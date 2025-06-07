@@ -1,0 +1,138 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie procedury ESKLEP_EksportInfoBlok"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie procedury ESKLEP_EksportInfoBlok */</I><BR>
+IF EXISTS (SELECT * FROM dbo.sysobjects WHERE id = OBJECT_ID(N'CDN.ESKLEP_EksportInfoBlok') AND OBJECTPROPERTY(id, N'IsProcedure') = 1)
+  DROP PROCEDURE CDN.ESKLEP_EksportInfoBlok
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury ESKLEP_EksportInfoBlok"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury ESKLEP_EksportInfoBlok */</I><BR>
+CREATE PROCEDURE CDN.ESKLEP_EksportInfoBlok
+  @ID			INT    -- ID e-sklepu
+ ,@ExpOpcje     INT    -- Maska opcji eksportu
+ ,@START		INT
+ ,@UniId		VARCHAR(60)
+AS
+SET NOCOUNT ON
+
+DECLARE  @TimeStamp INT
+	    ,@BazaDanych VARCHAR(31)
+		,@WersjaBazy VARCHAR(8)
+		,@BazaDanychGUID VARCHAR(50)
+		,@KngSyncId INT
+		,@OSS TINYINT
+		,@Lokalizacja TINYINT
+
+DECLARE @LokalizacjaKraje TABLE (LokalizacjaId INT, KodKraju NVARCHAR(8))
+
+INSERT INTO @LokalizacjaKraje (LokalizacjaId, KodKraju) VALUES
+(1, 'PL'),(2, 'US'),(3, 'DE'),(4, 'UA'),(5, 'FR'),(6, 'CH')
+
+SELECT @Lokalizacja = LK.LokalizacjaId
+FROM CDN.PicoKonfig
+JOIN CDN.FrmStruktura ON PcK_CentrumID = FRS_GIDNumer
+JOIN CDN.Firma ON FRS_FrmNumer = Frm_GidNumer
+JOIN @LokalizacjaKraje LK on Frm_KrajDzialalnosci = LK.KodKraju
+WHERE PcK_PicoID = @ID
+
+SELECT @Lokalizacja = COALESCE(
+    (SELECT DISTINCT LK.LokalizacjaId 
+		FROM CDN.PicoKonfig
+		JOIN CDN.FrmStruktura ON PcK_CentrumID = FRS_GIDNumer
+		JOIN CDN.Firma ON FRS_FrmNumer = Frm_GidNumer
+		JOIN @LokalizacjaKraje LK on Frm_KrajDzialalnosci = LK.KodKraju
+		WHERE PcK_PicoID = @ID),
+    (SELECT LK.LokalizacjaId
+     FROM CDN.Konfig
+     JOIN @LokalizacjaKraje LK ON Kon_Wartosc = LK.KodKraju
+     WHERE Kon_Numer = 2154),
+    1
+);
+
+SELECT @BazaDanychGUID =  
+			CAST(CAST(dbid AS BINARY(4))
+			+CAST(DATEDIFF(S,'20000101',crdate) AS BINARY(4)) 
+			+CAST(@@SERVICENAME AS BINARY(4))
+			+CAST(@@SERVERNAME AS BINARY(4))
+			AS UNIQUEIDENTIFIER)
+			FROM sys.sysdatabases WHERE dbid=DB_ID();
+
+SET @TimeStamp = DATEDIFF(s,CONVERT(DATETIME,'19900101',121),GETDATE())
+
+SELECT @BazaDanych	= SYS_Wartosc FROM CDN.SystemCDN WHERE SYS_ID = 1
+-- Wyciagniecie wersji bazy z jednoczesnym usunieciem wszystkich kropek poza pierwsza
+SELECT @WersjaBazy	= left(SYS_Wartosc,charindex('.',SYS_Wartosc))+replace(RIGHT(SYS_Wartosc,LEN(SYS_Wartosc)-charindex('.',SYS_Wartosc)),'.','') FROM CDN.SystemCDN WHERE SYS_ID = 3
+
+SELECT @KngSyncId = Kng_SyncId FROM CDN.PicoKonfig JOIN CDN.KntGrupy ON KnG_GIDNumer = PcK_KnGINumer WHERE PcK_PicoID = @ID AND KnG_GidTyp = -32
+SELECT @OSS = IIF(Kon_Wartosc IN (1,3), 1, 0) from cdn.konfig where Kon_Numer = 9855
+
+/******** Update timestampów w PicoKonfig *********/
+UPDATE CDN.PicoKonfig SET PcK_TSSynchr = @TimeStamp WHERE PcK_PicoId = @ID AND @START = 1
+
+IF (@ExpOpcje &amp; 1 = 1)		 -- eksport cennika
+   UPDATE CDN.PicoKonfig SET PcK_TSSynchrTwr = @TimeStamp WHERE PcK_PicoId = @ID
+ 
+IF((@ExpOpcje &amp; 4) / 4 = 1)  -- eksport grup
+   UPDATE CDN.PicoKonfig SET PcK_TSSynchrGrup = @TimeStamp WHERE PcK_PicoId = @ID
+   
+IF((@ExpOpcje &amp; 16) / 16 = 1)  -- eksport dane binarne
+   UPDATE CDN.PicoKonfig SET PcK_TSSynchrBin = @TimeStamp WHERE PcK_PicoId = @ID
+ 
+SET NOCOUNT OFF
+
+SELECT	 PcK_PicoID			AS eSklepID 
+		,'17'				AS Wersja
+		,PcK_TSSynchr		AS TSSynchr 
+		,PcK_TSSynchrTwr	AS TSSynchrTwr
+		,PcK_TSSynchrGrup	AS TSSynchrGrup
+		,PcK_TSSynchrKnt	AS TSSynchrKntPtw
+		,PcK_TwGNumer		AS ExpTwGNumer
+		,PcK_TSSynchrBin	AS TSSynchrBin 
+		,0					AS TSSynchrCSelling
+		,PcK_Waluta			AS WalutaSys
+		,0					AS Rabaty
+		,2					AS ZrodloID
+		,@Lokalizacja		AS Lokalizacja
+		,@BazaDanych		AS BazaDanych
+		,@BazaDanychGUID	AS BazaDanychGUID
+		,@WersjaBazy		AS WersjaBazy
+		,PcK_NrCeny			AS CenaD
+		,CASE WHEN PcK_NrCenyDomyslnej &gt; 0 THEN PcK_NrCenyDomyslnej ELSE -1 END AS CenaDP
+		,CASE WHEN @ExpOpcje = 0 THEN 1 ELSE 0 END AS Koniec
+		,PCK_ZatwierdzanieZamPoPrzekrLimitu AS Zam
+		,@KngSyncId AS GrupaKntID
+		,@UniId				AS SynchroGUID
+		,@START				AS Start
+		,@OSS				AS OSS
+FROM CDN.PicoKonfig AS INFOBLOK
+WHERE PcK_PicoID = @ID
+FOR XML AUTO
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury ESKLEP_EksportInfoBlok"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury ESKLEP_EksportInfoBlok */</I><BR>
+GRANT EXECUTE ON CDN.ESKLEP_EksportInfoBlok TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

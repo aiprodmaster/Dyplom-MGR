@@ -1,0 +1,192 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="SumaStanowTowaruNaSC"></A><PRE>
+          <FONT SIZE="2"><I>/* SumaStanowTowaruNaSC */</I><BR>
+CREATE function CDN.SumaStanowTowaruNaSC(
+@p_gt smallint,
+@p_gf integer,
+@p_gn integer,
+@p_typ integer,
+@p_NumerCeny integer,
+@p_Zerowe integer,
+@p_SCFirma integer,
+@p_SCNumer integer,
+@p_TylkoCeny integer)
+Returns  VARCHAR(128)
+AS
+BEGIN
+  DECLARE @retval VARCHAR(128);
+  DECLARE @opuscic integer;
+  DECLARE @Ilosc Decimal(28,4);
+  DECLARE @Cena   VARCHAR(20);
+  DECLARE @Waluta VARCHAR(3);
+  DECLARE @ZnakZero VARCHAR(1);
+  DECLARE @statusUsluga integer;
+  declare @lFlagaBN smallint;  -- 0 - netto, 1-brutto
+  Declare @sGrupaVat char(1)
+  Declare @lStawkaVat decimal(9,2)
+  Declare @lCEna decimal(19,4)
+
+  IF(@p_typ=0 OR @p_typ=3 OR @p_typ=4 OR @p_typ=6 OR @p_typ IS NULL) OR
+    (@p_TylkoCeny = 1 OR @p_TylkoCeny = 5 OR @p_TylkoCeny = 9)
+    BEGIN
+      SET @ZnakZero='-'
+      SET @statusUsluga=1
+    END
+  ELSE
+    BEGIN
+      SET @ZnakZero='0'
+      SET @statusUsluga=0
+    END
+
+
+  IF(@statusUsluga=0)       -- jest to towar dla ktorego stany maj¦ sens
+    BEGIN                   -- pobranie ilosci
+      IF(@p_SCNumer&gt;0)      -- z konkretnego sk-adu celnego
+        --
+        --
+          SELECT @Ilosc=IsNull(SUM(SZ_Ilosc),0)
+          FROM cdn.SCZasoby
+          WHERE 
+					SZ_TwrTyp=@p_gt AND SZ_TwrNumer=@p_gn AND
+          SZ_SCTyp=336 AND SZ_SCNumer=@p_SCNumer
+        --
+        -- koniec pobrania ilosci z konkretnego sk-adu celnego
+        --
+      ELSE
+        --
+        --
+        IF(@p_SCNumer=0)  -- ze wszystkich sk-adów celnych
+            SELECT @Ilosc=IsNull(SUM(SZ_Ilosc),0)
+            FROM cdn.SCZasoby 
+						JOIN  cdn.SkladyCelne ON SZ_SCTyp = SC_GIDTyp AND SZ_SCNumer = SC_GIDNumer
+            WHERE 
+						SZ_TwrTyp=@p_gt AND SZ_TwrNumer=@p_gn
+        --
+        -- Koniec ze wszystkich sk-adˇw celnych
+        --
+        ELSE -- Informacja o sk-adach w tabeli pomocniczej
+          --
+          --
+            SELECT @Ilosc=IsNull(SUM(SZ_Ilosc),0)
+            FROM cdn.SCZasoby 
+						JOIN cdn.MagWybor ON SZ_SCTyp = MgW_MagTyp AND SZ_SCNumer = MgW_MagNumer
+            WHERE
+            SZ_TwrTyp=@p_gt AND SZ_TwrNumer=@p_gn AND
+            MgW_SesjaID=-@p_SCFirma AND MgW_Watek=-@p_SCNumer
+        --
+        --
+        -- Koniec z wybranych sk-adˇw celnych
+    --
+    --  Czy opusciŠ pozycje ze stanami zerowymi
+    IF @p_Zerowe=0 and @Ilosc=0
+        SET @opuscic=1
+    ELSE
+       SET @opuscic=0
+    END
+  -- koniec obs-ugi dla towarˇw (nie us-ug)
+
+  ELSE -- towar ma specjalny status (usluga/koszt...)
+    BEGIN
+      SET @opuscic=0
+    END
+  --
+  --
+  IF(@opuscic=0)  -- nie opuszczamy tego towaru - pobranie ceny i waluty
+    BEGIN
+    IF @p_NumerCeny &lt; 32768
+    BEGIN
+		if @p_NumerCeny &lt; 0
+		begin
+			DECLARE @FrsID int
+			Set @FrsID = -@p_NumerCeny
+			select top 1 @p_NumerCeny = isnull(FRO_GIDLp,case when B.FRS_Id = 1 then Twr_Cenaspr else null end)
+			from CDN.FrsCentra(1,0,@FrsID,0,0) A
+			join CDN.FrmStruktura B on A.Frs_Id = B.Frs_Id
+			inner join CDN.TwrKarty on Twr_GIDNumer = @p_gn
+			left outer join CDN.FrmObiekty on B.FRS_Id=FRO_FrmID and FRO_GIDLp = Twr_CenaSpr
+			where (B.Frs_CenyZRodzica = 0 or B.Frs_ID = 1)
+			order by A.Frs_Poziom desc
+			
+			if @p_NumerCeny is null
+				select @p_NumerCeny=FRS_CenaDomyslna from CDN.FrmStruktura where FRS_Id=@FrsID
+		end
+		
+		SELECT @Cena=CAST(Twc_Wartosc AS VARCHAR(28)), @Waluta=Twc_Waluta
+		FROM CDN.TwrCeny
+		WHERE TwC_TwrNumer=@p_gn AND TwC_TwrLp=@p_NumerCeny
+
+
+		If (@p_TylkoCeny &gt; 1 )
+		Begin
+			Select @lFlagaBN = isnull((case when Substring(Naz_Nazwa,11,1)='B' then 1 else 0 end),0)
+			From CDN.Nazwy
+			Where Naz_GIDTyp=64 and Naz_GIDLp=@p_NumerCeny
+			
+			If (@lFlagaBN=1) and ( @p_TylkoCeny=4 OR @p_TylkoCeny=5)	-- Brutto -&gt; netto
+			Begin
+				Select @sGrupaVat = Twr_GrupaPodSpr, @lStawkaVat = Twr_StawkaPodSpr
+				From Cdn.TwrKarty
+				Where Twr_GIDTyp = @p_gt and Twr_GIDNumer = @p_gn 
+
+				--Select @lStawkaVat = Cast(Substring(Naz_Nazwa1,1,7) as decimal(7,2))
+				--From Cdn.Nazwy
+				--Where Naz_GIDTyp=624 and Substring(Naz_Nazwa,1,1) = @sGrupaVat
+				Set @lCena = cast(@Cena as decimal(20,4))/(1+@lStawkaVat/100)
+				Set @Cena = cast(@lCena as varchar(28))
+			End	
+			If (@lFlagaBN=0) and ( @p_TylkoCeny=8 OR @p_TylkoCeny=9)	-- Netto -&gt; brutto
+			Begin
+				Select @sGrupaVat = Twr_GrupaPodSpr, @lStawkaVat = Twr_StawkaPodSpr
+				From Cdn.TwrKarty
+				Where Twr_GIDTyp = @p_gt and Twr_GIDNumer = @p_gn 
+
+				--Select @lStawkaVat = Cast(Substring(Naz_Nazwa1,1,7) as decimal(7,2))
+				--From cdn.Nazwy
+				--Where Naz_GIDTyp=624 and Substring(Naz_Nazwa,1,1) = @sGrupaVat
+				Set @lCena = cast(@Cena as decimal(20,4))*(1+@lStawkaVat/100)
+				Set @Cena = cast(@lCena as varchar(28))
+	--			Set @Cena = cast(Round(cast(@Cena as decimal(20,4))*(1+@lStawkaVat/100),4) as varchar(28))
+			End	
+
+
+
+		End
+	END
+
+
+      --
+      -- podstawienie obliczonych ilosci
+      IF (@statusUsluga=0)
+        SET @retval=
+          cast(@Ilosc AS VARCHAR(28))+':'
+          +IsNull(@Cena,'-')+':'
+          +IsNull(@Waluta,'-')
+      ELSE
+        SET @retval=
+          @ZnakZero+':'
+          +IsNull(@Cena,'-')+':'
+          +IsNull(@Waluta,'-')
+    END
+    -- koniec braku opuszczania
+  ELSE
+    -- jest to opuszczony stan zerowy funkcja zwraca null
+    SET @retval=NULL
+
+  RETURN @retval
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

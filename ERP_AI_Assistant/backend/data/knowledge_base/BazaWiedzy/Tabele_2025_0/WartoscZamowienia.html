@@ -1,0 +1,117 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="WartoscZamowienia"></A><PRE>
+          <FONT SIZE="2"><I>/* WartoscZamowienia */</I><BR>
+CREATE FUNCTION CDN.WartoscZamowienia( 
+@ZamNumer   int, 
+@CzyBrutto  tinyint,
+@GetDate	datetime -- podstawić tu funkcje getdate() by była zgodnoścć z sql 2000
+) 
+RETURNS DECIMAL(15,2) AS 
+BEGIN 
+DECLARE @Razem DECIMAL(15,2)
+DECLARE @WalutaNag VARCHAR(3)
+DECLARE @KursL DECIMAL(15,10)
+DECLARE @KursM DECIMAL(5)
+DECLARE @DataSys INT
+DECLARE @TSKursu INT
+DECLARE @WalutaSys VARCHAR(5)
+
+SET @DataSys = DATEDIFF(d,convert(datetime,'1800-12-28',120),@GetDate)
+SET @TSKursu = (@DataSys - 69035)*86400 -1
+SET @WalutaSys = (select Kon_Wartosc from cdn.konfig where kon_numer = 211) 
+
+select top 1 @KursM=
+		CASE ZaN_TypKursu 
+			WHEN 1 THEN coalesce(WaE_KursM,1)
+            WHEN 2 THEN ZaN_KursM 
+            WHEN 3 THEN 
+			CASE WHEN ZaN_DataWaznosci&lt;=@DataSys THEN ZaN_KursM
+            ELSE coalesce(WaE_KursM,1)            
+            END 
+        END, 
+   @KursL=
+		CASE ZaN_TypKursu 
+			WHEN 1 THEN coalesce(WaE_KursL,1.00)
+            WHEN 2 THEN ZaN_KursL
+            WHEN 3 THEN 
+			CASE WHEN ZaN_DataWaznosci&lt;=@DataSys THEN ZaN_KursL
+            ELSE coalesce(WaE_KursL,1)         
+            END 
+		END
+
+from CDN.ZamNag
+left outer join CDN.WalElem on WaE_Symbol = ZaN_Waluta and WaE_Lp = ZaN_NrKursu
+where ZaN_GIDNumer = @ZamNumer and ZaN_GIDTyp = 960 and ISNULL(WaE_KursTS,0)&lt;= @TSKursu
+order by WaE_KursTS desc 
+
+SET @KursM = ISNULL(@KursM,1)
+SET @KursL = ISNULL(@KursL,1)
+
+select 
+@Razem=sum(CASE WHEN ZaN_FlagaNB='N' 
+				THEN 
+					CASE WHEN ZaN_Waluta&lt;&gt;ZaV_Waluta
+						THEN round(
+							round(
+									CASE ZaN_TypKursu 
+										WHEN 1 THEN CDN.WartoscWWalucieSys(ZaV_Netto,ZaV_Waluta,ZaV_NrKursu, @TSKursu)
+										WHEN 2 THEN ZaV_Netto*(ZaV_KursL/ZaV_KursM)
+										WHEN 3 THEN 
+											CASE WHEN ZaN_DataWaznosci&lt;=@DataSys
+												THEN ZaV_Netto*(ZaV_KursL/ZaV_KursM)
+												ELSE CDN.WartoscWWalucieSys(ZaV_Netto,ZaV_Waluta,ZaV_NrKursu, @TSKursu) 
+											END 
+									END 
+									*CASE WHEN ZaN_Waluta&lt;&gt;@WalutaSys
+										THEN @KursM/@KursL 
+										ELSE 1 
+									END
+							,2)*case when @CzyBrutto = 1 then (1+ZaV_StawkaPod/100) else 1 end
+							,2)   
+						ELSE round(ZaV_Netto*case when @CzyBrutto = 1 then (1+ZaV_StawkaPod/100) else 1 end,2) 
+					END
+        ELSE 
+             CASE WHEN ZaN_Waluta&lt;&gt;ZaV_Waluta
+                  THEN round( 
+						round(
+							CASE ZaN_TypKursu 
+								  WHEN 1 THEN CDN.WartoscWWalucieSys(ZaV_Brutto,ZaV_Waluta,ZaV_NrKursu, @TSKursu)
+								  WHEN 2 THEN ZaV_Brutto*(ZaV_KursL/ZaV_KursM)
+								  WHEN 3 THEN 
+									 CASE WHEN ZaN_DataWaznosci&lt;=@DataSys
+										  THEN ZaV_Brutto*(ZaV_KursL/ZaV_KursM)
+										  ELSE CDN.WartoscWWalucieSys(ZaV_Brutto,ZaV_Waluta,ZaV_NrKursu, @TSKursu)   
+									 END 
+							END
+							*CASE WHEN ZaN_Waluta&lt;&gt;@WalutaSys
+							THEN @KursM/@KursL ELSE 1 
+							END,2)/case when @CzyBrutto = 1 then 1 else (1+ZaV_StawkaPod/100) end
+						,2)
+                   ELSE round(ZaV_Brutto/case when @CzyBrutto = 1 then 1 else (1+ZaV_StawkaPod/100) end,2)
+             END
+  END ),
+@WalutaNag=max(ZaN_Waluta)
+from CDN.ZamNag
+join CDN.ZamVat on ZaV_GIDNumer=ZaN_GIDNumer and ZaV_GIDTyp=ZaN_GIDTyp
+where ZaN_GIDNumer = @ZamNumer and ZaN_GIDTyp = 960
+
+select @Razem = isnull(@Razem,0)
+
+Return (@Razem) 
+END 
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

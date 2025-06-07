@@ -1,0 +1,174 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="GoogleMaps"></A><PRE>
+          <FONT SIZE="2"><I>/* GoogleMaps */</I><BR>
+Create FUNCTION CDN.GoogleMaps 
+(
+	@ObiTyp int,	-- jeśli 343: prezentowana zdefiniowana trasa w systemie, w pozostałych przypadkach idetyfikator adresu docelowego
+	@ObiNumer int,
+	@Centrum int	-- jeśli nie zerowe to zwracany link prezentujący trasę z firmy do adresu
+)
+RETURNS varchar(1024)
+AS
+BEGIN
+	declare @adres varchar(1024)
+	declare @lp int
+
+	Set @adres='http://maps.google.com/maps?f='
+    set @adres=@adres+'q&amp;hl=pl&amp;'
+
+		
+
+	if (@Centrum &lt;&gt;0)  -- Pokazujemy trasę z Firmy do Adresu docelowego
+    Begin
+		Select  top 1 @adres = @adres + '&amp;saddr='+CDN.URLEncode(isnull(T.Ulica,'')+'+,+'+IsNull(T.Miasto ,''))
+		From 
+		(
+			select A.Frs_Poziom Poziom, Frm_Miasto Miasto, Frm_Ulica Ulica
+			from CDN.FrsCentra(1, -4272,@Centrum,0,0)  A
+			join CDN.FrmStruktura B on A.FRS_ID = B.FRS_ID
+			join CDN.Firma on FRM_GIDNumer=B.Frs_FrmNumer
+			union 
+			Select -99999, Frm_Miasto Miasto, Frm_Ulica Ulica
+			FRom CDN.Firma
+			Where Frm_DataArc=0
+		) T
+		Order by T.Poziom DESC
+    End
+
+	if @OBITyp = 343  -- Trasa (CDN.TrasyNag) 
+        Begin
+                Set @lp=0
+                select
+                @adres = @adres+ case   when (select count(*) from cdn.trasyelem A
+                                                                          where A.Tse_TsnId = @ObiNumer and A.Tse_LP &lt;= B.Tse_LP) =1 then '&amp;daddr='
+                                                                when (select count(*) from cdn.trasyelem A
+                                                                          where A.Tse_TsnId = @ObiNumer and A.Tse_LP &lt;= B.Tse_LP) =2 then '+to:'
+                                                                else '+to:'end 
+																+ CDN.URLEncode(isnull(KnA_Ulica,'')+'+,+'+IsNull(KnA_Miasto ,''))
+                from cdn.trasyelem B join CDN.KntAdresy
+                on tse_KntATyp = KnA_GIDTyp and TsE_KntANumer = KnA_GIDNumer
+                Where B.TsE_TsnId = @ObiNumer
+                order by B.Tse_Lp
+
+                RETURN @adres
+        End
+
+	if (@Centrum &lt;&gt;0)
+	   select @adres = @adres + '&amp;daddr='
+	else 
+	   select @adres = @adres + '&amp;q='
+		
+	BEGIN
+	IF @ObiTyp = 944
+		Select @adres = @adres + CDN.URLEncode(isnull(PrC_Ulica,'')+'+,+'+IsNull(PrC_Miasto ,''))
+		From CDN.PrcKarty
+		Where PrC_GIDTyp=@ObiTyp and PrC_GIDNumer = @ObiNumer
+	else if @OBITyp = 48
+		Select @adres = @adres + CDN.URLEncode(isnull(Bnk_Ulica,'')+'+,+'+IsNull(Bnk_Miasto ,''))
+		From CDN.Banki
+		Where Bnk_GIDTyp=@ObiTyp and Bnk_GIDNumer = @ObiNumer
+
+	ELSE if @OBITyp = 864
+		Select @adres = @adres + CDN.URLEncode(isnull(KnA_Ulica,'')+'+,+'+IsNull(KnA_Miasto ,''))
+		From CDN.KntAdresy
+		Where Kna_GIDTyp=@ObiTyp and Kna_GIDNumer = @ObiNumer		
+	ELSE if @OBITyp = 896
+		Select @adres = @adres + CDN.URLEncode(isnull(KnA_Ulica,'')+'+,+'+IsNull(KnA_Miasto ,''))
+		From CDN.KntAdresy
+		Where Kna_GIDTyp=@ObiTyp and Kna_GIDNumer = @ObiNumer
+	ELSE if @OBITyp = 32
+		Select @adres = @adres + CDN.URLEncode(isnull(KnT_Ulica,'')+'+,+'+IsNull(KnT_Miasto ,''))
+		From CDN.KntKarty
+		Where KnT_GIDTyp=@ObiTyp and KnT_GIDNumer = @ObiNumer
+	ELSE if @ObiTyp = 14400
+        Select @adres = @adres + CDN.URLEncode(cast(isnull(DAB_GPSSz,0)AS varchar(10)) +',%20'+ cast(IsNull(DAB_GPSDl ,0) AS varchar(10)))
+        From CDN.DaneBinarne
+        Where DAB_ID=@ObiNumer
+    ELSE if @ObiTyp = 4180
+        Select @adres = @adres + CDN.URLEncode(cast(isnull(Sap_PrzyjazdGPSSz,0)AS varchar(10)) +',%20'+ cast(IsNull(Sap_PrzyjazdGPSDl ,0) AS varchar(10)))
+        From CDN.SamPrzejazdy
+        Where SAP_ID=@ObiNumer       
+    ELSE if @ObiTyp = -864
+			Select @adres = @adres + CDN.URLEncode(cast(isnull(KnA_GPSSz,0)AS varchar(10)) +',%20'+ cast(IsNull(KnA_GPSDl ,0) AS varchar(10)))
+			From CDN.KntAdresy
+			Where KnA_GIDNumer = @ObiNumer
+
+	Else
+		Select @adres = @adres + 'niezdefiniowane' + '+,+' + 'niezdefiniowane'
+
+    END
+	select @adres = @adres +'&amp;ie=UTF8'
+
+	RETURN @adres
+
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[URLEnCode]"></A><PRE>
+          <FONT SIZE="2"><I>/* [URLEnCode] */</I><BR>
+CREATE Function [CDN].[URLEnCode](@adres Varchar(1024))
+Returns varchar(1024)
+As
+Begin
+declare @i int
+declare @wynik varchar(1024)
+declare @znak varchar(1)
+declare @h varchar(16)
+set @i = 1
+set @h = '0123456789ABCDEF'
+set @wynik = ''
+	while @i&lt;=len(ltrim(rtrim(@adres)))
+	begin
+		set @znak = substring(@adres, @i, 1)
+		if @znak LIKE '[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0-9''*-._!]'
+			set @wynik = @wynik+ @znak
+		else
+		begin
+			select @wynik = @wynik + case Ascii(@znak)
+					when 165 then '%C4%84'   -- 'Ą
+					when 198 then '%C4%86'	 -- 'Ć
+					when 202 then '%C4%98'	-- Ę
+					when 163 then '%C5%81'	-- Ł
+					when 209 then '%C5%83'	-- Ń
+					when 211 then '%C3%93'	-- Ó
+					when 140 then '%C5%9A'	-- Ś
+					when 143 then '%C5%B9'	-- Ź
+					when 175 then '%C5%BB'	-- Ż
+					when 185 then '%C4%85'	-- ą
+					when 230 then '%C4%87'	-- ć
+					when 234 then '%C4%99'	-- ę
+					when 179 then '%C5%82'	-- ł
+					when 241 then '%C5%84'	-- ń
+					when 243 then '%C3%B3'	-- ó
+					when 156 then '%C5%9B'	-- ś
+					when 159 then '%C5%BA'	-- ź
+					when 191 then '%C5%BC'	-- ż
+					else
+					@znak
+					end
+			--Set @wynik = @wynik+ '%'+substring(@h,ascii(@znak)/16+1,1)+substring(@h,ascii(@znak)%16+1,1)
+		end
+		set @i = @i+1
+	end
+	return @wynik
+End
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

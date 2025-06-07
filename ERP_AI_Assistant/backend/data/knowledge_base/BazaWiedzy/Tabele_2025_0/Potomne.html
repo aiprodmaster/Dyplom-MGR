@@ -1,0 +1,296 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="FrmPotomne"></A><PRE>
+          <FONT SIZE="2"><I>/* FrmPotomne */</I><BR>
+CREATE PROCEDURE CDN.FrmPotomne(@ID INT, @TylkoCentra INT = 0) AS
+BEGIN
+  DECLARE @c int
+  CREATE TABLE #potomne (FRS_ID INT UNIQUE)
+  INSERT INTO #potomne SELECT A.FRS_ID FROM cdn.frmstruktura AS A join cdn.frmstruktura AS B ON B.FRS_GidTyp=A.FRS_GroTyp and B.FRS_GidNumer=A.FRS_GroNumer and B.FRS_GidLp=A.FRS_GroLp AND B.FRS_ID=@ID
+  SET @c=0
+  WHILE @c&lt;&gt;(SELECT COUNT(*) FROM #potomne)
+  BEGIN
+    SET @c=(SELECT COUNT(*) FROM #potomne)
+    IF @TylkoCentra=1
+      insert into #potomne select A.frs_id from cdn.frmstruktura as A join cdn.frmstruktura as B ON B.FRS_GidTyp=A.FRS_GroTyp and B.FRS_GidNumer=A.FRS_GroNumer and B.FRS_GidLp=A.FRS_GroLp JOIN #potomne ON  B.FRS_ID=#potomne.FRS_ID AND NOT EXISTS(SELECT * FROM #potomne WHERE #potomne.FRS_ID=A.FRS_ID) where A.FRS_StrTyp&gt;0
+    ELSE
+      insert into #potomne select A.frs_id from cdn.frmstruktura as A join cdn.frmstruktura as B ON B.FRS_GidTyp=A.FRS_GroTyp and B.FRS_GidNumer=A.FRS_GroNumer and B.FRS_GidLp=A.FRS_GroLp JOIN #potomne ON  B.FRS_ID=#potomne.FRS_ID AND NOT EXISTS(SELECT * FROM #potomne WHERE #potomne.FRS_ID=A.FRS_ID)
+  END
+  SELECT FRS_ID FROM #potomne
+  DROP TABLE #potomne
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="UsunPotomne"></A><PRE>
+          <FONT SIZE="2"><I>/* UsunPotomne */</I><BR>
+CREATE PROCEDURE CDN.UsunPotomne (@ID int,@Typ smallint,@Firma int,@Numer int,@Lp smallint) AS
+BEGIN
+  CREATE TABLE #potomne (FRS_ID INT UNIQUE)
+  INSERT INTO #potomne EXECUTE cdn.frmpotomne @ID
+  DELETE FROM CDN.FrmObiekty
+  WHERE (FRO_FRMID IN (SELECT FRS_ID FROM #potomne) OR FRO_FRMID=@ID)
+  AND FRO_GIDTyp=@Typ AND FRO_GIDFirma=@Firma AND FRO_GIDNumer=@Numer AND FRO_GIDLp=@Lp
+  --uaktualnienie domyślnych magazynów
+  IF @Typ=208
+  BEGIN
+    --magazyn domyślny na centrach
+    UPDATE CDN.FrmStruktura 
+	SET Frs_MagTyp=0, Frs_MagFirma=0, Frs_MagNumer=0
+	FROM CDN.FrmStruktura
+    WHERE Frs_Id IN (SELECT FRS_ID FROM #potomne)
+    AND Frs_MagTyp=@Typ AND Frs_MagFirma=@Firma AND Frs_MagNumer=@Numer
+    --magazyn źródłowy na definicjach
+    UPDATE CDN.DokDefinicje 
+	SET Dok_MagZTyp=0, Dok_MagZFirma=0, Dok_MagZNumer=0
+	FROM CDN.DokDefinicje
+    WHERE Dok_DefZNadrzednego=0 AND (Dok_FrsId IN (SELECT FRS_ID FROM #potomne) OR Dok_FrsId=@ID)
+		  AND Dok_MagZTyp=@Typ AND Dok_MagZFirma=@Firma AND Dok_MagZNumer=@Numer
+    --magazyn docelowy na definicjach
+    UPDATE CDN.DokDefinicje 
+	SET Dok_MagDTyp=0, Dok_MagDFirma=0, Dok_MagDNumer=0
+	FROM CDN.DokDefinicje
+    WHERE Dok_DefZNadrzednego=0 AND (Dok_FrsId IN (SELECT FRS_ID FROM #potomne) OR Dok_FrsId=@ID)
+		  AND Dok_MagDTyp=@Typ AND Dok_MagDFirma=@Firma AND Dok_MagDNumer=@Numer
+    --magazyn korekty na definicjach
+    UPDATE CDN.DokDefinicje 
+	SET Dok_MagKTyp=0, Dok_MagKFirma=0, Dok_MagKNumer=0
+	FROM CDN.DokDefinicje
+    WHERE Dok_DefZNadrzednego=0 AND (Dok_FrsId IN (SELECT FRS_ID FROM #potomne) OR Dok_FrsId=@ID)
+    AND Dok_MagKTyp=@Typ AND Dok_MagKFirma=@Firma AND Dok_MagKNumer=@Numer
+  END
+  --uaktualnienie domyślnych serii
+  IF @Typ=272
+  BEGIN
+    --seria domyślna na centrach
+    UPDATE CDN.FrmStruktura 
+	SET Frs_SerTyp=0, Frs_SerFirma=0, Frs_SerNumer=0
+	FROM CDN.FrmStruktura 
+    WHERE Frs_Id IN (SELECT FRS_ID FROM #potomne)
+    AND Frs_SerTyp=@Typ AND Frs_SerFirma=@Firma AND Frs_SerNumer=@Numer
+    --seria domyślna na definicjach
+    UPDATE CDN.DokDefinicje 
+	SET Dok_SerTyp=0, Dok_SerFirma=0, Dok_SerNumer=0
+	FROM CDN.DokDefinicje
+    WHERE Dok_DefZNadrzednego=0 AND (Dok_FrsId IN (SELECT FRS_ID FROM #potomne) OR Dok_FrsId=@ID)
+    AND Dok_SerTyp=@Typ AND Dok_SerFirma=@Firma AND Dok_SerNumer=@Numer
+    --seria korekty na definicjach
+    UPDATE CDN.DokDefinicje 
+	SET Dok_SerKTyp=0, Dok_SerKFirma=0, Dok_SerKNumer=0
+	FROM CDN.DokDefinicje
+    WHERE Dok_DefZNadrzednego=0 AND (Dok_FrsId IN (SELECT FRS_ID FROM #potomne) OR Dok_FrsId=@ID)
+    AND Dok_SerKTyp=@Typ AND Dok_SerKFirma=@Firma AND Dok_SerKNumer=@Numer
+  END
+  --uaktualnienie rejestrów na formach płatności
+  IF @Typ=752
+  BEGIN
+    UPDATE CDN.FrmObiekty SET FRO_GID2Typ=0, FRO_GID2Firma=0, FRO_GID2Numer=0, FRO_GID2Lp=0
+    WHERE FRO_FRMID IN (SELECT FRS_ID FROM #potomne)
+    AND FRO_GID2Typ=@Typ AND FRO_GID2Firma=@Firma AND FRO_GID2Numer=@Numer AND FRO_GID2Lp=@Lp
+  END
+  DROP TABLE #potomne
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="FrmRodzice"></A><PRE>
+          <FONT SIZE="2"><I>/* FrmRodzice */</I><BR>
+CREATE PROCEDURE CDN.FrmRodzice(@ID INT) AS
+BEGIN
+  DECLARE @c int
+  CREATE TABLE #rodzice (FRS_ID INT UNIQUE,Poziom INT)
+  INSERT INTO #rodzice SELECT B.FRS_ID,1 FROM cdn.frmstruktura AS A join cdn.frmstruktura AS B ON B.FRS_GidTyp=A.FRS_GroTyp and B.FRS_GidFirma=A.FRS_GroFirma and B.FRS_GidNumer=A.FRS_GroNumer and B.FRS_GidLp=A.FRS_GroLp AND A.FRS_ID=@ID
+  SET @c=0
+  WHILE @c&lt;&gt;(SELECT COUNT(*) FROM #rodzice)
+  BEGIN
+    SET @c=(SELECT COUNT(*) FROM #rodzice)
+    insert into #rodzice select B.frs_id,#rodzice.Poziom+1 from cdn.frmstruktura as A join cdn.frmstruktura as B ON 
+ B.FRS_GidTyp=A.FRS_GroTyp and B.FRS_GidFirma=A.FRS_GroFirma and 
+ B.FRS_GidNumer=A.FRS_GroNumer and B.FRS_GidLp=A.FRS_GroLp JOIN #rodzice ON A.FRS_ID=#rodzice.FRS_ID
+ AND NOT EXISTS(SELECT * FROM #rodzice WHERE #rodzice.FRS_ID=B.FRS_ID)
+  END
+  SELECT FRS_ID,Poziom FROM #rodzice
+  DROP TABLE #rodzice
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[SprawdzPotomne]"></A><PRE>
+          <FONT SIZE="2"><I>/* [SprawdzPotomne] */</I><BR>
+CREATE PROCEDURE [CDN].[SprawdzPotomne](@ID INT, @ParId INT, @ParMagZRodzica INT, @ParSerZRodzica INT, @ParRejZRodzica INT, @ParCenyZRodzica INT = NULL, @ParRejVATZRodzica INT = NULL) AS
+BEGIN
+  SET NOCOUNT ON
+  CREATE TABLE #potomneFRS (FRS_ID INT UNIQUE)
+  CREATE TABLE #rodzicaFRS (FRS_ID INT UNIQUE)
+  CREATE TABLE #potomneFRO (FRO_GIDTyp SMALLINT,FRO_GIDFirma INT,FRO_GIDNumer INT, FRO_GIDLp SMALLINT)
+  CREATE TABLE #rodzicaFRO (FRO_GIDTyp SMALLINT,FRO_GIDFirma INT,FRO_GIDNumer INT, FRO_GIDLp SMALLINT)
+  CREATE TABLE #bledne (FRO_GIDTyp SMALLINT,FRO_GIDFirma INT,FRO_GIDNumer INT, FRO_GIDLp SMALLINT, sObiekt VARCHAR(20) COLLATE Polish_CI_AS)
+
+  INSERT INTO #potomneFRS EXECUTE cdn.frmpotomne @ID
+  INSERT INTO #rodzicaFRS EXECUTE cdn.frmpotomne @ParId
+
+  INSERT INTO #potomneFRO SELECT FRO_GIDTyp, FRO_GIDFirma, FRO_GIDNumer, FRO_GIDLp
+  FROM CDN.FrmObiekty
+  WHERE (FRO_FRMID IN (SELECT FRS_ID FROM #potomneFRS) OR FRO_FRMID=@ID)
+  AND FRO_GIDTyp&lt;&gt;736
+  GROUP BY FRO_GIDTyp, FRO_GIDFirma, FRO_GIDNumer, FRO_GIDLp
+
+  INSERT INTO #rodzicaFRO SELECT FRO_GIDTyp, FRO_GIDFirma, FRO_GIDNumer, FRO_GIDLp
+  FROM CDN.FrmObiekty
+  WHERE (FRO_FRMID IN (SELECT FRS_ID FROM #rodzicaFRS) OR FRO_FRMID=@ParId)
+  AND FRO_GIDTyp&lt;&gt;736
+  GROUP BY FRO_GIDTyp, FRO_GIDFirma, FRO_GIDNumer, FRO_GIDLp
+
+  --jeśli któraś lista z rodzica, to musimy znaleźć z którego
+  IF @ParMagZRodzica=1 OR @ParSerZRodzica=1 OR @ParRejZRodzica=1 OR @ParCenyZRodzica = 1 OR @ParRejVATZRodzica = 1
+  BEGIN
+    --wypełnienie pomocniczej tabeli z rodzicami węzła do którego wpinamy
+    DECLARE @c int
+    CREATE TABLE #rodzice (FRS_ID INT UNIQUE,Poziom INT, MagZRodzica INT, SerZRodzica INT, RejZRodzica INT, CenyZRodzica INT, RejVATZRodzica INT)
+    INSERT INTO #rodzice SELECT B.FRS_ID,1,B.FRS_MagazynyZRodzica,B.FRS_SerieZRodzica,B.FRS_RejestryZRodzica,B.FRS_CenyZRodzica,B.FRS_RejestryVatZRodzica FROM cdn.frmstruktura AS A join cdn.frmstruktura AS B ON B.FRS_GidTyp=A.FRS_GroTyp and B.FRS_GidFirma=A.FRS_GroFirma and B.FRS_GidNumer=A.FRS_GroNumer and B.FRS_GidLp=A.FRS_GroLp AND A.FRS_ID=@ParId
+    SET @c=0
+    WHILE @c&lt;&gt;(SELECT COUNT(*) FROM #rodzice)
+    BEGIN
+      SET @c=(SELECT COUNT(*) FROM #rodzice)
+      insert into #rodzice select B.frs_id,#rodzice.Poziom+1,B.FRS_MagazynyZRodzica,B.FRS_SerieZRodzica,B.FRS_RejestryZRodzica,B.FRS_CenyZRodzica,B.FRS_RejestryVatZRodzica from cdn.frmstruktura as A join cdn.frmstruktura as B ON
+      B.FRS_GidTyp=A.FRS_GroTyp and B.FRS_GidFirma=A.FRS_GroFirma and
+      B.FRS_GidNumer=A.FRS_GroNumer and B.FRS_GidLp=A.FRS_GroLp JOIN #rodzice ON A.FRS_ID=#rodzice.FRS_ID
+      AND NOT EXISTS(SELECT * FROM #rodzice WHERE #rodzice.FRS_ID=B.FRS_ID)
+    END
+    --jeśli magazyny z rodzica
+    IF @ParMagZRodzica=1
+    BEGIN
+      SET @ParMagZRodzica = (select top 1 isnull(frs_id,1) from #rodzice
+                             where MagZRodzica=0 OR MagZRodzica is null
+                             order by Poziom)
+      IF @ParMagZRodzica IS NULL
+        SET @ParMagZRodzica=1
+      delete from #rodzicaFRS
+      INSERT INTO #rodzicaFRS EXECUTE cdn.frmpotomne @ParMagZRodzica
+      INSERT INTO #rodzicaFRO SELECT FRO_GIDTyp, FRO_GIDFirma, FRO_GIDNumer, FRO_GIDLp
+      FROM CDN.FrmObiekty
+      WHERE FRO_GIDTyp=208 AND (FRO_FRMID IN (SELECT FRS_ID FROM #rodzicaFRS) OR FRO_FRMID=@ParMagZRodzica)
+      GROUP BY FRO_GIDTyp, FRO_GIDFirma, FRO_GIDNumer, FRO_GIDLp
+    END
+    --jeśli serie z rodzica
+    IF @ParSerZRodzica=1
+    BEGIN
+      SET @ParSerZRodzica = (select top 1 isnull(frs_id,1) from #rodzice
+                             where SerZRodzica=0 OR SerZRodzica is null
+                             order by Poziom)
+      IF @ParSerZRodzica IS NULL
+        SET @ParSerZRodzica=1
+      delete from #rodzicaFRS
+      INSERT INTO #rodzicaFRS EXECUTE cdn.frmpotomne @ParSerZRodzica
+      INSERT INTO #rodzicaFRO SELECT FRO_GIDTyp, FRO_GIDFirma, FRO_GIDNumer, FRO_GIDLp
+      FROM CDN.FrmObiekty
+      WHERE FRO_GIDTyp=272 AND (FRO_FRMID IN (SELECT FRS_ID FROM #rodzicaFRS) OR FRO_FRMID=@ParSerZRodzica)
+      GROUP BY FRO_GIDTyp, FRO_GIDFirma, FRO_GIDNumer, FRO_GIDLp
+    END
+    --jeśli rejestry z rodzica
+    IF @ParRejZRodzica=1
+    BEGIN
+      SET @ParRejZRodzica = (select top 1 isnull(frs_id,1) from #rodzice
+                             where RejZRodzica=0 OR RejZRodzica is null
+                             order by Poziom)
+      IF @ParRejZRodzica IS NULL
+        SET @ParRejZRodzica=1
+      delete from #rodzicaFRS
+      INSERT INTO #rodzicaFRS EXECUTE cdn.frmpotomne @ParRejZRodzica
+      INSERT INTO #rodzicaFRO SELECT FRO_GIDTyp, FRO_GIDFirma, FRO_GIDNumer, FRO_GIDLp
+      FROM CDN.FrmObiekty
+      WHERE FRO_GIDTyp=752 AND (FRO_FRMID IN (SELECT FRS_ID FROM #rodzicaFRS) OR FRO_FRMID=@ParRejZRodzica)
+      GROUP BY FRO_GIDTyp, FRO_GIDFirma, FRO_GIDNumer, FRO_GIDLp
+    END
+    --jeśli typy cen z rodzica
+    IF @ParCenyZRodzica=1
+    BEGIN
+      SET @ParCenyZRodzica = (select top 1 isnull(frs_id,1) from #rodzice
+                             where CenyZRodzica=0 OR CenyZRodzica is null
+                             order by Poziom)
+      IF @ParCenyZRodzica IS NULL
+        SET @ParCenyZRodzica=1
+      delete from #rodzicaFRS
+      INSERT INTO #rodzicaFRS EXECUTE cdn.frmpotomne @ParCenyZRodzica
+      INSERT INTO #rodzicaFRO SELECT FRO_GIDTyp, FRO_GIDFirma, FRO_GIDNumer, FRO_GIDLp
+      FROM CDN.FrmObiekty
+      WHERE FRO_GIDTyp=64 AND (FRO_FRMID IN (SELECT FRS_ID FROM #rodzicaFRS) OR FRO_FRMID=@ParCenyZRodzica)
+      GROUP BY FRO_GIDTyp, FRO_GIDFirma, FRO_GIDNumer, FRO_GIDLp
+    END
+    --jeśli rejestry vat z rodzica
+    IF @ParRejVATZRodzica=1
+    BEGIN
+      SET @ParRejVATZRodzica = (select top 1 isnull(frs_id,1) from #rodzice
+                             where RejVATZRodzica=0 OR RejVATZRodzica is null
+                             order by Poziom)
+      IF @ParRejVATZRodzica IS NULL
+        SET @ParRejVATZRodzica=1
+      delete from #rodzicaFRS
+      INSERT INTO #rodzicaFRS EXECUTE cdn.frmpotomne @ParRejVATZRodzica
+      INSERT INTO #rodzicaFRO SELECT FRO_GIDTyp, FRO_GIDFirma, FRO_GIDNumer, FRO_GIDLp
+      FROM CDN.FrmObiekty
+      WHERE FRO_GIDTyp=576 AND (FRO_FRMID IN (SELECT FRS_ID FROM #rodzicaFRS) OR FRO_FRMID=@ParRejVATZRodzica)
+      GROUP BY FRO_GIDTyp, FRO_GIDFirma,FRO_GIDNumer, FRO_GIDLp
+    END
+    --usunięcie pomocniczej tabeli
+    DROP TABLE #rodzice
+  END
+
+  INSERT INTO #bledne SELECT A.FRO_GIDTyp, A.FRO_GIDFirma, A.FRO_GIDNumer, A.FRO_GIDLp, ''
+  FROM #potomneFRO A
+  LEFT OUTER JOIN #rodzicaFRO B ON A.FRO_GIDTyp=B.FRO_GIDTyp AND A.FRO_GIDFirma=B.FRO_GIDFirma AND A.FRO_GIDNumer=B.FRO_GIDNumer AND A.FRO_GIDLp = B.FRO_GIDLp
+  WHERE B.FRO_GIDTyp IS NULL
+
+  UPDATE #bledne SET sObiekt=SER_Nazwa
+  FROM #bledne C, CDN.Serie WHERE C.FRO_GIDTyp=SER_GIDTyp AND C.FRO_GIDFirma=SER_GIDFirma AND C.FRO_GIDNumer=SER_GIDNumer
+
+  UPDATE #bledne SET sObiekt=MAG_Kod
+  FROM #bledne C, CDN.Magazyny WHERE C.FRO_GIDTyp=MAG_GIDTyp AND C.FRO_GIDFirma=MAG_GIDFirma AND C.FRO_GIDNumer=MAG_GIDNumer
+
+  UPDATE #bledne SET sObiekt=KAR_Seria
+  FROM #bledne C, CDN.Rejestry WHERE C.FRO_GIDTyp=KAR_GIDTyp AND C.FRO_GIDFirma=KAR_GIDFirma AND C.FRO_GIDNumer=KAR_GIDNumer
+  
+  UPDATE #bledne SET sObiekt=SUBSTRING(Naz_Nazwa,1,9)
+  FROM #bledne C, CDN.Nazwy WHERE C.FRO_GIDTyp=Naz_GIDTyp AND C.FRO_GIDFirma=Naz_GIDFirma AND C.FRO_GIDNumer=Naz_GIDNumer AND C.FRO_GIDLp = Naz_GIDLp
+  
+  	UPDATE #bledne
+	SET sObiekt = concat(cast(SLW_WartoscS AS VARCHAR(17)),':',cast(C.FRO_GIDLp AS VARCHAR(2)))
+	FROM #bledne C,
+		CDN.Slowniki
+	WHERE C.FRO_GIDTyp = 4598 --kolumna budżetu projektu
+		AND C.FRO_GIDNumer = SLW_ID
+  
+  SELECT sObiekt FROM #bledne
+
+  DROP TABLE #potomneFRS
+  DROP TABLE #rodzicaFRS
+  DROP TABLE #potomneFRO
+  DROP TABLE #rodzicaFRO
+  DROP TABLE #bledne
+  SET NOCOUNT OFF
+
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

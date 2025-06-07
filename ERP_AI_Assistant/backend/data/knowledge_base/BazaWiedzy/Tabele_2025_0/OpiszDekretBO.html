@@ -1,0 +1,234 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[OpiszDekretBO]"></A><PRE>
+          <FONT SIZE="2"><I>/* [OpiszDekretBO] */</I><BR>
+CREATE Procedure [CDN].[OpiszDekretBO] (@_BO_GidNumer int)
+AS
+ set nocount on
+ declare @DzkTS int
+ declare @PoprzedniDzkTS int
+ declare @BoOkrID int
+ declare @DtOkrID int
+ declare @KontoNumer varchar(80)
+ declare @KwotaSumAbs numeric(28,10)
+ declare @KwotaSum numeric(28,10)
+ declare @KwotaSumAbsOa numeric(28,10)
+ declare @GidTyp int
+ declare @GidFirma int
+ declare @GidNumer int
+ declare @GidLp int
+ declare @DtDc int
+ declare @OweGidTyp int
+ declare @OweGidFirma int
+ declare @OweGidNumer int
+ declare @OweGidLp int
+ declare @Owepozycja int
+ declare @Numer int
+ declare @Wartosc numeric(28,10)
+ declare @Procent numeric(28,10)
+ declare @Kierunek int
+ declare @OwsWmrID int
+ declare @OwsElement varchar(30)
+ declare @OwsTypWymiaru int
+ 
+ SET @GidNumer = @_BO_GidNumer
+
+ select
+ @DzkTS = DZKELEM.del_ts,
+ @GidTyp = BO.DT_GidTyp,
+ @GidFirma = BO.DT_GidFirma,
+ @GidLp = BO.DT_GidLp,
+ @DtDc = BO.DT_DC,
+ @KontoNumer = BOKKS.kks_konto,
+ @KwotaSum = BO.dt_kwota,
+ @BoOkrID = BOOKR.okr_id
+ from cdn.dekrety BO
+ join CDN.DziennikElem DZKELEM on
+ DZKELEM.del_GidNumer = BO.dt_Gidnumer and
+ DZKELEM.del_GidLp = BO.dt_GidLp
+ join CDN.Konta BOKKS on
+ BOKKS.kks_gidnumer = BO.dt_kksnumer
+ join cdn.okresy BOOKR on
+ BOOKR.okr_id = BOKKS.kks_OkresID
+ where BO.dt_dziennik = '*BO*' and BO.dt_gidnumer = @GidNumer
+ 
+ 
+ select @PoprzedniDzkTS = isnull(max(del_ts),0)
+ from cdn.dziennikelem DZKELEM
+ join cdn.dekrety DT on
+  DZKELEM.del_gidnumer = DT.dt_gidnumer and
+  DZKELEM.del_gidlp = DT.dt_gidlp
+ join CDN.Konta KKS on
+  KKS.kks_gidnumer = DT.dt_kksnumer
+ join cdn.okresy OKR on
+  OKR.okr_id = KKS.kks_OkresID
+ where DT.DT_dziennik = '*bo*'
+ and KKS.kks_konto = @KontoNumer
+ and OKR.okr_id = @BoOkrID
+ and DZKELEM.del_ts &lt; @DzkTS
+
+ IF @DtDc = 1
+ SET @Kierunek = 1
+ ELSE
+ SET @Kierunek = -1
+
+ set @DtOkrID = @BoOkrID - 1
+
+
+ set @KwotaSumAbs =
+ (
+ select
+        sum(abs(isnull(DT.dt_pozostaje,0)))
+ from cdn.dekrety DT
+        join cdn.dziennikelem DZKELEM on
+                DZKELEM.del_gidnumer = DT.dt_gidnumer and
+                DZKELEM.del_gidlp = DT.dt_gidlp
+        join CDN.Konta KKS on
+                KKS.kks_gidnumer = DT.dt_kksnumer
+        join cdn.okresy OKR on
+                OKR.okr_id = KKS.kks_OkresID
+        join cdn.Konta KKS1
+                on KKS.KKS_NastNumer = KKS1.KKS_GIDNumer
+ where KKS1.kks_Konto = @KontoNumer and
+ OKR.okr_id = @DtOkrID and
+ isnull(DT.DT_Bufor,'') = '' and
+ isNull(DT.Dt_NieRozliczony,1) = 1
+ and DZKELEM.del_ts between @PoprzedniDzkTS and @DzkTS
+ )
+
+ DELETE FROM CDN.[OpisWymNag] WHERE OWN_GidTyp = @GidTyp and OWN_GidNumer = @GidNumer
+ if @@error &lt;&gt; 0
+ begin
+ RAISERROR ('Wystąpił błąd podczas usuwania nagłówka opisu analitycznego. %d', 16, 1, @GidNumer)
+ Return(1)
+ end
+
+ INSERT INTO CDN.[OpisWymNag]
+ ([OWN_GIDTyp], [OWN_GIDFirma], [OWN_GIDNumer], [OWN_GIDLp], [OWN_Opis], [OWN_Zatwierdzono], [OWN_TStampAkt], [OWN_OpeTypA], [OWN_OpeFirmaA], [OWN_OpeNumerA], [OWN_OpeLpA], [OWN_TStampZatw], [OWN_OpeTypZ], [OWN_OpeFirmaZ], [OWN_OpeNumerZ], [OWN_OpeLpZ], [OWN_Kategoria], [OWN_DataControllingowa], [OWN_DataKsiegowania], [OWN_IloscElementow])
+ VALUES (@GidTyp, @GidFirma, @GidNumer, 0, 'Automatyczny opis BO na podstawie opisu dekretów', 0, 0, 128 , @GidFirma, 1, 0, 0, 0, 0, 0, 0, 5, 1, 1, -1)
+ 
+ if @@error &lt;&gt; 0
+ begin
+ RAISERROR ('Wystąpił błąd podczas dodawania nagłówka opisu analitycznego. %d', 16, 1, @GidNumer)
+ Return(1)
+ end
+
+
+ DECLARE Opis CURSOR
+ READ_ONLY
+ FOR
+		 select
+		 owe_procent as Procent,
+		 sum(case when DT.dt_kwota = 0 then 0 else owe_wartosc*(DT.dt_pozostaje/DT.dt_kwota) end) as Wartosc,
+		 OWE.owe_gidtyp, OWE.owe_gidfirma,OWE.owe_pozycja,OWS.OWS_WMRID, OWS.OWS_Element, OWS.OWS_TypWymiaru
+		 from cdn.dekrety DT
+		 join cdn.dziennikelem DZKELEM on
+		  DZKELEM.del_gidnumer = DT.dt_gidnumer and
+		  DZKELEM.del_gidlp = DT.dt_gidlp
+		 join CDN.Konta KKS on
+		 KKS.kks_gidnumer = DT.dt_kksnumer
+		 join cdn.Konta KKS1 on
+		 KKS.KKS_NastNumer = KKS1.KKS_GIDNumer
+		 join cdn.okresy OKR on
+		 OKR.okr_id = KKS.kks_OkresID
+		 join cdn.opiswymelem OWE on
+		 OWE.owe_GidTyp = DT.dt_gidtyp and
+		 OWE.owe_GidNumer = DT.dt_gidnumer and
+		 OWE.owe_Pozycja = DT.dt_gidlp and
+		 OWE.owe_kierunek = (case when DT.dt_dc = 1 then 1 else -1 end)
+		 left join cdn.opiswymSelem OWS on
+		 OWS_GIDTyp = OWE.owe_GidTyp and
+		 OWS_GIDNumer = OWE.owe_GidNumer and
+		 OWS_GidLp = OWE.owe_GidLp
+		 where
+		 KKS1.kks_Konto = @KontoNumer and
+		 OKR.okr_id = @DtOkrID and
+		 isnull(DT.DT_Bufor,'') = '' and
+		 isNull(DT.Dt_NieRozliczony,1) = 1
+		 and DZKELEM.del_ts between @PoprzedniDzkTS and @DzkTS
+		 group by owe_procent, OWE.owe_gidtyp, OWE.owe_gidfirma, OWE.owe_pozycja,OWS.OWS_WMRID, OWS.OWS_Element, OWS.OWS_TypWymiaru
+
+ OPEN Opis
+ SET @Numer = 1
+ FETCH NEXT FROM Opis INTO @Procent, @Wartosc, @OweGidTyp, @OweGidFirma, @OwePozycja, @OwsWmrID, @OwsElement, @OwsTypWymiaru
+ WHILE (@@fetch_status &lt;&gt; -1)
+ BEGIN
+ IF (@@fetch_status &lt;&gt; -2)
+ BEGIN
+ INSERT INTO CDN.[OpisWymElem]([OWE_GIDTyp], [OWE_GIDFirma], [OWE_GIDNumer], [OWE_GIDLp], [OWE_Pozycja], [OWE_Wartosc], [OWE_Procent], [OWE_Kierunek], [OWE_Typ])
+ VALUES(@GidTyp, @GidFirma, @GidNumer, @Numer, 0, @Wartosc, @Procent, @Kierunek, 0)
+ if @@error &lt;&gt; 0
+ begin
+ delete from cdn.opiswymnag where own_gidtyp = 432 and own_gidnumer = @GidNumer
+ RAISERROR ('Wystąpił błąd podczas wypełniania tabeli CDN.OpisWymElem %d', 16, 1, @GidNumer)
+ Return(1)
+ end
+
+ INSERT INTO CDN.[OpisWymSElem]([OWS_GIDTyp], [OWS_GIDFirma], [OWS_GIDNumer], [OWS_GIDLp], [OWS_WMRID], [OWS_Element], [OWS_TypWymiaru])
+ SELECT [OWE_GIDTyp], [OWE_GIDFirma], [OWE_GIDNumer], [OWE_GIDLp], @OwsWmrID, @OwsElement, @OwsTypWymiaru
+ FROM CDN.OpisWymElem
+ where
+ OWE_GIDTyp = @GidTyp and
+ OWE_GIDNumer = @GidNumer and
+ OWE_GidLp = @Numer and 
+ @OwsWmrID is not null
+ if @@error &lt;&gt; 0
+ begin
+ delete from cdn.opiswymnag where own_gidtyp = 432 and own_gidnumer = @GidNumer
+ RAISERROR ('Wystąpił błąd podczas wypełniania tabeli CDN.OpisWymSElem %d', 16, 1, @GidNumer)
+ Return(1)
+ end
+
+ SET @Numer = @Numer + 1
+ END
+ FETCH NEXT FROM Opis INTO @Procent, @Wartosc, @OweGidTyp, @OweGidFirma, @OwePozycja, @OwsWmrID, @OwsElement, @OwsTypWymiaru
+ END
+ CLOSE Opis
+ DEALLOCATE Opis
+
+ --dopełnienie wartości
+ set @KwotaSumAbsOa = (select sum(abs(owe_wartosc)) from cdn.opiswymelem where owe_gidtyp = 432 and owe_gidnumer = @Gidnumer )
+ IF @KwotaSumAbsOa &lt;&gt; @KwotaSumAbs
+ BEGIN
+   SET @Wartosc = @KwotaSumAbs - @KwotaSumAbsOa
+   INSERT INTO CDN.[OpisWymElem]([OWE_GIDTyp], [OWE_GIDFirma], [OWE_GIDNumer], [OWE_GIDLp], [OWE_Pozycja], [OWE_Wartosc], [OWE_Procent], [OWE_Kierunek], [OWE_Typ])
+   VALUES(@GidTyp, @GidFirma, @GidNumer, @Numer, 0, @Wartosc, 0, @Kierunek, 0)
+   if @@error &lt;&gt; 0
+   begin
+   delete from cdn.opiswymnag where own_gidtyp = 432 and own_gidnumer = @GidNumer
+   RAISERROR ('Wystąpił błąd podczas dodawania elementów dopełniających %d', 16, 1, @GidNumer)
+   Return(1)
+   end
+ END
+
+ --przelicznie procentów
+ IF isNull(@KwotaSumAbs,0) &lt;&gt; 0
+ BEGIN
+   update OWE
+   set OWE.owe_procent = 100.0 * convert(numeric(28,10),OWE.owe_wartosc) / @KwotaSumAbs
+   from cdn.opiswymelem OWE
+   where owe_gidtyp = 432 and
+   owe_gidnumer = @GidNumer
+ END
+
+ set nocount off
+ --&lt;
+GO
+
+
+GRANT EXECUTE ON CDN.OpiszDekretBO TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

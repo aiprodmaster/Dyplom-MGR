@@ -1,0 +1,168 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="ProdDrzewoZastosowan"></A><PRE>
+          <FONT SIZE="2"><I>/* ProdDrzewoZastosowan */</I><BR>
+CREATE FUNCTION CDN.ProdDrzewoZastosowan(@PTEID INT,@PTZID INT,@TylkoZatwierdzone INT,@LadujZwiniete INT = 0, @Filtr VARCHAR(100) = '')
+RETURNS TABLE 
+as RETURN
+
+
+with cte_techtree (Kod, Nazwa, OpisWersji, Wersja, Technologia, Czynnosc, Zasob,  TypZasobu, TechnologiaCzynnosc,  Poziom ,Typ, ID,Filtered)
+AS
+(
+SELECT Kod, Nazwa, OpisWersji, Wersja, Technologia, Czynnosc, Zasob,  TypZasobu, TechnologiaCzynnosc,  Poziom ,Typ, ID,Filtered
+from (
+        select distinct
+                PTE_Kod Kod, PTE_Nazwa Nazwa, PTE_OpisWersji OpisWersji, PTE_Wersja Wersja, PTE_Id Technologia, 0 Czynnosc, 0 Zasob, 0 TypZasobu, 0 TechnologiaCzynnosc, 1 Poziom , 1 typ, PTE_id Id,
+                CASE
+                        WHEN @Filtr       =   '' THEN 1
+                        WHEN PTE_Kod + PTE_Nazwa LIKE '%' + @Filtr + '%'THEN 1
+                        ELSE 0
+                END Filtered
+        from
+                CDN.ProdTechnologia
+                LEFT JOIN CDN.ProdTechnologiaCzynnosci on  PTE_Id = PTC_Technologia
+                LEFT JOIN CDN.ProdTechnologiaZasoby  on PTC_ID = PTZ_TechnologiaCzynnosc
+        where
+                PTE_TwrNumer = @PTZID  OR  (PTE_Id = PTC_Technologia and PTZ_TwrNumer = @PTZID and PTZ_TwrTyp = 16 and PTZ_TypZasobu in (1,2)) or (PTC_TwrNumer = @PTZID and PTC_TwrTyp = 16)
+        union all
+                select
+                        PTC_Kod Kod, PTC_Nazwa Nazwa, '' OpisWersji, 0 Wersja, PTC_Technologia Technologia, PTC_Id Czynnosc, 0 Zasob, 0 TypZasobu, PTC_Id TechnologiaCzynnosc, 2 Poziom  , 3 typ, PTC_id Id,
+                        CASE
+						      WHEN @Filtr       =   '' THEN 1
+                              WHEN PTC_Kod + PTC_Nazwa LIKE '%' + @Filtr + '%'
+                              THEN 1
+                              ELSE 0
+                        END Filtered
+                from
+                        CDN.ProdTechnologiaCzynnosci
+                where
+                        PTC_TwrNumer = @PTZID and PTC_TwrTyp = 16
+                        or exists(select * from CDN.ProdTechnologiaZasoby where PTZ_TwrNumer = @PTZID and PTZ_TwrTyp = 16 and PTC_Id = PTZ_TechnologiaCzynnosc and PTZ_TypZasobu in (1,2))
+        union all
+                select
+                        PTZ_Kod Kod, PTZ_Nazwa Nazwa, '' OpisWersji, 0 Wersja, PTC_Technologia Technologia,  0 Czynnosc, PTZ_Id Zasob, PTZ_TypZasobu TypZasobu, PTZ_TechnologiaCzynnosc TechnologiaCzynnosc, 3 Poziom  ,
+                        case
+                                when PTZ_TypZasobu = 4 then 2
+                                when PTZ_TypZasobu = 0 then 4
+                                when PTZ_TypZasobu = 1 and PTZ_TechnologiaZasob &lt;&gt; 0 then 7
+                                else 5
+                        end  typ, PTZ_id Id,
+                        CASE    WHEN @Filtr       =   '' THEN 1
+                                WHEN PTZ_Kod + PTZ_Nazwa LIKE '%' + @Filtr + '%'
+                                THEN 1
+                        ELSE 0
+                END Filtered
+                from
+                        CDN.ProdTechnologiaZasoby
+                join CDN.ProdTechnologiaCzynnosci on PTZ_TechnologiaCzynnosc = PTC_Id
+                where
+                        PTZ_TwrNumer = @PTZID and PTZ_TwrTyp = 16 and PTZ_TypZasobu in (1,2)
+                ) pomocnicza join CDN.ProdTechnologia on PTE_Id = pomocnicza.Technologia
+where (PTE_ID = PTE_Wersja or 0 = 0) and (PTE_DataZatw &gt; 0 or @TylkoZatwierdzone = 0) and PTE_id &lt;&gt; @PTEID
+
+)
+SELECT Kod, Nazwa, OpisWersji, Wersja, cte_techtree.Technologia, Czynnosc, Zasob,  TypZasobu, TechnologiaCzynnosc,  Poziom ,Typ, ID
+from cte_techtree
+left join
+(SELECT  Technologia, sum(Filtered) filtered
+from cte_techtree group by Technologia)a on a.technologia = cte_techtree.Technologia
+where a.filtered &gt; 0 and (@LadujZwiniete = 0 or poziom = 1)
+
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="ProdDrzewoTechnologiczne"></A><PRE>
+          <FONT SIZE="2"><I>/* ProdDrzewoTechnologiczne */</I><BR>
+CREATE FUNCTION CDN.ProdDrzewoTechnologiczne (@PTEID INT,@PTZID INT,@TylkoZatwierdzone INT,@LadujZwiniete INT = 0, @Filtr VARCHAR(100) = '')
+RETURNS TABLE 
+as RETURN
+(   with cte_techtree (Kod, Nazwa, OpisWersji, Wersja, Technologia, Czynnosc, Zasob,  TypZasobu, TechnologiaCzynnosc,  Poziom ,Typ, ID,Filtered)
+AS
+(
+SELECT Kod, Nazwa, OpisWersji, Wersja, Technologia, Czynnosc, Zasob,  TypZasobu, TechnologiaCzynnosc,  Poziom ,Typ, ID,Filtered
+from (
+        select distinct
+                PTE_Kod Kod, PTE_Nazwa Nazwa, PTE_OpisWersji OpisWersji, PTE_Wersja Wersja, PTE_Id Technologia, 0 Czynnosc, 0 Zasob, 0 TypZasobu, 0 TechnologiaCzynnosc, 1 Poziom , 1 typ, PTE_id Id,
+                CASE
+                        
+                        WHEN PTE_Kod + PTE_Nazwa LIKE '%' + @Filtr + '%' THEN 1
+                        ELSE 0
+                END Filtered
+        from
+                CDN.ProdTechnologia
+                LEFT JOIN CDN.ProdTechnologiaCzynnosci on  PTE_Id = PTC_Technologia
+                LEFT JOIN CDN.ProdTechnologiaZasoby  on PTC_ID = PTZ_TechnologiaCzynnosc
+        where
+                PTE_TwrNumer = @PTZID  OR  (PTE_Id = PTC_Technologia and PTZ_TwrNumer = @PTZID and PTZ_TwrTyp = 16 and (PTZ_TypZasobu in (0,4) or PTZ_TechnologiaZasob &lt;&gt; 0)) or (PTC_TwrNumer = @PTZID and PTC_TwrTyp = 16)
+        union all
+                select
+                        PTC_Kod Kod, PTC_Nazwa Nazwa, '' OpisWersji, 0 Wersja, PTC_Technologia Technologia, PTC_Id Czynnosc, 0 Zasob, 0 TypZasobu, PTC_Id TechnologiaCzynnosc, 2 Poziom  , 3 typ, PTC_id Id,
+                        CASE
+						    WHEN @Filtr ='' THEN 1
+                            WHEN PTC_Kod + PTC_Nazwa LIKE '%' + @Filtr + '%'
+                                THEN 1
+                                ELSE 0
+                        END Filtered
+                from
+                        CDN.ProdTechnologiaCzynnosci
+                where
+                        PTC_TwrNumer = @PTZID and PTC_TwrTyp = 16
+                        or exists(select * from CDN.ProdTechnologiaZasoby where PTZ_TwrNumer = @PTZID and PTZ_TwrTyp = 16 and PTC_Id = PTZ_TechnologiaCzynnosc and(PTZ_TypZasobu in (0,4) or PTZ_TechnologiaZasob &lt;&gt; 0))
+        union all
+                select
+                        PTZ_Kod Kod, PTZ_Nazwa Nazwa, '' OpisWersji, 0 Wersja, PTC_Technologia Technologia,  0 Czynnosc, PTZ_Id Zasob, PTZ_TypZasobu TypZasobu, PTZ_TechnologiaCzynnosc TechnologiaCzynnosc, 3 Poziom  ,
+                        case
+                                when PTZ_TypZasobu = 4 then 2
+                                when PTZ_TypZasobu = 0 then 4
+                                when PTZ_TypZasobu = 1 and PTZ_TechnologiaZasob &lt;&gt; 0 then 7
+                                else 5
+                        end  typ, PTZ_id Id,
+                        CASE    WHEN @Filtr ='' THEN 1
+                                WHEN PTZ_Kod + PTZ_Nazwa LIKE '%' + @Filtr + '%'
+                                THEN 1
+                        ELSE 0
+                END Filtered
+                from
+                        CDN.ProdTechnologiaZasoby
+                join CDN.ProdTechnologiaCzynnosci on PTZ_TechnologiaCzynnosc = PTC_Id
+                where
+                        PTZ_TwrNumer = @PTZID and PTZ_TwrTyp = 16 and (PTZ_TypZasobu in (0,4) or PTZ_TechnologiaZasob &lt;&gt; 0)
+                ) pomocnicza join CDN.ProdTechnologia on PTE_Id = pomocnicza.Technologia
+where (PTE_ID = PTE_Wersja or 0 = 0) and (PTE_DataZatw &gt; 0 or @TylkoZatwierdzone = 0) and PTE_id &lt;&gt; @PTEID
+
+)
+
+
+
+
+SELECT Kod, Nazwa, OpisWersji, Wersja, cte_techtree.Technologia, Czynnosc, Zasob,  TypZasobu, TechnologiaCzynnosc,  Poziom ,Typ, ID
+from cte_techtree
+left join
+(SELECT  Technologia, sum(Filtered) filtered
+from cte_techtree group by Technologia)a on a.technologia = cte_techtree.Technologia
+where a.filtered &gt; 0 and (@LadujZwiniete = 0 or poziom = 1)
+
+
+)
+
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

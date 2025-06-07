@@ -1,0 +1,76 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[POS_EksportOsobyKontaktowe]"></A><PRE>
+          <FONT SIZE="2"><I>/* [POS_EksportOsobyKontaktowe] */</I><BR>
+CREATE PROCEDURE [CDN].[POS_EksportOsobyKontaktowe]
+	@rowVersion bigint,
+	@PointOfSaleId int
+AS
+BEGIN
+SET NOCOUNT ON;	
+
+	declare @contactPersons table ([@GUID] varchar(40), [@FirstName] varchar(100), [@LastName] varchar(100), [@PositionTypeId] int, [@IsActive] varchar(10), [@ModificationDate] datetime, [@CustomerGUID] varchar(40), LastMod int)
+
+	
+	insert into @contactPersons 
+			select  distinct
+			Kns_GUID as [@GUID],
+			isnull(SUBSTRING(kns_nazwa, 1, CASE CHARINDEX(' ', kns_nazwa) WHEN 0 THEN LEN(kns_nazwa) ELSE CHARINDEX(' ', kns_nazwa) - 1 END),'') as [@FirstName],
+			isnull(SUBSTRING(kns_nazwa, CASE CHARINDEX(' ', kns_nazwa) WHEN 0 THEN LEN(kns_nazwa) + 1 ELSE CHARINDEX(' ', kns_nazwa) + 1 END, 1000),'') as [@LastName],
+			-- as [@TitleId]
+			-- as [@FamilyRelationTypeId], NULL
+			(select slw_id from cdn.Slowniki where SLW_Kategoria='Stanowiska' and SLW_WartoscS=KnS_Stanowisko) as [@PositionTypeId],
+			-- as [@DateOfBirth], NULL
+			CASE WHEN KnS_Archiwalny &lt;&gt; 0 THEN 'false' else 'true' end as [@IsActive],
+			DATEADD(second,KnS_CzasModyfikacji,convert(datetime,'01-01-1990',105)) as [@ModificationDate],
+			kntGUID as [@CustomerGUID],
+			case when @PointOfSaleId is null and oddzialBylWyslany = 0 and PSaDataDodania &gt; KntWaNCzasModyfikacji and PSaDataDodania &gt; KnS_CzasModyfikacji then PSaDataDodania else
+			isNull((case when KntWaNCzasModyfikacji &gt; KnS_CzasModyfikacji THEN KntWaNCzasModyfikacji else KnS_CzasModyfikacji end), @rowVersion) end
+			FROM cdn.POS_OddzialyDoEksportu(@PointOfSaleId,@rowVersion)
+			cross apply CDN.POS_KntDoEksportu(PsaId,0)
+			JOIN CDN.KntOsoby ON KnS_KntNumer = KntGIDNumer
+			where ((SELECT MAX(rw) FROM (VALUES (KntLastMod),(KntWaNCzasModyfikacji),(KnS_CzasModyfikacji)) AS rws(rw)) &gt; @rowVersion or (@PointOfSaleId is null and oddzialBylWyslany = 0))
+			AND kns_GUID IS NOT NULL AND kns_GUID &lt;&gt; '' AND juzNieWysylany = 0
+	
+	SELECT (coalesce((select max(LastMod) from @contactPersons),@RowVersion)) AS [@RowVersion]
+		,(		
+		select 
+		[@GUID],
+		[@FirstName],
+		[@LastName],
+		-- as [@TitleId]
+		-- as [@FamilyRelationTypeId], NULL
+		[@PositionTypeId],
+		-- as [@DateOfBirth], NULL
+		[@IsActive],
+		[@ModificationDate],
+			(
+				select
+					[@GUID],
+					[@CustomerGUID],
+					-- as [@FamilyRelationTypeId],
+					[@PositionTypeId],
+					[@ModificationDate],
+					'false'	as [@IsDefault]
+				for xml path('Customer'), root('Customers'), type
+			)
+		from @contactPersons group by [@GUID], [@FirstName], [@LastName], [@PositionTypeId], [@IsActive], [@ModificationDate], [@CustomerGUID] 
+		for xml path('ContactPerson'), type)
+	for xml path('ContactPersons')
+	SET NOCOUNT OFF;	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

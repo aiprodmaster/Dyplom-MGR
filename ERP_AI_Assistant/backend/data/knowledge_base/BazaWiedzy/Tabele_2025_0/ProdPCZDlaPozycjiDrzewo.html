@@ -1,0 +1,152 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="ProdPCZDlaPozycjiDrzewo"></A><PRE>
+          <FONT SIZE="2"><I>/* ProdPCZDlaPozycjiDrzewo */</I><BR>
+CREATE FUNCTION CDN.ProdPCZDlaPozycjiDrzewo (@Czynnosc varchar(8000))
+RETURNS @Czynnosci TABLE (
+  Czynnosc int,
+  Ojciec int,
+  Poziom int,
+  PlanowacOd int,
+  Zrealizowano DECIMAL(15,4)
+)
+as
+begin
+    
+	DECLARE @Proc int
+	DECLARE @zlec int
+	DECLARE @odd int
+
+	DECLARE @Czynnosci2 TABLE (
+  Czynnosc int,
+  Ojciec int,
+  Poziom int,
+  PlanowacOd int,
+  Zrealizowano DECIMAL(15,4),
+  Ilosc DECIMAL(11,4),
+  OjciecPierw INT,
+  TypPlan TINYINT)
+
+  DECLARE @Czynnosci3 TABLE (
+  Czynnosc int,
+  Ojciec int,
+  Poziom int,
+  PlanowacOd int,
+  Zrealizowano DECIMAL(15,4),
+  Ilosc DECIMAL(11,4),
+  OjciecPierw INT,
+  TypPlan TINYINT)
+
+  DECLARE @CzynnosciPierw TABLE(
+  PCZId INT, 
+  Poziom INT)
+    
+    if @Czynnosc=''
+		BEGIN
+            SET @Czynnosc = '0'
+		END
+
+		--POPRZEDNIKI i ich poprzedniki
+		begin
+		with DrzewoCzynnosci
+		AS
+			(SELECT PCZ_Id Czynnosc,0 Ojciec,0 Poziom,PPC_PlanowacOd PlanowacOd,P.PCZ_Ilosc, PCZ_Id OjciecPierw, CASE WHEN PPC_PlanowacOd &lt; 0 THEN 0 ELSE 1 END TypPlan
+				FROM CDN.ProdCzynnosci P 
+				JOIN CDN.Str2List(@Czynnosc) ON PCZ_Id = Num
+				JOIN CDN.ProdProcesy  ON PCZ_Proces = PPC_Id
+				where PCZ_Realizuje = 0
+			UNION ALL
+			SELECT POW1.POP_PrzedPczId,d.czynnosc,d.Poziom + 1, PlanowacOd, P1.PCZ_Ilosc, OjciecPierw, TypPlan
+				FROM DrzewoCzynnosci as d
+				JOIN cdn.ProdOperacjePowiazane POW1 on POW1.POP_PczId = d.czynnosc
+				JOIN CDN.ProdCzynnosci P1 ON P1.PCZ_Id = POW1.POP_PrzedPczId AND P1.PCZ_Realizuje = 0
+				WHERE Poziom &lt; 100
+				)
+			INSERT INTO @Czynnosci3 SELECT distinct Drzewo.Czynnosc,Drzewo.Ojciec,Drzewo.Poziom,Drzewo.PlanowacOd,Zrealizowano, Drzewo.PCZ_Ilosc, Drzewo.OjciecPierw, TypPlan
+				FROM (SELECT A.Czynnosc,A.Ojciec,A.Poziom,A.PlanowacOd,A.PCZ_Ilosc,
+				(SELECT ISNULL(SUM(R.PCZ_Ilosc),0) FROM CDN.ProdCzynnosci R WHERE R.PCZ_Realizuje = Czynnosc) Zrealizowano, OjciecPierw, TypPlan  FROM DrzewoCzynnosci A
+				) Drzewo
+					WHERE Drzewo.PCZ_Ilosc &gt; drzewo.Zrealizowano
+		END
+
+		BEGIN
+		with DrzewoCzynnosci
+		AS
+			(SELECT C.Czynnosc,0 Ojciec,0 Poziom,C.PlanowacOd,C.Ilosc PCZ_Ilosc, C.OjciecPierw, C.Poziom PoziomO, C.TypPlan
+				FROM @Czynnosci3 C
+				where C.TypPlan = 1 AND NOT EXISTS(SELECT 1 FROM @Czynnosci3 O WHERE O.Ojciec = C.Czynnosc AND O.OjciecPierw = C.OjciecPierw)
+			UNION ALL
+			SELECT E.Czynnosc,d.czynnosc,d.Poziom + 1, D.PlanowacOd,E.Ilosc, D.OjciecPierw, E.Poziom, D.TypPlan
+				FROM DrzewoCzynnosci as d
+				JOIN @Czynnosci3 C ON D.Czynnosc = C.Czynnosc AND D.OjciecPierw = C.OjciecPierw AND d.PoziomO = C.Poziom AND C.TypPlan = 1
+				JOIN @Czynnosci3 E ON E.Czynnosc = C.Ojciec AND D.OjciecPierw = C.OjciecPierw AND E.Poziom = C.Poziom - 1 AND E.TypPlan = 1
+				WHERE d.Poziom &lt;100
+				)
+			INSERT INTO @Czynnosci2 
+			SELECT DISTINCT Drzewo.Czynnosc,Drzewo.Ojciec,Drzewo.Poziom,Drzewo.PlanowacOd,Zrealizowano, Drzewo.PCZ_Ilosc, Drzewo.OjciecPierw, 1
+				FROM (SELECT A.Czynnosc,A.Ojciec,A.Poziom,A.PlanowacOd,A.PCZ_Ilosc,
+				(SELECT ISNULL(SUM(R.PCZ_Ilosc),0) FROM CDN.ProdCzynnosci R WHERE R.PCZ_Realizuje = Czynnosc) Zrealizowano, OjciecPierw, PoziomO			
+				FROM DrzewoCzynnosci A
+				) Drzewo
+			WHERE  Drzewo.PCZ_Ilosc &gt; Drzewo.Zrealizowano 
+			order by Poziom
+		END
+
+		INSERT INTO @Czynnosci2
+		SELECT * FROM @Czynnosci3 WHERE TypPlan = 0
+			
+
+		INSERT @CzynnosciPierw (PCZId, Poziom)
+		SELECT P.OjciecPierw, MAX(Poziom)
+		FROM @Czynnosci2 P 
+		GROUP BY P.OjciecPierw
+
+		-- NASTĘPNIKI - W PRZÓD
+		BEGIN
+		with DrzewoCzynnosci
+		AS
+			(SELECT PCZ_Id Czynnosc, 0 Ojciec, P.Poziom Poziom, PPC_PlanowacOd * CASE WHEN PPC_PlanowacOd &lt; 0 THEN -1 ELSE 1 END PlanowacOd, PCZ_Ilosc Ilosc, PCZ_Id OjciecPierw
+			FROM @CzynnosciPierw P
+			JOIN CDN.ProdCzynnosci O ON P.PCZId = O.PCZ_Id
+			JOIN CDN.ProdProcesy  ON O.PCZ_Proces = PPC_Id
+			UNION ALL
+			SELECT POW2.POP_PczId,d.czynnosc,d.Poziom + 1, PlanowacOd,P2.PCZ_Ilosc, OjciecPierw
+				FROM DrzewoCzynnosci as d
+				JOIN CDN.ProdOperacjePowiazane POW2 ON POW2.POP_PrzedPczId = d.czynnosc
+				JOIN CDN.PROdCzynnosci P2 ON P2.PCZ_Id = POW2.POP_PczId and p2.PCZ_Realizuje = 0
+				WHERE Poziom &lt; 100
+				)
+			INSERT INTO @Czynnosci2 SELECT distinct Drzewo.Czynnosc,Drzewo.Ojciec,Drzewo.Poziom,Drzewo.PlanowacOd,Zrealizowano, Drzewo.Ilosc, Drzewo.OjciecPierw, 0 TypPlan
+				FROM (SELECT A.Czynnosc,A.Ojciec,A.Poziom,A.PlanowacOd, A.Ilosc,
+				(SELECT ISNULL(SUM(R.PCZ_Ilosc),0) FROM CDN.ProdCzynnosci R WHERE R.PCZ_Realizuje = Czynnosc) Zrealizowano, OjciecPierw  FROM DrzewoCzynnosci A
+				) Drzewo
+					WHERE Drzewo.Ojciec &gt; 0 AND Drzewo.Ilosc &gt; drzewo.Zrealizowano
+		END
+
+		INSERT @Czynnosci 
+		SELECT DISTINCT  A.Czynnosc,  Ojciec, A.Poziom, PlanowacOd, Zrealizowano from 
+		(
+			SELECT Czynnosc, MAX(Poziom) Poziom, TypPlan
+			FROM @Czynnosci2
+			GROUP BY Czynnosc, TypPlan
+		) Grupa 
+		JOIN @Czynnosci2  A ON A.Czynnosc = Grupa.Czynnosc AND A.Poziom = Grupa.Poziom AND A.TypPlan = Grupa.TypPlan
+		ORDER BY Poziom
+
+		return
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

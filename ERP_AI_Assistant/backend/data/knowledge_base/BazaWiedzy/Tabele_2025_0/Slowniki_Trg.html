@@ -1,0 +1,155 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Slowniki_UaktualnijStruktureFirmy"></A><PRE>
+          <FONT SIZE="2"><I>/* Slowniki_UaktualnijStruktureFirmy */</I><BR>
+CREATE TRIGGER CDN.Slowniki_UaktualnijStruktureFirmy
+  ON CDN.Slowniki
+  FOR UPDATE
+AS
+BEGIN
+  IF UPDATE(Slw_WartoscS) AND EXISTS(SELECT 1 FROM INSERTED JOIN CDN.SlownikiStruktura ON INSERTED.SLW_SLSID = SLS_ID WHERE SLS_Predefiniowany = 52)
+    UPDATE CDN.FrmStruktura 
+      SET Frs_Nazwa=INSERTED.Slw_WartoscS 
+      FROM INSERTED JOIN CDN.FrmStruktura ON Frs_GIDTyp=-4272 and Frs_StrTyp=1002 and Frs_GIDNumer=INSERTED.Slw_Id
+      JOIN CDN.SlownikiStruktura ON INSERTED.SLW_SLSID = SLS_ID 
+      WHERE SLS_Predefiniowany = 52;
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Slowniki_UstawDomyslny"></A><PRE>
+          <FONT SIZE="2"><I>/* Slowniki_UstawDomyslny */</I><BR>
+CREATE TRIGGER CDN.Slowniki_UstawDomyslny
+  ON CDN.Slowniki
+  FOR UPDATE
+AS
+BEGIN
+  IF UPDATE(Slw_Domyslny)
+  BEGIN
+
+	-- TID: 182314, Na potrzeby różnicowej synchronizacji z Mobile
+	-- Zmiana czasu modyfikacji dla slownika ktory przestaje byc domyslny.
+    UPDATE CDN.Slowniki 
+		SET SLW_CzasModyfikacji = DATEDIFF(s,convert(datetime,'1990-01-01',120),getdate())
+    FROM CDN.Slowniki JOIN INSERTED ON CDN.Slowniki.Slw_kategoria=INSERTED.Slw_kategoria
+    where CDN.Slowniki.Slw_Domyslny=1
+
+	UPDATE CDN.Slowniki
+	SET Slw_Domyslny = CASE WHEN CDN.Slowniki.Slw_WartoscS=INSERTED.Slw_WartoscS AND CDN.Slowniki.SLW_WersjaNr = inserted.SLW_WersjaNr THEN INSERTED.Slw_Domyslny ELSE 0 END
+	FROM inserted
+	JOIN CDN.SlownikiStruktura on inserted.SLW_SLSId = CDN.SlownikiStruktura.SLS_Id
+	JOIN CDN.Slowniki on inserted.SLW_SLSId=CDN.Slowniki.SLW_SLSId 
+		and (inserted.SLW_WartoscS1=CDN.Slowniki.SLW_WartoscS1 or not CDN.SlownikiStruktura.SLS_Predefiniowany=143) -- TID: 164530 Konfigurator produktu, KategoriaDefinicje pytan konfiguratora
+	WHERE CDN.Slowniki.Slw_Domyslny =1
+  END
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Slowniki_KolumnyBudzetow"></A><PRE>
+          <FONT SIZE="2"><I>/* Slowniki_KolumnyBudzetow */</I><BR>
+CREATE TRIGGER CDN.Slowniki_KolumnyBudzetow
+  ON CDN.Slowniki
+  FOR INSERT
+AS
+BEGIN
+  ;WITH nums AS
+   (SELECT 1 AS value
+    UNION ALL
+    SELECT value + 1 AS value
+    FROM nums
+    WHERE nums.value &lt; 32)
+INSERT INTO CDN.FrmObiekty(FRO_FRMID,FRO_GIDTyp,FRO_GIDFirma,FRO_GIDNumer,FRO_GIDLp,FRO_GID2Typ,FRO_GID2Firma,FRO_GID2Numer,FRO_GID2Lp,FRO_MagProdId,FRO_KnPTyp,FRO_KnPNumer,FRO_DlaDetalu,FRO_GID3Typ,FRO_GID3Numer,FRO_Autonomiczna,FRO_NiedostepnaNaDok)
+SELECT 
+	FRS_ID, 4598,FRS_GIDFirma, SLW_ID, nums.value,0,0,0,0,0,0,0,0,0,0,0,0
+FROM cdn.DokDefinicje 
+JOIN cdn.FrmStruktura ON	Dok_FrsId = FRS_ID
+JOIN nums ON 1=1
+JOIN cdn.SlownikiStruktura ON SLS_Predefiniowany=165
+JOIN inserted ON SLS_Id=SLW_SLSId
+WHERE Dok_GIDTyp=4595 AND Dok_DefZNadrzednego=0
+
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Slowniki_AktualizujWersjeZrodla"></A><PRE>
+          <FONT SIZE="2"><I>/* Slowniki_AktualizujWersjeZrodla */</I><BR>
+CREATE TRIGGER CDN.Slowniki_AktualizujWersjeZrodla
+  ON CDN.Slowniki
+  FOR UPDATE
+AS
+BEGIN
+  IF UPDATE(Slw_WartoscS)
+  BEGIN
+	  UPDATE CDN.Slowniki 
+      SET Slw_WartoscS=INSERTED.Slw_WartoscS 
+      FROM cdn.Slowniki 
+	  join INSERTED ON INSERTED.SLW_Id = cdn.Slowniki.SLW_WersjaZrodlo
+      JOIN CDN.SlownikiStruktura ON INSERTED.SLW_SLSID = SLS_ID 
+      WHERE SLS_Predefiniowany = 173;
+  END
+
+  IF UPDATE(Slw_Archiwalny)
+  BEGIN
+	update cdn.Slowniki
+	set SLW_Archiwalny = inserted.Slw_Archiwalny, 
+	SLW_Aktywny=CASE inserted.SLW_Archiwalny WHEN 1 THEN 0 ELSE 1 END,
+	SLW_Domyslny=0
+	FROM cdn.Slowniki 
+	JOIN INSERTED on INSERTED.SLW_WersjaZrodlo = cdn.Slowniki.SLW_WersjaZrodlo
+	JOIN CDN.SlownikiStruktura ON INSERTED.SLW_SLSID = SLS_ID 
+    WHERE SLS_Predefiniowany = 173;
+  END
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Slowniki_DodatkoweKolumny"></A><PRE>
+          <FONT SIZE="2"><I>/* Slowniki_DodatkoweKolumny */</I><BR>
+CREATE TRIGGER CDN.Slowniki_DodatkoweKolumny
+  ON CDN.Slowniki
+  FOR INSERT,UPDATE
+AS
+BEGIN
+
+	if exists(select * 
+			from inserted i
+			inner join cdn.SlownikiStruktura sls on i.SLW_SLSId = sls.SLS_Id
+			where i.SLW_Aktywny = 1 
+				and i.SLW_WartoscL1 &gt; 0
+				and sls.SLS_Predefiniowany = 181 -- słownik: Dodatkowe kolumny importu wyciągów 
+				and exists(select * from cdn.Slowniki slw where slw.SLW_Id &lt;&gt; i.SLW_Id and slw.SLW_SLSId = i.SLW_SLSId and slw.SLW_WartoscL1 = i.SLW_WartoscL1 and slw.SLW_Aktywny = 1)) 
+	begin
+		raiserror('#CDN_BLAD/##CDN_1=Istnieje juz inny wpis o statusie Aktywne ze wskazaniem na wybraną kolumnę./# [Slowniki_DodatkoweKolumny]', 16, 1)
+		rollback tran
+		return
+	end
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

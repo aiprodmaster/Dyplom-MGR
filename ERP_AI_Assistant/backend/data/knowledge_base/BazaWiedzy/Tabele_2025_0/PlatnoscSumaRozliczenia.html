@@ -1,0 +1,345 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="PlatnoscSumaRozliczenia"></A><PRE>
+          <FONT SIZE="2"><I>/* PlatnoscSumaRozliczenia */</I><BR>
+CREATE  FUNCTION CDN.PlatnoscSumaRozliczenia(
+@GIDTyp smallint,
+@GIDNumer int,
+@GIDLp smallint,
+@Tryb smallint = 0, -- 0 - waluta rozliczenia, 1 - waluta systemowa, 2- waluta sys z dynamicznie wyliczanymi roznicami kursowymi, 3 - waluta sys uwzgledniajaca rk z pola r2_rk
+@ParID int = 0,
+@Wycena tinyint = 0 --czy dotyczy wyceny
+)
+RETURNS decimal(15,2)  AS
+BEGIN
+
+declare @Kwota decimal(15,2)
+declare @Kurs1 decimal(19,7)
+declare @TypRK smallint
+set @TypRK = 435
+declare @WalutaSys VARCHAR(3)
+
+
+
+	if @Tryb = 0
+	begin
+		set @Kwota = 
+			(select sum(isnull(a.suma,0)) 
+			from (	
+				select sum(R2_KwotaWal1) as suma
+				from cdn.Rozliczenia
+				where R2_Dok1Typ = @GIDTyp and R2_Dok1Numer = @GIDNumer and R2_Dok1Lp = @GIDLp
+					and (@ParID = 0 or R2_ParID = @ParID)
+					and (R2_Wycena = @Wycena)
+				union all
+				select sum(R2_KwotaWal2) as suma
+				from cdn.Rozliczenia
+				where R2_Dok2Typ = @GIDTyp and R2_Dok2Numer = @GIDNumer and R2_Dok2Lp = @GIDLp
+					and (@ParID = 0 or R2_ParID = @ParID)
+					and (R2_Wycena = @Wycena)
+				) a)
+	end
+	else if @Tryb = 1
+	begin
+		set @Kwota = 
+			(select sum(isnull(a3.suma,0)) 
+			from (	
+				select sum(R2_KwotaSys) as suma
+				from cdn.Rozliczenia
+				where R2_Dok1Typ = @GIDTyp and R2_Dok1Numer = @GIDNumer and R2_Dok1Lp = @GIDLp
+					and (@ParID = 0 or R2_ParID = @ParID)
+					and (R2_Wycena = @Wycena)
+				union all 
+				select sum(R2_KwotaSys) as suma
+				from cdn.Rozliczenia
+				where R2_Dok2Typ = @GIDTyp and R2_Dok2Numer = @GIDNumer and R2_Dok2Lp = @GIDLp
+					and (@ParID = 0 or R2_ParID = @ParID)
+					and (R2_Wycena = @Wycena)
+				) a3
+			)
+	end
+	else if @Tryb = 3
+	begin
+		set @Kwota = 
+			(select sum(isnull(a3.suma,0)) 
+			from (	
+				select sum(R2_KwotaSys + case when R2_RkStrona = 1 then isnull(R2_RK,0) else 0 end) as suma
+				from cdn.Rozliczenia
+				where R2_Dok1Typ = @GIDTyp and R2_Dok1Numer = @GIDNumer and R2_Dok1Lp = @GIDLp
+					and (@ParID = 0 or R2_ParID = @ParID)
+					and R2_Dok2Typ &lt;&gt; 435 
+					and (R2_Wycena = @Wycena)
+				union all
+				select sum(R2_KwotaSys + case when R2_RkStrona = 2 then isnull(R2_RK,0) else 0 end) as suma
+				from cdn.Rozliczenia
+				where R2_Dok2Typ = @GIDTyp and R2_Dok2Numer = @GIDNumer and R2_Dok2Lp = @GIDLp
+					and (@ParID = 0 or R2_ParID = @ParID)
+					and R2_Dok1Typ &lt;&gt; 435 
+					and (R2_Wycena = @Wycena)
+				) a3
+			)
+	end
+	else
+	begin
+
+		SELECT @WalutaSys = KON_Wartosc FROM CDN.Konfig with(nolock) WHERE KON_Numer = 211
+
+
+		if @GIDTyp = 784
+			select 
+				@Kurs1 = KAZ_KursL/KAZ_KursM
+			from cdn.Zapisy 
+			where KAZ_GIDNumer = @GIDNumer	
+		else
+			select 
+				@Kurs1 = TrP_KursL/TrP_KursM
+			from cdn.TraPlat
+			where Trp_GIDTyp = @GIDTyp and Trp_GIDNumer = @GIDNumer	and Trp_GIDLp = @GIDLp
+
+
+
+
+		set @Kwota = 
+			(select sum(isnull(a3.suma,0)) 
+			from (	
+				select sum(R2_KwotaSys) as suma
+				from cdn.Rozliczenia
+				where R2_Dok1Typ = @GIDTyp and R2_Dok1Numer = @GIDNumer and R2_Dok1Lp = @GIDLp
+					and (@ParID = 0 or R2_ParID = @ParID)
+					and R2_Dok2Typ &lt;&gt; @TypRK --dok Rk jest uwzgledniany nizej
+					and (R2_Wycena = @Wycena)
+				union all 
+				select sum(R2_KwotaSys) as suma
+				from cdn.Rozliczenia
+				where R2_Dok2Typ = @GIDTyp and R2_Dok2Numer = @GIDNumer and R2_Dok2Lp = @GIDLp
+					and (@ParID = 0 or R2_ParID = @ParID)
+					and R2_Dok1Typ &lt;&gt; @TypRK --dok Rk jest uwzgledniany nizej
+					and (R2_Wycena = @Wycena)
+				union all --roznice kursowe 
+				select
+
+					sum(
+					case when a2.RKN_Kwota = 0 then
+						case when a2.DT_RK_Kwota = 0 then
+							case when a2.R2_RK = 0 then
+								case when @Kurs1 &gt; a2.Kurs2 then
+									0 --abs(round(((@Kurs1 - a2.Kurs2)* a2.R2_KwotaWal1),2))
+								else
+									0
+								end
+							else
+								case when a2.R2_RKStrona = 2 then
+									a2.R2_RK
+								else 
+									0
+								end
+							end
+						else
+							a2.DT_RK_Kwota
+						end
+					else
+						a2.RKN_Kwota
+					end) as suma
+				from (
+					select
+						case when not KAZ_GIDNumer is null then
+							KAZ_KursL/KAZ_KursM
+						else
+							TrP_KursL/TrP_KursM
+						end as Kurs2,
+						R4.RKN_Kwota,
+						R4.DT_RK_Kwota,
+						R4.R2_RK,
+						R4.R2_RKStrona,
+						R6.R2_KwotaWal1 R2_KwotaWal1
+					from 
+						(
+						select R2.R2_ParID, 
+							min(R2_ID) as R2_ID, 
+							isnull(
+								(select sum(isnull(RKNRoz.KwotaSys,0))
+								from 
+									(select sum(RozRK.R2_KwotaSys) KwotaSys
+									from cdn.Rozliczenia RozRK 
+									where RozRK.R2_ParID = R2.R2_ParID 
+										and RozRK.R2_Dok1Typ = @TypRK 
+										and RozRK.R2_Dok2Typ = @GIDTyp
+										and RozRK.R2_Dok2Numer = @GIDNumer
+										and RozRK.R2_Dok2Lp = @GIDLp
+										and (RozRK.R2_Wycena = @Wycena)
+									union all
+									select sum(RozRK.R2_KwotaSys) KwotaSys
+									from cdn.Rozliczenia RozRK 
+									where RozRK.R2_ParID = R2.R2_ParID 
+										and RozRK.R2_Dok2Typ = @TypRK 
+										and RozRK.R2_Dok1Typ = @GIDTyp
+										and RozRK.R2_Dok1Numer = @GIDNumer
+										and RozRK.R2_Dok1Lp = @GIDLp
+										and (RozRK.R2_Wycena = @Wycena)
+									) RKNRoz)
+							,0) as RKN_Kwota,
+							isnull((select sum(RozRK.R2_KwotaSys)
+							from cdn.Rozliczenia RozRK 
+							where RozRK.R2_ParID = R2.R2_ParID  
+								and (RozRK.R2_Wycena = @Wycena)
+								and (isnull(RozRK.R2_Dok1Typ,0) = 0 and isnull(RozRK.R2_Dok2Typ,0) = 0)
+								and RozRK.R2_Waluta1 &lt;&gt; RozRK.R2_Waluta2 and (RozRK.R2_Waluta1 = @WalutaSys or RozRK.R2_Waluta2 = @WalutaSys)
+								and exists (select Zro_TrnTyp
+									from cdn.Zrodla join cdn.Dekrety
+										on Zro_DTTyp = Dt_GIDTyp and Zro_DTNumer = Dt_GIDNumer and Zro_DTLp = DT_GIDLp
+									where Zro_TrnTyp = @GIDTyp and Zro_TrnNumer = @GIDNumer and Zro_TrnLp = @GIDLp
+									and (DT_GIDNumer = RozRK.R2_Dekret1Numer and DT_GIDLp = RozRK.R2_Dekret1Lp) 
+									union all 
+									select Zro_TrnTyp
+									from cdn.Zrodla join cdn.Dekrety
+										on Zro_DTTyp = Dt_GIDTyp and Zro_DTNumer = Dt_GIDNumer and Zro_DTLp = DT_GIDLp
+									where Zro_TrnTyp = @GIDTyp and Zro_TrnNumer = @GIDNumer and Zro_TrnLp = @GIDLp
+									and (DT_GIDNumer = RozRK.R2_Dekret2Numer and DT_GIDLp = RozRK.R2_Dekret2Lp)
+									)
+								)
+							,0) as DT_RK_Kwota,
+							max(isnull(R2_RK,0)) as R2_RK,
+							max(isnull(R2_RKStrona,0)) as R2_RKStrona
+						from cdn.Rozliczenia R2
+						where R2.R2_Dok2Typ = @GIDTyp and R2.R2_Dok2Numer = @GIDNumer and R2.R2_Dok2Lp = @GIDLp
+							and R2.R2_Dok1Typ &lt;&gt; @TypRK and (@ParID = 0 or R2.R2_ParID = @ParID)
+							and (R2.R2_Wycena = @Wycena)
+						group by R2.R2_ParId
+						) as R4
+							join cdn.Rozliczenia R6
+								on R4.R2_ID = R6.R2_ID 
+							left join cdn.Zapisy 
+								on RKN_Kwota = 0 and R6.R2_Dok1Typ = KAZ_GIDTyp and R6.R2_Dok1Numer = KAZ_GIDNumer
+							left join cdn.TraPlat
+								on RKN_Kwota = 0 and R6.R2_Dok1Typ = TrP_GIDTyp and R6.R2_Dok1Numer = TrP_GIDNumer and R6.R2_Dok1Lp = TrP_GIDLp
+				
+					) a2
+				union all
+				select
+
+					sum(
+					case when a2.RKN_Kwota = 0 then
+						case when a2.DT_RK_Kwota = 0 then
+							case when a2.R2_RK = 0 then
+								case when @Kurs1 &gt; a2.Kurs2 then
+									0 --abs(round(((@Kurs1 - a2.Kurs2)* a2.R2_KwotaWal1),2))
+								else
+									0
+								end
+							else
+								case when a2.R2_RKStrona = 1 then
+									a2.R2_RK
+								else 
+									0
+								end
+							end
+						else
+							a2.DT_RK_Kwota
+						end
+					else
+						a2.RKN_Kwota
+					end) as suma
+				from (
+					select
+						case when not KAZ_GIDNumer is null then
+							KAZ_KursL/KAZ_KursM
+						else
+							TrP_KursL/TrP_KursM
+						end as Kurs2,
+						R4.RKN_Kwota,
+						R4.DT_RK_Kwota,
+						R4.R2_RK,
+						R4.R2_RKStrona,
+						R6.R2_KwotaWal1 R2_KwotaWal1
+					from 
+						(
+						select R2.R2_ParID, 
+							min(R2_ID) as R2_ID, 
+							isnull(
+								(select sum(isnull(RKNRoz.KwotaSys,0))
+								from 
+									(select sum(RozRK.R2_KwotaSys) KwotaSys
+									from cdn.Rozliczenia RozRK 
+									where RozRK.R2_ParID = R2.R2_ParID 
+										and RozRK.R2_Dok1Typ = @TypRK 
+										and RozRK.R2_Dok2Typ = @GIDTyp
+										and RozRK.R2_Dok2Numer = @GIDNumer
+										and RozRK.R2_Dok2Lp = @GIDLp
+										and (RozRK.R2_Wycena = @Wycena)
+									union all
+									select sum(RozRK.R2_KwotaSys) KwotaSys
+									from cdn.Rozliczenia RozRK 
+									where RozRK.R2_ParID = R2.R2_ParID 
+										and RozRK.R2_Dok2Typ = @TypRK 
+										and RozRK.R2_Dok1Typ = @GIDTyp
+										and RozRK.R2_Dok1Numer = @GIDNumer
+										and RozRK.R2_Dok1Lp = @GIDLp
+										and (RozRK.R2_Wycena = @Wycena)
+								) RKNRoz)
+							,0) as RKN_Kwota,
+							isnull((select sum(RozRK.R2_KwotaSys) 
+							from cdn.Rozliczenia RozRK 
+							where RozRK.R2_ParID = R2.R2_ParID
+								and (RozRK.R2_Wycena = @Wycena)
+								and (isnull(RozRK.R2_Dok1Typ,0) = 0 and isnull(RozRK.R2_Dok2Typ,0) = 0)
+								and RozRK.R2_Waluta1 &lt;&gt; RozRK.R2_Waluta2 and (RozRK.R2_Waluta1 = @WalutaSys or RozRK.R2_Waluta2 = @WalutaSys)
+								and exists (select Zro_TrnTyp
+									from cdn.Zrodla join cdn.Dekrety
+										on Zro_DTTyp = Dt_GIDTyp and Zro_DTNumer = Dt_GIDNumer and Zro_DTLp = DT_GIDLp
+									where Zro_TrnTyp = @GIDTyp and Zro_TrnNumer = @GIDNumer and Zro_TrnLp = @GIDLp
+									and (DT_GIDNumer = RozRK.R2_Dekret1Numer and DT_GIDLp = RozRK.R2_Dekret1Lp) 
+									union all 
+									select Zro_TrnTyp
+									from cdn.Zrodla join cdn.Dekrety
+										on Zro_DTTyp = Dt_GIDTyp and Zro_DTNumer = Dt_GIDNumer and Zro_DTLp = DT_GIDLp
+									where Zro_TrnTyp = @GIDTyp and Zro_TrnNumer = @GIDNumer and Zro_TrnLp = @GIDLp
+									and (DT_GIDNumer = RozRK.R2_Dekret2Numer and DT_GIDLp = RozRK.R2_Dekret2Lp)
+									)
+								)
+							,0) as DT_RK_Kwota,
+							max(isnull(R2_RK,0)) as R2_RK,
+							max(isnull(R2_RKStrona,0)) as R2_RKStrona
+						from cdn.Rozliczenia R2
+						where R2.R2_Dok1Typ = @GIDTyp and R2.R2_Dok1Numer = @GIDNumer and R2.R2_Dok1Lp = @GIDLp
+							and R2.R2_Dok2Typ &lt;&gt; @TypRK and (@ParID = 0 or R2.R2_ParID = @ParID)
+							and (R2.R2_Wycena = @Wycena)
+						group by R2.R2_ParId
+						) as R4
+							join cdn.Rozliczenia R6
+								on R4.R2_ID = R6.R2_ID 
+							left join cdn.Zapisy 
+								on RKN_Kwota = 0 and R6.R2_Dok2Typ = KAZ_GIDTyp and R6.R2_Dok2Numer = KAZ_GIDNumer
+							left join cdn.TraPlat
+								on RKN_Kwota = 0 and R6.R2_Dok2Typ = TrP_GIDTyp and R6.R2_Dok2Numer = TrP_GIDNumer and R6.R2_Dok2Lp = TrP_GIDLp
+				
+					) a2
+
+
+			) a3 )
+	end
+
+
+
+
+	set @Kwota = isnull(@Kwota,0)
+
+
+
+RETURN (@Kwota)
+END
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

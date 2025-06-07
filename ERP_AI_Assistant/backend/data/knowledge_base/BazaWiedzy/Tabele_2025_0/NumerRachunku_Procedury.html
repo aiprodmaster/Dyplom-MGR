@@ -1,0 +1,382 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie procedury DodajNrRachunku"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie procedury DodajNrRachunku */</I><BR>
+IF EXISTS (SELECT * FROM sysobjects WHERE NAME = 'DodajNrRachunku' AND xtype = 'P')
+  drop procedure CDN.DodajNrRachunku;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury DodajNrRachunku"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury DodajNrRachunku */</I><BR>
+create procedure CDN.DodajNrRachunku
+  @ObGid integer,
+  @ObGidTyp smallint,
+  @Nr_Rachunku varchar(50)
+as
+	Insert into CDN.NumeryRachunkow (Nrb_ObNumer, Nrb_ObTyp, Nrb_NrRachunkuZnorm)
+	Values(@ObGid, @ObGidTyp, REPLACE(REPLACE(@Nr_Rachunku,'-',''),' ',''));
+	
+	if @@Error &lt;&gt; 0
+	begin
+		rollback tran
+		raiserror('Błąd dodawania numeru rachunku bankowego',16,1)
+		return
+	end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury DodajNrRachunku"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury DodajNrRachunku */</I><BR>
+GRANT EXECUTE ON CDN.DodajNrRachunku TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie procedury AktualizujNrRachunku"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie procedury AktualizujNrRachunku */</I><BR>
+IF EXISTS (SELECT * FROM sysobjects WHERE NAME = 'AktualizujNrRachunku' AND xtype = 'P')
+  drop procedure CDN.AktualizujNrRachunku;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury AktualizujNrRachunku"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury AktualizujNrRachunku */</I><BR>
+create procedure CDN.AktualizujNrRachunku
+@ObNr integer,
+@ObTyp smallint,
+@Nr_Rachunku varchar(50),
+@Nr_RachunkuStary varchar(50)
+as
+begin
+	declare @NumId int;
+	print @Nr_RachunkuStary
+	select @NumId = (select isnull((select min(NrB_Id) from CDN.NumeryRachunkow
+					where NrB_ObNumer = @ObNr
+					AND NrB_ObTyp = @ObTyp
+					AND NrB_NrRachunkuZnorm Like REPLACE(REPLACE(@Nr_RachunkuStary,'-',''),' ','')),0));
+	if @@Error &lt;&gt; 0
+	begin
+		raiserror('Błąd aktualizowania numeru rachunku bankowego',16,1)
+		return;
+	end
+	if @NumId = 0
+		exec CDN.DodajNrRachunku @ObNr, @ObTyp, @Nr_Rachunku
+	else
+		update CDN.NumeryRachunkow set NrB_NrRachunkuZnorm = REPLACE(REPLACE(@Nr_Rachunku,'-',''),' ','')
+		where NrB_Id = @NumId;
+		
+	if @@Error &lt;&gt; 0
+	begin
+		raiserror('Błąd aktualizowania numeru rachunku bankowego',16,1)
+		return;
+	end
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury AktualizujNrRachunku"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury AktualizujNrRachunku */</I><BR>
+GRANT EXECUTE ON CDN.AktualizujNrRachunku TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie procedury NumerRachunku_Poszukaj"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie procedury NumerRachunku_Poszukaj */</I><BR>
+IF EXISTS (SELECT * FROM sysobjects WHERE NAME = 'NumerRachunku_Poszukaj' AND xtype = 'P')
+  drop procedure CDN.NumerRachunku_Poszukaj;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury NumerRachunku_Poszukaj"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury NumerRachunku_Poszukaj */</I><BR>
+Create procedure CDN.NumerRachunku_Poszukaj
+   @NumerRachunku varchar(50),
+   @SzukajPoDanychZWyciagu bit = 0,
+   @WyciagRejestr varchar(5) = NULL,
+   @WyciagKwotaObciazenia decimal(15, 2) = NULL,
+   @WyciagKwotaUznania decimal(15, 2) = NULL,
+   @WyciagKodOperacji varchar(30) = NULL,
+   @WyciagData int = NULL,
+   @WyciagTresc varchar(254) = NULL,
+   @WyciagPodmiot varchar(140) = NULL,
+   @WyciagEndToEndId varchar(20) = NULL,
+   @WyciagRachunekWirtualny varchar(50) = NULL
+AS
+begin
+	declare	@Kolor tinyint = 0 
+	--0 jeden niearchiwalny brak
+	--1 wiele niearchiwalnych zółty 
+	--2	zero niearchiwalnych i (jeden lub wiele archiwalnych)
+
+	if @SzukajPoDanychZWyciagu = 1
+	begin
+		create table #ZnalezionePodmioty
+		(
+			Typ int, Id int
+		);
+		
+		BEGIN TRY
+			insert into #ZnalezionePodmioty
+			exec CDN.IdentyfikatorPodmiotuZWyciagu @NumerRachunku, @WyciagRejestr, @WyciagKwotaObciazenia, @WyciagKwotaUznania, @WyciagKodOperacji, @WyciagData, @WyciagTresc, @WyciagPodmiot, @WyciagEndToEndId, @WyciagRachunekWirtualny;
+		END TRY
+		BEGIN CATCH
+			DECLARE @ErrorMessage NVARCHAR(4000);
+			DECLARE @ErrorSeverity INT;
+			DECLARE @ErrorState INT;
+
+			SELECT 
+				@ErrorMessage = ERROR_MESSAGE(),
+				@ErrorSeverity = ERROR_SEVERITY(),
+				@ErrorState = ERROR_STATE();
+
+			RAISERROR ('Błąd w procedurze CDN.IdentyfikatorPodmiotuZWyciagu: %s', -- Message text.
+					   @ErrorSeverity, -- Severity.
+					   @ErrorState, -- State.
+					   @ErrorMessage);
+		END CATCH;
+		
+		if isnull((select top 1 Typ from #ZnalezionePodmioty), -1) &lt;&gt; -1
+		begin
+			declare @podmiotGidTyp int = (select top 1 Typ from #ZnalezionePodmioty);
+			declare @podmiotGidNumer int = (select top 1 Id from #ZnalezionePodmioty);
+			declare @podmiotAkronim varchar(20) = (select isnull((
+				select COALESCE(
+					(select Knt_Akronim from cdn.kntkarty where Knt_GIDTyp=@podmiotGidTyp and Knt_GIDNumer=@podmiotGidNumer),
+					(select Prc_Akronim from cdn.PrcKarty where Prc_GIDTyp=@podmiotGidTyp and Prc_GIDNumer=@podmiotGidNumer),
+					(select Urz_Akronim from cdn.Urzedy where URZ_GIDTyp=@podmiotGidTyp and URZ_GIDNumer=@podmiotGidNumer))), ''));
+			
+			-- podmiot zwrócony przez procedurę IdentyfikatorPodmiotuZWyciagu może nie istnieć, trzeba to sprawdzić
+			if isnull(@podmiotAkronim, '') &lt;&gt; ''
+			begin
+				set @kolor = case when (select count(*) from #ZnalezionePodmioty) &gt; 1 then 1 else 0 end;
+
+				select @podmiotGidTyp as Typ, @podmiotGidNumer as Id, @kolor as Kolor, @podmiotAkronim as Akronim;
+				drop table #ZnalezionePodmioty;
+				return;
+			end
+		end
+		drop table #ZnalezionePodmioty;
+	end
+
+	declare @Rezultat int;
+	declare @TypWyniku int;
+	declare @norma2 varchar(50);
+	declare @liczbaNiearchiwalnychPodmiotow int;
+	declare @liczbaArchiwalnychPodmiotow int;
+	declare @KodKraju varchar(2) = '';
+	
+	set @norma2 = REPLACE(REPLACE(@NumerRachunku,'-',''), ' ', '');
+
+	-- Usuwamy pierwsze dwa znaki, gdy nie są numeryczne i traktujemy je jako kod kraju (rachunek IBAN)
+	if LEN(@norma2) &gt; 2 AND ISNUMERIC(SUBSTRING(@norma2,1,1)) = 0 AND ISNUMERIC(SUBSTRING(@norma2,2,1)) = 0
+	begin
+		set @KodKraju = SUBSTRING(@norma2, 1, 2)
+		set @norma2 = RIGHT(@norma2,LEN(@norma2)-2)
+	end
+
+
+    if  LEN(@norma2) = 0 --TFSID:195187
+    begin
+        select -1 as Typ, 0 as Id,  @Kolor as Kolor, '' as Akronim;
+        return;
+    end
+
+	set @liczbaNiearchiwalnychPodmiotow = (
+		select count(*) from cdn.RachunkiBankowe
+			left join cdn.Banki on Bnk_GIDNumer=RkB_BnkNumer
+			left join cdn.KntKarty on Knt_GIDNumer=RkB_ObiNumer
+		where RkB_CzasArchiwizacji = 0 AND RkB_NrRachunku LIKE @norma2 
+			AND (RkB_ObiTyp != 32 OR (RkB_ObiTyp = 32 AND Knt_Archiwalny = 0))
+			AND (RkB_BnkTyp != 48 OR (RkB_BnkTyp = 48 AND (Bnk_KodKraju = @KodKraju OR (@KodKraju = '' AND Bnk_KodKraju = 'PL') OR (@KodKraju = 'PL' AND Bnk_KodKraju = ''))))
+	)
+
+	if @liczbaNiearchiwalnychPodmiotow &gt; 0
+	begin
+		set @Kolor = (select CASE WHEN @liczbaNiearchiwalnychPodmiotow &gt;1 THEN 1 ELSE 0 END)
+		
+		select top 1 RkB_ObiTyp as Typ, RkB_ObiNumer as Id, @Kolor as Kolor, COALESCE(Knt_Akronim,Prc_Akronim,Urz_Akronim) as Akronim  from cdn.RachunkiBankowe left join cdn.Banki on Bnk_GIDNumer=RkB_BnkNumer LEFT join cdn.KntKarty on RkB_ObiNumer = Knt_GIDNumer AND RkB_ObiTyp = Knt_GIDTyp LEFT join cdn.PrcKarty on RkB_ObiNumer = PrC_GIDNumer AND RkB_ObiTyp = Prc_GIDTyp LEFT join cdn.Urzedy on RkB_ObiNumer = URZ_GIDNumer AND RkB_ObiTyp = URZ_GIDTyp where RkB_CzasArchiwizacji = 0 AND RkB_NrRachunku LIKE @norma2 AND (RkB_ObiTyp != 32 OR (RkB_ObiTyp = 32 AND Knt_Archiwalny = 0)) AND (RkB_BnkTyp != 48 OR (RkB_BnkTyp = 48 AND (Bnk_KodKraju = @KodKraju OR (@KodKraju = '' AND Bnk_KodKraju = 'PL') OR (@KodKraju = 'PL' AND Bnk_KodKraju = '')))) ORDER BY Kolor, Typ, Akronim
+		return
+	end
+
+	set @liczbaArchiwalnychPodmiotow = (select count(*) from cdn.RachunkiBankowe left join cdn.Banki on Bnk_GIDNumer=RkB_BnkNumer left join cdn.KntKarty on Knt_GIDNumer=RkB_ObiNumer where RkB_CzasArchiwizacji &lt;&gt; 0 AND RkB_NrRachunku LIKE @norma2 AND (RkB_ObiTyp != 32 OR (RkB_ObiTyp = 32 AND Knt_Archiwalny = 0)) AND (RkB_BnkTyp != 48 OR (RkB_BnkTyp = 48 AND (Bnk_KodKraju = @KodKraju OR (@KodKraju = '' AND Bnk_KodKraju = 'PL') OR (@KodKraju = 'PL' AND Bnk_KodKraju = '')))))
+
+	if @liczbaArchiwalnychPodmiotow &gt; 0 
+	begin
+		set @Kolor = 2
+
+		select top 1 RkB_ObiTyp as Typ, RkB_ObiNumer as Id, @Kolor as Kolor, COALESCE(Knt_Akronim,Prc_Akronim,Urz_Akronim) as Akronim from cdn.RachunkiBankowe left join cdn.Banki on Bnk_GIDNumer=RkB_BnkNumer LEFT join cdn.KntKarty on RkB_ObiNumer = Knt_GIDNumer AND RkB_ObiTyp = Knt_GIDTyp LEFT join cdn.PrcKarty on RkB_ObiNumer = PrC_GIDNumer AND RkB_ObiTyp = Prc_GIDTyp LEFT join cdn.Urzedy on RkB_ObiNumer = URZ_GIDNumer AND RkB_ObiTyp = URZ_GIDTyp where RkB_CzasArchiwizacji &lt;&gt; 0 AND RkB_NrRachunku LIKE @norma2 AND (RkB_ObiTyp != 32 OR (RkB_ObiTyp = 32 AND Knt_Archiwalny = 0)) AND (RkB_BnkTyp != 48 OR (RkB_BnkTyp = 48 AND (Bnk_KodKraju = @KodKraju OR (@KodKraju = '' AND Bnk_KodKraju = 'PL') OR (@KodKraju = 'PL' AND Bnk_KodKraju = '')))) ORDER BY Kolor, Typ, Id
+		return
+	end
+ 
+	select -1 as Typ, 0 as Id, @Kolor as Kolor, '' as Akronim
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury NumerRachunku_Poszukaj"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury NumerRachunku_Poszukaj */</I><BR>
+GRANT EXECUTE ON CDN.NumerRachunku_Poszukaj TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie procedury NumerRachunkuWirtualny_Poszukaj"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie procedury NumerRachunkuWirtualny_Poszukaj */</I><BR>
+IF EXISTS (SELECT * FROM sysobjects WHERE NAME = 'NumerRachunkuWirtualny_Poszukaj' AND xtype = 'P')
+  drop procedure CDN.NumerRachunkuWirtualny_Poszukaj;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury NumerRachunkuWirtualny_Poszukaj"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury NumerRachunkuWirtualny_Poszukaj */</I><BR>
+Create procedure CDN.NumerRachunkuWirtualny_Poszukaj
+   @NumerBanku varchar(50),
+   @NumerRejestru int,
+   @PodanoNiepelnyRachunek bit = 0
+AS
+begin
+	declare @Rezultat int;
+	declare @TypWyniku int;
+	declare @norma2 varchar(50);
+	declare @podanoNiepelnyRachunekWarunek varchar(2);
+
+	if @PodanoNiepelnyRachunek = 1
+		set @podanoNiepelnyRachunekWarunek = '%'
+	else
+		set @podanoNiepelnyRachunekWarunek = ''
+
+		--poprawka dla PKO (zwracane numery rachunków zaczynają się od 'PL')
+	if SUBSTRING(@NumerBanku,1,2) = 'PL'
+	   set @NumerBanku = RIGHT(@NumerBanku,26)
+
+	set @norma2 = REPLACE(REPLACE(@NumerBanku,'-',''),' ','');
+
+	if LEN(@norma2) = 0 --TFSID:195187
+    begin
+        select -1 as Typ, 0 as Id;
+        return;
+    end
+
+    SELECT @Rezultat =
+    (
+	   SELECT isnull(
+				 (
+					SELECT MIN(KRj_ObiNumer) a
+					FROM CDN.KntRejestr
+					WHERE KRj_TypRejestru = 1
+						 AND KRj_CzasArchiwizacji = 0
+						 AND KRj_KarNumer = @NumerRejestru
+						 AND KRj_ObiTyp = 32
+						 AND REPLACE(KRj_NrRachunku, ' ', '') LIKE @podanoNiepelnyRachunekWarunek+@norma2
+				 ), 0)
+    );
+    IF @Rezultat != 0
+	   BEGIN
+		  SET @TypWyniku = 32;
+		  SELECT @TypWyniku AS Typ,
+			    @Rezultat AS Id,
+			    0 AS Kolor;
+		  RETURN;
+	   END
+    SELECT @Rezultat =
+    (
+	   SELECT isnull(
+				 (
+					SELECT MIN(KRj_ObiNumer) a
+					FROM CDN.KntRejestr
+					WHERE KRj_TypRejestru = 1
+						 AND KRj_CzasArchiwizacji = 0
+						 AND KRj_KarNumer = @NumerRejestru
+						 AND KRj_ObiTyp = 944
+						 AND REPLACE(KRj_NrRachunku, ' ', '') LIKE @podanoNiepelnyRachunekWarunek+@norma2
+				 ), 0)
+    );
+    IF @Rezultat != 0
+	   BEGIN
+		  SET @TypWyniku = 944;
+		  SELECT @TypWyniku AS Typ,
+			    @Rezultat AS Id,
+			    0 AS Kolor;
+		  RETURN;
+	   END
+    SELECT @Rezultat =
+    (
+	   SELECT isnull(
+				 (
+					SELECT MIN(KRj_ObiNumer) a
+					FROM CDN.KntRejestr
+					WHERE KRj_TypRejestru = 1
+						 AND KRj_CzasArchiwizacji = 0
+						 AND KRj_KarNumer = @NumerRejestru
+						 AND KRj_ObiTyp = 4304
+						 AND REPLACE(KRj_NrRachunku, ' ', '') LIKE @podanoNiepelnyRachunekWarunek+@norma2
+				 ), 0)
+    );
+    IF @Rezultat != 0
+	   BEGIN
+		  SET @TypWyniku = 4304;
+		  SELECT @TypWyniku AS Typ,
+			    @Rezultat AS Id,
+			    0 AS Kolor;
+		  RETURN;
+	   END
+    
+    SELECT -1 AS Typ,  0 AS Id,  0 AS Kolor;
+    
+    RETURN;
+
+
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury NumerRachunkuWirtualny_Poszukaj"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury NumerRachunkuWirtualny_Poszukaj */</I><BR>
+GRANT EXECUTE ON CDN.NumerRachunkuWirtualny_Poszukaj TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,69 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[POS_EksportDostepnoscGrupTwrWeb]"></A><PRE>
+          <FONT SIZE="2"><I>/* [POS_EksportDostepnoscGrupTwrWeb] */</I><BR>
+CREATE PROCEDURE [CDN].[POS_EksportDostepnoscGrupTwrWeb]
+	@RowVersion BIGINT
+AS
+BEGIN
+SET NOCOUNT ON;
+
+	
+
+	DECLARE @DstTwr TABLE (PcK_CentrumID int, TwG_SyncId int, rw int, quickSalesOrdinalNumber int)
+
+	declare @grp table(GIDNumer int,GIDTyp int,PcK_TSZmianyGrupyEksportuTwr int,PicoID int,GrONumer int, CentrumId int)
+	insert into @grp 
+	select distinct 
+	GIDNumer,
+	GIDTyp,
+	PcK_TSZmianyGrupyEksportuTwr,
+	PcK_PicoID,
+	GrONumer,
+	PcK_CentrumID
+	from cdn.PicoKonfig 
+	join cdn.PicoStanowiska on pck_picoid = psa_pckid
+	outer apply cdn.PobierzDrzewoGrupTowarowych(PcK_TwGENumer,DEFAULT,DEFAULT,1,DEFAULT,DEFAULT)
+	where PSa_TypAplikacji = 2
+	
+
+		insert into @DstTwr select distinct 
+			CentrumID,
+			TwG_SyncId,
+			case when oddzialBylWyslany = 0 and PSaDataDodania &gt; TwG_CzasModyfikacji and PSaDataDodania &gt;PcK_TSZmianyGrupyEksportuTwr then PSaDataDodania
+			else case when TwG_CzasModyfikacji &gt; PcK_TSZmianyGrupyEksportuTwr then TwG_CzasModyfikacji else PcK_TSZmianyGrupyEksportuTwr end end,
+			(select PSS_Pozycja from cdn.PicoSzybkaSprzedaz where PSS_PicoID = PicoID and PSS_TwgSyncID = TwG_SyncId)
+		from @grp
+		join cdn.TwrGrupy on GIDNumer=TwG_GIDNumer and GIDTyp=TwG_GIDTyp and TwG_GrONumer = GrONumer
+		join cdn.POS_OddzialyDoEksportu(null, @rowVersion) on PicoID = PckPicoID
+		where (case when TwG_CzasModyfikacji &gt; PcK_TSZmianyGrupyEksportuTwr then TwG_CzasModyfikacji else PcK_TSZmianyGrupyEksportuTwr end &gt; @rowVersion OR @rowVersion = 0 OR oddzialBylWyslany = 0)
+		
+		declare @LastMod int = ISNULL(NULLIF((select max(rw) from @DstTwr),0),@RowVersion)
+	select
+		@LastMod as [@RowVersion], (
+		select distinct
+			TwG_SyncId as [@GroupId],
+			PcK_CentrumID as [@CompanyUnitId],
+			'True' as [@IsActive],
+			quickSalesOrdinalNumber as [@QuickSalesOrdinalNumber]
+		from @DstTwr 
+		
+	for xml path('ProductGroupAvailability'), type)
+	for xml path('ProductGroupAvailability')
+	SET NOCOUNT OFF;	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

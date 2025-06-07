@@ -1,0 +1,173 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="OFFLXLSrv_ImportROZ"></A><PRE>
+          <FONT SIZE="2"><I>/* OFFLXLSrv_ImportROZ */</I><BR>
+CREATE PROCEDURE CDN.OFFLXLSrv_ImportROZ
+       @ID                VARCHAR(15),
+       @Dok1Typ           VARCHAR(15),
+       @Dok1Numer         VARCHAR(15),
+       @Dok1NumerO        VARCHAR(15),
+       @Dok1Lp            VARCHAR(15),
+       @Seria1            VARCHAR(5),
+       @Dok2Typ           VARCHAR(15),
+       @Dok2Numer         VARCHAR(15),
+       @Dok2NumerO        VARCHAR(15),
+       @Dok2Lp            VARCHAR(15),
+       @Seria2            VARCHAR(5),
+       @Kwota             VARCHAR(15),
+       @Info              VARCHAR(255),
+       @PcKTyp            SMALLINT = 0
+AS
+SET NOCOUNT ON
+DECLARE @KwotaRoz DECIMAL(15,2)
+DECLARE @D1Typ    SMALLINT,
+        @D2Typ    SMALLINT,
+        @D1Numer  INT,
+        @D2Numer  INT,
+        @D1Lp     SMALLINT,
+        @D2Lp     SMALLINT
+DECLARE @Ret      INT
+DECLARE @ROZ_ID   INT
+DECLARE @CurrDate INT
+DECLARE @GIDFirma INT
+DECLARE @ZewnetrznyID INT
+SET @GIDFirma = CDN.GIDFirma()
+SET @D1Typ = CAST(@Dok1Typ AS SMALLINT)
+SET @D2Typ = CAST(@Dok2Typ AS SMALLINT)
+SET @D1Numer = CAST(@Dok1Numer As INT)
+SET @D2Numer = CAST(@Dok2Numer As INT)
+SET @D1Lp = CAST(@Dok1Lp AS SMALLINT)
+SET @D2Lp = CAST(@Dok2Lp AS SMALLINT)
+SET @KwotaRoz = CAST(@Kwota As DECIMAL(15,2))
+SET @CurrDate=DATEDIFF(s,CONVERT(DATETIME,'1990-1-1',120),CONVERT(DATETIME,GETDATE(),120))
+SET @ROZ_ID=0
+SET @ZewnetrznyID = 1
+
+IF EXISTS(select top 1 * from cdn.PicoUsuniete where PcU_ObiTyp = 433 AND PcU_ObiektID=@ID)
+BEGIN
+	RAISERROR('Ostrzeżenie - Zapis K/B istniał wcześniej w systemie i został wykasowany.', 16, 1)
+END	
+ELSE
+BEGIN
+	IF @D1Numer=0
+	BEGIN
+	  IF @Dok1Typ='784' --Zapis k/b
+		SELECT TOP 1 @D1Numer=KAZ_GIDNumer FROM CDN.Zapisy WITH (NOLOCK) WHERE KAZ_ZewnetrznyId=CAST(@Dok1NumerO As INT) AND KAZ_Seria=@Seria1 ORDER BY kaz_gidnumer DESC
+	  ELSE
+		IF @PcKTyp = 5 AND (@Dok1Typ = '2035' OR @Dok1Typ = '2043') -- RA lub RAK
+		  SELECT TOP 1 @D1Numer=TrP_GIDNumer, @D1Typ=TrP_GIDTyp
+			FROM CDN.TraNag SPI WITH(NOLOCK) 
+			JOIN CDN.TraNag ZRD WITH(NOLOCK) ON ZRD.TrN_SpiNumer = SPI.TrN_GIDNumer AND ZRD.TrN_SpiTyp = SPI.TrN_GIDTyp
+			JOIN CDN.TraPlat WITH(NOLOCK)ON ZRD.TrN_GIDTyp = TrP_GIDTyp AND ZRD.TrN_GIDNumer = TrP_GIDNumer 
+		  WHERE SPI.TrN_OddDokID=CAST(@Dok1NumerO As INT) AND SPI.TrN_TrNSeria=@Seria1 ORDER BY SPI.TrN_GIDNumer DESC
+		ELSE
+		  SELECT TOP 1 @D1Numer=TrN_GIDNumer FROM CDN.TraNag WITH(NOLOCK)JOIN CDN.TraPlat WITH(NOLOCK)ON TrN_GIDTyp=TrP_GIDTyp AND TrN_GIDNumer=TrP_GIDNumer WHERE TrN_OddDokID=CAST(@Dok1NumerO As INT) AND TrN_TrNSeria=@Seria1 ORDER BY trn_gidnumer DESC
+	END
+	ELSE
+	BEGIN
+	  IF @Dok1Typ='784' --Zapis k/b
+		SELECT @D1Numer=KAZ_GIDNumer FROM CDN.Zapisy WITH(NOLOCK) WHERE KAZ_GIDNumer=@D1Numer AND KAZ_Seria=@Seria1
+	  ELSE
+		IF @PcKTyp = 5 AND (@Dok1Typ = '2035' OR @Dok1Typ = '2043') -- RA lub RAK
+		  SELECT TOP 1 @D1Numer=TrP_GIDNumer, @D1Typ = TrP_GIDTyp, @D1Lp = TrP_GIDLp --TFSID:247488
+		  FROM CDN.TraPlat WITH(NOLOCK) 
+		  WHERE TrP_SpiTyp=@Dok1Typ AND TrP_SpiNumer=@D1Numer--TFSID:247488 AND TrP_SpiLp=@Dok1Lp
+		ELSE
+		  SELECT @D1Numer=TrP_GIDNumer FROM CDN.TraPlat WITH(NOLOCK) WHERE TrP_GIDTyp=@Dok1Typ AND TrP_GIDNumer=@D1Numer AND TrP_GIDLp=@Dok1Lp
+	END
+
+	IF ISNULL(@D1Numer,0)=0
+	BEGIN
+	  IF @Dok1Typ='784' --Zapis k/b
+		RAISERROR('800:Błąd - Brak Zapisu K/B do rozliczenia', 16, 1) 
+	  ELSE
+		RAISERROR('800:Błąd - Brak platnosci dokumentu do rozliczenia', 16, 1) 
+
+	  SET NOCOUNT OFF
+	  SELECT  ISNULL(@ROZ_ID,0) As ID
+	  RETURN 0
+	END
+
+
+	IF @D2Numer=0
+	BEGIN
+	  IF @Dok2Typ='784' --Zapis k/b
+		SELECT @D2Numer=KAZ_GIDNumer FROM CDN.Zapisy WITH (NOLOCK) WHERE KAZ_ZewnetrznyId = CAST(@Dok2NumerO As INT) AND KAZ_Seria=@Seria2
+	  ELSE
+		IF @PcKTyp = 5 AND (@Dok1Typ = '2035' OR @Dok1Typ = '2043') -- RA lub RAK
+		  SELECT TOP 1 @D2Numer=TrP_GIDNumer, @D2Typ = TrP_GIDTyp
+		  FROM CDN.TraNag SPI WITH(NOLOCK) 
+			JOIN CDN.TraNag ZRD WITH(NOLOCK) ON ZRD.TrN_SpiNumer = SPI.TrN_GIDNumer AND ZRD.TrN_SpiTyp = SPI.TrN_GIDTyp
+			JOIN CDN.TraPlat WITH(NOLOCK)ON ZRD.TrN_GIDTyp = TrP_GIDTyp AND ZRD.TrN_GIDNumer = TrP_GIDNumer 
+		  WHERE SPI.TrN_OddDokID = CAST(@Dok2NumerO As INT) AND SPI.TrN_TrNSeria=@Seria2
+		ELSE
+		  SELECT @D2Numer=TrN_GIDNumer FROM CDN.TraNag WITH(NOLOCK)JOIN CDN.TraPlat WITH(NOLOCK)ON TrN_GIDTyp=TrP_GIDTyp AND TrN_GIDNumer=TrP_GIDNumer WHERE TrN_OddDokID = CAST(@Dok2NumerO As INT) AND TrN_TrNSeria=@Seria2
+	END
+	ELSE
+	BEGIN
+	  IF @Dok2Typ='784' --Zapis k/b
+		SELECT @D2Numer=KAZ_GIDNumer FROM CDN.Zapisy WITH(NOLOCK) WHERE KAZ_GIDNumer=@D2Numer AND KAZ_Seria=@Seria2
+	  ELSE
+		IF @PcKTyp = 5 AND (@Dok1Typ = '2035' OR @Dok1Typ = '2043') -- RA lub RAK
+		  SELECT TOP 1 @D2Numer=TrP_GIDNumer, @D2Typ = TrP_GIDTyp
+		  FROM CDN.TraPlat WITH(NOLOCK) 
+		  WHERE TrP_SpiTyp=@Dok2Typ AND TrP_SpiNumer=@D2Numer AND TrP_SpiLp=@Dok2Lp
+		ELSE
+		  SELECT @D2Numer=TrP_GIDNumer FROM CDN.TraPlat WITH(NOLOCK) WHERE TrP_GIDTyp=@Dok2Typ AND TrP_GIDNumer=@D2Numer AND TrP_GIDLp=@Dok2Lp
+	END
+
+	IF ISNULL(@D2Numer,0)=0
+	BEGIN
+	  IF @Dok2Typ='784' --Zapis k/b
+		RAISERROR('800:Błąd - Brak Zapisu K/B do rozliczenia', 16, 1) 
+	  ELSE
+		RAISERROR('800:Błąd - Brak dokumentu do rozliczenia', 16, 1) 
+
+	  SET NOCOUNT OFF
+	  SELECT  ISNULL(@ROZ_ID,0) As ID
+	  RETURN 0
+	END
+	  SELECT @ROZ_ID=R2_ID FROM CDN.Rozliczenia WITH (NOLOCK) WHERE R2_Dok1Typ=@D1Typ AND R2_Dok1Numer=@D1Numer AND R2_Dok1Lp=@D1Lp AND R2_Dok2Typ=@D2Typ AND R2_Dok2Numer=@D2Numer AND R2_Dok2Lp=@D2Lp AND R2_ZewnetrznyId=CAST(@ID As INT)
+
+	  IF ISNULL(@ROZ_ID,0)=0
+	  BEGIN
+		DECLARE @UserID INT
+		SET @UserID = CDN.PolaczenieInfo(5)
+		EXECUTE @Ret = CDN.DodajRozliczenieUwzglWycene @GIDFirma,@D1Typ,@D1Numer,@D1Lp,@D2Typ,@D2Numer,@D2Lp,@KwotaRoz,@UserID,@CurrDate,@ROZ_ID OUTPUT		
+		--SELECT @ROZ_ID=R2_ID FROM CDN.Rozliczenia WITH (NOLOCK) 
+		--WHERE 
+		--(R2_Dok1Typ=@Dok1Typ AND R2_Dok1Numer=@D1Numer AND R2_Dok1Lp=@Dok1Lp AND R2_Dok2Typ=@Dok2Typ AND R2_Dok2Numer=@D2Numer AND R2_Dok2Lp=@Dok2Lp) OR 
+		--(R2_Dok1Typ=@Dok2Typ AND R2_Dok1Numer=@D2Numer AND R2_Dok1Lp=@Dok2Lp AND R2_Dok2Typ=@Dok1Typ AND R2_Dok2Numer=@D1Numer AND R2_Dok2Lp=@Dok1Lp)
+	  END
+	  ELSE
+	  BEGIN
+		SET @Ret=0
+	  END
+
+	  if @@ERROR=0 AND @Ret IN (0,203)
+	  BEGIN
+		--UPDATE CDN.Rozliczenia SET R2_ZewnetrznySys=CAST(@ID As INT) WHERE R2_ID=@ROZ_ID
+		UPDATE CDN.Rozliczenia 
+		SET R2_ZewnetrznySys=CAST(@ID As INT), R2_ZewnetrznyId=CAST(@ID As INT), R2_CzasModyfikacji=@CurrDate, R2_ZewnetrznyTyp = @ZewnetrznyID
+		WHERE R2_ID=@ROZ_ID
+	  END
+END	  
+
+SET NOCOUNT OFF
+
+SELECT  ISNULL(@ROZ_ID,0) As ID
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

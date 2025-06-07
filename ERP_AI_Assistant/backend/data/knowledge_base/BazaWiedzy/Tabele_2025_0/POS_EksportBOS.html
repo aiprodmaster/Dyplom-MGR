@@ -1,0 +1,190 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[POS_EksportPrzypisanieMagazynow]"></A><PRE>
+          <FONT SIZE="2"><I>/* [POS_EksportPrzypisanieMagazynow] */</I><BR>
+CREATE PROCEDURE [CDN].[POS_EksportPrzypisanieMagazynow] 
+@PointOfSaleId INT
+AS
+BEGIN
+SET NOCOUNT ON;
+
+	DECLARE @DokMag TABLE([@DocumentTypeId] INT,[@WarehouseId] INT, [@CompanyUnitId] INT, [@IsDefault] VARCHAR(250), [@DokGIDTyp] smallint)
+
+	DECLARE @oddzialy TABLE(FrsId int,PicoID int, PckMag int, PointOfSaleId int)
+	INSERT INTO @oddzialy select PcKCentrumID, PcKPicoID, PcKMagNumer, PSaID from cdn.POS_OddzialyDoEksportu(@PointOfSaleId, 0)
+
+	BEGIN
+	INSERT INTO @DokMag
+		select distinct
+				case when duplikatyMMP.sekcja =2 then 13
+				when duplikatyFS.sekcja = 2 then ( select  Dok_Id from cdn.DokDefinicje where dok_GIDTyp = 2041 AND Dok_FrsId = FrsId)
+				when duplikatyPA.sekcja = 2 then ( select  Dok_Id from cdn.DokDefinicje where dok_GIDTyp = 2042 AND Dok_FrsId = FrsId)
+				else (
+					select top 1 dok_id from cdn.DokRelacje 
+					left join cdn.dokdefinicje on dor_id = dok.Dok_Id
+					where DoR_MSNumer = MAG_GIDNumer and Dok_FrsId = FrsId and Dok_GIDTyp = dok.Dok_GIDTyp
+				) end as [@DocumentTypeId],
+				MAG_GIDNumer as [@WarehouseId],
+				FrsId as [@CompanyUnitId],
+				case when exists(select Dok_MagZNumer from cdn.dokdefinicje dok2 where dok2.dok_id = dok.dok_id and dok_frsId =FrsId and dok2.Dok_MagZNumer = mag.MAG_GIDNumer) THEN 'True' else 'False' end as [@IsDefault],
+				dok.dok_GIDTyp as [@DokGIDTyp]
+				from @oddzialy
+				join cdn.dokdefinicje dok on dok.dok_GIDTyp in (2033,2034,1603,1604,9473,9472,1616,1617,1489)
+				join cdn.Magazyny mag on MaG_PcKId = PicoID
+				join cdn.dokrelacje on dor_id = dok.Dok_Id
+				left join (select 1 as sekcja union select 2) duplikatyMMP on dok.Dok_GIDTyp=1604
+				left join (select 1 as sekcja union select 2) duplikatyFS on dok.Dok_GIDTyp=2033
+				left join (select 1 as sekcja union select 2) duplikatyPA on dok.Dok_GIDTyp=2034
+				where DoR_MSTyp = 208 and DoR_MSNumer = MAG_GIDNumer and (@PointOfSaleId is not null or (duplikatyMMP.sekcja &lt;&gt; 2 and duplikatyMMP.sekcja is not null) or duplikatyMMP.sekcja is null)
+
+		union all
+		select 
+				14 as [@DocumentTypeId],
+				MAG_GIDNumer as [@WarehouseId],
+				FrsId as [@CompanyUnitId],
+				'False' as [@IsDefault],
+				14 as [@DokGIDTyp]
+				from @oddzialy
+				join cdn.Magazyny mag on MaG_PcKId = PicoID
+
+	END
+
+	select
+		0 as [@RowVersion], 
+		(
+			select  [@DocumentTypeId],
+				[@WarehouseId],[@CompanyUnitId],case when exists(select Dok_MagZNumer from cdn.dokdefinicje dok2 where dok2.dok_id = [@DocumentTypeId] and dok_frsId =FrsId and dok2.Dok_MagZNumer = [@WarehouseId]) then 'True'
+				when ([@DokGIDTyp]=1489 or [@DokGIDTyp]=14) and [@WarehouseId]=PckMag then 'True'
+				else 'False' end as [@IsDefault] from @DokMag join @oddzialy on FrsId = [@CompanyUnitId]
+		for xml path('Entry'), type)
+	for xml path('DocumentTypeWarehouses')
+	SET NOCOUNT OFF;
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[POS_EksportRezerwacjeIlosciowe]"></A><PRE>
+          <FONT SIZE="2"><I>/* [POS_EksportRezerwacjeIlosciowe] */</I><BR>
+CREATE PROCEDURE [CDN].[POS_EksportRezerwacjeIlosciowe]
+	@rowVersion bigint,
+	@CompanyUnitId int
+AS
+BEGIN
+SET NOCOUNT ON;	
+	declare @LastMod int = 0,
+			@PointOfSaleId int = (select top 1 psa_id from cdn.PicoStanowiska where PSa_PcKID=@CompanyUnitId)
+
+	SELECT @LastMod AS [@RowVersion]
+		,(		
+		/*select	TwrGidNumer as [@ProductId],
+				MAG_GIDNumer as [@WarehouseId],
+				sum(Rez_Ilosc - Rez_Zrealizowano - Rez_IloscMag) as [@QuantitativeReservations]
+			FROM  CDN.Magazyny
+			join CDN.Rezerwacje on Rez_MagNumer = MAG_GIDNumer
+			join CDN.POS_TwrDoEksportu(@PointOfSaleId,0) on TwrGidNumer = Rez_TwrNumer
+			where 
+				MaG_PcKId = @CompanyUnitId
+				AND Rez_typ=1 
+				AND Rez_gidTyp=2576 
+				AND Rez_DstNumer=0
+			group by TwrGidNumer,MAG_GIDNumer*/
+		select 1 WHERE 1=0
+		for xml path('Entry'), type)
+	for xml path('QuantitativeReservations')
+	SET NOCOUNT OFF;	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[POS_EksportStanyMagazynowe]"></A><PRE>
+          <FONT SIZE="2"><I>/* [POS_EksportStanyMagazynowe] */</I><BR>
+CREATE PROCEDURE [CDN].[POS_EksportStanyMagazynowe]
+	@rowVersion bigint,
+	@CompanyUnitId int
+AS
+BEGIN
+SET NOCOUNT ON;	
+	declare @LastMod int = 0,
+		@PointOfSaleId int = (select top 1 psa_id from cdn.PicoStanowiska where PSa_PcKID=@CompanyUnitId),
+		@FrsID int  = (select PcK_CentrumID from cdn.PicoKonfig where PcK_PicoID=@CompanyUnitId)
+
+	
+	DECLARE @TPA TABLE(ID INT,WarehouseId INT,Quantity DECIMAL(16,4),QuantityReserved DECIMAL(16,4), PRODUCTID INT,DataW int,Cecha varchar(256),Ean varchar(256),CCKNumer int, DstNumer int);
+		
+	WITH Partie_CTE (TPAId,TPaTwrNumer,TPaDataW,TPaCecha,TPaEan,TpACCKNumer)
+	AS 
+	(
+		SELECT MIN(TPa_Id) as TPAId,TPa_TwrNumer,TPa_DataW,TPa_Cecha,TPa_Ean,TpA_CCKNumer
+		FROM cdn.TwrPartie 
+		JOIN CDN.POS_TwrDoEksportu(@PointOfSaleId,0) ON TPa_TwrNumer = TwrGidNumer 	
+		GROUP BY TPa_TwrNumer,TPa_DataW,TPa_Cecha,TPa_Ean,TpA_CCKNumer
+	)
+	INSERT INTO @TPA SELECT TPAId,TwZ_MagNumer,0,0,TPa_TwrNumer,TPa_DataW,TPa_Cecha,TPa_Ean,TpA_CCKNumer,Dst_GIDNumer
+	FROM Partie_CTE 
+	JOIN CDN.TwrPartie ON TPa_TwrNumer = TPaTwrNumer AND TPa_DataW = TPaDataW AND TPa_Cecha = TPaCecha AND TPa_Ean = TPaEan AND TpA_CCKNumer = TpACCKNumer
+	JOIN CDN.Dostawy ON Dst_TpaId=TPa_Id
+	JOIN CDN.TwrZasoby ON TwZ_DstNumer = DsT_GIDNumer
+	JOIN CDN.Magazyny ON MAG_GIDNumer = TwZ_MagNumer
+	WHERE MAG_PcKId = @CompanyUnitId
+
+	update T set Quantity=case when MaG_WMS = 0 AND [@Handlowa] &gt; [@Magazynowa] AND Twr_Bon = 0 THEN [@Magazynowa] ELSE [@Handlowa] END,QuantityReserved=[@Reservations]
+	FROM @TPA T
+	join (
+		select	
+			MIN(ID) as [@LotId],
+			sum(cast(SUBSTRING(ilosc,1,CHARINDEX(':',ilosc,1)-1) as decimal(15,4))) as [@Handlowa],
+			sum(cast(SUBSTRING(ilosc,CHARINDEX(':',ilosc,1)+1,CHARINDEX(':',SUBSTRING(ilosc,CHARINDEX(':',ilosc,1)+1,len(ilosc)),1)-1) as decimal(15,4))) as [@Magazynowa],
+			sum(cast(SUBSTRING(ilosc,charindex(':', ilosc,charindex(':', ilosc,1)+1) + 1,charindex(':', ilosc,charindex(':', ilosc,charindex(':', ilosc,1)+1)+1) - charindex(':', ilosc,charindex(':', ilosc,1)+1) - 1) as decimal(15,4))) as [@Reservations],
+			MAG_GIDNumer,
+			MaG_WMS,
+			Twr_Bon,
+			DstNumer AS Dst_GIDNumer
+		from 
+		(
+			select CDN.DokSumaStanowTowaru(Twr_GIDTyp,Twr_GIDFirma,Twr_GIDNumer,Twr_Typ,-@FrsID,1,1,Mag_GidFirma,Mag_GidNumer,1,1,DstNumer,DateDiff(d,convert(datetime,'28-12-1800',105),getdate()),0,1,@FrsID,0,0,0,0,0,0,-1)  as  ilosc,*
+				from @TPA STPA										
+				JOIN cdn.Magazyny on MAG_GIDNumer = WarehouseId
+				JOIN CDN.TwrKarty ON Twr_GIDNumer = PRODUCTID
+		) a		
+		group by ID,DstNumer,MAG_GIDNumer,Mag_WMS,Twr_Bon
+	) b on [@LotId] = ID AND WarehouseId = MAG_GIDNumer	AND DstNumer = Dst_GIDNumer
+	
+
+	SELECT @LastMod AS [@RowVersion]
+		,(
+		select	
+			ID as [@LotId],
+			WarehouseId as [@WarehouseId],
+			SUM(Quantity) as [@Quantity],
+			SUM(QuantityReserved) as [@Reservations],
+			0 as [@Shortages],
+			PRODUCTID as [@ProductId],
+			0 as [@PendingQuantityToRelease]
+		from @TPA
+		GROUP BY ID,WarehouseId,PRODUCTID
+		for xml path('Entry'), type)
+	for xml path('StockLevels')
+
+	SET NOCOUNT OFF;	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

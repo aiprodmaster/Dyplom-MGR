@@ -1,0 +1,108 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="KsiVATZD_ImportTRP"></A><PRE>
+          <FONT SIZE="2"><I>/* KsiVATZD_ImportTRP */</I><BR>
+CREATE PROCEDURE CDN.KsiVATZD_ImportTRP
+@Tryb bit = 0, --0 - wierzyciel, 1 - dluznik
+@DeklOkres bit, --0 - miesieczna, 1 - kwartalna
+@DeklRok smallint,
+@DeklMiesiac tinyint,
+@DeklKwartal tinyint,
+@NaDzien int,
+@VATZDGIDNumer int = 0, --GIDNumer deklaracji VATZD
+@VATZDGIDLp smallint = 0, --GIDLp pozycji deklaracji VATZD
+@TrPTyp smallint = 0, --GIDTyp platnosci w przypadku importu pojedynczego
+@TrPNumer int = 0, --GIDNumer platnosci w przypadku importu pojedynczego
+@TrPLp smallint = 0 --GIDLp platnosci w przypadku importu pojedynczego
+AS
+
+declare @FltTraNag nvarchar(max)
+declare @FltSadNag nvarchar(max)
+declare @FltOgolny nvarchar(max)
+declare @DniZwlokiOd smallint
+declare @DataOd int
+declare @DataDo int
+
+
+set @DniZwlokiOd = 150
+set @DataDo = @NaDzien
+set @DataOd = datediff(dd,'18001228',cdn.ymd(@DeklRok-2,1,1))
+
+
+	if @Tryb = 0
+	begin
+		set @FltTraNag = 'TRN_VatTyp=2 and (TRN_GIDTyp &amp; 8 = 0 or (TRN_GIDTyp &amp; 8 &lt;&gt; 0 and TRN_VatR&gt;=0))' --bez korekt in minus, dla korekty danych moga byc rowne 0
+		set @FltSadNag = '1=2'--'SAN_VatTyp=2 and SaN_GIDTyp &amp; 8 = 0'
+		set @FltOgolny = 'TRV_ExpoNorm in (1,20) and TSV_Rozliczac=1 and TRV_FlagaVat&lt;&gt;2'
+	end
+	else 
+	begin
+		set @FltTraNag = 'TRN_VatTyp=1 and (TRN_GIDTyp &amp; 8 = 0 or (TRN_GIDTyp &amp; 8 &lt;&gt; 0 and TRN_VatP&gt;0))'
+		set @FltSadNag = '1=2'--'SAN_VatTyp=1 and SaN_GIDTyp &amp; 8 = 0'
+		set @FltOgolny = 'TRV_ExpoNorm=1 and TSV_Rozliczac=1'
+	end
+
+
+	set @FltOgolny = @FltOgolny + ' and TrP_Termin &gt;= 77286 and TrN_Data2 between ' + convert(varchar,@DataOd) + ' and ' + convert(varchar,@DataDo) +
+					' and ((TTV_KorektaDanych=1 and TRV_NettoP&gt;=0 and TRV_NettoR&gt;=0 and TRV_VatP&gt;=0 and TRV_VatR&gt;=0) or (TTV_KorektaDanych=0)) and TSV_MetodaKasowa=0'
+	
+		
+	declare @TerminPlatnosciLiczbaDni tinyint=1
+	if @DeklRok &lt; 2019
+		set @TerminPlatnosciLiczbaDni = 2
+	else if @DeklRok = 2019 and ((@DeklOkres = 0 and @DeklMiesiac in (1,2,3)) or (@DeklOkres = 1 and @DeklKwartal=1))
+		set @TerminPlatnosciLiczbaDni = 3
+	else
+		set @TerminPlatnosciLiczbaDni = 1
+
+
+	if @TrPTyp &lt;&gt; 0
+	begin
+		set @FltOgolny = @FltOgolny + ' and trp_GIDTyp=' + convert(varchar, @TRPTyp) + ' and trp_GIDNumer=' + convert(varchar, @TrPNumer) + ' and TRP_GIDLp=' + convert(varchar, @TrPLp)	
+		set @TerminPlatnosciLiczbaDni = 3 -- w przypadku wskazania dokumentu, liczbe dni bedzie bral z listy RejVat
+	end
+
+
+	exec cdn.KsiListaRejestrVAT 
+		@SortOrder = 1,
+		@Platnosc = 1,
+		@PlatnoscRodzaj = 1, --nierozliczone
+		@PlatnoscPrezentacjaCtl = 1,
+		@PlatnoscPrezentacja = 0, --wg platnosci
+		@PlatnoscPrzeterminowaneCtl = 1,
+		@PlatnoscPrzeterminowane = 1, --przeterminowane
+		@PlatnoscPrzeterminowaneWg = 1, --przeterminowane wg (0 - dni zwloki, 1 - ulga za zle dlugi)
+		@DniZwlokiOd = @DniZwlokiOd,
+		@DniZwlokiDo = 0,	
+		@TerminPlatnosciLiczbaDni = @TerminPlatnosciLiczbaDni, 	
+		@TerminPlatnosciWg = @DeklOkres,--termin platnosci wg (0 - miesiaca, 1 - kwartalu)
+		@TerminPlatnosciRok = @DeklRok,
+		@TerminPlatnosciMiesiac = @DeklMiesiac,
+		@TerminPlatnosciKwartal = @DeklKwartal,
+		@DataRozliczenia = @NaDzien,
+		@PdmNazwa = 0,
+		@DokBezVat = 0,
+		@PodzialTRV = 1, --z podzialem na TRV
+		@VATZDGIDNumerCtl = 1,
+		@VATZDGIDNumer = @VATZDGIDNumer,
+		@VATZDGIDLp = @VATZDGIDLp,
+		@FltTraNag = @FltTraNag,
+		@FltSadNag = @FltSadNag,
+		@FltOgolny = @FltOgolny,
+		@FltStrony = ''	
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

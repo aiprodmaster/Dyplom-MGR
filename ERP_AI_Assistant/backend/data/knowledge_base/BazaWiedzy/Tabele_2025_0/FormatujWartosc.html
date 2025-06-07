@@ -1,0 +1,148 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="FormatujWartosc"></A><PRE>
+          <FONT SIZE="2"><I>/* FormatujWartosc */</I><BR>
+CREATE FUNCTION CDN.FormatujWartosc (@Wartosc VARCHAR(255),@Format Varchar(10))
+RETURNS varchar(255)
+as
+begin
+	declare @Wynik VARCHAR(255)
+
+	IF CHARINDEX('@N',@Format,1) &gt; 0
+	BEGIN
+		DECLARE @SeparatorMD VARCHAR(1)
+		DECLARE @SeparatorCyfr VARCHAR(1)
+		DECLARE @WypelnijZerami BIT
+
+		SELECT @SeparatorMD = CASE WHEN Kon_Wartosc = 1 THEN '.' ELSE ',' END FROM CDN.Konfig WHERE Kon_Numer = 2138
+		SELECT @SeparatorCyfr = CASE WHEN Kon_Wartosc = 1 THEN '.' WHEN Kon_Wartosc = 2 THEN ',' WHEN Kon_Wartosc = 3 THEN ' ' ELSE '' END FROM CDN.Konfig WHERE Kon_Numer = 2139
+
+		DECLARE @PozLStart TINYINT
+		DECLARE @PozLEnd TINYINT
+		DECLARE @FormatL VARCHAR(20)
+		DECLARE @CzyUjemna TINYINT = 0
+
+		SET @PozLStart = PATINDEX('%[0-9]%',@Format)
+		SET @PozLEnd = LEN(@Format)- PATINDEX('%[0-9]%',reverse(@Format)) + 1
+
+		IF SUBSTRING(LTRIM(@Format),CHARINDEX('@N',LTRIM(@Format),1) + 2, @PozLStart - 3) = '-'
+			SET @CzyUjemna = 1
+
+		SET @FormatL = SUBSTRING(@Format,@PozLStart,@PozLEnd-@PozLSTart+1)
+
+		DECLARE @Laczna TINYINT
+		DECLARE @Dziesietna TINYINT
+		DECLARE @SeparatorPos TINYINT
+		
+		SET @SeparatorPos = CHARINDEX('.',@FormatL,1)
+		IF @SeparatorPos = 0
+		BEGIN
+			SET @Laczna = @FormatL
+			SET @Dziesietna = 0
+		END
+		ELSE
+		BEGIN
+			SET @Laczna = SUBSTRING(@FormatL,1,@SeparatorPos-1)
+			SET @Dziesietna = SUBSTRING(@FormatL,@SeparatorPos+1,LEN(@FormatL))
+		END
+		IF SUBSTRING(@FormatL, 1, 1) = '0'
+		BEGIN
+			SET @WypelnijZerami = 1
+		END
+
+		--SET @Calkowita = @Calkowita - @Dziesietna - CASE WHEN @Dziesietna &gt; 0 THEN 1 ELSE 0 END - 1
+		IF @CzyUjemna &gt; 0
+			SET @Laczna = @Laczna - 1
+
+		DECLARE @Wzor VARCHAR(20)
+		SET @Wzor = '#,0.'+right('00000000',@Dziesietna)
+		
+		DECLARE @CzyPodanaWartJestUjemna TINYINT = 0
+		DECLARE @WartoscDec DECIMAL(30,8) = TRY_PARSE(@Wartosc AS DECIMAL(30,8))
+		SET @WartoscDec = CASE WHEN @CzyUjemna = 0 THEN ABS(@WartoscDec) ELSE @WartoscDec END
+
+		IF @WartoscDec &lt; 0
+			SET @CzyPodanaWartJestUjemna = 1
+			
+		-- jezeli format to token z wiadacymi zerami, to wypelnij zera i zwroc od razu liczbe
+		IF @WypelnijZerami = 1
+		BEGIN
+			return REPLACE(
+				SUBSTRING(
+					STR(@WartoscDec), 
+					CASE WHEN LEN(STR(@WartoscDec)) - @Laczna &lt; 1 THEN 1 ELSE LEN(STR(@WartoscDec)) - (@Laczna-1) END, -- MIN(1, LEN(STR(@WartoscDec)) - @Laczna), 
+					CASE WHEN LEN(STR(@wartoscDec)) &lt; @Laczna THEN LEN(STR(@wartoscDec)) ELSE @Laczna END  -- MIN(LEN(STR(@wartoscDec)), @Laczna)
+				),
+				' ','0'
+			)
+		END
+		
+		SET @Wartosc = FORMAT(ABS(@WartoscDec),@Wzor)
+
+		--SET @Wynik = REPLACE(REPLACE(REPLACE(@Wartosc,',','+'),'.',@SeparatorMD),'+',@SeparatorCyfr)
+		SET @Wartosc = REPLACE(REPLACE(@Wartosc,',','+'),'.',@SeparatorMD)
+		
+		-- znajdz pozycje dla (@Laczna) liczb (pomin biale znaki w @Wartosc)
+		DECLARE @LacznaZeZnakami TINYINT, @IndeksWartosci TINYINT
+		SET @IndeksWartosci = 0
+		SET @LacznaZeZnakami = 0
+		WHILE @IndeksWartosci &lt; LEN(@Wartosc)
+		BEGIN
+			IF SUBSTRING(@Wartosc, LEN(@Wartosc) - @IndeksWartosci, 1) LIKE '[0-9]' 
+				SET @LacznaZeZnakami += 1
+			SET @IndeksWartosci += 1
+			IF @LacznaZeZnakami &gt;= @Laczna
+				BREAK
+		END
+		SET @Laczna = @IndeksWartosci
+
+		IF SUBSTRING(RIGHT(@Wartosc,@Laczna),1,1) = '+'
+		BEGIN
+			SET @Wynik = CASE WHEN @CzyUjemna = 1 AND @CzyPodanaWartJestUjemna = 1 THEN '-' ELSE '' END +
+				SUBSTRING(REVERSE(@Wartosc),@Laczna + 1,1) +
+				SUBSTRING(RIGHT(REPLACE(@Wartosc,'+',@SeparatorCyfr),@Laczna),2,LEN(@Wartosc))
+		END
+		ELSE		
+			SET @Wynik = CASE WHEN @CzyUjemna = 1 AND @CzyPodanaWartJestUjemna = 1 THEN '-' ELSE '' END +
+			RIGHT(RTRIM(LTRIM(REPLACE(@Wartosc,'+',@SeparatorCyfr))),@Laczna)
+	END
+	ELSE
+	BEGIN
+		IF CHARINDEX('@d',@Format,1) &gt; 0
+		BEGIN
+			DECLARE @WartoscLiczb INT
+
+			SET @WartoscLiczb = TRY_PARSE(@Wartosc AS int)
+			IF @WartoscLiczb IS NOT NULL		
+				SET @Wynik = CASE WHEN CHARINDEX('B',@Format,1) &gt; 0 AND @WartoscLiczb = 0 THEN '' ELSE FORMAT(DATEADD( dd, @WartoscLiczb,'18001228'),'yyyy-MM-dd','en-US') END
+			ELSE
+				SET @Wynik = ''
+		END
+		ELSE
+		BEGIN
+			DECLARE @IloscZnakow INT
+			SET @IloscZnakow = TRY_PARSE(SUBSTRING(@Format,CHARINDEX('s',@Format,1)+1,LEN(@Format)) AS INT)
+			IF @IloscZnakow &lt; 255
+				SET @Wynik = SUBSTRING(@Wartosc,1,@IloscZnakow)
+			ELSE
+				SET @Wynik = @Wartosc		
+		END
+	END
+
+	RETURN @Wynik
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

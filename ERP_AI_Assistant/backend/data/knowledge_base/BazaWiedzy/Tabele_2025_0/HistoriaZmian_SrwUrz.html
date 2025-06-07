@@ -1,0 +1,546 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="HistoriaZmianRejestruj_SrwUrzadzenia"></A><PRE>
+          <FONT SIZE="2"><I>/* HistoriaZmianRejestruj_SrwUrzadzenia */</I><BR>
+CREATE PROCEDURE cdn.HistoriaZmianRejestruj_SrwUrzadzenia (
+	 @SrUId NVARCHAR(50)
+	,@ObiTyp NVARCHAR(50)
+	,@ObiNumer NVARCHAR(50)
+	,@ObiNazwa NVARCHAR(350)	
+	,@Tabela NVARCHAR(30)
+	,@WarunekInsert NVARCHAR(1000)
+	,@WarunekUpdate NVARCHAR(1000)
+	,@WarunekDelete NVARCHAR(1000)
+	,@WarunekWycofanieInsert NVARCHAR(1000)
+	,@ColumnsUpdated VARBINARY(512)
+	)
+AS
+BEGIN
+	DECLARE @OpeIdent NVARCHAR(50)
+	DECLARE @sSQL NVARCHAR(max)
+
+	SET @sSQL = ''
+
+	DECLARE @TypZmiany TINYINT
+	DECLARE @DataDB INT
+	DECLARE @DataDBStr VARCHAR(30)
+
+	SET @DataDB = datediff(s, convert(DATETIME, '1990-01-01', 120), getdate())
+	SET @DataDBStr = CAST(@DataDB AS VARCHAR(30))
+
+	SELECT @OpeIdent = isnull(CDN.PolaczenieInfo(4), '') 
+
+	IF @OpeIdent = ''
+	BEGIN
+		SELECT TOP 1 @OpeIdent = SES_OpeIdent
+		FROM cdn.Sesje WITH (NOLOCK)
+		WHERE (SES_ClarionSPID = @@SPID OR SES_ADOSPID = @@SPID) AND SES_Aktywna = 0
+		ORDER BY SES_Start DESC
+
+		IF @@ROWCOUNT = 0
+		BEGIN
+			SET @OpeIdent = 'SQL:' + left(SYSTEM_USER, 46)
+		END
+	END
+
+	DECLARE @WarunekStaraWartosc NVARCHAR(max)
+	DECLARE @WarunekNowaWartosc NVARCHAR(max)
+	DECLARE @WarunekStaraWartoscSrU NVARCHAR(max)
+	DECLARE @WarunekNowaWartoscSrU NVARCHAR(max)
+	DECLARE @UpdateJakoInsert TINYINT
+
+	DECLARE @CASEObiNazwa NVARCHAR(max)
+
+	SET @UpdateJakoInsert = 0
+
+	DECLARE @ExistInserted TINYINT
+	DECLARE @ExistDeleted TINYINT
+
+	IF EXISTS (
+			SELECT 1
+			FROM #inserted
+			)
+		SET @ExistInserted = 1
+	ELSE
+		SET @ExistInserted = 0
+
+	IF EXISTS (
+			SELECT 1
+			FROM #deleted
+			)
+		SET @ExistDeleted = 1
+	ELSE
+		SET @ExistDeleted = 0
+
+	IF @ExistDeleted = 0 AND @ExistInserted = 0
+		RETURN
+
+	IF @Tabela = 'SrwUrzadzenia'
+		SET @CASEObiNazwa =
+			'COALESCE(CASE 
+				WHEN k.NazwaKolumny = ''SrU_ObiTyp'' OR k.NazwaKolumny = ''SrU_ObiNumer'' THEN 
+					CASE i.SrU_ObiTyp 
+						WHEN 16 THEN (SELECT Twr_Kod FROM CDN.TwrKarty WHERE Twr_GIDNumer=i.SrU_ObiNumer AND Twr_GIDTyp=i.SrU_ObiTyp) 
+						WHEN 342 THEN (SELECT SaM_NrRej FROM CDN.Samochody WHERE SaM_Id=i.SrU_ObiNumer)  
+						WHEN 368 THEN (SELECT Srt_Akronim FROM CDN.SrtKarty WHERE Srt_GIDNumer=i.SrU_ObiNumer AND Srt_GIDTyp=i.SrU_ObiTyp) 
+						WHEN 14337 THEN (SELECT POB_Kod FROM CDN.ProdObiekty WHERE POB_Id=i.SrU_ObiNumer) 
+						ELSE CASE d.SrU_ObiTyp 
+							WHEN 16 THEN (SELECT Twr_Kod FROM CDN.TwrKarty WHERE Twr_GIDNumer=d.SrU_ObiNumer AND Twr_GIDTyp=d.SrU_ObiTyp) 
+							WHEN 342 THEN (SELECT SaM_NrRej FROM CDN.Samochody WHERE SaM_Id=d.SrU_ObiNumer)  
+							WHEN 368 THEN (SELECT Srt_Akronim FROM CDN.SrtKarty WHERE Srt_GIDNumer=d.SrU_ObiNumer AND Srt_GIDTyp=d.SrU_ObiTyp) 
+							WHEN 14337 THEN (SELECT POB_Kod FROM CDN.ProdObiekty WHERE POB_Id=d.SrU_ObiNumer) 
+							ELSE ''''
+						END
+					END
+				WHEN k.NazwaKolumny = ''SrU_DokTyp'' OR k.NazwaKolumny = ''SrU_DokNumer'' OR k.NazwaKolumny = ''SrU_DokLp'' THEN
+					CASE WHEN i.SrU_DokTyp&gt;0 
+						THEN (SELECT CDN.NumerDokumentuZ(TrN_GidTyp,TrN_SpiTyp,TrN_TrNTyp,TrN_TrNNumer,TrN_TrNRok,TrN_TrNSeria,TrN_TrNMiesiac,TrN_ZwrTyp,TrN_ZwrNumer,TrN_WMS) FROM CDN.TraNag WHERE TrN_GIDNumer=i.SrU_DokNumer AND TrN_GidTyp=i.SrU_DokTyp)
+						ELSE (SELECT CDN.NumerDokumentuZ(TrN_GidTyp,TrN_SpiTyp,TrN_TrNTyp,TrN_TrNNumer,TrN_TrNRok,TrN_TrNSeria,TrN_TrNMiesiac,TrN_ZwrTyp,TrN_ZwrNumer,TrN_WMS) FROM CDN.TraNag WHERE TrN_GIDNumer=d.SrU_DokNumer AND TrN_GidTyp=d.SrU_DokTyp)
+					END
+				WHEN k.NazwaKolumny = ''SrU_SURId'' THEN
+					(SELECT SUR_Kod FROM CDN.SrwUrzRodzaje WHERE SUR_Id=i.SrU_SURId)  
+				WHEN k.NazwaKolumny = ''SrU_Nadrzedny'' THEN
+					CASE WHEN i.SrU_Nadrzedny&gt;0 
+						THEN (SELECT SrU_Kod FROM CDN.SrwUrzadzenia WHERE SrU_Id=i.SrU_Nadrzedny) 
+						ELSE (SELECT SrU_Kod FROM CDN.SrwUrzadzenia WHERE SrU_Id=d.SrU_Nadrzedny) 
+					END
+				WHEN k.NazwaKolumny = ''SrU_JednostkaPrzebiegu'' THEN
+					(SELECT Slw_WartoscS FROM CDN.Slowniki WHERE Slw_Id=i.SrU_JednostkaPrzebiegu) 
+				ELSE
+					''''
+			END, '''')'
+		ELSE
+			SET @CASEObiNazwa = ''
+
+	IF @ExistDeleted = 0
+	BEGIN --insert glownej
+		DECLARE @NowaWartosc NVARCHAR(max)
+		IF @Tabela = 'SrwUrzParam' 
+			SET @NowaWartosc = '(CASE SUD_SlwTyp '+
+									' WHEN 1 THEN (select COALESCE((SELECT CCh_Cecha FROM CDN.Cechy WHERE CCh_GIDNumer=SUD_SlwNumer AND CCh_GIDLp=SUP_ParWartoscL), (select COALESCE(SUP_ParWartoscS,''''))))' +
+									' WHEN 2 THEN (SELECT Slw_WartoscS FROM CDN.Slowniki WHERE Slw_Id=SUP_ParWartoscL) ' +
+								' ELSE '+
+									' CASE WHEN SUP_ParWartoscL&lt;&gt;0 THEN CAST(SUP_ParWartoscL as varchar(1023)) WHEN SUP_ParWartoscDec&lt;&gt;0 THEN CAST(SUP_ParWartoscDec as varchar(1023))  '+
+									' ELSE'+
+										' CASE SUBSTRING(SUD_Format,2,1) '+
+											' WHEN ''n'' THEN '+
+												' case substring(SUD_Format,(select max(A.sep) from (select charindex(''.'',SUD_Format) as sep union select charindex(''`'',SUD_Format)) A)+1,1) '+
+													' when ''0'' THEN CAST(SUP_ParWartoscL as varchar(1023)) '+
+													' else CAST(SUP_ParWartoscDec as varchar(1023)) '+
+												' end '+
+											' ELSE SUP_ParWartoscS '+
+										' END '+
+									' END '+
+								' END )'
+		ELSE  
+			SET @NowaWartosc = ''''''
+
+		SET @TypZmiany = 0
+		SET @sSQL = 'INSERT INTO CDN.SrwSruHistoriaZmian (SSHZ_ObiTyp, SSHZ_ObiNumer,SSHZ_TypZmiany, SSHZ_CzasZmiany, SSHZ_OpeIdent, SSHZ_ObiNazwa, SSHZ_Kolumna, SSHZ_StaraWartosc, SSHZ_NowaWartosc, SSHZ_SrUId)' + 
+				    ' SELECT ' + @ObiTyp + ', i.' + @ObiNumer + ',@TypZmiany,' + @DataDBStr + ', @OpeIdent, ' + COALESCE(@ObiNazwa, '''''') + ', '''', '''', '+@NowaWartosc+',' + 'i.' + @SrUId + ' FROM #inserted i'
+
+		IF @Tabela = 'SrwUrzParam' 
+			SET @sSQL = @sSQL + ' JOIN CDN.SrwUrzParDef ON SUP_SUDId=SUD_Id' 
+
+		SET @UpdateJakoInsert = 1
+	END
+	ELSE
+	BEGIN
+		SET @sSQL = 'SELECT @UpdateJakoInsert = CASE WHEN EXISTS(SELECT 1 FROM #inserted i JOIN #deleted d ON ' + @WarunekUpdate + ' WHERE ' + @WarunekInsert + ') THEN 1 ELSE 0 END'
+
+		EXEC sp_executeSQL @sSQL
+			,N'@UpdateJakoInsert tinyint output'
+			,@UpdateJakoInsert = @UpdateJakoInsert OUTPUT
+
+		IF @UpdateJakoInsert &gt; 0
+		BEGIN
+			SET @TypZmiany = 0
+			SET @sSQL = 'INSERT INTO CDN.SrwSruHistoriaZmian (SSHZ_ObiTyp, SSHZ_ObiNumer,SSHZ_TypZmiany, SSHZ_CzasZmiany, SSHZ_OpeIdent, SSHZ_ObiNazwa, SSHZ_Kolumna, SSHZ_StaraWartosc, SSHZ_NowaWartosc, SSHZ_SrUId)' 
+						+ ' SELECT ' + @ObiTyp + ', i.' + @ObiNumer + ',@TypZmiany,' + @DataDBStr + ',@OpeIdent, ' + COALESCE(@ObiNazwa, '''''') + ', '''', '''', '''',' + 'i.' + @SrUId + ' FROM #inserted i'
+	
+		END
+		ELSE --update glownej/delete glownej
+		BEGIN
+			SET @UpdateJakoInsert = 0
+			SET @sSQL = ''
+		END
+	END
+
+	IF @ExistInserted = 0
+	BEGIN --delete glownej/wycofanie z insert glownej
+		DECLARE @DeleteJakoWycofanieP TINYINT
+
+		SET @DeleteJakoWycofanieP = 0
+
+		DECLARE @ParmDefinition NVARCHAR(500);
+
+		SET @sSQL = 'SELECT @DeleteJakoWycofanie = CASE WHEN EXISTS(SELECT 1 FROM #deleted d WHERE ' + @WarunekWycofanieInsert + ') THEN 1 ELSE 0 END'
+		SET @ParmDefinition = N'@DeleteJakoWycofanie tinyint output';
+
+		EXEC sp_executeSQL @sSQL
+			,@ParmDefinition
+			,@DeleteJakoWycofanie = @DeleteJakoWycofanieP OUTPUT
+
+		IF @DeleteJakoWycofanieP = 0
+		BEGIN
+			SET @TypZmiany = 2
+			SET @sSQL = 'INSERT INTO CDN.SrwSruHistoriaZmian (
+				SSHZ_ObiTyp, SSHZ_ObiNumer,SSHZ_TypZmiany, SSHZ_CzasZmiany, SSHZ_OpeIdent, SSHZ_ObiNazwa, SSHZ_Kolumna, SSHZ_StaraWartosc, SSHZ_NowaWartosc, SSHZ_SrUId)' + ' SELECT ' + @ObiTyp + ', d.' + @ObiNumer + ', @TypZmiany, @DataDB, @OpeIdent,(' + coalesce(@ObiNazwa, '''''') + '), '''', '''','''', d.' + @SrUId + ' FROM #deleted d WHERE ' + @WarunekDelete
+		END
+		ELSE
+		BEGIN
+			SET @sSQL = 'DELETE FROM cdn.SrwSruHistoriaZmian WHERE EXISTS(SELECT 1 FROM #deleted d WHERE ' + @ObiTyp + ' = SSHZ_ObiTyp AND d.' + @ObiNumer + ' = SSHZ_ObiNumer AND ' + @WarunekWycofanieInsert + ')'
+		END
+	END
+	ELSE IF @UpdateJakoInsert = 0 AND @ExistDeleted = 1
+	BEGIN --update podleglej/glownej
+		SET @WarunekInsert = '1=1'
+
+		SELECT colorder AS Lp
+			,b.name AS NazwaKolumny
+		INTO #Kolumny1
+		FROM syscolumns b WITH (NOLOCK)
+		JOIN sysobjects a WITH (NOLOCK) ON a.id = b.id
+		WHERE a.xtype = 'U' AND a.name = @Tabela AND sys.fn_IsBitSetInBitmask(@ColumnsUpdated, b.colid) &lt;&gt; 0
+
+		IF EXISTS (
+				SELECT 1
+				FROM #deleted
+				)
+			SET @TypZmiany = 1
+		ELSE
+			SET @TypZmiany = 0
+
+		IF @Tabela = 'SrwUrzadzenia'
+			BEGIN
+				SELECT *
+				INTO #Kolumny2
+				FROM #Kolumny1
+				WHERE NazwaKolumny IN ('SrU_ObiTyp', 'SrU_ObiNumer', 'SrU_DokTyp', 'SrU_DokNumer', 'SrU_DokLp')
+
+				DELETE
+				FROM #Kolumny1
+				WHERE NazwaKolumny IN ('SrU_ObiTyp', 'SrU_ObiNumer', 'SrU_DokTyp', 'SrU_DokNumer', 'SrU_DokLp', 'SrU_ZewnetrznySys', 'SrU_ZewnetrznyID')
+			END
+		ELSE IF (@Tabela = 'SrwUrzParam') AND (@TypZmiany = 1)
+		BEGIN
+			DELETE
+			FROM #Kolumny1
+			WHERE NazwaKolumny IN ('SUP_ParWartoscL')
+			AND EXISTS(SELECT * FROM #Kolumny1 WHERE NazwaKolumny IN ('SUP_ParWartoscS'))
+		END
+
+		SET @WarunekStaraWartosc = ''
+		SET @WarunekNowaWartosc = ''
+
+		IF EXISTS (
+				SELECT *
+				FROM #Kolumny1
+				)
+		BEGIN
+			SELECT @WarunekStaraWartosc = @WarunekStaraWartosc + ' WHEN k.NazwaKolumny = ''' + NazwaKolumny + ''' THEN convert(varchar(1023),d.' + NazwaKolumny + ')'
+				,@WarunekNowaWartosc = @WarunekNowaWartosc + ' WHEN k.NazwaKolumny = ''' + NazwaKolumny + ''' THEN convert(varchar(1023),i.' + NazwaKolumny + ')'
+			FROM #Kolumny1
+
+			SET @sSQL = 'INSERT INTO CDN.SrwSruHistoriaZmian 
+				(SSHZ_ObiTyp, SSHZ_ObiNumer,SSHZ_TypZmiany, SSHZ_CzasZmiany, SSHZ_OpeIdent, SSHZ_ObiNazwa, SSHZ_Kolumna, SSHZ_StaraWartosc, SSHZ_NowaWartosc, SSHZ_SrUId)' 
+				+ ' SELECT a1,a2,a3,a4,a5,a6,a7,staraWartosc,nowaWartosc,a8 FROM (' 
+				+ ' SELECT k.Lp a0, ' + @ObiTyp + ' a1, i.' + @ObiNumer + ' a2, @TypZmiany a3,' + @DataDBStr + ' a4, @OpeIdent a5, (' +  CASE WHEN @Tabela='SrwUrzadzenia' THEN @CASEObiNazwa ELSE coalesce(@ObiNazwa, '''''') END + ') a6, 
+							k.NazwaKolumny a7,i.' + @SrUId + ' a8,isnull(CASE ' + @WarunekStaraWartosc + ' END,'''') staraWartosc, isnull(CASE ' + @WarunekNowaWartosc + ' END,'''') nowaWartosc' + ' FROM #Kolumny1 k, #inserted i left join #deleted d on ' + @WarunekUpdate + ' WHERE ' + @WarunekInsert + ' ) a'
+			SET @sSQL = @sSQL + ' WHERE staraWartosc &lt;&gt; nowaWartosc order by a.a0 '
+		END
+
+		IF @Tabela='SrwUrzadzenia'
+		BEGIN
+			IF EXISTS (
+					SELECT *
+					FROM #Kolumny2
+					)
+			BEGIN
+				SET @WarunekStaraWartoscSrU = ''
+
+				SELECT @WarunekStaraWartoscSrU = @WarunekStaraWartoscSrU + ' WHEN k.NazwaKolumny = ''' + NazwaKolumny + ''' THEN convert(varchar(1023),d.' + NazwaKolumny + ')'
+				FROM #Kolumny2
+				WHERE NazwaKolumny &lt;&gt; 'SrU_ObiTyp' AND NazwaKolumny &lt;&gt; 'SrU_ObiNumer' AND NazwaKolumny &lt;&gt; 'SrU_DokTyp' AND NazwaKolumny &lt;&gt; 'SrU_DokNumer' AND NazwaKolumny &lt;&gt; 'SrU_DokLp'
+
+				IF EXISTS (
+						SELECT 1
+						FROM #Kolumny2
+						WHERE NazwaKolumny IN ('SrU_ObiTyp', 'SrU_ObiNumer')
+						)
+					SET @WarunekStaraWartoscSrU = @WarunekStaraWartoscSrU + ' WHEN k.NazwaKolumny = ''SrU_ObiTyp'' OR k.NazwaKolumny = ''SrU_ObiNumer'' THEN CONVERT(VARCHAR(500),d.SrU_ObiTyp)+'':''+CONVERT(VARCHAR(500),d.SrU_ObiNumer) '
+
+				IF EXISTS (
+						SELECT 1
+						FROM #Kolumny2
+						WHERE NazwaKolumny IN ('SrU_DokTyp', 'SrU_DokNumer', 'SrU_DokLp')
+						)
+					SET @WarunekStaraWartoscSrU = @WarunekStaraWartoscSrU + ' WHEN k.NazwaKolumny = ''SrU_DokTyp'' OR k.NazwaKolumny = ''SrU_DokNumer'' OR k.NazwaKolumny = ''SrU_DokLp'' THEN convert(varchar(255),d.SrU_DokTyp)+'':''+CONVERT(VARCHAR(255),d.SrU_DokNumer)+'':''+CONVERT(VARCHAR(255),d.SrU_DokLp) '
+
+
+				SET @WarunekNowaWartoscSrU = 'CASE WHEN k.NazwaKolumny = ''SrU_ObiTyp'' THEN convert(varchar(500),i.SrU_ObiTyp)+'':''+CONVERT(VARCHAR(500),i.SrU_ObiNumer) ' +
+											' WHEN k.NazwaKolumny = ''SrU_ObiNumer'' THEN '+
+												' CASE WHEN i.SrU_ObiTyp = d.SrU_ObiTyp THEN convert(varchar(500),i.SrU_ObiTyp)+'':''+CONVERT(VARCHAR(500),i.SrU_ObiNumer) ' +
+												' ELSE convert(varchar(500),d.SrU_ObiTyp)+'':''+CONVERT(VARCHAR(500),d.SrU_ObiNumer) END' + -- podmieniamy na starą wartość, aby ten rekord potem pominał (wartość będzie zapisana juz dla ObiTyp
+											' WHEN k.NazwaKolumny = ''SrU_DokTyp'' THEN convert(varchar(255),i.SrU_DokTyp)+'':''+CONVERT(VARCHAR(255),i.SrU_DokNumer)+'':''+CONVERT(VARCHAR(255),i.SrU_DokLp) ' +
+											' WHEN k.NazwaKolumny = ''SrU_DokNumer'' THEN '+
+												' CASE WHEN i.SrU_DokTyp = d.SrU_DokTyp THEN convert(varchar(255),i.SrU_DokTyp)+'':''+CONVERT(VARCHAR(255),i.SrU_DokNumer)+'':''+CONVERT(VARCHAR(255),i.SrU_DokLp) ' +
+												' ELSE convert(varchar(255),d.SrU_DokTyp)+'':''+CONVERT(VARCHAR(255),d.SrU_DokNumer)+'':''+CONVERT(VARCHAR(255),d.SrU_DokLp) END' +
+											' WHEN k.NazwaKolumny = ''SrU_DokLp'' THEN '+
+												' CASE WHEN i.SrU_DokTyp = d.SrU_DokTyp AND i.SrU_DokNumer = d.SrU_DokNumer THEN convert(varchar(255),i.SrU_DokTyp)+'':''+CONVERT(VARCHAR(255),i.SrU_DokNumer)+'':''+CONVERT(VARCHAR(255),i.SrU_DokLp) ' +
+												' ELSE convert(varchar(255),d.SrU_DokTyp)+'':''+CONVERT(VARCHAR(255),d.SrU_DokNumer)+'':''+CONVERT(VARCHAR(255),d.SrU_DokLp) END' +
+											' END'
+				SET @sSQL = CASE 
+						WHEN EXISTS (
+								SELECT *
+								FROM #Kolumny1
+								)
+							THEN @sSQL
+						ELSE ''
+						END + ISNULL('INSERT INTO CDN.SrwSruHistoriaZmian 
+									(SSHZ_ObiTyp, SSHZ_ObiNumer,SSHZ_TypZmiany, SSHZ_CzasZmiany, SSHZ_OpeIdent, SSHZ_ObiNazwa, SSHZ_Kolumna, SSHZ_StaraWartosc, SSHZ_NowaWartosc, SSHZ_SrUId)' 
+									+ ' SELECT a1,a2,a3,a4,a5,a6,a7,staraWartosc, nowaWartosc,a8 FROM (' + ' SELECT k.Lp a0, ' + @ObiTyp + ' a1, i.' + @ObiNumer + ' a2, @TypZmiany a3,' + @DataDBStr + ' a4, @OpeIdent a5, (' + coalesce(@CASEObiNazwa, '''''') + ') a6, '+
+									' CASE WHEN k.NazwaKolumny = ''SrU_ObiTyp'' OR k.NazwaKolumny = ''SrU_ObiNumer'' THEN ''SrU_Obi''' +
+									' WHEN k.NazwaKolumny = ''SrU_DokTyp'' OR k.NazwaKolumny = ''SrU_DokNumer'' OR k.NazwaKolumny = ''SrU_DokLp'' THEN ''SrU_Dok''' +
+									' ELSE k.NazwaKolumny END a7,i.' + @SrUId + ' a8,isnull(CASE ' + @WarunekStaraWartoscSrU + ' END,'''') staraWartosc, isnull(' + @WarunekNowaWartoscSrU + ','''') nowaWartosc ' 
+									+ ' FROM #Kolumny2 k,#inserted i left join #deleted d on ' + @WarunekUpdate + ' WHERE ' + @WarunekInsert + ' ) a WHERE staraWartosc &lt;&gt; nowaWartosc order by a.a0', '')
+			END
+		END
+	END
+
+	IF @sSQL &lt;&gt; ''
+		EXEC sp_executeSQL @sSQL
+			,N'@DataDB int, @OpeIdent nvarchar(50), @TypZmiany tinyint'
+			,@DataDB = @DataDB
+			,@OpeIdent = @OpeIdent
+			,@TypZmiany = @TypZmiany
+
+	IF @@ERROR &lt;&gt; 0
+	BEGIN
+		RAISERROR (
+				'Błąd zapisu do tabeli cdn.SrwSruHistoriaZmian'
+				,16
+				,1
+				)
+
+		ROLLBACK TRAN
+
+		RETURN
+	END
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="SrwUrzadzenia_HistoriaZmian"></A><PRE>
+          <FONT SIZE="2"><I>/* SrwUrzadzenia_HistoriaZmian */</I><BR>
+CREATE TRIGGER cdn.SrwUrzadzenia_HistoriaZmian ON CDN.SrwUrzadzenia
+AFTER UPDATE
+AS
+BEGIN
+	SET NOCOUNT ON;
+
+	IF NOT EXISTS(SELECT 1 FROM inserted) AND NOT EXISTS(SELECT 1 FROM deleted) 
+		RETURN
+
+	DECLARE @ObiNazwa NVARCHAR(350)
+	DECLARE @ColumnsUpdated VARBINARY(512)
+	SET @ColumnsUpdated = COLUMNS_UPDATED()
+
+	SELECT * INTO #inserted	FROM inserted
+	SELECT * INTO #deleted FROM deleted
+
+	EXEC CDN.HistoriaZmianRejestruj_SrwUrzadzenia 
+		@SrUId = 'SrU_Id'
+		,@ObiTyp = '4701'
+		,@ObiNumer = 'SrU_Id'
+		,@ObiNazwa = ''
+		,@Tabela = 'SrwUrzadzenia'
+		,@WarunekInsert = 'd.SrU_Id&lt;&gt;i.SrU_Id'
+		,@WarunekUpdate = 'i.SrU_Id=d.SrU_Id'
+		,@WarunekDelete = '1=1'
+		,@WarunekWycofanieInsert = '1=0'
+		,@ColumnsUpdated = @ColumnsUpdated
+
+	SET NOCOUNT OFF
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="SrwUrzWlasc_HistoriaZmian"></A><PRE>
+          <FONT SIZE="2"><I>/* SrwUrzWlasc_HistoriaZmian */</I><BR>
+CREATE TRIGGER cdn.SrwUrzWlasc_HistoriaZmian ON CDN.SrwUrzWlasc
+AFTER INSERT
+	,UPDATE
+	,DELETE
+AS
+BEGIN
+	SET NOCOUNT ON;
+
+	IF NOT EXISTS(SELECT 1 FROM inserted) AND NOT EXISTS(SELECT 1 FROM deleted) 
+		RETURN
+
+	DECLARE @ObiNazwa NVARCHAR(350)
+	DECLARE @ColumnsUpdated VARBINARY(512)
+	SET @ColumnsUpdated = COLUMNS_UPDATED()
+
+	IF EXISTS (
+			SELECT 1
+			FROM inserted
+			)
+		SET @ObiNazwa = '(SELECT Knt_Akronim FROM CDN.KntKarty WHERE Knt_GidNumer=i.SUW_WlaNumer AND Knt_GidTyp=i.SUW_WlaTyp)'
+	ELSE
+	BEGIN
+		IF NOT EXISTS (
+				SELECT 1
+				FROM deleted
+				JOIN cdn.SrwUrzadzenia ON SrU_Id = deleted.SUW_SrUId
+				)
+			RETURN
+
+		SET @ObiNazwa = '(SELECT Knt_Akronim FROM CDN.KntKarty WHERE Knt_GidNumer=d.SUW_WlaNumer AND Knt_GidTyp=d.SUW_WlaTyp)'
+	END
+
+	SELECT * INTO #inserted	FROM inserted
+	SELECT * INTO #deleted FROM deleted
+
+	EXEC CDN.HistoriaZmianRejestruj_SrwUrzadzenia 
+		@SrUId = 'SUW_SrUId'
+		,@ObiTyp = '32'
+		,@ObiNumer = 'SUW_WlaNumer'
+		,@ObiNazwa = @ObiNazwa
+		,@Tabela = 'SrwUrzWlasc'
+		,@WarunekInsert = 'd.SUW_SrUId&lt;&gt;i.SUW_SrUId'
+		,@WarunekUpdate = 'i.SUW_SrUId=d.SUW_SrUId'
+		,@WarunekDelete = '1=1'
+		,@WarunekWycofanieInsert = '1=0'
+		,@ColumnsUpdated = @ColumnsUpdated
+
+
+	SET NOCOUNT OFF
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="SrwUrzParam_HistoriaZmian"></A><PRE>
+          <FONT SIZE="2"><I>/* SrwUrzParam_HistoriaZmian */</I><BR>
+CREATE TRIGGER cdn.SrwUrzParam_HistoriaZmian ON CDN.SrwUrzParam
+AFTER INSERT
+	,UPDATE
+	,DELETE
+AS
+BEGIN
+
+	IF NOT EXISTS(SELECT 1 FROM inserted) AND NOT EXISTS(SELECT 1 FROM deleted) 
+		RETURN
+
+	IF NOT EXISTS(SELECT * FROM inserted i WHERE i.SUP_ObiTyp=4701) AND (NOT EXISTS(SELECT * FROM deleted d WHERE d.SUP_ObiTyp=4701))
+		RETURN;
+
+	SET NOCOUNT ON;
+
+	DECLARE @ObiNazwa NVARCHAR(350)
+	DECLARE @ColumnsUpdated VARBINARY(512)
+	SET @ColumnsUpdated = COLUMNS_UPDATED()
+
+	IF EXISTS (
+			SELECT 1
+			FROM inserted
+			)
+		SET @ObiNazwa = '(SELECT SUD_Nazwa FROM CDN.SrwUrzParDef WHERE SUD_Id=i.SUP_SUDId)'
+	ELSE
+	BEGIN
+		IF NOT EXISTS (
+				SELECT 1
+				FROM deleted
+				JOIN cdn.SrwUrzadzenia ON SrU_Id = deleted.SUP_ObiNumer AND deleted.SUP_ObiTyp=4701
+				)
+			RETURN
+
+		SET @ObiNazwa = '(SELECT SUD_Nazwa FROM CDN.SrwUrzParDef WHERE SUD_Id=d.SUP_SUDId)'
+	END
+
+	SELECT * INTO #inserted	FROM inserted
+	SELECT * INTO #deleted FROM deleted
+
+	EXEC CDN.HistoriaZmianRejestruj_SrwUrzadzenia 
+		@SrUId = 'SUP_ObiNumer'
+		,@ObiTyp = '4707'
+		,@ObiNumer = 'SUP_Id'
+		,@ObiNazwa = @ObiNazwa
+		,@Tabela = 'SrwUrzParam'
+		,@WarunekInsert = 'd.SUP_Id&lt;&gt;i.SUP_Id'
+		,@WarunekUpdate = 'i.SUP_Id=d.SUP_Id'
+		,@WarunekDelete = '1=1'
+		,@WarunekWycofanieInsert = '1=0'
+		,@ColumnsUpdated = @ColumnsUpdated
+
+
+	SET NOCOUNT OFF
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="SrwSruHistoriaZmian_ZapiszLinki"></A><PRE>
+          <FONT SIZE="2"><I>/* SrwSruHistoriaZmian_ZapiszLinki */</I><BR>
+CREATE TRIGGER cdn.SrwSruHistoriaZmian_ZapiszLinki ON CDN.SrwSruHistoriaZmian
+AFTER INSERT
+AS
+BEGIN
+
+	SET NOCOUNT ON;
+
+	WITH NadrzedneCTE AS 
+	(
+		SELECT SrU_Nadrzedny AS Nadrzedny, inserted.SSHZ_Id
+		FROM CDN.SrwUrzadzenia
+		JOIN inserted ON SrU_Id = inserted.SSHZ_SrUId
+
+		UNION ALL
+		
+		SELECT SrU_Nadrzedny AS Nadrzedny, NadrzedneCTE.SSHZ_Id
+		FROM CDN.SrwUrzadzenia
+		JOIN NadrzedneCTE ON NadrzedneCTE.Nadrzedny = SrU_Id
+		WHERE SrU_Nadrzedny &lt;&gt; 0
+	)
+	INSERT INTO CDN.SrwSruHistoriaZmianLinki (
+		SSHZL_SSHZId, SSHZL_SruIdWyswietl
+		)
+	SELECT SSHZ_Id, Nadrzedny
+	FROM NadrzedneCTE
+	WHERE Nadrzedny &lt;&gt; 0
+
+	UNION ALL
+
+	SELECT inserted.SSHZ_Id ,inserted.SSHZ_SrUId
+	FROM inserted
+
+
+	SET NOCOUNT OFF
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

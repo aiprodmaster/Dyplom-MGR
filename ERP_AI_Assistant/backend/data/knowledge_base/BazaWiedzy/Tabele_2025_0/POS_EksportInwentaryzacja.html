@@ -1,0 +1,161 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[POS_EksportInwentaryzacja]"></A><PRE>
+          <FONT SIZE="2"><I>/* [POS_EksportInwentaryzacja] */</I><BR>
+CREATE PROCEDURE [CDN].[POS_EksportInwentaryzacja] 
+	@RowVersion BIGINT,
+	@PointOfSaleId INT
+AS
+BEGIN
+SET NOCOUNT ON;
+
+	declare @mag table(magGidNumer int)
+	insert into @mag select mag_gidnumer from cdn.Magazyny join cdn.PicoStanowiska on PSa_PcKID= MAG_PcKId where PSa_ID = @PointOfSaleId
+
+	declare @inw table(InN_GUID varchar(max), InN_Nazwa varchar(max), InN_TStampOtw int, InN_Opis varchar(max),InN_Id int, CzasModyfikacji int, InN_TStampZam int, InM_MagNumer int, SLTI_GUID varchar(max))
+	insert into @inw
+		select InN_GUID, InN_Nazwa, InN_TStampOtw, InN_Opis,InN_Id, case when InN_CzasModyfikacji &gt; max(InA_CzasModyfikacji) then InN_CzasModyfikacji else max(InA_CzasModyfikacji) end, InN_TStampZam, InM_MagNumer, SLTI_GUID
+		from CDN.InwNag
+		join cdn.InwArk on InN_Id=InA_InNId
+		join cdn.InwMag on InN_Id=InM_InNId
+		join cdn.SlwTypyInwentaryzacjiPOS on SLTI_SlwId = InN_POSTypId
+		where (InN_CzasModyfikacji &gt; @RowVersion or InA_CzasModyfikacji &gt; @RowVersion)
+		and not exists (select 1 from cdn.InwNagSesje where InN_Id=InS_InNId and InS_typ = 0)
+		and InN_RealizujWPOS = 1
+		and not exists(select 1 from cdn.InwMag where InM_InNId=InN_Id and InM_MagNumer not in (select magGidNumer from @mag))
+		group by InN_GUID, InN_Nazwa, InN_TStampOtw, InN_Opis,InN_Id, InN_CzasModyfikacji, InN_TStampZam, InM_MagNumer, SLTI_GUID
+
+	declare @inwElem table( elemGuid varchar(max), elemLot int, elemStatus int, elemTargetQuantity decimal, elemReportedQuantity int,
+							elemUnitId smallint, elemVerificationRequired int,elemRegisteredReport int, elemIAT_InAId int)
+	insert into @inwElem
+	select (select InT_GUID from cdn.InwTwr where InT_Id = min(a.InT_Id)) as [@GUID] ,[@LotId], [@Status], sum([@TargetQuantity]) as [@TargetQuantity], [@ReportedQuantity], [@UnitId], [@VerificationRequired], [@RegisteredReport], IAT_InAId from
+				(select
+				case when InT_TpaId &lt;&gt; 0 then (SELECT MIN(t1.TPA_ID) 
+								FROM CDN.TwrPartie t1
+								join cdn.TwrPartie t2 on t1.TPa_TwrNumer = t2.TPa_TwrNumer and t1.TPa_DataW = t2.TPa_DataW and t1.TPa_Cecha = t2.TPa_Cecha and t1.TPa_Ean = t2.TPa_Ean and t1.TpA_CCKNumer = t2.TpA_CCKNumer
+								where t2.tpa_id = InT_TpaId
+								group by t1.TPa_TwrNumer,t1.TPa_DataW,t1.TPa_Cecha,t1.TPa_Ean,t1.TpA_CCKNumer)
+								else ( select top 1 * from
+								(SELECT MIN(t1.TPA_ID) as tpa_id
+								FROM CDN.TwrPartie t1
+								join cdn.TwrPartie t2 on t1.TPa_TwrNumer = t2.TPa_TwrNumer and t1.TPa_DataW = t2.TPa_DataW and t1.TPa_Cecha = t2.TPa_Cecha and t1.TPa_Ean = t2.TPa_Ean and t1.TpA_CCKNumer = t2.TpA_CCKNumer
+								where t2.TPa_TwrNumer = InT_TwrNumer
+								group by t1.TPa_TwrNumer,t1.TPa_DataW,t1.TPa_Cecha,t1.TPa_Ean,t1.TpA_CCKNumer) p order by p.tpa_id) end as [@LotId],
+				1 as [@Status],
+				InT_IloscMag as [@TargetQuantity],
+				0 as [@ReportedQuantity],
+				Naz_GIDLp as [@UnitId],
+				0 as [@VerificationRequired],
+				0 as [@RegisteredReport],
+				InT_Id,
+				IAT_InAId
+				from cdn.InwArkTwr 
+				join cdn.InwTwr on InT_Id=IAT_InTId
+				join cdn.TwrKarty on Twr_GIDNumer=InT_TwrNumer
+				join cdn.Nazwy on Naz_Nazwa = Twr_Jm and Naz_GIDTyp=144
+				where IAT_InAId in (select InA_Id from @inw join cdn.InwArk on InN_Id=InA_InNId)
+				) a
+				group by [@LotId], [@Status], [@ReportedQuantity], [@UnitId], [@VerificationRequired], [@RegisteredReport],IAT_InAId
+				having [@LotId] IS NOT NULL
+
+	
+	declare @LastMod bigint = isnull((select max(CzasModyfikacji) from @inw),@RowVersion)
+
+	select @LastMod as [@RowVersion],
+	(select
+	SLW_ID as [@TypeId],
+	SLTI_GUID as [@GUID],
+	SLTI_OtwPoz as [@EnableOpeningPositionsByReporter],
+	SLTI_IloscDoc as [@DisplayTargetQuantity],
+	0 as [@EnableICOpening],
+	0 as [@EnableICClosing],
+	0 as [@EnableAddingIC],
+	0 as [@EnableICLClosing],
+	0 as [@EnableAddingICL],
+	0 as [@EnableClosingPositionsInMPOS],
+	0 as [@ReservationsCountingMethod],
+	case when SLTI_RodzOdc = 0 then 1 else 0 end as [@ReportingType],
+	SLTI_OpeOtwPoz as [@EnableOperationsOnOpenedPositions],
+	1 as [@EnableConcurrentOperationsControl],
+	SLTI_DodPoz as [@EnableAddingICLPositionsByReporter],
+	1 as [@SynchronizeICLBeforeClosing],
+	SLTI_WyswRozbZamk as [@PresentDiscrepancyBeforeClosing],
+	SLW_Domyslny as [@IsDefault],
+	SLW_Nazwa as [@Description],
+	1 as [@InventoryCountMethod], --?
+	1 as [@MPosReportApprovalOptions],
+	0 as [@WarnAboutUnreportedItems], --?
+	SLTI_SortKat as [@SortICLItemsByCategories]
+	from cdn.Slowniki
+	join CDN.SlownikiStruktura on SLW_SLSId = SLS_Id
+	join CDN.SlwTypyInwentaryzacjiPOS on SLTI_SlwId = SLW_ID
+	for xml path('InventoryCountType'), root('InventoryCountTypes'), type),
+	(select 
+		 (
+		select
+		InN_GUID as [@GUID],
+		InN_Nazwa as [@NumberString],
+		SLTI_GUID as [@TypeGuid],        
+		cdn.TSToDate(InN_TStampOtw,0) as [@DateOfIssue],
+		null as [@CountDate],
+		case when InN_TStampZam = 0 then null else cdn.TSToDate(InN_TStampZam,0) end as [@ClosingDate],
+		InN_Opis as [@Description],
+		case when InN_TStampZam = 0 then 1 else 2 end as [@Status],
+		null as [@AssistantId],
+			(
+			select 
+			InA_GUID as [@GUID],
+			InA_Nazwa as [@NumberString],
+			case when InN_TStampZam &lt;&gt; 0 then 4 else (case when InA_Stan = 2 then 0 when INA_Stan = 0 then 1 end) end as [@Status],
+			cdn.TSToDate(InA_TStamp,0) as [@DateOfIssue],
+			case when InN_TStampZam = 0 then null else cdn.TSToDate(InN_TStampZam,0) end as [@ClosingDate],
+			InN_GUID as [@InventoryCountGuid],
+			InM_MagNumer as [@WarehouseId],
+			(select count(*) from @inwElem where InA_Id = elemIAT_InAId) as [@NumberOfItems],
+				(select
+				elemGuid as [@GUID],
+				elemLot as [@LotId],
+				case when InN_TStampZam = 0 then elemStatus else 3 end as [@Status],
+				elemTargetQuantity as [@TargetQuantity],
+				elemReportedQuantity as [@ReportedQuantity],
+				elemUnitId as [@UnitId],
+				elemVerificationRequired as [@VerificationRequired],
+				InA_GUID as [@InventoryCountListGuid],
+				elemRegisteredReport as [@RegisteredReport]
+				from @inwElem
+				where InA_Id = elemIAT_InAId
+				for xml path('InventoryCountListItem'), root('InventoryCountListItems'), type)
+			from cdn.InwArk where InN_Id=InA_InNId 
+		for xml path('InventoryCountList'), root('InventoryCountLists'), type)
+		
+		FROM @inw	
+		for xml path('InventoryCount'), type)
+	where exists (select 1 from @inw)
+	for xml path('InventoryCounts'), type)
+	
+	for xml path('InventoryCountsData')
+
+	DECLARE @prevcontextInfo VARBINARY(MAX)
+	SET @prevcontextInfo = ISNULL(CONTEXT_INFO(),0x0)
+	SET CONTEXT_INFO 0x15ff2808
+	UPDATE inwark SET inwark.InA_PsAID = @PointOfSaleId FROM CDN.InwArk inwark
+	JOIN @inw inw ON inw.InN_Id = inwark.InA_InNId WHERE inwark.InA_PsAID = 0
+	SET CONTEXT_INFO @prevcontextInfo
+
+	SET NOCOUNT OFF;	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

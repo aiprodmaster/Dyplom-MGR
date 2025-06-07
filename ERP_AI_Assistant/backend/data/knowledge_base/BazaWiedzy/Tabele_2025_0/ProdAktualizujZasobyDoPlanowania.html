@@ -1,0 +1,105 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="ProdAktualizujZasobyDoPlanowania"></A><PRE>
+          <FONT SIZE="2"><I>/* ProdAktualizujZasobyDoPlanowania */</I><BR>
+CREATE PROCEDURE CDN.ProdAktualizujZasobyDoPlanowania @PZLId INT, @PNZId INT
+AS
+BEGIN
+	DECLARE @ObiektyBiez TABLE(POPLId INT, PTCId INT, PFUId INT, POBLp SMALLINT, PZLId INT)
+
+	 DECLARE @Operacje TABLE(PTCId INT, PZLId INT,FunkcjaId INT, LiczbaObiektow INT)
+
+	DECLARE @Zlecenia TABLE(PZLId INT)
+
+	IF @PZLId &gt; 0
+	BEGIN
+		INSERT INTO @Zlecenia VALUES(@PZLId)
+	END
+	ELSE
+	BEGIN
+		INSERT INTO @Zlecenia(PZLId)
+		SELECT PZL_Id
+		FROM CDN.ProdNadzleceniaLinki
+		JOIN CDN.ProdZlecenia ON PZL_Id = PNL_PZLId
+		WHERE PNL_PNZId = @PNZId AND PZL_PlanWskazaneZasoby &gt; 0
+	END
+
+	IF NOT EXISTS (SELECT 1 FROM @Zlecenia) 
+		RETURN
+
+	UPDATE CDN.ProdObiektyDoPlanu
+	SET POPL_POBId = 0
+	FROM CDN.ProdObiekty
+	WHERE POB_Id = POPL_POBId AND POB_Archiwalny = 1 AND POPL_PZLId IN(SELECT PZLId FROM @Zlecenia)
+
+	INSERT INTO @ObiektyBiez (POPLId, PTCId, PFUId, POBLp, PZLId)
+	SELECT POPL_Id, POPL_PTCId, POPL_PFUId, ROW_NUMBER() OVER (PARTITION BY POPL_PTCId, POPL_PFUId ORDER BY POPL_PTCId, POPL_PFUId, CASE WHEN POPL_POBId &gt; 0 THEN 1 ELSE 0 END DESC, POPL_Id), POPL_PZLId
+	FROM CDN.ProdObiektyDoPlanu
+	WHERE POPL_PZLId IN(SELECT PZLId FROM @Zlecenia)
+
+	UPDATE CDN.ProdObiektyDoPlanu
+	SET POPL_POBLp = O.POBLp
+	FROM @ObiektyBiez O
+	WHERE O.POPLId = POPL_Id
+
+	DELETE FROM @obiektyBiez
+
+	;with OperacjeZp
+	 AS
+	 (
+		SELECT PTC_Id PTCId, PTC_Ojciec OjciecId, PZE_Zlecenie PZLId, PFU_Id FunkcjaId, PTF_Wszystkie Wszystkie, PTF_LiczbaObiektow LiczbaObiektow
+		FROM CDN.ProdZlecElem 
+		JOIN CDN.ProdTechnologiaCzynnosci ON PTC_Technologia = PZE_Technologia
+		join CDN.ProdTechnologiaFunkcje on PTF_TechnologiaCzynnosc=PTC_Id and PTF_LiczbaObiektow&gt;0
+		inner join CDN.ProdFunkcje on PFU_Id=PTF_Funkcja AND PFU_Archiwalny = 0
+		WHERE PZE_Zlecenie IN(SELECT PZLId FROM @Zlecenia)
+		UNION ALL
+		SELECT PTC_Id, PTCId, PZLId, FunkcjaId, Wszystkie, LiczbaObiektow
+		FROM OperacjeZp
+		join CDN.ProdTechnologiaCzynnosci on PTC_Ojciec = PTCId AND Wszystkie &gt; 0
+	 )
+	 INSERT INTO @Operacje(PTCId, PZLId, FunkcjaId, LiczbaObiektow)
+	 SELECT DISTINCT PTCId, PZLId, FunkcjaId, LiczbaObiektow
+	 FROM OperacjeZp
+
+	;with Zasoby
+	as (
+		SELECT PTCId, FunkcjaId PFUId, 1 IloscObiektow, PZLId
+		FROM @Operacje
+		UNION ALL
+		SELECT PTF_TechnologiaCzynnosc, PTF_Funkcja, IloscObiektow + 1, PZLId
+		FROM Zasoby
+		JOIN CDN.ProdTechnologiaFunkcje ON PTF_Funkcja = PFUId AND PTF_TechnologiaCzynnosc = PTCId
+		WHERE IloscObiektow &lt; PTF_LiczbaObiektow
+	)
+	INSERT INTO @ObiektyBiez (PTCId, PFUId, POBLp, PZLId)
+	SELECT DISTINCT PTCId, PFUId, IloscObiektow, PZLId
+	FROM Zasoby
+
+
+	MERGE CDN.ProdObiektyDoPlanu AS Target
+	USING (
+		SELECT *
+		FROM @ObiektyBiez) AS Source
+	ON Target.POPL_PTCId = Source.PTCId AND Target.POPL_PZLId = Source.PZLId AND Target.POPL_PFUId = Source.PFUId AND Target.POPL_POBLp = Source.POBLp
+	WHEN NOT MATCHED BY TARGET THEN
+	INSERT (POPL_PFUId, POPL_POBId, POPL_POBLp, POPL_PTCId, POPL_PZLId)
+	VALUES ( Source.PFUId, 0, Source.POBLp, Source.PTCId, Source.PZLId)
+	WHEN NOT MATCHED BY SOURCE AND Target.POPL_PZLId IN (SELECT PZLId FROM @Zlecenia) THEN
+	DELETE ;
+	END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

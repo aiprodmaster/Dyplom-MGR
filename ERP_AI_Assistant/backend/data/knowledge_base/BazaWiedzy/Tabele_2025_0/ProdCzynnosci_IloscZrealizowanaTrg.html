@@ -1,0 +1,146 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="ProdCzynnosci_IloscZrealizowana"></A><PRE>
+          <FONT SIZE="2"><I>/* ProdCzynnosci_IloscZrealizowana */</I><BR>
+CREATE TRIGGER CDN.ProdCzynnosci_IloscZrealizowana
+  ON CDN.ProdCzynnosci
+  FOR INSERT,UPDATE,delete
+AS
+SET NOCOUNT ON
+declare @ilosc decimal(15,4)
+declare @iloscstr varchar(20)
+
+	IF (SELECT COUNT(1) FROM inserted) = 0 AND EXISTS(SELECT * FROM deleted 
+		WHERE deleted.PCZ_Realizuje &gt; 0 AND deleted.PCZ_Uruchomiona = 0)
+	BEGIN	
+		UPDATE CDN.ProdCzynnosci SET PCZ_IloscZrealizowana =PCZ_IloscZrealizowana - R.Ilosc FROM 
+		(SELECT D.PCZ_Realizuje Realizowana,SUM(D.PCZ_Ilosc) Ilosc FROM deleted D WHERE D.PCZ_Realizuje &gt; 0 AND D.PCZ_Uruchomiona = 0 GROUP BY D.PCZ_Realizuje) R
+		WHERE PCZ_Id = R.Realizowana
+	END	
+
+	IF (SELECT COUNT(1) FROM inserted) = 0 AND EXISTS(SELECT * FROM deleted WHERE deleted.PCZ_Realizuje &gt; 0)
+	BEGIN	
+		UPDATE CDN.ProdCzynnosci SET PCZ_Status = CASE WHEN ISNULL(R.IloscZ,0) = 0 THEN (CASE WHEN ISNULL(R.IloscU,0) = 0 THEN 'Zaplanowana' ELSE 'Uruchomiona' END) 
+		ELSE (CASE WHEN R.IloscZ &gt;= PCZ_Ilosc THEN 'Zrealizowana' ELSE 'W realizacji' END) END FROM 
+		(SELECT C.PCZ_Realizuje Realizowana,ISNULL(SUM(CASE WHEN D.PCZ_Uruchomiona = 0 THEN D.PCZ_Ilosc ELSE 0 END),0) IloscZ,
+		ISNULL(SUM(CASE WHEN D.PCZ_Uruchomiona &gt; 0 THEN D.PCZ_Ilosc ELSE 0 END),0) IloscU 
+		FROM deleted C LEFT JOIN CDN.ProdCzynnosci D ON D.PCZ_Realizuje = C.PCZ_Realizuje WHERE C.PCZ_Realizuje &gt; 0 GROUP BY C.PCZ_Realizuje) R
+		WHERE PCZ_Id = R.Realizowana
+	END
+
+	IF (SELECT COUNT(1) FROM deleted) = 0 AND EXISTS(SELECT * FROM inserted WHERE inserted.PCZ_Realizuje = 0)
+	BEGIN	
+		UPDATE CDN.ProdCzynnosci SET PCZ_Status = 'Zaplanowana' FROM (SELECT PCZ_Id IdCzynn FROM inserted) I WHERE PCZ_Id = I.IdCzynn	
+	END
+
+	
+	IF UPDATE(PCZ_Ilosc)
+	begin
+		IF EXISTS(SELECT * FROM inserted 
+		WHERE inserted.PCZ_Realizuje &gt; 0 AND inserted.PCZ_Uruchomiona = 0)
+		BEGIN
+			UPDATE CDN.ProdCzynnosci SET PCZ_IloscZrealizowana = PCZ_IloscZrealizowana + Ilosc
+			FROM 
+			(SELECT I.PCZ_Realizuje Realizowana,(SUM(I.PCZ_Ilosc) - ISNULL(SUM(ISNULL(D.PCZ_Ilosc,0)),0)) Ilosc FROM inserted i
+			LEFT JOIN deleted D ON D.PCZ_Realizuje = I.PCZ_Realizuje
+			WHERE I.PCZ_Realizuje &gt; 0 AND I.PCZ_Uruchomiona = 0 AND isnull(D.PCZ_Uruchomiona,0) = 0
+			GROUP BY I.PCZ_Realizuje) R
+			WHERE PCZ_Id = R.Realizowana 
+		END		
+	end
+
+	IF UPDATE(PCZ_Realizuje) 
+	BEGIN
+		IF EXISTS(SELECT * FROM inserted 
+			WHERE inserted.PCZ_Realizuje &gt; 0 AND inserted.PCZ_Uruchomiona = 0)
+			BEGIN
+				IF NOT UPDATE(PCZ_Ilosc)
+				BEGIN
+					UPDATE CDN.ProdCzynnosci SET PCZ_IloscZrealizowana = PCZ_IloscZrealizowana + Ilosc
+					FROM 
+					(SELECT I.PCZ_Realizuje Realizowana,SUM(I.PCZ_Ilosc) Ilosc FROM inserted i
+					LEFT JOIN deleted D ON D.PCZ_Realizuje = I.PCZ_Realizuje
+					WHERE I.PCZ_Realizuje &gt; 0 AND I.PCZ_Uruchomiona = 0
+					GROUP BY I.PCZ_Realizuje) R
+					WHERE PCZ_Id = R.Realizowana 
+				END
+				IF EXISTS(SELECT * FROM deleted
+					WHERE deleted.PCZ_Realizuje &gt; 0 AND deleted.PCZ_Uruchomiona = 0)
+				BEGIN
+					UPDATE CDN.ProdCzynnosci SET PCZ_IloscZrealizowana = PCZ_IloscZrealizowana - Ilosc
+					FROM 
+					(SELECT I.PCZ_Realizuje Realizowana,SUM(I.PCZ_Ilosc) Ilosc FROM deleted i
+					WHERE I.PCZ_Realizuje &gt; 0 AND I.PCZ_Uruchomiona = 0
+					GROUP BY I.PCZ_Realizuje) R
+					WHERE PCZ_Id = R.Realizowana 
+				END
+			END
+	END
+	
+	IF UPDATE(PCZ_Uruchomiona) --AND NOT UPDATE(PCZ_Ilosc) AND NOT UPDATE(PCZ_Realizuje)
+	BEGIN
+		IF EXISTS(SELECT * FROM inserted 
+			WHERE inserted.PCZ_Realizuje &gt; 0)
+			BEGIN
+				UPDATE CDN.ProdCzynnosci SET PCZ_IloscZrealizowana = PCZ_IloscZrealizowana + Ilosc
+					FROM 
+					(SELECT I.PCZ_Realizuje Realizowana,SUM(CASE WHEN I.PCZ_Uruchomiona = 0 THEN I.PCZ_Ilosc ELSE -I.PCZ_Ilosc END) Ilosc FROM inserted i
+					JOIN deleted d ON D.PCZ_Id = I.PCZ_Id
+                    WHERE I.PCZ_Realizuje &gt; 0 AND D.PCZ_Uruchomiona &lt;&gt; I.PCZ_Uruchomiona
+					GROUP BY I.PCZ_Realizuje) R
+					WHERE PCZ_Id = R.Realizowana 
+
+				UPDATE CDN.ProdCzynnosci SET PCZ_Status = CASE WHEN PCZ_Uruchomiona = 0 THEN 'Zakończona' ELSE 'W toku' END
+				FROM
+				(
+					SELECT i.PCZ_Id Id
+					FROM inserted i
+				) R
+				WHERE PCZ_Id = R.Id
+			END
+	END
+
+	IF UPDATE(PCZ_Ilosc) --zmiana ilości operacji planowanej
+	BEGIN
+		IF EXISTS(SELECT * FROM inserted 
+			WHERE inserted.PCZ_Realizuje = 0)
+			UPDATE CDN.ProdCzynnosci SET PCZ_Status = CASE WHEN R.IloscZ = 0 THEN (CASE WHEN R.IloscU = 0 THEN 'Zaplanowana' ELSE 'Uruchomiona' END) 
+				ELSE CASE WHEN R.IloscZ &gt;= PCZ_Ilosc THEN 'Zrealizowana' ELSE 'W realizacji' END END FROM 
+			(SELECT D.PCZ_Realizuje Realizowana,ISNULL(SUM(CASE WHEN D.PCZ_Uruchomiona = 0 THEN D.PCZ_Ilosc ELSE 0 END),0) IloscZ,
+				ISNULL(SUM(CASE WHEN D.PCZ_Uruchomiona &gt; 0 THEN D.PCZ_Ilosc ELSE 0 END),0) IloscU 
+				FROM inserted I LEFT JOIN CDN.ProdCzynnosci D ON D.PCZ_Realizuje = I.PCZ_Id WHERE I.PCZ_Realizuje = 0 GROUP BY D.PCZ_Realizuje) R
+			WHERE PCZ_Id = R.Realizowana
+	END
+
+	IF UPDATE(PCZ_Uruchomiona) OR UPDATE(PCZ_Ilosc) OR UPDATE(PCZ_Realizuje) 		
+	BEGIN
+		IF EXISTS(SELECT * FROM inserted 
+			WHERE inserted.PCZ_Realizuje &gt; 0)
+			UPDATE CDN.ProdCzynnosci SET PCZ_Status = CASE WHEN R.IloscZ = 0 THEN (CASE WHEN R.IloscU = 0 THEN 'Zaplanowana' ELSE 'Uruchomiona' END) 
+				ELSE CASE WHEN R.IloscZ &gt;= PCZ_Ilosc THEN 'Zrealizowana' ELSE 'W realizacji' END END FROM 
+			(SELECT D.PCZ_Realizuje Realizowana,ISNULL(SUM(CASE WHEN D.PCZ_Uruchomiona = 0 THEN D.PCZ_Ilosc ELSE 0 END),0) IloscZ,
+				ISNULL(SUM(CASE WHEN D.PCZ_Uruchomiona &gt; 0 THEN D.PCZ_Ilosc ELSE 0 END),0) IloscU 
+				FROM inserted I LEFT JOIN CDN.ProdCzynnosci D ON D.PCZ_Realizuje = I.PCZ_Realizuje WHERE I.PCZ_Realizuje &gt; 0 GROUP BY D.PCZ_Realizuje) R
+			WHERE PCZ_Id = R.Realizowana
+	END
+
+	
+	
+	
+	SET NOCOUNT OFF
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,385 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Usuwanie procedury POS_EksportZamowienia"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Usuwanie procedury POS_EksportZamowienia */</I><BR>
+if exists (select name from sysobjects where name = 'POS_EksportZamowienia' and type = 'P')
+drop procedure CDN.POS_EksportZamowienia;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury POS_EksportZamowienia"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury POS_EksportZamowienia */</I><BR>
+CREATE PROCEDURE [CDN].[POS_EksportZamowienia]
+	@RowVersion BIGINT,
+	@PointOfSaleId INT,
+	@OrderGUID VARCHAR(36) = NULL
+AS
+BEGIN
+SET NOCOUNT ON;
+	
+	declare @LastMod bigint = isnull((select max(ZaN_LastMod) from cdn.ZamNag
+		where  (ZaN_LastMod &gt; @RowVersion)),@RowVersion)
+
+	declare @FrsId int, @WalSys varchar(3);
+	select @FrsId=pck_centrumid, @WalSys=pck_waluta from CDN.PicoKonfig join CDN.PicoStanowiska on PSa_PcKID=PcK_PicoID where PSa_ID = @pointOfSaleId
+
+	declare @mag table(magGidNumer int)
+	insert into @mag select mag_gidnumer from cdn.Magazyny join cdn.PicoStanowiska on PSa_PcKID= MAG_PcKId where PSa_ID = @PointOfSaleId
+
+	Select * into #KntDoEksportu from CDN.POS_KntDoEksportu(@PointOfSaleId, 0)
+	Select * into #TwrDoEksportu from CDN.POS_TwrDoEksportu(@PointOfSaleId,0)
+	
+	DECLARE @TpaZan TABLE(ZaEGIDNumer INT)
+	INSERT INTO @TpaZan SELECT ZaE_GIDNumer FROM CDN.ZamElem 
+		JOIN CDN.Rezerwacje ON Rez_ZrdNumer = ZaE_GIDNumer and Rez_ZrdTyp = ZaE_GIDTyp and Rez_ZrdLp = ZaE_GIDLp AND Rez_Typ = 1 AND Rez_DstNumer &lt;&gt; 0 AND Rez_DstTyp = 160
+		JOIN CDN.Dostawy ON Dst_GIDNumer = Rez_DstNumer
+		join CDN.ZamNag ON ZaE_GIDNumer = ZaN_GIDNumer
+		where ZaN_PsAID = 0
+		GROUP BY ZaE_GIDNumer, ZaE_GIDLp
+		HAVING COUNT(DISTINCT Dst_TpAId)&gt;1
+
+	DECLARE @ZaN TABLE(ZaN_GUID VARCHAR(36),ZaN_GIDTyp SMALLINT, ZaN_GIDNumer INT, ZaN_FlagaNB VARCHAR(1), ZaN_ZamTyp SMALLINT, ZaN_Rodzaj SMALLINT, ZaN_ZamNumer INT,ZaN_ZamRok SMALLINT, ZaN_ZamSeria VARCHAR(5),
+		ZaN_ZamMiesiac TINYINT, ZaN_DataPotwierdz INT, ZaN_GodzinaPotwierdzenia INT, ZaN_DataRealizacji INT, ZaN_LastMod INT, ZaN_FormaNr TINYINT, ZaN_ExpoNorm TINYINT, ZaN_TerminPlatnosci INT, ZaN_Stan SMALLINT,
+		ZaN_OperatorPOS INT,ZaN_MagNumer INT, ZaN_KntNumer INT, ZaN_KnDNumer INT, ZaN_KnATyp SMALLINT,ZaN_KnANumer INT,ZaN_AdwTyp INT, ZaN_AdwNumer INT,ZaN_Waluta VARCHAR(3),ZaN_OstatniaModyfikacjaPOS INT, ZaN_FrmNumer INT, ZaN_DokumentObcy VARCHAR(40), ZaN_EAN VARCHAR(50), ZaN_StatusRealizacji INT, ZaN_StatusPlatnosciPOS INT,
+		ZaN_PsAID INT, ZaN_KorNumer INT, zrodKnt_GUIDdane VARCHAR(41), docKnt_GUIDdane VARCHAR(41), ZaN_GIDLp INT, ZaN_DataWystawienia INT, ZaN_GodzinaWystawienia INT)
+		
+	IF @OrderGUID IS NULL 
+		INSERT INTO @ZaN SELECT ZaN_GUID,ZaN_GIDTyp,ZaN_GIDNumer,ZaN_FlagaNB,ZaN_ZamTyp,ZaN_Rodzaj,ZaN_ZamNumer ,ZaN_ZamRok,ZaN_ZamSeria,
+			ZaN_ZamMiesiac,ZaN_DataPotwierdz,ZaN_GodzinaPotwierdzenia,ZaN_DataRealizacji,ZaN_LastMod,ZaN_FormaNr,ZaN_ExpoNorm,ZaN_TerminPlatnosci,ZaN_Stan,
+			ZaN_OperatorPOS,ZaN_MagNumer,ZaN_KntNumer, ZaN_KnDNumer, ZaN_KnATyp,ZaN_KnANumer,ZaN_AdwTyp, ZaN_AdwNumer, ZaN_Waluta,ZaN_OstatniaModyfikacjaPOS, ZaN_FrMNumer, ZaN_DokumentObcy, ZaN_EAN, ZaN_StatusRealizacji, ZaN_StatusPlatnosciPOS,
+			COALESCE(ZaN_PsAID,0), ZaN_KorNumer, zrod.Knt_GUIDdane, doc.Knt_GUIDdane, ZaN_GIDLp, ZaN_DataWystawienia, ZaN_GodzinaWystawienia  FROM CDN.ZamNag 		
+		JOIN @mag ON magGidNumer = ZaN_MagNumer 
+		JOIN cdn.PicoStanowiska  ON PSa_ID = @PointOfSaleId
+		LEFT JOIN CDN.ZamPlat ON (ZaP_TrNTyp = 1824 or ZaP_TrNTyp = 1828 or ZaP_TrNTyp = 1312) AND ZaP_GIDNumer = ZaN_GIDNumer
+		JOIN CDN.Firma on ZaN_FrMNumer = Frm_GidNumer
+		JOIN CDN.Konfig on Kon_Numer=2154 and Kon_Wartosc = Frm_KrajDzialalnosci
+		join cdn.KntKarty zrod on ZaN_KntNumer = zrod.Knt_GIDNumer
+		join cdn.KntKarty doc on ZaN_KnDNumer = doc.Knt_GIDNumer
+		join #KntDoEksportu eksZrod on zrod.Knt_GUID = eksZrod.kntGUID
+		join #KntDoEksportu eksDoc on doc.Knt_GUID = eksDoc.kntGUID
+		left join @TpaZan on ZaEGIDNumer = ZaN_GIDNumer
+		WHERE (@RowVersion = 0 OR (
+			ZaN_LastMod &gt; @RowVersion AND 
+			(
+				ZaN_OstatniaModyfikacjaPOS &lt; ZaN_LastMod OR ZaN_PsAID &lt;&gt; @PointOfSaleId
+			))
+		)  AND ZaN_GUID IS NOT NULL and ZaN_GUID &lt;&gt; '' AND ZaN_ZamTyp = 1280  AND ZaN_Rodzaj=4
+		AND ZaP_GIDNumer IS NULL
+		AND ZaN_ExpoNorm &lt;&gt; 26
+		and ZaN_Stan &lt;&gt; 2 and ZaN_Stan &lt;&gt; 19 and ZaN_Stan &lt;&gt; 67 and Zan_Stan &lt;&gt; 69
+		and ((ZaN_Stan in (32,35,21,51,53) and ZaN_PsAID &lt;&gt; 0) or (ZaN_Stan not in (32,35,21,51,53)))
+		AND ZaN_Waluta=@WalSys
+		AND ZaEGIDNumer IS NULL
+		AND NOT EXISTS (	select 1 from CDN.ZamElem elem
+						left join @mag magElem on magElem.magGidNumer = elem.ZaE_MagNumer
+						left join #TwrDoEksportu on elem.ZaE_TwrNumer = TwrGidNumer
+						join cdn.TwrKarty on ZaE_TwrNumer=Twr_GIDNumer
+						left join CDN.Rezerwacje on Rez_ZrdNumer = elem.ZaE_GIDNumer and Rez_ZrdTyp = elem.ZaE_GIDTyp and Rez_ZrdLp= elem.ZaE_GIDLp
+						left join @mag magRez on Rez_MagNumer=magRez.magGidNumer
+						where elem.ZaE_GIDNumer = ZaN_GIDNumer
+						--wykluczenie zamówień które mają elementy z przypisanym magazynem który nie jest przypisany do stanowiska POS
+						and ( elem.ZaE_MagNumer&lt;&gt;0 and (magElem.magGidNumer is NULL
+														--wykluczenie zamówień które mają rezerwacje z przypisanym magazynem który nie jest przypisany do stanowiska POS lub mają ustawiony magazyn wszystkie
+														or  (Rez_MagNumer is not NULL and magRez.magGidNumer is NULL))
+						--wykluczenie zamówień które są złożone na towary nie wysyłane do stanowiska POS
+						or TwrGidNumer is NULL
+						or elem.ZaE_Waluta&lt;&gt;@WalSys
+						--wykluczenie zamówień z towarami które mają ustawiony magazyn wszystkie
+						or (elem.ZaE_MagNumer=0 and Twr_Typ&lt;&gt;4)
+						or Twr_Bon=1))
+
+	ELSE
+		INSERT INTO @ZaN SELECT ZaN_GUID,ZaN_GIDTyp,ZaN_GIDNumer,ZaN_FlagaNB,ZaN_ZamTyp,ZaN_Rodzaj,ZaN_ZamNumer ,ZaN_ZamRok,ZaN_ZamSeria,
+			ZaN_ZamMiesiac,ZaN_DataPotwierdz,ZaN_GodzinaPotwierdzenia,ZaN_DataRealizacji,ZaN_LastMod,ZaN_FormaNr,ZaN_ExpoNorm,ZaN_TerminPlatnosci,ZaN_Stan,
+			ZaN_OperatorPOS,ZaN_MagNumer,ZaN_KntNumer, ZaN_KnDNumer, ZaN_KnATyp,ZaN_KnANumer,ZaN_AdwTyp, ZaN_AdwNumer, ZaN_Waluta,ZaN_OstatniaModyfikacjaPOS, ZaN_FrMNumer, ZaN_DokumentObcy, ZaN_EAN, ZaN_StatusRealizacji, ZaN_StatusPlatnosciPOS,
+			COALESCE(ZaN_PsAID,0), ZaN_KorNumer, zrod.Knt_GUIDdane, doc.Knt_GUIDdane, ZaN_GIDLp, ZaN_DataWystawienia, ZaN_GodzinaWystawienia FROM CDN.ZamNag 		
+		JOIN @mag ON magGidNumer = ZaN_MagNumer 
+		JOIN cdn.PicoStanowiska  ON PSa_ID = @PointOfSaleId
+		LEFT JOIN CDN.ZamPlat ON (ZaP_TrNTyp = 1824 or ZaP_TrNTyp = 1828 or ZaP_TrNTyp = 1312) AND ZaP_GIDNumer = ZaN_GIDNumer
+		JOIN CDN.Firma on ZaN_FrMNumer = Frm_GidNumer
+		JOIN CDN.Konfig on Kon_Numer=2154 and Kon_Wartosc = Frm_KrajDzialalnosci
+		join cdn.KntKarty zrod on ZaN_KntNumer = zrod.Knt_GIDNumer
+		join cdn.KntKarty doc on ZaN_KnDNumer = doc.Knt_GIDNumer
+		join #KntDoEksportu eksZrod on zrod.Knt_GUID = eksZrod.kntGUID
+		join #KntDoEksportu eksDoc on doc.Knt_GUID = eksDoc.kntGUID
+		left join @TpaZan on ZaEGIDNumer = ZaN_GIDNumer
+		WHERE (@RowVersion = 0 OR (
+			ZaN_LastMod &gt; @RowVersion AND 
+			(
+				ZaN_OstatniaModyfikacjaPOS &lt; ZaN_LastMod OR ZaN_PsAID &lt;&gt; @PointOfSaleId
+			))
+		) AND ZaN_GUID IS NOT NULL and ZaN_GUID &lt;&gt; '' AND ZaN_ZamTyp = 1280  AND ZaN_Rodzaj=4
+		AND ZaP_GIDNumer IS NULL
+		AND ZaN_GUID = @OrderGUID
+		AND ZaN_ExpoNorm &lt;&gt; 26
+		and ZaN_Stan &lt;&gt; 2 and ZaN_Stan &lt;&gt; 19 and ZaN_Stan &lt;&gt; 67 and Zan_Stan &lt;&gt; 69
+		and ((ZaN_Stan in (32,35,21,51,53) and ZaN_PsAID &lt;&gt; 0) or (ZaN_Stan not in (32,35,21,51,53)))
+		AND ZaN_Waluta=@WalSys
+		AND ZaEGIDNumer IS NULL
+		AND NOT EXISTS (	select 1 from CDN.ZamElem elem
+						left join @mag magElem on magElem.magGidNumer = elem.ZaE_MagNumer
+						left join #TwrDoEksportu on elem.ZaE_TwrNumer = TwrGidNumer
+						join cdn.TwrKarty on ZaE_TwrNumer=Twr_GIDNumer
+						left join CDN.Rezerwacje on Rez_ZrdNumer = elem.ZaE_GIDNumer and Rez_ZrdTyp = elem.ZaE_GIDTyp and Rez_ZrdLp= elem.ZaE_GIDLp
+						left join @mag magRez on Rez_MagNumer=magRez.magGidNumer
+						where elem.ZaE_GIDNumer = ZaN_GIDNumer
+						--wykluczenie zamówień które mają elementy z przypisanym magazynem który nie jest przypisany do stanowiska POS
+						and ( elem.ZaE_MagNumer&lt;&gt;0 and (magElem.magGidNumer is NULL
+														--wykluczenie zamówień które mają rezerwacje z przypisanym magazynem który nie jest przypisany do stanowiska POS lub mają ustawiony magazyn wszystkie
+														or (Rez_MagNumer is not NULL and magRez.magGidNumer is NULL))
+						--wykluczenie zamówień które są złożone na towary nie wysyłane do stanowiska POS
+						or TwrGidNumer is NULL
+						or elem.ZaE_Waluta&lt;&gt;@WalSys
+						--wykluczenie zamówień z towarami które mają ustawiony magazyn wszystkie
+						or (elem.ZaE_MagNumer=0 and Twr_Typ &lt;&gt;4)
+						or Twr_Bon=1))
+		
+		
+	SELECT
+		@LastMod as [@RowVersion], (
+		select           
+			cast(zan.ZaN_GUID as uniqueidentifier) as [@GUID],
+			CDN.NumerDokumentu(CDN.DokMapTypDokumentu(zan.ZaN_GIDTyp,zan.ZaN_ZamTyp,zan.ZaN_Rodzaj),0,0,zan.ZaN_ZamNumer,zan.ZaN_ZamRok,zan.ZaN_ZamSeria,zan.ZaN_ZamMiesiac) as [@NumberString],
+			(Select Dok_Id from cdn.DokDefinicje where Dok_GIDTyp=9472 and Dok_FrsId=@FrsId) as [@DocumentTypeId],
+			cast(DATEADD(day, 0, DATEDIFF(day, 0, cdn.TSToDate(zan.ZaN_DataWystawienia,0))) + DATEADD(day, 0 - DATEDIFF(day, 0, cdn.TSToDate(LEFT(zan.ZaN_GodzinaWystawienia,5),1)), cdn.TSToDate(LEFT(zan.ZaN_GodzinaWystawienia,5),1))as datetime) as [@ConfirmationDate],
+			CDN.WartoscZamowienia(zan.ZaN_GIDNumer,1,GETDATE()) as [@Value],
+			CDN.WartoscZamowienia(zan.ZaN_GIDNumer,0,GETDATE()) as [@NetValue],
+			cast(docKnt_GUIDdane as uniqueidentifier) as [@CustomerData2GUID],
+			cast(docA.KnA_GUIDdane as uniqueidentifier) as [@Address2GUID],
+			cast(zrodKnt_GUIDdane as uniqueidentifier) as [@CustomerDataGUID],
+			cast(zrodA.KnA_GUIDdane as uniqueidentifier) as [@AddressGUID],
+			cast(docA.KnA_GUIDdane as uniqueidentifier) as [@DeliveryAddressGUID],
+			case when zan.ZaN_FlagaNB = 'N' then 1 when zan.ZaN_FlagaNB = 'B' then 2 end as [@VatDirection],
+			0 as [@CanProcessAtCollectionPoint],
+			--Zw.zan.ZaN_FrSID as [@CompanyUnitId],
+			cdn.TSToDate(zan.ZaN_DataRealizacji,0) as [@RealizationDate],
+			cdn.TSToDate(zan.ZaN_LastMod,1) as [@LastModificationStateDate],
+			1 as [@SourceId],
+			zan.ZaN_FormaNr as [@PaymentFormId],
+			case when zan.ZaN_ExpoNorm = 0 then 0 when zan.ZaN_ExpoNorm = 1 or zan.ZaN_ExpoNorm = 2 then 2 else 1 end as [@TransactionType],
+			0 as [@CanUseReverseCharge],
+			0 as [@IsSplitPayment],
+			cdn.TSToDate(zan.ZaN_DataWystawienia,0)+zan.ZaN_TerminPlatnosci as [@PaymentDate],
+			0 as [@IsFromEShop],
+			case when zan.ZaN_Stan = 3 then 1 when zan.ZaN_Stan = 5 then 6 when zan.ZaN_Stan in (32,35) then 3 when zan.ZaN_Stan in (51,53) then 5 when zan.ZaN_Stan = 21 then 7 end as [@Status],
+			zan.ZaN_OperatorPOS as [@AssistantId],
+			zan.ZaN_EAN as [@EAN],
+			Op.ZnO_Opis as [@Description],
+			zan.ZaN_FrmNumer as [@StampId],
+			2 as [@VatAggregateType],
+			CDN.WartoscZamowienia(zan.ZaN_GIDNumer,0,GETDATE()) as [@InitialNetValue],
+			CDN.WartoscZamowienia(zan.ZaN_GIDNumer,1,GETDATE()) as [@InitialValue],
+
+			--case when Zw.zan.ZaN_LastMod &gt; Zw.zan.ZaN_OstatniaModyfikacjaPOS then 'true' else 'false' end as [@WasModified],
+			--WaN_Id as [@CurrencyId],
+			--0 as [@HeaderValueDiscount],
+			--0 as [@NumeratorSchemeId],
+			--0 as [@NetValueBeforePaymentRounding],
+			case when zan.ZaN_Stan = 3 and NOT EXISTS (select korekty.ZaN_GIDNumer from cdn.zamnag korekty where korekty.ZaN_KorNumer = zan.Zan_GidNumer) then 1 else 0 end as [@CanOpen],
+			case when zan.ZaN_Stan = 3 then 1 when zan.ZaN_Stan = 5 AND NOT EXISTS(select TrS_GIDNumer from cdn.TraSElem join cdn.TraNag on TrN_GIDNumer=TrS_GIDNumer where TrS_ZlcNumer = zan.ZaN_GIDNumer and TrS_ZlcTyp = 960 and TrN_Stan in (0,1,2)) AND NOT EXISTS(select MaS_GIDNumer from cdn.MagSElem join cdn.MagNag on MaN_GIDNumer=MaS_GIDNumer where MaS_ZlcNumer = zan.ZaN_GIDNumer and MaS_ZlcTyp = 960 and MaN_Stan in (0,1,2)) then 1 else 0 end as [@CanClose],			
+			1 as [@TradeDocumentToGenerateType],
+			CASE WHEN @OrderGUID IS NULL THEN NULL ELSE 1 END AS [@ForceImport],
+			case when zan.ZaN_DokumentObcy = '' then null else zan.ZaN_DokumentObcy end as [@ReferenceNumber],
+			case when zan.ZaN_StatusRealizacji=0 then null else zan.ZaN_StatusRealizacji end as [@DeliveryStatusId],
+			case when zan.ZaN_StatusPlatnosciPOS=0 then null else zan.ZaN_StatusPlatnosciPOS end as [@PaymentStatusId],
+			(select 
+				Atr_GUID as [@GUID],
+				AtK_ID as [@AttributeClassId],
+				24 as [@ObjectTypeId],
+				zan.ZaN_GUID as [@ObjectGUID],
+				case when AtK_Typ &gt; 10 then 0 else null end as [@DirectoryValueId],
+				case when AtK_Typ &lt; 10 AND AtK_Typ=4 AND atk_format like '@s%' then (select atw_id from cdn.atrybutywartosci where AtW_AtKId=atk_id and AtW_Wartosc=Atr_Wartosc) else null end as [@ListValueId],		
+				
+				case when AtK_Typ = 1 AND Atr_Wartosc= 'TAK' then 'true' 
+						when AtK_Typ = 1 and Atr_Wartosc=  'NIE' then 'false'  
+						when atk_format like '@d%' then CONVERT(nvarchar,DateAdd(d,cast(Atr_Wartosc as int),convert(datetime,'28-12-1800',105)),101) when NOT(AtK_Typ &lt; 10 AND AtK_Typ=4 AND atk_format like '@s%') then RTRIM(Atr_Wartosc) else null end as [@Value],
+				DATEADD(second,AtR_LastMod,convert(datetime,'01-01-1990',105)) as [@ModificationDate]
+			from CDN.Atrybuty 
+			join cdn.AtrybutyKlasy on AtK_ID = Atr_AtkId
+			where AtK_Wielowart = 0 AND (AtR_LastMod &gt; @RowVersion OR @RowVersion = 0) AND case when Atk_Format like '@d%' then 6 when AtK_Typ=1 then 4 when AtK_Typ=2 then 1 when AtK_Typ=3 then 2 when AtK_Typ=4 then 5 else 3 end not in (3)
+			AND Atr_ObiTyp=zan.ZaN_GIDTyp AND Atr_ObiNumer = zan.ZaN_GIDNumer AND Atr_ObiLp = ZaN_GIDLp
+			for xml path('Attribute'), root('Attributes'), type), 
+			(
+			   select 
+                case when ZaE_GUID ='' then null else cast(ZaE_GUID as uniqueidentifier) end as [@GUID],
+				Zae_GidLp as [@OrdinalNumber],
+				zae_TwrNumer as [@ProductId],
+				ZaE_TwrKod as [@ProductCode],
+				1 as [@ProductNameVersion],
+				(elem.ZaE_Ilosc*elem.ZaE_PrzeliczM/elem.ZaE_PrzeliczL) as [@Quantity],
+				ZaE_Ilosc as [@QuantityInBasicUnit],
+				Naz_GIDLp as [@UnitId],
+				cast(round((case when zan.ZaN_FlagaNB = 'B' then (ZaE_WartoscPoRabacie * (100/(100+ZaE_StawkaPod))) else ZaE_WartoscPoRabacie end),2) as numeric(16,2)) as [@ToPayNet],
+				cast(round((case when zan.ZaN_FlagaNB = 'N' then (ZaE_WartoscPoRabacie * ((100+ZaE_StawkaPod)/100)) else ZaE_WartoscPoRabacie end),2) as numeric(16,2)) as [@ToPay],
+				cast(round((case when zan.ZaN_FlagaNB = 'B' then (ZaE_CenaUzgodniona * (100/(100+ZaE_StawkaPod))) else ZaE_CenaUzgodniona end)*elem.ZaE_PrzeliczL/elem.ZaE_PrzeliczM ,2) as numeric(16,2)) as [@ProductEndNetPrice],
+				cast(round((case when zan.ZaN_FlagaNB = 'N' then (ZaE_CenaUzgodniona * ((100+ZaE_StawkaPod)/100)) else ZaE_CenaUzgodniona end)*elem.ZaE_PrzeliczL/elem.ZaE_PrzeliczM ,2) as numeric(16,2)) as [@ProductEndPrice],
+				cast(round((case when zan.ZaN_FlagaNB = 'B' then (ZaE_CenaKatalogowa * (100/(100+ZaE_StawkaPod))) else ZaE_CenaKatalogowa end)*elem.ZaE_PrzeliczL/elem.ZaE_PrzeliczM ,2) as numeric(16,2)) as [@ProductInitialNetPrice],
+				cast(round((case when zan.ZaN_FlagaNB = 'N' then (ZaE_CenaKatalogowa * ((100+ZaE_StawkaPod)/100)) else ZaE_CenaKatalogowa end)*elem.ZaE_PrzeliczL/elem.ZaE_PrzeliczM ,2) as numeric(16,2)) as [@ProductInitialPrice],
+				cast(round((case when zan.ZaN_FlagaNB = 'B' then (ZaE_CenaKatalogowa * (100/(100+ZaE_StawkaPod))) else ZaE_CenaKatalogowa end)*elem.ZaE_PrzeliczL/elem.ZaE_PrzeliczM ,2) as numeric(16,2)) as [@ProductDefaultNetPrice],
+				cast(round((case when zan.ZaN_FlagaNB = 'N' then (ZaE_CenaKatalogowa * ((100+ZaE_StawkaPod)/100)) else ZaE_CenaKatalogowa end)*elem.ZaE_PrzeliczL/elem.ZaE_PrzeliczM ,2) as numeric(16,2)) as [@ProductDefaultPrice],
+				--0 as [@PriceListId],
+				zan.ZaN_OperatorPOS as [@AssistantId],
+				0 as [@Points],
+				cast(round((case when zan.ZaN_FlagaNB = 'B' then (ZaE_WartoscPoRabacie * (ZaE_StawkaPod/(ZaE_StawkaPod+100))) else (ZaE_WartoscPoRabacie * (ZaE_StawkaPod/100)) end),2) as numeric(16,2)) as [@VatValue],
+				(select Naz_GIDLp from cdn.Nazwy where Naz_GIDTyp = 624 and right(RTRIM(Naz_Nazwa),1) like '[0-9]' and LEFT(LTRIM(Naz_Nazwa1),5) = elem.ZaE_StawkaPod and LEFT(LTRIM(Naz_Nazwa),1) = elem.ZaE_GrupaPod) as [@VatRateId],
+				ZaE_Rabat as [@PercentFinalDiscount],
+				ZaE_Rabat as [@UserDiscountPercentage],
+				0.00 as [@HeaderPercentageDiscountValue],
+				0.00 as [@HeaderValueDiscount],
+				cast(round((ZaE_Ilosc * (ZaE_CenaKatalogowa - ZaE_CenaUzgodniona)),4) as numeric(16,4)) as [@ManualUserDiscountValue],
+				ZaE_Rabat as [@ManualUserDiscountPercentage],
+				0 as [@CanUseReverseCharge],
+				0 as [@IsSplitPayment],
+				cast(round((ZaE_Ilosc * (ZaE_CenaKatalogowa - ZaE_CenaUzgodniona)),4) as numeric(16,4)) as [@UserDiscountValue],
+				-cast(round((ZaE_Ilosc * (ZaE_CenaKatalogowa - ZaE_CenaUzgodniona)),4) as numeric(16,4)) as [@ValueFinalDiscount],
+				-cast(round((ZaE_CenaKatalogowa*(elem.ZaE_PrzeliczL/elem.ZaE_PrzeliczM) - ZaE_CenaUzgodniona*(elem.ZaE_PrzeliczL/elem.ZaE_PrzeliczM)),4) as numeric(16,4)) as [@PriceFinalDiscount],
+				COALESCE((Select Sum(Rez_Ilosc - Rez_IloscMag - Rez_Zrealizowano - Rez_IloscImp - Rez_IloscSAD - Rez_IloscSSC)*elem.ZaE_PrzeliczM/elem.ZaE_PrzeliczL From CDN.Rezerwacje where Rez_ZrdNumer = ZaE_GIDNumer and Rez_ZrdTyp = ZaE_GIDTyp and Rez_ZrdLp= ZaE_GIDLp),0) as [@QuantityRemaining],
+				/*COALESCE((Select MIN(lotid) from(SELECT
+					CASE WHEN Twr_Typ=4 THEN -elem.ZaE_TwrNumer
+					WHEN Rez_Typ = 1 AND Rez_DstNumer &lt;&gt; 0 AND Rez_DstTyp &lt;&gt; 0 and Twr_Typ&lt;&gt;4 THEN (select MIN(TPa_Id) from cdn.twrpartie join CDN.Dostawy on Dst_GIDNumer = Rez_DstNumer where TPa_Cecha = Dst_Cecha and TPa_TwrNumer=Rez_TwrNumer and TPa_DataW = Dst_DataW and TPa_Ean = Dst_Ean and Dst_GIDNumer = Rez_DstNumer group by TPa_TwrNumer,TPa_DataW,TPa_Cecha,TPa_Ean,TpA_CCKNumer)
+					else ISNULL((select top(1) tpa_id from cdn.TwrPartie where TPa_Cecha = elem.ZaE_Cecha and TPa_TwrNumer = elem.ZaE_TwrNumer), (select top(1) tpa_id from cdn.TwrPartie where TPa_TwrNumer = elem.ZaE_TwrNumer)) end as lotid
+					FROM CDN.Rezerwacje where (Rez_ZrdNumer = ZaE_GIDNumer and Rez_ZrdTyp = ZaE_GIDTyp and Rez_ZrdLp= ZaE_GIDLp))as lotid),(select case when twr_typ = 4 then -elem.ZaE_TwrNumer else ISNULL((select top(1) tpa_id from cdn.TwrPartie where TPa_Cecha = elem.ZaE_Cecha and TPa_TwrNumer = elem.ZaE_TwrNumer), (select top(1) tpa_id from cdn.TwrPartie where TPa_TwrNumer = elem.ZaE_TwrNumer))end)) as [@LotId],*/
+				 /*COALESCE(
+					(Select MIN(lotid) from(SELECT CASE WHEN Rez_Typ = 1 AND Rez_DstNumer &lt;&gt; 0 AND Rez_DstTyp &lt;&gt; 0 and Twr_Typ&lt;&gt;4 THEN (select MIN(TPa_Id) from cdn.twrpartie join CDN.Dostawy on Dst_GIDNumer = Rez_DstNumer where TPa_Cecha = Dst_Cecha and TPa_TwrNumer=Rez_TwrNumer and TPa_DataW = Dst_DataW and TPa_Ean = Dst_Ean and Dst_GIDNumer = Rez_DstNumer group by TPa_TwrNumer,TPa_DataW,TPa_Cecha,TPa_Ean,TpA_CCKNumer)end
+					FROM CDN.Rezerwacje where Rez_ZrdNumer = ZaE_GIDNumer and Rez_ZrdTyp = ZaE_GIDTyp and Rez_ZrdLp= ZaE_GIDLp) as lotid),
+					(SELECT CASE WHEN Twr_Typ=4 THEN -elem.ZaE_TwrNumer
+					else ISNULL((select top(1) tpa_id from cdn.TwrPartie where TPa_Cecha = elem.ZaE_Cecha and TPa_TwrNumer = elem.ZaE_TwrNumer), (select top(1) tpa_id from cdn.TwrPartie where TPa_TwrNumer = elem.ZaE_TwrNumer))end)) as [@LotId],*/
+				COALESCE((Select MIN(lotid) 
+						from(SELECT CASE WHEN Rez_Typ = 1 AND Rez_DstNumer &lt;&gt; 0 AND Rez_DstTyp &lt;&gt; 0 and Twr_Typ&lt;&gt;4 THEN 
+								(select MIN(TPa_Id) 
+								from cdn.twrpartie join CDN.Dostawy on Dst_GIDNumer = Rez_DstNumer and Dst_GIDNumer=TpA_DstNumer
+								where TPa_Cecha = Dst_Cecha and TPa_TwrNumer=Rez_TwrNumer and TPa_DataW = Dst_DataW and TPa_Ean = Dst_Ean and Dst_GIDNumer = Rez_DstNumer 
+								group by TPa_TwrNumer,TPa_DataW,TPa_Cecha,TPa_Ean,TpA_CCKNumer)end as lotid
+							FROM CDN.Rezerwacje where Rez_ZrdNumer = ZaE_GIDNumer and Rez_ZrdTyp = ZaE_GIDTyp and Rez_ZrdLp= ZaE_GIDLp)as a)
+						,(SELECT CASE WHEN Twr_Typ=4 THEN -elem.ZaE_TwrNumer
+						else ISNULL((select min(tpa_id) from cdn.TwrPartie where TPa_Cecha = elem.ZaE_Cecha and TPa_TwrNumer = elem.ZaE_TwrNumer)
+									,(select min(tpa_id) from cdn.TwrPartie where TPa_TwrNumer = elem.ZaE_TwrNumer))end)) 
+				as [@LotId],
+				elem.ZaE_CenaSpr as [@PriceTypeId],
+				'false' as [@IsBundleGratis],
+				'false' as [@BundleAddHeaderDiscount],
+				'false' as [@IsBundleBreakdown],
+				--0.0000 as [@PriceDifferenceNetValue],
+				--0.0000 as [@PriceDifferenceValue],
+				0 as [@WarehouseWasManuallyChanged],
+				0 as [@IsWeighedProduct],
+				0 as [@IsPayableByVoucher],
+				case when zan.ZaN_LastMod &gt; zan.ZaN_OstatniaModyfikacjaPOS then 1 else 0 end as [@WasModified],
+				OpE.ZeO_Opis as [@Description],
+				WaN_Id as [@CurrencyId],
+				--ZaE_WartoscPoRabacie as [@NetValue],
+				(	select 
+						Atr_GUID as [@GUID],
+						AtK_ID as [@AttributeClassId],
+						124 as [@ObjectTypeId],
+						ZaE_GUID as [@ObjectGUID],
+						case when AtK_Typ &gt; 10 then 0 else null end as [@DirectoryValueId],
+						case when AtK_Typ &lt; 10 AND AtK_Typ=4 AND atk_format like '@s%' then (select atw_id from cdn.atrybutywartosci where AtW_AtKId=atk_id and AtW_Wartosc=Atr_Wartosc) else null end as [@ListValueId],		
+				
+						case when AtK_Typ = 1 AND Atr_Wartosc= 'TAK' then 'true' 
+								when AtK_Typ = 1 and Atr_Wartosc=  'NIE' then 'false'  
+								when atk_format like '@d%' then CONVERT(nvarchar,DateAdd(d,cast(Atr_Wartosc as int),convert(datetime,'28-12-1800',105)),101) when NOT(AtK_Typ &lt; 10 AND AtK_Typ=4 AND atk_format like '@s%') then RTRIM(Atr_Wartosc) else null end as [@Value],
+						DATEADD(second,AtR_LastMod,convert(datetime,'01-01-1990',105)) as [@ModificationDate]
+					from CDN.Atrybuty 
+					join cdn.AtrybutyKlasy on AtK_ID = Atr_AtkId
+					where AtK_Wielowart = 0 AND (AtR_LastMod &gt; @RowVersion OR @RowVersion = 0) AND case when Atk_Format like '@d%' then 6 when AtK_Typ=1 then 4 when AtK_Typ=2 then 1 when AtK_Typ=3 then 2 when AtK_Typ=4 then 5 else 3 end not in (3)
+					AND Atr_ObiTyp=ZaE_GIDTyp AND Atr_ObiNumer = ZaE_GIDNumer AND Atr_ObiLp = ZaE_GIDLp
+					for xml path('Attribute'), root('Attributes'), type), 
+				(
+
+				SELECT [@DocumentItemId], [@LotId], [@ProductId], sum([@QuantityInBasicUnit]) as [@QuantityInBasicUnit], sum([@Shortages]) as [@Shortages], [@WarehouseId], sum([@Reservations]) as [@Reservations], [@IsQuantitativeReservation], sum([@QuantityRemaining]) as [@QuantityRemaining] FROM(
+					select
+					Rez_ZrdLp as [@DocumentItemId],
+					CASE WHEN Rez_Typ = 1 AND Rez_DstNumer=0 AND Rez_DstTyp = 0 THEN null
+					WHEN Rez_Typ=0 AND Twr_Typ=4 THEN -elem.ZaE_TwrNumer
+					WHEN Rez_Typ=0 AND Twr_Typ&lt;&gt;4 THEN ISNULL((select top(1) tpa_id from cdn.TwrPartie where TPa_Cecha = elem.ZaE_Cecha and TPa_TwrNumer = elem.ZaE_TwrNumer),(select top(1) tpa_id from cdn.TwrPartie where TPa_TwrNumer = elem.ZaE_TwrNumer))
+					else (select MIN(TPa_Id) from cdn.twrpartie join CDN.Dostawy on Dst_GIDNumer = Rez_DstNumer and Dst_GIDNumer=TpA_DstNumer where TPa_Cecha = Dst_Cecha and TPa_TwrNumer=Rez_TwrNumer and TPa_DataW = Dst_DataW and TPa_Ean = Dst_Ean and Dst_GIDNumer = Rez_DstNumer group by TPa_TwrNumer,TPa_DataW,TPa_Cecha,TPa_Ean,TpA_CCKNumer)
+					end as [@LotId],
+					Rez_TwrNumer as [@ProductId],
+					Rez_Ilosc as [@QuantityInBasicUnit],
+					0.0000 as [@Shortages],
+					case when elem.ZaE_MagNumer=0 then zan.ZaN_MagNumer else Rez_MagNumer end as [@WarehouseId],
+					case when Rez_Typ=0 then 0.0000
+					else Rez_Ilosc end as [@Reservations],
+					--0 as [@PendingQuantityToRelease],
+					case when Rez_Typ = 1 AND Rez_DstNumer=0 AND Rez_DstTyp = 0 THEN 1 ELSE 0 END AS [@IsQuantitativeReservation],
+					(Rez_Ilosc - Rez_IloscMag - Rez_Zrealizowano - Rez_IloscImp - Rez_IloscSAD - Rez_IloscSSC) as [@QuantityRemaining]
+					FROM CDN.Rezerwacje where Rez_ZrdNumer = ZaE_GIDNumer and Rez_ZrdTyp = ZaE_GIDTyp and Rez_ZrdLp= ZaE_GIDLp
+					UNION ALL
+					SELECT ZaE_GIDLp, null, ZaE_TwrNumer, 0, 0, CASE WHEN Twr_Typ = 4 THEN zan.ZaN_MagNumer ELSE ZaE_MagNumer END, 0, 0, 0 WHERE NOT EXISTS(SELECT * FROM CDN.Rezerwacje where Rez_ZrdNumer = ZaE_GIDNumer and Rez_ZrdTyp = ZaE_GIDTyp and Rez_ZrdLp= ZaE_GIDLp)
+				) subelemns
+				group by [@DocumentItemId], [@LotId], [@ProductId], [@WarehouseId], [@IsQuantitativeReservation]
+				for xml path('TradeDocumentSubitem'), root('TradeDocumentSubitems'), type
+
+				
+
+				)
+				FROM CDN.ZamElem elem
+				join CDN.TwrKarty ON Twr_GIDNumer = elem.ZaE_TwrNumer
+				join cdn.Nazwy on Naz_GIDTyp = 144 and Naz_Nazwa = zae_jmz
+				left join @mag on magGidNumer = elem.ZaE_MagNumer
+				join cdn.WalNag on ZaE_Waluta = WaN_Symbol
+				left join cdn.ZaEOpisy OpE on ZaE_GIDTyp=ZeO_ZamTyp AND ZaE_GIDNumer=ZeO_ZamNumer AND ZaE_GIDLp=ZeO_ZamLp
+				where ZaE_GIDNumer = zan.ZaN_GIDNumer and (magGidNumer is not null or elem.ZaE_MagNumer=0)
+				for xml path('Item'), root('Items'), type
+			),	
+			
+			(
+				Select
+				case when ZaV_Brutto = 0.00 then ZaV_Netto else ZaV_Brutto - ZaV_Vat end as [@NetValue],
+				case when ZaV_Netto = 0.00 then ZaV_Brutto else ZaV_Netto + ZaV_Vat end as [@GrossValue],
+				(select top(1) Naz_GIDLp from cdn.Nazwy where Naz_GIDTyp = 624 and right(RTRIM(Naz_Nazwa),1) like '[0-9]' and LEFT(LTRIM(Naz_Nazwa1),5) = ZaV_StawkaPod and SUBSTRING(Naz_Nazwa1,11,1) = ZaV_FlagaVat) as [@VatRateId],
+				ZaV_Vat as [@VatValue],
+				0 as [@IsReverseCharge]
+				from CDN.ZamVat
+				where zan.ZaN_GIDNumer = ZaV_GIDNumer
+				for xml path('VatAggregate'), root('VatAggregates'), type
+			)	
+		
+		FROM @ZaN zan
+		
+		left join cdn.KntAdresy zrodA on zrodA.KnA_GIDTyp=zan.ZaN_KnATyp AND zrodA.KnA_GIDNumer=zan.ZaN_KnANumer
+		left join CDN.KntAdresy docA on docA.KnA_GIDTyp=zan.ZaN_AdwTyp AND docA.KnA_GIDNumer=zan.ZaN_AdwNumer
+		left join cdn.ZaNOpisy Op on zan.ZaN_GIDNumer = ZnO_ZamNumer 
+		join cdn.WalNag on zan.ZaN_Waluta = WaN_Symbol
+		
+		
+	for xml path('SalesOrder'), type)
+	for xml path('SalesOrders')
+	DECLARE @prevcontextInfo VARBINARY(MAX)
+	SET @prevcontextInfo = ISNULL(CONTEXT_INFO(),0x0)
+	SET CONTEXT_INFO 0x15ff2808
+	UPDATE zamnag SET zamnag.ZaN_PsAID = @PointOfSaleId FROM CDN.ZamNag zamnag
+	JOIN @ZaN ZaN ON ZaN.ZaN_GIDNumer = zamnag.ZaN_GIDNumer WHERE ZaN.ZaN_PsAID = 0
+	SET CONTEXT_INFO @prevcontextInfo
+	Drop table #KntDoEksportu
+	Drop table #TwrDoEksportu
+	SET NOCOUNT OFF;	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury POS_EksportZamowienia"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury POS_EksportZamowienia */</I><BR>
+GRANT EXECUTE ON CDN.POS_EksportZamowienia TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

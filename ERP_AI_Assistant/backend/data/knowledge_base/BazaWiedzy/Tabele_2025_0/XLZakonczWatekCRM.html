@@ -1,0 +1,104 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[XLZakonczWatekCRM]"></A><PRE>
+          <FONT SIZE="2"><I>/* [XLZakonczWatekCRM] */</I><BR>
+CREATE PROCEDURE [CDN].[XLZakonczWatekCRM] 
+	@SsNNumer			int,
+	@OpeStopNumer		int,
+
+	@TStampDataStop		int = NULL,
+	@IgnorujBledy		tinyint = NULL							
+
+AS
+declare @MinDataStop	int --minimalna data z jaką możemy zamknąć wątek ze względu na elementy
+declare @GIDFirma		int
+
+if @SsNNumer is null
+	set @SsNNumer = 0
+if @OpeStopNumer is null
+	set @OpeStopNumer = 0
+
+SET NOCOUNT ON
+select @GIDFirma = frs_GIDFirma from cdn.frmstruktura where frs_id = 1
+
+BEGIN TRAN XLZakonczWatekCRM
+if not exists(select * from cdn.SrsNag where SsN_GIDNumer = @SsNNumer and SsN_GIDLp &lt;&gt; -1)
+		begin
+			rollback tran XLZakonczWatekCRM
+			if @IgnorujBledy is null
+				raiserror('Nie znaleziono wątku konwersacji - (-1)',16,1)
+			return -1
+		end
+
+if not exists(select * from cdn.Opekarty where Ope_GIDNumer = @OpeStopNumer and Ope_Zablokowane &lt;&gt; 1)
+		begin
+			rollback tran XLZakonczWatekCRM
+			if @IgnorujBledy is null
+				raiserror('Nie znaleziono operatora - (-2)',16,1)
+			return -2
+		end
+
+select top 1 @MinDataStop = isnull(SsE_TStampDataStart + SsE_CzasKonsultacji + SsE_CzasDodatkowy,0)
+from cdn.SrsElem where SsE_GIDNumer = @SsNNumer and SsE_FlagaStatusu = 0
+order by SsE_TStampDataStart + SsE_CzasKonsultacji + SsE_CzasDodatkowy desc
+
+if @TStampDataStop is null or @TStampDataStop &lt; 1 
+	select @TStampDataStop = DATEDIFF(s,'19900101',GETDATE())
+
+if @TStampDataStop &lt; @MinDataStop
+		select @TStampDataStop = @MinDataStop
+
+update cdn.SrsNag set
+SsN_TStampDataStop = @TStampDataStop,
+SsN_OpeStopTyp = 128,
+SsN_OpeStopFirma = @GIDFirma,
+SsN_OpeStopNumer = @OpeStopNumer,
+SsN_OpeStopLp = 0
+where
+SsN_GIDNumer = @SsNNumer
+if @@error &lt;&gt; 0  
+	begin
+		ROLLBACK TRAN XLZakonczWatekCRM
+		if @IgnorujBledy is null
+			RAISERROR ('Błąd podczas aktualizowania wątku - (-33)', 16, 1)
+		return -33
+	end	
+
+update cdn.SrsElem set
+SsE_TStampDataChange = @TStampDataStop,
+SsE_OpeChangeTyp = 128,
+SsE_OpeChangeFirma = @GIDFirma,
+SsE_OpeChangeNumer = @OpeStopNumer,
+SsE_OpeChangeLp = 0,
+SsE_OpeWNumer = @OpeStopNumer,
+SsE_DataWykonania = @TStampDataStop,
+SsE_FlagaStatusu = 1
+where
+SsE_GIDNumer = @SsNNumer and
+SsE_FlagaStatusu = 0
+if @@error &lt;&gt; 0  
+	begin
+		ROLLBACK TRAN XLZakonczWatekCRM
+		if @IgnorujBledy is null
+			RAISERROR ('Błąd podczas aktualizowania elementów - (-34)', 16, 1)
+		return -34
+	end	
+
+COMMIT TRAN XLZakonczWatekCRM
+SET NOCOUNT OFF
+RETURN 0
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

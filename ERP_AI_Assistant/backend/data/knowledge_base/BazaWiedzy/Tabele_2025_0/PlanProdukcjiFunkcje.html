@@ -1,0 +1,2568 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[ProdPlanyPobierzMagazynyPP]"></A><PRE>
+          <FONT SIZE="2"><I>/* [ProdPlanyPobierzMagazynyPP] */</I><BR>
+CREATE FUNCTION [CDN].[ProdPlanyPobierzMagazynyPP](
+@i_PlanProdId INT,
+@MagazynDlaElementu TINYINT = 0
+)
+RETURNS @tabMagazynyPP TABLE(
+    PPId        int,
+    MagNumer    int,
+    MagDlaElem    int
+)
+AS
+BEGIN
+    DECLARE @TypProdPlany INT
+    SET @TypProdPlany = 14360
+
+    IF @MagazynDlaElementu = 0
+    BEGIN
+        IF EXISTS(Select * FROM CDN.ProdPlanyMag where PPM_PPLId = @i_PlanProdId AND PPM_MagDlaElem = @MagazynDlaElementu) BEGIN
+            INSERT INTO @tabMagazynyPP
+            SELECT PPL_Id PPId, MAG_GIDNumer MagNumer, PPM_MagDlaElem MagDlaElem FROM 
+            CDN.ProdPlany 
+            CROSS APPLY CDN.DokDostepneMagazyny(PPL_FrsId,0,@TypProdPlany,0,0,0,0)
+            INNER JOIN CDN.ProdPlanyMag on PPM_MagNumer = MAG_GIDNumer and PPM_PPLId = PPL_Id
+            WHERE MAG_GIDNumer=PPM_MagNumer AND PPL_ID = @i_PlanProdId AND PPM_MagDlaElem = @MagazynDlaElementu
+        END
+        ELSE BEGIN
+            INSERT INTO @tabMagazynyPP
+            SELECT PPL_Id PPId, MAG_GIDNumer MagNumer, @MagazynDlaElementu MagDlaElem FROM 
+            CDN.ProdPlany 
+            CROSS APPLY CDN.DokDostepneMagazyny(PPL_FrsId,0,@TypProdPlany,0,0,0,0)
+            WHERE PPL_ID = @i_PlanProdId
+        END
+    END
+    ELSE
+    BEGIN
+        IF EXISTS(Select * FROM CDN.ProdPlanyMag where PPM_PPLId = @i_PlanProdId AND PPM_MagDlaElem = @MagazynDlaElementu) BEGIN
+            INSERT INTO @tabMagazynyPP
+            SELECT PPL_Id PPId, MAG_GIDNumer MagNumer, PPM_MagDlaElem MagDlaElem FROM 
+            CDN.ProdPlany 
+            CROSS APPLY CDN.Magazyny
+            INNER JOIN CDN.ProdPlanyMag on PPM_MagNumer = MAG_GIDNumer and PPM_PPLId = PPL_Id
+            WHERE MAG_GIDNumer=PPM_MagNumer AND PPL_ID = @i_PlanProdId AND PPM_MagDlaElem = @MagazynDlaElementu
+        END
+        ELSE BEGIN
+            INSERT INTO @tabMagazynyPP
+            SELECT PPL_Id PPId, MAG_GIDNumer MagNumer, @MagazynDlaElementu MagDlaElem FROM 
+            CDN.ProdPlany 
+            CROSS APPLY CDN.Magazyny
+            WHERE PPL_ID = @i_PlanProdId
+        END
+    END
+    RETURN
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[ProdPlanyPobierzProduktyPP]"></A><PRE>
+          <FONT SIZE="2"><I>/* [ProdPlanyPobierzProduktyPP] */</I><BR>
+CREATE FUNCTION [CDN].[ProdPlanyPobierzProduktyPP](
+@i_PlanProdId INT
+)
+RETURNS @tabMagazynyPP TABLE(
+    Id Int,
+    TechnologiaId int
+)
+AS
+BEGIN
+    DECLARE @TypProdPlany INT    
+    DECLARE @PPLProduktyZdefTechnologia INT
+    DECLARE @FrsId    INT
+    
+    SET @TypProdPlany = 14360
+
+    SELECT @FrsId = PPL_FrsId FROM CDN.ProdPlany WHERE PPL_Id = @i_PlanProdId
+    SET @PPLProduktyZdefTechnologia = (Select Dok_PPLProduktyZdefTechnologia FROM CDN.DokDefinicje WHERE Dok_FrsId = @FrsId AND Dok_GIDTyp = @TypProdPlany)
+
+    INSERT INTO @tabMagazynyPP
+    select distinct Twr_GIDNumer, Twr_ProdTechnologia from CDN.TwrKarty    
+    inner join CDN.TwrGrupy on TwG_GIDNumer = Twr_GIDNumer AND TwG_GIDTyp = Twr_GIDTyp
+    Where (@PPLProduktyZdefTechnologia = 0 or (@PPLProduktyZdefTechnologia = 1 and Twr_ProdTechnologia &gt; 0)) 
+        AND TwG_GrONumer IN(
+                            SELECT GIDNumer FROM CDN.ProdPlanyTwG 
+                            CROSS APPLY CDN.PobierzDrzewoGrupTowarowychKuLisciom(PPG_TwGNumer,default,null,null,null) 
+                            WHERE PPG_PPLId = @i_PlanProdId
+                            )
+        AND Twr_Typ NOT IN(3,4,6)--wykluczamy a-viste, uslugi i koszty
+    RETURN
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[ProdPlanyPobierzElementyDoMPS]"></A><PRE>
+          <FONT SIZE="2"><I>/* [ProdPlanyPobierzElementyDoMPS] */</I><BR>
+CREATE FUNCTION [CDN].[ProdPlanyPobierzElementyDoMPS](
+@i_PlanProdId INT, @i_TwrNumer INT = 0
+)
+RETURNS @tabCDNMPS TABLE(
+    Id                int IDENTITY(1,1),
+    GIDNumer        int,  
+    GIDTyp            smallint,
+    GIDLp           int, 
+    RezGIDTyp        smallint,
+    TwrNumer        int,
+    DataRealizacji    int,
+    DataWystawienia int, 
+    Rodzaj            tinyint,
+    PriorytetRez    int, 
+    Ilosc            decimal(15,4), 
+    IloscDst        decimal(15,4),
+    MPSTyp            tinyint,
+    TechnologiaId    int,
+    ProduktId int
+)
+AS
+BEGIN
+    DECLARE @tabCDNProdukty table 
+    (
+        Id Int,
+        TechnologiaId int
+    ); 
+    
+    DECLARE @tabMagaynyPP table
+    (
+        PPId        int,
+        MagNumer    int,
+        MagDlaElem  INT
+    )    
+    DECLARE @SkladnikiMPS    TINYINT
+    DECLARE @OkresPrzeliczeniaOd INT
+    DECLARE @OkresPrzeliczeniaDo INT
+    DECLARE @ZakresRezerwacji TINYINT
+    DECLARE @WszystkieRezerwacje TINYINT = 1
+
+    DECLARE @RodzajPLZ SMALLINT
+    DECLARE @RodzajZak SMALLINT
+    DECLARE @RodzajSpr SMALLINT
+    DECLARE @RodzajZS SMALLINT
+    DECLARE @RodzajZWSpr SMALLINT
+    DECLARE @RodzajZWZak SMALLINT
+    DECLARE @RodzajZP SMALLINT
+
+    DECLARE @MPSZS    TINYINT
+    DECLARE @MPSPLZ  TINYINT 
+    DECLARE    @MPSZP    TINYINT
+    DECLARE @MPSZW    TINYINT
+
+    SET @RodzajZak        = 0
+    SET @RodzajZWZak    = 1
+    SET @RodzajSpr        = 2
+    SET @RodzajZS        = 3
+    SET @RodzajZP        = 4
+    SET @RodzajZWSpr    = 5
+    SET @RodzajPLZ        = 6
+    
+    SET @MPSZS    = 1
+    SET @MPSPLZ = 2 
+    SET @MPSZP    = 4
+    SET @MPSZW    = 8
+
+    SELECT @SkladnikiMPS = PPL_SkladnikiMPS, @OkresPrzeliczeniaOd = PPL_PrzeliczenieOd, @OkresPrzeliczeniaDo = PPL_PrzeliczenieDo, @ZakresRezerwacji = PPL_ZakresRezerwacjiDlaProduktu 
+       FROM CDN.ProdPlany WHERE PPL_Id = @i_PlanProdId
+
+    INSERT INTO @tabMagaynyPP
+    SELECT * FROM CDN.ProdPlanyPobierzMagazynyPP(@i_PlanProdId, DEFAULT)
+    
+    IF @i_TwrNumer IS NULL OR @i_TwrNumer = 0 BEGIN
+        INSERT INTO @tabCDNProdukty
+        SELECT * FROM CDN.ProdPlanyPobierzProduktyPP(@i_PlanProdId)
+    END
+    ELSE BEGIN
+        INSERT INTO @tabCDNProdukty
+        SELECT Twr_GIDNumer, Twr_ProdTechnologia FROM CDN.TwrKarty WHERE Twr_GIDNumer = @i_TwrNumer
+    END
+
+    INSERT INTO @tabCDNMPS(GIDNumer, GIDTyp, GIDLp, RezGIDTyp,TwrNumer,DataRealizacji,DataWystawienia , Rodzaj,PriorytetRez, Ilosc, IloscDst,MPSTyp,TechnologiaId, ProduktId)
+    SELECT GIDNumer, GIDTyp, GIDLp, RezGIDTyp, TwrNumer, DataRealizacji, DataWystawienia, 
+        CASE WHEN SUM(DstIlosc) &lt; SUM(Ilosc) OR Rodzaj NOT IN(@RodzajZS, @RodzajZWSpr) 
+                THEN 
+                    Rodzaj 
+            ELSE 
+                @RodzajSpr 
+        END Rodzaj, 
+        PriorytetRez, SUM(Ilosc) Ilosc, SUM(DstIlosc) IloscDst, 
+        CASE WHEN SUM(DstIlosc) &lt; SUM(Ilosc) 
+                THEN 
+                    MPSTyp 
+            ELSE 
+                0 
+        END MPSTyp, TechnologiaId, ProduktId
+    FROM
+    (
+    --PLZ ilosci z planu zapotrzebowania
+        select  PLN_Id GIDNumer, 14347 GIDTyp, PLE_Id GIDLp,0 RezGIDNumer,2576 RezGIDTyp, PLE_TwrNumer TwrNumer, PLO_OkresDo DataRealizacji, 
+            PLN_DataUtworz DataWystawienia, @RodzajPLZ Rodzaj, 999999 PriorytetRez,PLE_Ilosc Ilosc, 0 DstIlosc, 1 MPSTyp, TechnologiaId, PTZ_Id ProduktId/*, 1 KolejnoscRezerwacji*/ 
+        from CDN.ProdPlany 
+            RIGHT join CDN.PlanOkres on PLO_OkresDo &gt;= PPL_PrzeliczenieOd and PLO_OkresDo &lt;= PPL_PrzeliczenieDo AND PPL_Id = @i_PlanProdId
+            inner join CDN.ProdPlanyTwG on PPG_PPLId = @i_PlanProdId
+            inner join CDN.PlanElem on PLE_Okres = PLO_Id
+            inner join CDN.PlanNag on PLN_Id = PLE_Plan
+            inner join @tabCDNProdukty on Id = PLE_TwrNumer
+            CROSS APPLY (SELECT TOP 1 PTZ_Id 
+                            FROM CDN.ProdTechnologiaZasoby
+                                JOIN CDN.ProdTechnologiaCzynnosci ON PTC_Id = PTZ_TechnologiaCzynnosc
+                            WHERE PTC_Technologia = CASE WHEN TechnologiaId &lt;&gt; 0 THEN TechnologiaId ELSE 
+                                    CDN.ProdTechnologiaDomyslna(PLE_TwrNumer, DEFAULT, DEFAULT, DEFAULT, DEFAULT, DEFAULT, DEFAULT) 
+                                END
+                            ORDER BY PTZ_PodstawowaTechnologiaDlaProduktu DESC, PTZ_Id) AS Produkt
+        where PLN_Stan &gt; 0 and (PPL_Id = @i_PlanProdId OR PPL_Id IS NULL) and @SkladnikiMPS &amp; @MPSPLZ &gt; 0 
+            AND PLO_OkresDo BETWEEN CASE WHEN @ZakresRezerwacji = @WszystkieRezerwacje THEN PLO_OkresDo ELSE @OkresPrzeliczeniaOd END 
+                AND CASE WHEN @ZakresRezerwacji = @WszystkieRezerwacje THEN PLO_OkresDo ELSE @OkresPrzeliczeniaDo END 
+
+        union all--ZS,ZW, daty z elementow ale ilosci z rezerwacji
+
+        SELECT GIDNumer, GIDTyp, GIDLp, RezGIDNumer, RezGIDTyp,  TwrNumer,  DataRealizacji, DataWystawienia,  Rodzaj, PriorytetRez,Ilosc, 
+            CASE WHEN DstIlosc &gt; Ilosc THEN Ilosc ELSE DstIlosc END DstIlosc,  MPSTyp, TechnologiaId, ProduktId/*, case when RezGIDTyp = 2592 then 0 else 1 end  KolejnoscRezerwacji */
+        FROM
+        (
+            select distinct  
+                ZaE_GIDNumer GIDNumer, ZaE_GIDTyp GIDTyp, ZaE_GIDLp GIDLp,Rez_GIDNumer RezGIDNumer,Rez_GIDTyp RezGIDTyp, ZaE_TwrNumer TwrNumer, ZaE_DataPotwDst DataRealizacji,
+                case when Rez_GIDTyp = 2592 then 0 else ZaN_DataWystawienia end DataWystawienia, 
+                case 
+                    when Rez_GIDTyp = 2592 then @RodzajZWZak 
+                    when ZaN_Rodzaj = 8 and @SkladnikiMPS &amp; @MPSZW &gt; 0 then @RodzajZWSpr 
+                    when @SkladnikiMPS &amp; @MPSZS &gt; 0 then @RodzajZS 
+                    else @RodzajSpr 
+                end Rodzaj,
+                case when Rez_GIDTyp = 2592 then 0 else ZaN_PriorytetRez end PriorytetRez, 
+                (Rez_Ilosc-Rez_Zrealizowano-Rez_IloscImp-Rez_IloscMag-Rez_IloscSAD-Rez_IloscSSC) -
+                ISNULL((
+                        SELECT SUM(ZaELink.ZaE_Ilosc) FROM CDN.ZamElem ZaELink
+                            INNER JOIN CDN.ZamNag ZaNLink ON ZaNLink.ZaN_GIDNumer = ZaELink.ZaE_GIDNumer
+                            INNER JOIN CDN.ZamZamLinki ON ZZL_ZZGidNumer = ZaELink.ZaE_GIDNumer AND ZZL_ZZGidLp = ZaELink.ZaE_GIDLp
+                        WHERE ZZL_ZSGidNumer = ZaE.ZaE_GIDNumer and ZZL_ZSGidLp = ZaE.ZaE_GIDLp AND ZZL_ZSGidTyp = 960 and ZZL_Kierunek IN(0,4,256) AND ZaNLink.ZaN_Stan IN(3,5,21)
+                            --e_ZS_do_ZZ,e_ZS_do_ZW,e_ZW_do_ZZ 
+                ),0) -
+                ISNULL((
+                        SELECT SUM(ZaELink.ZaE_Ilosc) FROM CDN.ZamElem ZaELink
+                            INNER JOIN CDN.ZamNag ZaNLink ON ZaNLink.ZaN_GIDNumer = ZaELink.ZaE_GIDNumer
+                            INNER JOIN CDN.ZamZamLinki ON ZZL_ZSGidNumer = ZaELink.ZaE_GIDNumer AND ZZL_ZSGidLp = ZaELink.ZaE_GIDLp
+                        WHERE ZZL_ZZGidNumer = ZaE.ZaE_GIDNumer and ZZL_ZZGidLp = ZaE.ZaE_GIDLp AND ZZL_ZZGidTyp = 960 and ZZL_Kierunek = 32 AND ZaNLink.ZaN_Stan IN(3,5,21)--e_ZS_do_KZ
+                ),0) Ilosc, 
+                case when Rez_DstNumer &gt; 0 then Rez_Ilosc-Rez_Zrealizowano-Rez_IloscImp-Rez_IloscMag-Rez_IloscSAD-Rez_IloscSSC else 0 end DstIlosc,
+                case when ((ZaN_Rodzaj = 8 and @SkladnikiMPS &amp; @MPSZW &gt; 0) OR (ZaN_Rodzaj = 4 AND @SkladnikiMPS &amp; @MPSZS &gt; 0)) AND Rez_GIDTyp = 2576 then 1 else 0 end MPSTyp,
+                --CDN.ProdTechnologiaDomyslna(ZaE_TwrNumer,0,'',ZaN_KntTyp,ZaN_KntNumer,ZaE_DataPotwDst,ZaE_DataPotwDst) TechnologiaId
+                ISNULL(linPtcTech, PTC_Technologia) TechnologiaId, ISNULL(linPtzId, PTZ_Id) ProduktId, Rez_ZrdTyp
+            from CDN.ProdPlany 
+                RIGHT JOIN CDN.ZamElem ZaE on ZaE_DataPotwDst &gt;= PPL_PrzeliczenieOd and ZaE_DataPotwDst &lt;= PPL_PrzeliczenieDo AND PPL_Id = @i_PlanProdId
+                INNER JOIN @tabMagaynyPP on PPId = @i_PlanProdId
+                INNER JOIN cdn.Rezerwacje on ZaE_GIDNumer = Rez_ZrdNumer and ZaE_GIDTyp = Rez_ZrdTyp and ZaE_GIDLp = Rez_ZrdLp
+                INNER JOIN CDN.RezMagazyny on ReM_RezNumer = Rez_GIDNumer and ReM_RezTyp = Rez_GIDTyp
+                INNER JOIN CDN.ZamNag on ZaN_GIDNumer = ZaE_GIDNumer
+                INNER JOIN @tabCDNProdukty on Id = ZaE_TwrNumer
+                OUTER APPLY (SELECT TOP 1 PTZ_Id linPtzId, PTC_Technologia linPtcTech
+                            FROM CDN.ZamZamLinki lin
+                                JOIN CDN.ProdZlecElem zle ON lin.ZZL_ZZGidNumer = zle.PZE_Id AND lin.ZZL_ZZGidLp = zle.PZE_Lp AND lin.ZZL_ZZGidTyp = 14343
+                                JOIN CDN.ProdTechnologiaCzynnosci ptc ON zle.PZE_Technologia = ptc.PTC_Technologia
+                                JOIN CDN.ProdTechnologiaZasoby ptz ON ptz.PTZ_TechnologiaCzynnosc = ptc.PTC_Id AND zle.PZE_TwrNumer = ptz.PTZ_TwrNumer AND zle.PZE_TwrTyp = ptz.PTZ_TwrTyp
+                                    AND ptz.PTZ_TypZasobu = 0
+                            WHERE lin.ZZL_ZSGidFirma = Zae.ZaE_GIDFirma AND lin.ZZL_ZSGidLp = ZaE.ZaE_GIDLp AND lin.ZZL_ZSGidNumer = ZaE.ZaE_GIDNumer AND lin.ZZL_ZSGidTyp = zae.ZaE_GIDTyp
+                            ORDER BY ZZL_ZZGidNumer DESC, ptz.PTZ_PodstawowaTechnologiaDlaProduktu DESC) AS link
+                OUTER APPLY (SELECT TOP 1 PTZ_Id, PTC_Technologia 
+                            FROM CDN.ProdTechnologiaZasoby
+                                JOIN CDN.ProdTechnologiaCzynnosci ON PTC_Id = PTZ_TechnologiaCzynnosc
+                            WHERE PTC_Technologia = CDN.ProdTechnologiaDomyslna(ZaE_TwrNumer,0,'',ZaN_KntTyp,ZaN_KntNumer,ZaE_DataPotwDst,ZaE_DataPotwDst)
+                            ORDER BY PTZ_PodstawowaTechnologiaDlaProduktu DESC, PTZ_Id) AS Produkt
+            where ZaE_DataPotwDst BETWEEN CASE WHEN @ZakresRezerwacji = @WszystkieRezerwacje THEN ZaE_DataPotwDst ELSE @OkresPrzeliczeniaOd END 
+                   AND CASE WHEN @ZakresRezerwacji = @WszystkieRezerwacje THEN ZaE_DataPotwDst ELSE @OkresPrzeliczeniaDo END 
+                AND ZaN_Stan &gt; 2 and (PPL_Id = @i_PlanProdId OR PPL_Id IS NULL) and ZaN_ZamTyp = 1280        
+                and MagNumer = ReM_MagNumer 
+                AND  ((Rez_GIDTyp = 2576 AND Rez_ZrdTyp IN (1605, -1605) AND Rez_Typ = 1) OR (Rez_GIDTyp = 2576 AND Rez_ZrdTyp NOT IN (1605, -1605)) OR Rez_GIDTyp &lt;&gt; 2576)
+        ) RezZSZW 
+        where Ilosc &gt; 0
+        /*AND NOT EXISTS(select * from CDN.ZamZamLinki Where 
+            (ZZL_ZSGidNumer = ZaN_GIDNumer and ZZL_ZSGidLp = ZaE_GIDLp AND ZZL_ZSGidTyp = 960 and ZZL_Kierunek IN(0,4,256) )--e_ZS_do_ZZ,e_ZS_do_ZW,e_ZW_do_ZZ 
+        OR (ZZL_ZZGidNumer = ZaN_GIDNumer and ZZL_ZZGidLp = ZaE_GIDLp AND ZZL_ZZGidTyp = 960 and ZZL_Kierunek = 32 )--e_ZS_do_KZ
+        )*/
+        union all
+
+        -- rezerwacje bedace na ZZ
+        SELECT GIDNumer, GIDTyp, GIDLp, RezGIDNumer, RezGIDTyp, TwrNumer, DataRealizacji, DataWystawienia, Rodzaj, PriorytetRez, Ilosc, DstIlosc, MPSTyp, TechnologiaId, ProduktId FROM
+        (
+            select distinct  
+                ZaE_GIDNumer GIDNumer, ZaE_GIDTyp GIDTyp, ZaE_GIDLp GIDLp,Rez_GIDNumer RezGIDNumer,Rez_GIDTyp RezGIDTyp, ZaE_TwrNumer TwrNumer, Rez_DataRealizacji DataRealizacji,
+                0 DataWystawienia, @RodzajZak Rodzaj, 0 PriorytetRez, (Rez_Ilosc-Rez_Zrealizowano-Rez_IloscImp-Rez_IloscMag-Rez_IloscSAD-Rez_IloscSSC) -
+                ISNULL((
+                        SELECT SUM(ZaELink.ZaE_Ilosc) FROM CDN.ZamElem ZaELink
+                            INNER JOIN CDN.ZamNag ZaNLink ON ZaNLink.ZaN_GIDNumer = ZaELink.ZaE_GIDNumer
+                            INNER JOIN CDN.ZamZamLinki ON ZZL_ZSGidNumer = ZaELink.ZaE_GIDNumer AND ZZL_ZSGidLp = ZaELink.ZaE_GIDLp
+                        WHERE ZZL_ZZGidNumer = ZaE.ZaE_GIDNumer and ZZL_ZZGidLp = ZaE.ZaE_GIDLp AND ZZL_ZZGidTyp = 960 and ZZL_Kierunek in (2,16) AND ZaNLink.ZaN_Stan IN(3,5,21)
+                            --e_ZZ_do_ZS,e_ZZ_do_KZ
+                ),0) Ilosc, 0 DstIlosc, 0 MPSTyp,0 TechnologiaId, 0 ProduktId/*, 0 KolejnoscRezerwacji*/
+            from CDN.ProdPlany 
+                RIGHT join cdn.Rezerwacje on Rez_DataRealizacji &gt;= PPL_PrzeliczenieOd and Rez_DataRealizacji &lt;= PPL_PrzeliczenieDo AND PPL_Id = @i_PlanProdId
+                inner join @tabMagaynyPP on PPId = @i_PlanProdId
+                inner join CDN.RezMagazyny on ReM_RezNumer = Rez_GIDNumer and ReM_RezTyp = Rez_GIDTyp
+                inner join CDN.ZamElem ZaE on ZaE_GIDNumer = Rez_ZrdNumer and ZaE_GIDTyp = Rez_ZrdTyp and ZaE_GIDLp = Rez_ZrdLp
+                inner join CDN.ZamNag on ZaN_GIDNumer = ZaE_GIDNumer
+                inner join @tabCDNProdukty on Id = ZaE_TwrNumer
+            where Rez_DataRealizacji BETWEEN CASE WHEN @ZakresRezerwacji = @WszystkieRezerwacje THEN Rez_DataRealizacji ELSE @OkresPrzeliczeniaOd END 
+                AND CASE WHEN @ZakresRezerwacji = @WszystkieRezerwacje THEN Rez_DataRealizacji ELSE @OkresPrzeliczeniaDo END
+                and ZaN_Stan &gt; 2 and (PPL_Id = @i_PlanProdId OR PPL_Id IS NULL) and ZaN_ZamTyp = 1152 
+            AND  MagNumer = ReM_MagNumer AND ((Rez_GIDTyp = 2576 AND Rez_ZrdTyp IN (1605, -1605) AND Rez_Typ = 1) OR (Rez_GIDTyp = 2576 AND Rez_ZrdTyp NOT IN (1605, -1605)) OR Rez_GIDTyp &lt;&gt; 2576)
+            /*AND NOT EXISTS(select * from CDN.ZamZamLinki Where 
+            ZZL_ZZGidNumer = ZaN_GIDNumer AND ZZL_ZZGidTyp = 960 AND ZZL_ZZGidLp = ZaE_GIDLp and ZZL_Kierunek in (2,16) --e_ZZ_do_ZS,e_ZZ_do_KZ
+            )*/
+        ) RezZZ WHERE Ilosc &gt; 0 
+
+        union all
+
+        --Prod Zlecenie - rezerwacje zakupowe podpiete pod element zlecenia
+        select distinct  
+            PZL_Id GIDNumer, 14343 GIDTyp, PZE_Id GIDLp,Rez_GIDNumer RezGIDNumer, 2576  RezGIDTyp,  Rez_TwrNumer TwrNumer, Rez_DataRealizacji DataRealizacji, 
+            PZL_DataWystawienia DataWystawienia,  @RodzajZP  Rodzaj, PZL_PriorytetRez PriorytetRez,PLK_Ilosc MPS, 0 DstIlosc,  1  MPSTyp, PZE_Technologia TechnologiaId, PTZ_Id ProduktId
+            /*, 1 KolejnoscRezerwacji*/
+        from CDN.ProdPlany 
+            RIGHT join cdn.Rezerwacje on Rez_DataRealizacji &gt;= PPL_PrzeliczenieOd and Rez_DataRealizacji &lt;= PPL_PrzeliczenieDo AND PPL_Id = @i_PlanProdId
+            inner join @tabMagaynyPP on PPId = @i_PlanProdId
+            inner join CDN.ProdPlanyTwG on PPG_PPLId = @i_PlanProdId
+            inner join CDN.RezMagazyny on ReM_RezNumer = Rez_GIDNumer and ReM_RezTyp = Rez_GIDTyp
+            inner join CDN.ProdLinki on PLK_ObiTyp = Rez_GIDTyp and PLK_ObiNumer = Rez_GIDNumer
+            inner join CDN.ProdZlecElem on PZE_Id = PLK_PZEId
+            inner join CDN.ProdZlecenia on PZL_Id = PZE_Zlecenie
+            inner join @tabCDNProdukty on Id = Rez_TwrNumer
+            CROSS APPLY (SELECT TOP 1 PTZ_Id, PTC_Technologia 
+                            FROM CDN.ProdTechnologiaZasoby
+                                JOIN CDN.ProdTechnologiaCzynnosci ON PTC_Id = PTZ_TechnologiaCzynnosc
+                            WHERE PTC_Technologia = PZE_Technologia
+                            ORDER BY PTZ_PodstawowaTechnologiaDlaProduktu DESC, PTZ_Id) AS Produkt
+        where Rez_DataRealizacji BETWEEN CASE WHEN @ZakresRezerwacji = @WszystkieRezerwacje THEN Rez_DataRealizacji ELSE @OkresPrzeliczeniaOd END 
+                AND CASE WHEN @ZakresRezerwacji = @WszystkieRezerwacje THEN Rez_DataRealizacji ELSE @OkresPrzeliczeniaDo END 
+                AND (PPL_Id = @i_PlanProdId OR PPL_Id IS NULL) and Rez_GIDTyp =2592-- and Rez_ZrdTyp = 14345 
+            and MagNumer = ReM_MagNumer and @SkladnikiMPS &amp; @MPSZP &gt; 0  
+            AND NOT EXISTS(select * from CDN.ZamZamLinki WHERE ZZL_ZZGidNumer =  PZE_Id AND ZZL_ZZGidTyp = 14343 AND ZZL_ZZGidLp = PZE_Lp AND ZZL_ZSGidTyp &gt; 0)
+        union all
+
+        --ProdZasoby - elementy MPS dla ZP pochodzace z ProdZasoby
+        select distinct  
+            PZL_Id GIDNumer, 14343 GIDTyp, PZE_Id GIDLp,0 RezGIDNumer, 2576  RezGIDTyp,  PZA_TwrNumer TwrNumer, 
+            (PCZ_TerminZakonczenia / 24 /3600 +  DATEDIFF(d,'18001228',GETDATE()) - DATEDIFF(d,'19900101',GETDATE())) DataRealizacji, 
+            PZL_DataWystawienia DataWystawienia,  @RodzajZP  Rodzaj, PZL_PriorytetRez PriorytetRez,PLK_Ilosc MPS, 0 DstIlosc,  1  MPSTyp, PZE_Technologia TechnologiaId, PTZ_Id ProduktId
+            /*, 1 KolejnoscRezerwacji*/
+        from CDN.ProdPlany 
+            RIGHT join CDN.ProdCzynnosci on (PCZ_TerminZakonczenia / 24 /3600 +  DATEDIFF(d,'18001228',GETDATE()) - DATEDIFF(d,'19900101',GETDATE())) &gt;= PPL_PrzeliczenieOd 
+                            and (PCZ_TerminZakonczenia / 24 /3600 +  DATEDIFF(d,'18001228',GETDATE()) - DATEDIFF(d,'19900101',GETDATE())) &lt;= PPL_PrzeliczenieDo AND PPL_Id = @i_PlanProdId
+            inner join @tabMagaynyPP on PPId = @i_PlanProdId
+            inner join CDN.ProdPlanyTwG on PPG_PPLId = @i_PlanProdId
+            inner join CDN.ProdZasoby on PCZ_Id = PZA_Czynnosc
+            inner join CDN.ProdLinki on PLK_ObiTyp = 14346 and PLK_ObiNumer = PZA_Id
+            inner join CDN.ProdZlecElem on PZE_Id = PLK_PZEId
+            inner join CDN.ProdZlecenia on PZL_Id = PZE_Zlecenie
+            inner join @tabCDNProdukty on Id = PZA_TwrNumer
+            CROSS APPLY (SELECT TOP 1 PTZ_Id, PTC_Technologia 
+                            FROM CDN.ProdTechnologiaZasoby
+                                JOIN CDN.ProdTechnologiaCzynnosci ON PTC_Id = PTZ_TechnologiaCzynnosc
+                            WHERE PTC_Technologia = PZE_Technologia
+                            ORDER BY PTZ_PodstawowaTechnologiaDlaProduktu DESC, PTZ_Id) AS Produkt
+        where (PCZ_TerminZakonczenia / 24 /3600 +  DATEDIFF(d,'18001228',GETDATE()) - DATEDIFF(d,'19900101',GETDATE())) BETWEEN CASE WHEN @ZakresRezerwacji = @WszystkieRezerwacje 
+                    THEN (PCZ_TerminZakonczenia / 24 /3600 +  DATEDIFF(d,'18001228',GETDATE()) - DATEDIFF(d,'19900101',GETDATE())) ELSE @OkresPrzeliczeniaOd END 
+                AND CASE WHEN @ZakresRezerwacji = @WszystkieRezerwacje THEN (PCZ_TerminZakonczenia / 24 /3600 +  DATEDIFF(d,'18001228',GETDATE()) - DATEDIFF(d,'19900101',GETDATE()))
+                    ELSE @OkresPrzeliczeniaDo END and @SkladnikiMPS &amp; @MPSZP &gt; 0 
+            AND (PPL_Id = @i_PlanProdId OR PPL_Id IS NULL) AND (PZA_MagNumer = MagNumer OR PZA_MagNumer = 0) 
+            AND NOT EXISTS(select * from CDN.ZamZamLinki WHERE ZZL_ZZGidNumer =  PZE_Id AND ZZL_ZZGidTyp = 14343 AND ZZL_ZZGidLp = PZE_Lp AND ZZL_ZSGidTyp &gt; 0)
+
+        union all
+
+        --pozostale rezerwacje zakupowe ktorych nie ma na zamówieniach co najmniej  potwierdzonych  
+        select distinct   
+            ISNULL(ZaN_GIDNumer, ISNULL(PZ1.PZL_Id,ISNULL(PZ2.PZL_Id,0))) GIDNumer, 
+            ISNULL(ZaN_GIDTyp, (CASE WHEN PZ1.PZL_Id IS NOT NULL OR PZ2.PZL_Id IS NOT NULL THEN 14343 ELSE 0 END)) GIDTyp,
+            ISNULL(PZE1.PZE_Id,ISNULL(PZE2.PZE_Id,Rez_ZrdLp)) GIDLp,Rez_GIDNumer RezGIDNumer, Rez_GIDTyp RezGIDTyp,  Rez_TwrNumer TwrNumer, Rez_DataRealizacji DataRealizacji, 
+            0 DataWystawienia, @RodzajZak Rodzaj, 
+            0 PriorytetRez, Rez_Ilosc-Rez_Zrealizowano-Rez_IloscImp-Rez_IloscMag-Rez_IloscSAD-Rez_IloscSSC MPS, 0 DstIlosc, 0 MPSTyp, 0 TechnologiaId, 0 ProduktId/*, 0 KolejnoscRezerwacji*/
+        from CDN.ProdPlany 
+            RIGHT join cdn.Rezerwacje on Rez_DataRealizacji &gt;= PPL_PrzeliczenieOd and Rez_DataRealizacji &lt;= PPL_PrzeliczenieDo AND PPL_Id = @i_PlanProdId
+            inner join @tabMagaynyPP on PPId = @i_PlanProdId
+            inner join CDN.ProdPlanyTwG on PPG_PPLId = @i_PlanProdId
+            inner join CDN.RezMagazyny on ReM_RezNumer = Rez_GIDNumer and ReM_RezTyp = Rez_GIDTyp
+            inner join @tabCDNProdukty on Id = Rez_TwrNumer
+            LEFT JOIN CDN.ZamNag on ZaN_GIDNumer = Rez_ZrdNumer and ZaN_GIDTyp = Rez_ZrdTyp    
+            LEFT JOIN CDN.ProdLinki PL1 on PL1.PLK_ObiTyp = Rez_GIDTyp and PL1.PLK_ObiNumer = Rez_GIDNumer
+            LEFT JOIN CDN.ProdZlecElem PZE1 on PZE1.PZE_Id = PLK_PZEId
+            LEFT JOIN CDN.ProdZlecenia PZ1 on PZ1.PZL_Id = PZE_Zlecenie
+            LEFT join CDN.ProdLinki PL2 on PL2.PLK_ObiNumer = Rez_ZrdNumer AND PL2.PLK_ObiTyp = Rez_ZrdTyp
+            LEFT JOIN CDN.ProdZlecElem PZE2 on PZE2.PZE_Id = PL2.PLK_PZEId
+            LEFT JOIN CDN.ProdZlecenia PZ2 on PZ2.PZL_Id = PZE2.PZE_Zlecenie
+        where Rez_GIDTyp = 2592 
+        AND Rez_DataRealizacji BETWEEN CASE WHEN @ZakresRezerwacji = @WszystkieRezerwacje THEN Rez_DataRealizacji ELSE @OkresPrzeliczeniaOd END 
+                AND CASE WHEN @ZakresRezerwacji = @WszystkieRezerwacje THEN Rez_DataRealizacji ELSE @OkresPrzeliczeniaDo END
+        and (ZaN_GIDNumer IS NULL or ZaN_Stan &lt; 3) 
+              and (Rez_ZrdTyp &lt;&gt; 14345 
+            or NOT EXISTS(select * from CDN.ProdLinki inner join CDN.ZamZamLinki on ZZL_ZZGidNumer =  PLK_PZEId AND ZZL_ZZGidTyp = 14343 
+                            where PLK_ObiTyp = Rez_GIDTyp and PLK_ObiNumer = Rez_GIDTyp))
+            and MagNumer = ReM_MagNumer 
+
+        union all
+
+        --pozostale rezerwacje sprzedazowe ktorych nie ma na ZS i ZW co najmniej potwierdzonych
+        select distinct   
+            ISNULL(ZaN_GIDNumer, ISNULL(PZ1.PZL_Id,ISNULL(PZ2.PZL_Id,0))) GIDNumer,
+            ISNULL(ZaN_GIDTyp, (CASE WHEN PZ1.PZL_Id IS NOT NULL OR PZ2.PZL_Id IS NOT NULL THEN 14343 ELSE 0 END)) GIDTyp, 
+            ISNULL(PZE1.PZE_Id,ISNULL(PZE2.PZE_Id,Rez_ZrdLp)) GIDLp,Rez_GIDNumer RezGIDNumer, Rez_GIDTyp RezGIDTyp,  Rez_TwrNumer TwrNumer, Rez_DataRealizacji DataRealizacji, 
+            0 DataWystawienia, @RodzajSpr Rodzaj, 
+            0 PriorytetRez, Rez_Ilosc-Rez_Zrealizowano-Rez_IloscImp-Rez_IloscMag-Rez_IloscSAD-Rez_IloscSSC MPS, 0 DstIlosc, 0 MPSTyp, 0 TechnologiaId, 0 ProduktId/*, 0 KolejnoscRezerwacji*/
+        from CDN.ProdPlany 
+            RIGHT join cdn.Rezerwacje on Rez_DataRealizacji &gt;= PPL_PrzeliczenieOd and Rez_DataRealizacji &lt;= PPL_PrzeliczenieDo AND PPL_Id = @i_PlanProdId
+            inner join @tabMagaynyPP on PPId = @i_PlanProdId
+            inner join CDN.ProdPlanyTwG on PPG_PPLId = @i_PlanProdId
+            inner join CDN.RezMagazyny on ReM_RezNumer = Rez_GIDNumer and ReM_RezTyp = Rez_GIDTyp    
+            inner join @tabCDNProdukty on Id = Rez_TwrNumer
+            LEFT JOIN CDN.ZamNag on ZaN_GIDNumer = Rez_ZrdNumer and ZaN_GIDTyp = Rez_ZrdTyp
+            LEFT JOIN CDN.ProdLinki PL1 on PL1.PLK_ObiTyp = Rez_GIDTyp and PL1.PLK_ObiNumer = Rez_GIDNumer
+            LEFT JOIN CDN.ProdZlecElem PZE1 on PZE1.PZE_Id = PLK_PZEId
+            LEFT JOIN CDN.ProdZlecenia PZ1 on PZ1.PZL_Id = PZE_Zlecenie
+            LEFT join CDN.ProdLinki PL2 on PL2.PLK_ObiNumer = Rez_ZrdNumer AND PL2.PLK_ObiTyp = Rez_ZrdTyp
+            LEFT JOIN CDN.ProdZlecElem PZE2 on PZE2.PZE_Id = PL2.PLK_PZEId
+            LEFT JOIN CDN.ProdZlecenia PZ2 on PZ2.PZL_Id = PZE2.PZE_Zlecenie
+        where (ZaN_GIDNumer IS NULL or ZaN_Stan &lt; 3)
+            AND Rez_DataRealizacji BETWEEN CASE WHEN @ZakresRezerwacji = @WszystkieRezerwacje THEN Rez_DataRealizacji ELSE @OkresPrzeliczeniaOd END 
+                AND CASE WHEN @ZakresRezerwacji = @WszystkieRezerwacje THEN Rez_DataRealizacji ELSE @OkresPrzeliczeniaDo END
+            and MagNumer = ReM_MagNumer
+            AND ((Rez_GIDTyp = 2576 AND Rez_ZrdTyp IN (1605, -1605) AND Rez_Typ = 1) OR (Rez_GIDTyp = 2576 AND Rez_ZrdTyp NOT IN (1605, -1605)))
+            
+    ) Elem
+    group by DataRealizacji,/*KolejnoscRezerwacji,*/  GIDTyp,GIDLp, RezGIDTyp, TwrNumer,MPSTyp, DataWystawienia, Rodzaj, PriorytetRez,GIDNumer, TechnologiaId, ProduktId
+    RETURN
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="SurowceCzynnosci"></A><PRE>
+          <FONT SIZE="2"><I>/* SurowceCzynnosci */</I><BR>
+CREATE FUNCTION CDN.SurowceCzynnosci()
+RETURNS TABLE
+AS
+RETURN
+    SELECT Polprodukt.PTZ_TypZasobu, Polprodukt.PTZ_ID, Polprodukt.PTZ_Kod, Polprodukt.PTZ_Nazwa, Polprodukt.Twr_Kod, Polprodukt.PTZ_TwrNumer TwrNumer, 
+        Polprodukt.Twr_Typ, Polprodukt.PTZ_Ilosc, Polprodukt.PTZ_TechnologiaZasob, Polprodukt.PTZ_Magnumer, CzynnoscProduktu.PTC_Technologia, Polprodukt.PTC_ID PTC_IDOrg, 
+        CzynnoscProduktu.PTC_ID, Polprodukt.PTC_Kod, Polprodukt.PTC_Technologia Technologia, Polprodukt.PTC_Id CzynnoscTech, CzynnoscProduktu.PTC_Ilosc,
+        CASE 
+            WHEN CDN.CzyKlasaAtrOkresowa(Produkt.PTZ_IloscAtr) = 1 
+                THEN Produkt.PTZ_Ilosc 
+            ELSE CDN.ProdIloscAtr(1,Produkt.PTZ_Ilosc,PTZ_IloscAtr,4,Produkt.PTZ_TypZasobu,PTC_Ilosc,PTC_IloscAtr,14340,CzynnoscProduktu.PTC_Technologia,0,0) 
+        END IloscPolprod, 
+        CASE 
+            WHEN CDN.CzyKlasaAtrOkresowa(Produkt.PTZ_IloscAtr) = 1 
+                THEN Produkt.PTZ_Ilosc 
+            ELSE 
+                CDN.ProdIloscAtr(1,Produkt.PTZ_Ilosc,Produkt.PTZ_IloscAtr,4,Produkt.PTZ_TypZasobu,CzynnoscProduktu.PTC_Ilosc,CzynnoscProduktu.PTC_IloscAtr,14340, CzynnoscProduktu.PTC_Technologia,0,0) 
+        END / (CASE WHEN Polprodukt.PTZ_Ilosc = 0 THEN 1 ELSE Polprodukt.PTZ_Ilosc END) Podzielnik,      
+        --kolumna Podzielnik jest współczynnikiem pozwalającym na proporcjonalne wyliczenie ilości potrzebnego surowca
+        Polprodukt.PTZ_Zamiennik,Polprodukt.PTZ_IloscFormat
+    FROM
+    (
+        --zapytanie zwracające półprodukty wchodzące do wszystkich czynności
+        SELECT PTZ_TypZasobu, PTZ_ID, PTZ_Kod, PTZ_Nazwa,Twr_Kod, PTZ_TwrNumer, Twr_Typ, 
+            CASE WHEN CDN.CzyKlasaAtrOkresowa(PTZ_IloscAtr) = 1 THEN PTZ_Ilosc 
+                ELSE CDN.ProdIloscAtr(1,PTZ_Ilosc,PTZ_IloscAtr,4,PTZ_TypZasobu,PTC_Ilosc,PTC_IloscAtr,14340,PTC_Technologia,0,0) 
+            END PTZ_Ilosc, 
+            PTZ_TechnologiaZasob, PTC_Id, PTC_Kod, PTZ_MagNumer, PTC_Technologia, PTZ_Zamiennik, PTZ_IloscFormat
+        FROM cdn.ProdTechnologiaCzynnosci
+            JOIN cdn.ProdTechnologiaZasoby on PTZ_TechnologiaCzynnosc = PTC_Id
+            LEFT OUTER JOIN Cdn.TwrKarty on PTZ_TwrTyp = Twr_GidTyp and PTZ_TwrNumer = Twr_GidNumer
+        WHERE /*PTZ_Zamiennik = 0 and*/  PTZ_TypZasobu = 1
+    ) Polprodukt
+        LEFT JOIN cdn.ProdTechnologiaZasoby Produkt on Produkt.PTZ_Id = Polprodukt.PTZ_TechnologiaZasob --AND PolProdukt.Twr_Kod IS NULL
+        --join aby wyciągnąć produkty powiązane z półproduktami czyli "cofamy się" do poprzedniej czynności z której otrzymujemy półprodukt
+        LEFT JOIN cdn.ProdTechnologiaCzynnosci CzynnoscProduktu on CzynnoscProduktu.PTC_ID = Produkt.PTZ_TechnologiaCzynnosc     
+        --czynność z której pochodzi produkt będący naszym półproduktem
+            
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="ProdPlanyZasobyMPS"></A><PRE>
+          <FONT SIZE="2"><I>/* ProdPlanyZasobyMPS */</I><BR>
+CREATE FUNCTION CDN.ProdPlanyZasobyMPS(@i_ZrdGIDNumer int,@i_ZrdGIDTyp smallint,@i_ZrdGIDLp int, @i_TwrNumer int, @i_DataRealizacji int)
+RETURNS @tabZasobyMPS TABLE(
+    IloscZasobPZA            decimal(15,4), 
+    IloscPwPZA        decimal(15,4)
+)
+as
+BEGIN
+    IF @i_ZrdGIDTyp = 14343 AND @i_DataRealizacji &gt; 0 BEGIN --Dla ZP
+        Insert into @tabZasobyMPS(IloscZasobPZA,IloscPwPZA)
+        select  SUM(IloscZasobPZA) IloscZasobPZA, SUM(IloscPwPZA) IloscPwPZA
+        from 
+        (select GIDNumerPZA,GIDLpPZA, GIDTypPZA, TwrNumerPZA, IloscZasobPZA,DataRealizacji,
+        (
+        select SUM(TrS_Ilosc) FROM CDN.ProdZlecElem PZETrna
+        inner join CDN.ProdLinki on PLK_PZEId = PZE_Id and PLK_ObiTyp = 14346
+        inner join CDN.ProdZasoby on PZA_Id = PLK_ObiNumer
+        inner join CDN.TraSElem on TrS_ZlcNumer = PZA_Id and TrS_ZlcTyp = 14346
+        inner join CDN.TraNag on TrN_GIDNumer = TrS_GIDNumer
+        where PZA_TwrNumer = TwrNumerPZA and  TrN_GIDTyp = 1617 and TrN_Stan = 5 and PZETrna.PZE_Zlecenie = ZlecenieId
+        ) IloscPwPZA
+        From
+        (
+        select ISNULL(ZZL_ZSGidNumer,ISNULL(DOZ_ZRDNumer,PZE_Zlecenie)) GIDNumerPZA,
+        ISNULL(CAST(ZZL_ZSGidLp as INT),ISNULL(CAST(DOZ_ZRDLp as INT),PZE_Id)) GIDLpPZA,
+        ISNULL(ZZL_ZSGidTyp,ISNULL(DOZ_ZRDTyp,14343)) GIDTypPZA, PZA_TwrNumer TwrNumerPZA,
+        PZE_Zlecenie ZlecenieId,SUM(PLK_Ilosc) IloscZasobPZA,
+        (PCZ_TerminZakonczenia / 24 /3600 +  DATEDIFF(d,'18001228',GETDATE()) - DATEDIFF(d,'19900101',GETDATE())) DataRealizacji
+        from CDN.ProdZlecElem PZEM
+        inner join CDN.ProdLinki on PLK_PZEId = PZE_Id and PLK_ObiTyp = 14346
+        inner join CDN.ProdZasoby on PZA_Id = PLK_ObiNumer
+        inner join CDN.ProdCzynnosci on PCZ_Id = PZA_Czynnosc
+        left join CDN.DokZwiazane on DOZ_DOKNumer = PZE_Id and DOZ_DOKTyp = 14343  
+        left join CDN.ZamZamLinki on ZZL_ZZGidNumer = PZE_Id  and ZZL_ZZGidTyp = 14343 AND ZZL_ZSGidTyp = 960
+        group by ZZL_ZSGidNumer,ZZL_ZSGidTyp,DOZ_ZRDNumer,DOZ_ZRDTyp, PZE_Zlecenie, PZA_TwrNumer,ZZL_ZSGidLp,DOZ_ZRDLp,PZE_Id,
+        (PCZ_TerminZakonczenia / 24 /3600 +  DATEDIFF(d,'18001228',GETDATE()) - DATEDIFF(d,'19900101',GETDATE()))
+        ) Zasoby
+        ) ZasobySumaDlaPozycji
+        where GIDNumerPZA = @i_ZrdGIDNumer AND GIDLpPZA = @i_ZrdGIDLp AND GIDTypPZA = @i_ZrdGIDTyp AND TwrNumerPZA = @i_TwrNumer AND DataRealizacji = @i_DataRealizacji
+        group by GIDNumerPZA,GIDLpPZA, GIDTypPZA, TwrNumerPZA,DataRealizacji
+    END ELSE BEGIN
+        Insert into @tabZasobyMPS(IloscZasobPZA,IloscPwPZA)
+        select SUM(IloscZasobPZA) IloscZasobPZA, SUM(IloscPwPZA) IloscPwPZA 
+        from 
+        (select GIDNumerPZA,GIDLpPZA, GIDTypPZA, TwrNumerPZA, IloscZasobPZA,
+        (
+        select SUM(TrS_Ilosc) FROM CDN.ProdZlecElem PZETrna
+        inner join CDN.ProdLinki on PLK_PZEId = PZE_Id and PLK_ObiTyp = 14346
+        inner join CDN.ProdZasoby on PZA_Id = PLK_ObiNumer
+        inner join CDN.TraSElem on TrS_ZlcNumer = PZA_Id and TrS_ZlcTyp = 14346
+        inner join CDN.TraNag on TrN_GIDNumer = TrS_GIDNumer
+        where PZA_TwrNumer = TwrNumerPZA and  TrN_GIDTyp = 1617 and TrN_Stan = 5 and PZETrna.PZE_Zlecenie = ZlecenieId
+        ) IloscPwPZA
+        From
+        (
+        select ISNULL(ZZL_ZSGidNumer,ISNULL(DOZ_ZRDNumer,PZE_Zlecenie)) GIDNumerPZA,
+        ISNULL(CAST(ZZL_ZSGidLp as INT),ISNULL(CAST(DOZ_ZRDLp as INT),PZE_Id)) GIDLpPZA,
+        ISNULL(ZZL_ZSGidTyp,ISNULL(DOZ_ZRDTyp,14343)) GIDTypPZA, PZA_TwrNumer TwrNumerPZA,
+        PZE_Zlecenie ZlecenieId,SUM(PLK_Ilosc) IloscZasobPZA
+        from CDN.ProdZlecElem PZEM
+        inner join CDN.ProdLinki on PLK_PZEId = PZE_Id and PLK_ObiTyp = 14346
+        inner join CDN.ProdZasoby on PZA_Id = PLK_ObiNumer
+        left join CDN.DokZwiazane on DOZ_DOKNumer = PZE_Id and DOZ_DOKTyp = 14343  
+        left join CDN.ZamZamLinki on ZZL_ZZGidNumer = PZE_Id  and ZZL_ZZGidTyp = 14343 AND ZZL_ZSGidTyp = 960
+        group by ZZL_ZSGidNumer,ZZL_ZSGidTyp,DOZ_ZRDNumer,DOZ_ZRDTyp, PZE_Zlecenie, PZA_TwrNumer,ZZL_ZSGidLp,DOZ_ZRDLp,PZE_Id
+        ) Zasoby
+        ) ZasobySumaDlaPozycji
+        where GIDNumerPZA = @i_ZrdGIDNumer AND GIDLpPZA = @i_ZrdGIDLp AND GIDTypPZA = @i_ZrdGIDTyp AND TwrNumerPZA = @i_TwrNumer
+        group by GIDNumerPZA,GIDLpPZA, GIDTypPZA, TwrNumerPZA
+    END
+    RETURN
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="ProdPlanyProdWygenerowaneDok"></A><PRE>
+          <FONT SIZE="2"><I>/* ProdPlanyProdWygenerowaneDok */</I><BR>
+CREATE FUNCTION CDN.ProdPlanyProdWygenerowaneDok(        
+        @i_PlanProdProduktId INT = 0,
+        @v_ProdPlanProdId VARCHAR(2000)
+        )
+RETURNS @tabDokMPS TABLE(
+    PPPId            INT,
+    DOKNumer        INT, 
+    DOKTyp            SMALLINT, 
+    DOKLp            SMALLINT,
+    Ilosc            decimal(15,4),
+    DataZwiazania    INT 
+)
+AS
+BEGIN
+    DECLARE @tabPlanyProdukcjiId TABLE(
+    PPIdPom        int
+    )
+
+    IF @i_PlanProdProduktId IS NOT NULL AND @i_PlanProdProduktId &gt; 0 BEGIN
+        INSERT INTO @tabPlanyProdukcjiId
+        Select @i_PlanProdProduktId        
+    END
+    ELSE IF @v_ProdPlanProdId IS NOT NULL AND LEN(@v_ProdPlanProdId) &gt; 0 BEGIN
+        DECLARE @str VARCHAR(20)  
+        DECLARE @ind Int 
+
+        SET @ind = CharIndex(',',@v_ProdPlanProdId)  
+        WHILE @ind &gt; 0 BEGIN  
+            SET @str = SUBSTRING(@v_ProdPlanProdId,1,@ind-1)  
+            SET @v_ProdPlanProdId = SUBSTRING(@v_ProdPlanProdId,@ind+1,LEN(@v_ProdPlanProdId)-@ind)  
+            INSERT INTO @tabPlanyProdukcjiId values (@str)  
+            SET @ind = CharIndex(',',@v_ProdPlanProdId)  
+        END  
+        SET @str = @v_ProdPlanProdId  
+        INSERT INTO @tabPlanyProdukcjiId values (@str) 
+    END
+
+    INSERT INTO @tabDokMPS
+    SELECT
+    PPPId, DOKNumer, DOKTyp, DOKLp, Ilosc, PPD_DataZwiazania DataZwiazania FROM
+    (
+    SELECT 
+    PPP_PPLId PPLId ,PPPId, ISNULL(ZaN_GIDNumer,ISNULL(PZL_Id,0)) DOKNumer, DOKTyp, DOKLp,ISNULL(PZE_Ilosc,ISNULL(ZaE_Ilosc,0)) Ilosc
+    FROM
+    (
+    SELECT PPP_Id PPPId, DOZ_ZRDNumer ZRDNumer, DOZ_ZRDTyp ZRDTyp, DOZ_ZRDLp ZRDLp, DOZ_DOKNumer DOKNumer, DOZ_DOKTyp DOKTyp, DOZ_DOKLp DOKLp
+                FROM CDN.ProdPlanyProdukty
+                INNER JOIN CDN.DokZwiazane ON DOZ_ZRDNumer = PPP_Id AND DOZ_ZRDTyp = 14361
+    UNION ALL
+    SELECT PPP_Id PPPId, DOZ_ZRDNumer ZRDNumer, DOZ_ZRDTyp ZRDTyp, DOZ_ZRDLp ZRDLp, DOZ_DOKNumer DOKNumer, DOZ_DOKTyp DOKTyp, DOZ_DOKLp DOKLp 
+                FROM CDN.ProdPlanyProdukty
+                INNER JOIN CDN.ProdPlanyZrdDok ON PPZ_PPPId = PPP_Id
+                INNER JOIN CDN.DokZwiazane ON DOZ_ZRDTyp = PPZ_DokTyp AND DOZ_ZRDNumer = PPZ_DokLp    
+    UNION ALL
+    SELECT PPP_Id PPPId, ZZL_ZSGidNumer ZRDNumer, ZZL_ZSGidTyp ZRDTyp, ZZL_ZSGidTyp ZRDLp, ZZL_ZZGidNumer DOKNumer, ZZL_ZZGidTyp DOKTyp, ZZL_ZZGidLp DOKLp 
+                FROM CDN.ProdPlanyProdukty
+                INNER JOIN CDN.ProdPlanyZrdDok ON PPZ_PPPId = PPP_Id
+                INNER JOIN CDN.ZamZamLinki ON ZZL_ZSGidNumer = PPZ_DokNumer AND ZZL_ZSGidTyp = PPZ_DokTyp AND ZZL_ZSGidLp = PPZ_DokLp
+    ) Powiazania
+    INNER JOIN CDN.ProdPlanyProdukty ON PPP_Id = PPPId
+    LEFT JOIN CDN.ZamElem ON ZaE_GIDNumer = DOKNumer AND ZaE_GIDTyp = DOKTyp AND ZaE_GIDLp = DOKLp
+    LEFT JOIN CDN.ZamNag ON ZaN_GIDNumer = ZaE_GIDNumer
+    LEFT JOIN CDN.ProdZlecElem ON PZE_Id = DOKNumer AND DOKTyp = 14343
+    LEFT JOIN CDN.ProdZlecenia ON PZL_Id = PZE_Zlecenie
+    WHERE
+    (DOKTyp = 14343
+    OR (DOKTyp = 960 AND ZaN_Stan NOT IN(35,37,51)))
+    AND PPP_Id IN(SELECT PPIdPom FROM @tabPlanyProdukcjiId)
+    ) Powiazania2
+    INNER JOIN CDN.ProdPlanyDokumenty ON PPD_DokNumer = DOKNumer AND PPD_DokTyp = DOKTyp AND PPD_PPLId = PPLId
+    RETURN
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="ProdPlanyProdPrzygotujGenerowanie"></A><PRE>
+          <FONT SIZE="2"><I>/* ProdPlanyProdPrzygotujGenerowanie */</I><BR>
+CREATE FUNCTION CDN.ProdPlanyProdPrzygotujGenerowanie(        
+        @v_ProdPlanProdId VARCHAR(2000),    
+        @i_PlanProdId INT = 0
+        )
+                            
+RETURNS @tabProdDokMPS TABLE(
+    PPPId            INT,
+    DOKTyp            SMALLINT, 
+    DOKNumer        INT, 
+    DOKLp            SMALLINT,
+    Ilosc            decimal(15,4),
+    TwrNumer        INT,
+    TerminOd        INT,
+    TerminDo        INT,
+    TerminProdukcji INT
+)
+AS
+BEGIN
+    DECLARE @PPPId        INT
+    DECLARE @DokTyp        SMALLINT
+    DECLARE @DokNumer    INT
+    DECLARE @DokLp        INT
+    DECLARE @IloscDoProdukcji    DECIMAL(15,4)
+    DECLARE @IloscWygenerowana    DECIMAL(15,4)
+    DECLARE @IloscDok            DECIMAL(15,4)
+    DECLARE @PPPTwrNumer        INT
+    DECLARE @TerminOd INT
+    DECLARE @TerminDo INT
+    DECLARE @TerminProdukcji INT
+    
+    DECLARE @PPPIdPoprzednia        INT
+    DECLARE @IloscDoProdukcjiPoprzednia    DECIMAL(15,4)
+    DECLARE @IloscWygenerowanaPoprzednia    DECIMAL(15,4)
+    DECLARE @PPPTwrNumerPoprzednia        INT 
+    DECLARE @TerminOdPoprzednia INT
+    DECLARE @TerminDoPoprzednia INT   
+    
+
+    DECLARE @PPPIdPom     INT
+    DECLARE @IloscDokSum DECIMAL(15,4)
+    DECLARE @IloscNaPozycji DECIMAL(15,4)
+    
+
+    DECLARE @tabProdPlanProdId TABLE(
+    PPPId        int
+    )
+
+    IF @v_ProdPlanProdId IS NOT NULL AND LEN(@v_ProdPlanProdId) &gt; 0 BEGIN
+        DECLARE @str VARCHAR(20)  
+        DECLARE @ind Int 
+
+        SET @ind = CharIndex(',',@v_ProdPlanProdId)  
+        WHILE @ind &gt; 0 BEGIN  
+            SET @str = SUBSTRING(@v_ProdPlanProdId,1,@ind-1)  
+            SET @v_ProdPlanProdId = SUBSTRING(@v_ProdPlanProdId,@ind+1,LEN(@v_ProdPlanProdId)-@ind)  
+            INSERT INTO @tabProdPlanProdId values (@str)  
+            SET @ind = CharIndex(',',@v_ProdPlanProdId)  
+        END  
+        SET @str = @v_ProdPlanProdId  
+        INSERT INTO @tabProdPlanProdId values (@str) 
+    END
+    
+    IF EXISTS(SELECT * FROM @tabProdPlanProdId) BEGIN
+        DECLARE ProdDokMPSKursor CURSOR LOCAL FOR 
+        SELECT PPP_Id,ISNULL(PPZ_DokTyp,14361),ISNULL(PPZ_DokNumer,PPP_Id),ISNULL(PPZ_DokLp,0),
+        PPP_IloscDoProdukcji IloscDoProdukcji,
+        (select ISNULL(Sum(Ilosc),0) FROM CDN.ProdPlanyProdWygenerowaneDok(PPP_Id,NULL)) IloscWygenerowana,
+        ISNULL(PPZ_Ilosc,PPP_IloscDoProdukcji) IloscDok,
+        PPP_TwrNumer,PPP_Termin,PPP_TerminDo, PPP_TerminProdukcji
+        FROM CDN.ProdPlanyProdukty
+        LEFT JOIN CDN.ProdPlanyZrdDok ON PPZ_PPPId = PPP_Id AND PPZ_Ilosc &gt; 0 WHERE PPP_Id IN (Select PPPId FROM @tabProdPlanProdId)
+    END ELSE  BEGIN
+        DECLARE ProdDokMPSKursor CURSOR LOCAL FOR 
+        SELECT PPP_Id,ISNULL(PPZ_DokTyp,14361),ISNULL(PPZ_DokNumer,PPP_Id),ISNULL(PPZ_DokLp,0),
+        PPP_IloscDoProdukcji IloscDoProdukcji,
+        (select ISNULL(Sum(Ilosc),0) FROM CDN.ProdPlanyProdWygenerowaneDok(PPP_Id,NULL)) IloscWygenerowana,
+        ISNULL(PPZ_Ilosc,PPP_IloscDoProdukcji) IloscDok,
+        PPP_TwrNumer,PPP_Termin,PPP_TerminDo, PPP_TerminProdukcji
+        FROM CDN.ProdPlanyProdukty
+         LEFT JOIN CDN.ProdPlanyZrdDok ON PPZ_PPPId = PPP_Id AND PPZ_Ilosc &gt; 0 
+        WHERE PPP_PPLId = @i_PlanProdId        
+    END
+
+    SET @PPPIdPom = 0
+    OPEN ProdDokMPSKursor
+    FETCH NEXT FROM ProdDokMPSKursor INTO @PPPId, @DokTyp, @DokNumer, @DokLp, @IloscDoProdukcji, @IloscWygenerowana, @IloscDok, @PPPTwrNumer,@TerminOd,@TerminDo, @TerminProdukcji
+    WHILE @@FETCH_STATUS = 0
+    BEGIN
+        IF @PPPId != @PPPIdPom BEGIN
+            IF @IloscDoProdukcjiPoprzednia &gt; @IloscDokSum AND @IloscDoProdukcjiPoprzednia &gt; @IloscWygenerowanaPoprzednia AND @PPPIdPoprzednia &gt; 0 BEGIN
+                INSERT INTO @tabProdDokMPS
+                VALUES(@PPPIdPoprzednia, 14361, @PPPIdPoprzednia, 0, 
+                        (CASE WHEN @IloscDoProdukcjiPoprzednia - @IloscDokSum &lt; @IloscDoProdukcjiPoprzednia - @IloscWygenerowanaPoprzednia THEN @IloscDoProdukcjiPoprzednia - @IloscDokSum ELSE @IloscDoProdukcjiPoprzednia - @IloscWygenerowanaPoprzednia END), 
+                        @PPPTwrNumerPoprzednia,@TerminOd,@TerminDo,@TerminProdukcji)    
+            END
+            SET @PPPIdPom = @PPPId
+            SET @IloscDokSum = 0
+        END
+
+        SET @IloscNaPozycji = 0
+        IF @IloscWygenerowana &lt; @IloscDok + @IloscDokSum AND @IloscDoProdukcji &gt; @IloscDokSum BEGIN
+            IF @IloscDoProdukcji &lt; @IloscDok--TFS 196816 
+                SET @IloscNaPozycji = ABS(@IloscDoProdukcji - (CASE WHEN @IloscWygenerowana - @IloscDokSum &gt; 0 THEN @IloscWygenerowana - @IloscDokSum ELSE 0 END))
+            ELSE
+                SET @IloscNaPozycji = @IloscDok - (CASE WHEN @IloscWygenerowana - @IloscDokSum &gt; 0 THEN @IloscWygenerowana - @IloscDokSum ELSE 0 END)
+        
+            
+            IF @IloscDoProdukcji &lt; @IloscDokSum + @IloscNaPozycji BEGIN
+                SET @IloscNaPozycji = @IloscNaPozycji - (@IloscDokSum + @IloscNaPozycji - @IloscDoProdukcji)
+            END
+        
+        END
+        SET @IloscDokSum = @IloscDokSum + @IloscDok
+        SET @PPPIdPoprzednia = @PPPId 
+        SET @IloscDoProdukcjiPoprzednia    = @IloscDoProdukcji
+        SET @IloscWygenerowanaPoprzednia = @IloscWygenerowana
+        SET @PPPTwrNumerPoprzednia = @PPPTwrNumer
+        SET @TerminOdPoprzednia  = @TerminOd
+        SET @TerminDoPoprzednia = @TerminDo
+        
+        INSERT INTO @tabProdDokMPS
+        VALUES(@PPPId, @DokTyp, @DokNumer, @DokLp, @IloscNaPozycji , @PPPTwrNumer,@TerminOd,@TerminDo,@TerminProdukcji)
+        
+        FETCH NEXT FROM ProdDokMPSKursor INTO @PPPId, @DokTyp, @DokNumer, @DokLp, @IloscDoProdukcji, @IloscWygenerowana, @IloscDok, @PPPTwrNumer,@TerminOd,@TerminDo,@TerminProdukcji    
+    END
+    CLOSE ProdDokMPSKursor
+    DEALLOCATE ProdDokMPSKursor
+    
+    IF @IloscDoProdukcji &gt; @IloscDokSum AND @IloscDoProdukcjiPoprzednia &gt; @IloscWygenerowana AND @PPPId &gt; 0 BEGIN
+        INSERT INTO @tabProdDokMPS
+        VALUES(@PPPId, 14361, @PPPId, 0, 
+            (CASE WHEN @IloscDoProdukcji - @IloscDokSum &lt; @IloscDoProdukcji - @IloscWygenerowana THEN @IloscDoProdukcji - @IloscDokSum ELSE @IloscDoProdukcji - @IloscWygenerowana END), 
+            @PPPTwrNumer,@TerminOd,@TerminDo,@TerminProdukcji)    
+    END
+    
+    RETURN
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="ProdPlanyMaterialyGrupy_UsunDzieci"></A><PRE>
+          <FONT SIZE="2"><I>/* ProdPlanyMaterialyGrupy_UsunDzieci */</I><BR>
+CREATE TRIGGER CDN.ProdPlanyMaterialyGrupy_UsunDzieci 
+    ON  cdn.ProdPlanyMaterialyGrupy
+    AFTER DELETE
+    AS 
+    DELETE FROM cdn.ProdPlanyMaterialyDoZamowienia WHERE PPTZ_PPTGId IN (SELECT PPTG_Id from deleted) AND NOT exists(SELECT * FROM cdn.ProdPlanyMaterialyGrupy pptg JOIN deleted ON pptg.PPTG_Id=deleted.PPTG_Id)
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="ProdPlanyMaterialyLista"></A><PRE>
+          <FONT SIZE="2"><I>/* ProdPlanyMaterialyLista */</I><BR>
+CREATE PROCEDURE CDN.ProdPlanyMaterialyLista(
+        @p_PPPIds VARCHAR(MAX),
+        @p_FiltrWewnetrzny VARCHAR(2000),
+        @p_Jezyk VARCHAR(2)='PL',
+        @p_PrzeliczenieRodzaj INT,
+        @p_RodzajMat INT = 0,
+        @p_TylkoBraki int = 0
+)AS
+BEGIN
+CREATE TABLE #ProdPlanyMaterialyLista (
+    Twr_Kod varchar(40),
+    Twr_Nazwa varchar(255),
+    PPT_Termin int,
+    MAG_Kod  varchar(11),
+    IloscPotrzeba decimal(17,4),
+    IloscOgolnieDostepna decimal(17,4),
+    DoWykorzystania decimal(17,4),
+    PPT_IloscWDrodze decimal(17,4),
+    IloscWszystkiePotrzeby decimal(17,4),
+    IloscZrealizowana decimal(17,4),
+    IloscBrak decimal(17,4),
+    PPT_TwrNumer INT,
+    DoZamowienia decimal(17,4),
+    ZapasBezpieczenstwa decimal(17,4),
+    EOQ decimal(17,4),
+    Wielokrotnosc decimal(17,4),
+    Zaokraglenie decimal(17,4),
+    CzasDostawy int,
+    MRPOd int,
+    MRPDo int,
+    Zwiazane  decimal(17,4),
+    ZgrupowaneID nvarchar(MAX),
+    PoziomDlaZamiennika int,
+    PPT_DoZamowienia decimal(17,4),
+    PPT_MagNumer int,
+    PPT_TerminZamowienia int,
+    TypWgPP varchar(3),
+    Sort varchar(8000),
+    PPT_Rodzaj tinyint,
+    Twr_Jm varchar(10),
+    IloscLogWolna decimal(17,4),
+    IloscLogZajeta decimal(17,4)
+)
+
+    DECLARE @PrzeliczenieRodzajFiltr VARCHAR(200)
+    SELECT @PrzeliczenieRodzajFiltr =
+        CASE
+        WHEN @p_PrzeliczenieRodzaj=4 THEN
+        'BETWEEN PPT_OkresMRPOd AND PPT_OkresMRPDo'
+        ELSE '= PPT.PPT_Termin'
+        END 
+    DECLARE @SlowoWszystkie VARCHAR(200)
+    SELECT @SlowoWszystkie = 
+        CASE
+        WHEN @p_Jezyk='PL' THEN
+        '&lt;Wszystkie&gt;'    
+        ELSE '&lt;ALL&gt;'
+        END
+    DECLARE @RodzajMatFiltr VARCHAR(200)
+    SELECT @RodzajMatFiltr =  
+        CASE
+        WHEN @p_RodzajMat=0 THEN
+        '1=1 OR ' 
+        ELSE '' 
+        END +  ' Id '+
+        CASE
+        WHEN @p_RodzajMat=2 THEN
+        ' '
+        ELSE 'NOT' 
+        END 
+    DECLARE @GrupowaniePoTerminieFiltr VARCHAR(200)
+    SELECT @GrupowaniePoTerminieFiltr =
+        CASE
+        WHEN @p_PrzeliczenieRodzaj=4 THEN
+        ''
+        ELSE 'PPT_Termin,'
+        END 
+    --DECLARE @BrakiHaving VARCHAR(200)
+    --SELECT @BrakiHaving =
+    --    CASE
+    --    WHEN @p_TylkoBraki &lt;&gt; 0 THEN
+    --        ' HAVING (SUM(PPT_IloscPotrzeba)-SUM(PPT_DoWykorzystania)-SUM(PPT_IloscZrealizowana) &gt; 0 AND PoziomDlaZamiennika = 0) OR PoziomDlaZamiennika &lt;&gt; 0  '
+    --    ELSE ' '
+    --    END 
+
+
+
+ --   SELECT @BrakiZamienniki = 
+ --       CASE WHEN @p_TylkoBraki &amp; 2 = 2 THEN
+ --           ' AND (PPT_IloscPotrzeba-PPT_DoWykorzystania-PPT_IloscZrealizowana &gt; 0'
+ --       ELSE ''
+ --       END
+
+    --IF @p_TylkoBraki &amp; 4 = 4
+    --    IF @BrakiZamienniki &lt;&gt; '' 
+    --        SET @BrakiZamienniki = CONCAT(@BrakiZamienniki, ' OR PPT_IloscPotrzeba-PPT_DoWykorzystania-PPT_IloscZrealizowana = 0')
+    --    ELSE
+    --        SET @BrakiZamienniki = ' AND (PPT_IloscPotrzeba-PPT_DoWykorzystania-PPT_IloscZrealizowana = 0'
+
+    --IF @p_TylkoBraki &amp; 6 &lt;&gt; 0
+    --    SET @BrakiZamienniki = CONCAT(@BrakiZamienniki, ')')
+
+    DECLARE @ZapytanieSQL VARCHAR(max)
+
+   CREATE TABLE #MaterialyPP(
+        PPT_Id int NOT NULL,
+        PPT_PPPId int,
+        PPT_TwrNumer int,
+        PPT_Termin int,
+        PPT_IloscPotrzeba decimal(15, 4) ,
+        PPT_IloscOgolnieDostepna decimal(15, 4) ,
+        PPT_IloscWDrodze decimal(15, 4) ,
+        PPT_IloscWszystkiePotrzeby decimal(15, 4) ,
+        PPT_IloscZrealizowana decimal(15, 4) ,
+        PPT_CzynnoscId int ,
+        PPT_MagNumer int ,
+        PPT_DoZamowienia decimal(15, 4) ,
+        PPT_ZapasBezpieczenstwa decimal(15, 4) ,
+        PPT_EOQ decimal(15, 4) ,
+        PPT_Wielokrotnosc decimal(15, 4) ,
+        PPT_Zaokraglenie decimal(15, 4) ,
+        PPT_CzasDostawy int ,
+        PPT_OkresMRPOd int ,
+        PPT_OkresMRPDo int ,
+        PPT_RodzicId int ,
+        PPT_ZamiennikTowaru int ,
+        PPT_TerminZamowienia int ,
+        PPT_Rodzaj tinyint ,
+        PPT_DoWykorzystania decimal(15, 4),
+        PPT_IloscLogWolna DECIMAL(20,4),
+        PPT_IloscLogZajeta DECIMAL(20,4)
+         CONSTRAINT PPT_Primary PRIMARY KEY CLUSTERED 
+        (
+            PPT_Id ASC
+        )
+    )
+
+    SELECT @ZapytanieSQL = '
+        INSERT INTO #MaterialyPP (PPT_Id, PPT_PPPId, PPT_TwrNumer, PPT_Termin, PPT_IloscPotrzeba, PPT_IloscOgolnieDostepna, PPT_IloscWDrodze, PPT_IloscWszystkiePotrzeby, 
+            PPT_IloscZrealizowana, PPT_CzynnoscId, PPT_MagNumer, PPT_DoZamowienia, PPT_ZapasBezpieczenstwa, PPT_EOQ, PPT_Wielokrotnosc, PPT_Zaokraglenie, 
+            PPT_CzasDostawy, PPT_OkresMRPOd, PPT_OkresMRPDo, PPT_RodzicId, PPT_ZamiennikTowaru, PPT_TerminZamowienia, PPT_Rodzaj, PPT_DoWykorzystania, 
+            PPT_IloscLogWolna, PPT_IloscLogZajeta) 
+        SELECT PPT_Id, PPT_PPPId, PPT_TwrNumer, PPT_Termin, PPT_IloscPotrzeba, PPT_IloscOgolnieDostepna, PPT_IloscWDrodze, PPT_IloscWszystkiePotrzeby, PPT_IloscZrealizowana, 
+            PPT_CzynnoscId, PPT_MagNumer, PPT_DoZamowienia, PPT_ZapasBezpieczenstwa, PPT_EOQ, PPT_Wielokrotnosc, PPT_Zaokraglenie, PPT_CzasDostawy, PPT_OkresMRPOd,
+            PPT_OkresMRPDo, PPT_RodzicId, PPT_ZamiennikTowaru, PPT_TerminZamowienia, PPT_Rodzaj, PPT_DoWykorzystania, PPT_IloscLogWolna, PPT_IloscLogZajeta
+        FROM CDN.ProdPlanyMaterialy WHERE PPT_PPPId IN ('+@p_PPPIds+')'
+
+    EXEC(@ZapytanieSQL)
+
+    SELECT @ZapytanieSQL = '
+    WITH Org(PPTId,
+        CzyZamiennik,
+        RodzicId,
+        Poziom,
+        PoziomDlaZamiennika,
+        Sort)
+    AS (
+        SELECT PPT_Id,
+            PPT_ZamiennikTowaru,
+            PPT_RodzicId,
+            0 Poziom,
+            CASE
+                WHEN isnull(PPT_ZamiennikTowaru, 0) = 0 THEN 0
+                ELSE 1
+            END PoziomDlaZamiennika,
+            CAST(PPT_Id AS VARCHAR(8000)) Sort
+        FROM #MaterialyPP PPT
+        WHERE PPT_RodzicId = 0' + /*@BrakiZamienniki*/ '' + '
+        UNION ALL
+        SELECT PPT.PPT_Id,
+            PPT.PPT_ZamiennikTowaru,
+            PPT.PPT_RodzicId,
+            Org.Poziom + 1 Poziom,
+            Org.PoziomDlaZamiennika + CASE
+                WHEN isnull(PPT_ZamiennikTowaru, 0) = 0 THEN 0
+                ELSE 1
+            END PoziomDlaZamiennika,
+            CAST(Sort+CASE
+                WHEN isnull(PPT_ZamiennikTowaru, 0) = 0 THEN '' :''
+                ELSE '' : ''
+            END + CAST(PPT.PPT_Id AS VARCHAR(8000)) AS VARCHAR(8000)) Sort
+        FROM #MaterialyPP PPT
+            JOIN Org ON PPT_RodzicId IN(Org.PPTId)
+        WHERE 1 = 1 ' + /*@BrakiZamienniki*/ + '
+    ),
+    CTEPolprodukty
+    AS (
+        SELECT PPT.PPT_Id
+        FROM #MaterialyPP PPT
+        WHERE PPT.PPT_ZamiennikTowaru = 0
+            AND EXISTS
+            (
+                SELECT *
+                FROM #MaterialyPP PPTe
+                WHERE PPTe.PPT_RodzicId = PPT.PPT_Id
+                AND PPTe.PPT_ZamiennikTowaru = 0
+            )
+        UNION ALL
+        SELECT PPT.PPT_Id
+        FROM #MaterialyPP PPT
+            JOIN CTEPolprodukty ctep ON PPT.PPT_ZamiennikTowaru &lt;&gt; 0
+                AND PPT.PPT_RodzicId = ctep.PPT_Id
+    ),
+    CTEFiltr(Id)
+    AS (
+        SELECT PPT_Id
+        FROM #MaterialyPP
+            INNER JOIN CDN.TwrKarty ON PPT_TwrNumer = Twr_GIDNumer
+            LEFT JOIN CDN.Magazyny ON MAG_GIDNumer = PPT_MAGNumer
+            LEFT JOIN CDN.ProdCzynnosci ON PPT_CzynnoscId = PCZ_Id
+            LEFT JOIN CDN.ProdTechnologiaZasoby ON PTZ_TechnologiaCzynnosc = PCZ_TechnologiaCzynnosc
+                AND Twr_Kod = PTZ_Kod
+         WHERE 1=1 '+@p_FiltrWewnetrzny+'
+        UNION ALL
+        SELECT PPT_Id
+        FROM #MaterialyPP
+            JOIN CTEFiltr ON Id = PPT_RodzicId
+        WHERE PPT_ZamiennikTowaru &lt;&gt; 0
+    )
+    INSERT INTO #ProdPlanyMaterialyLista
+    SELECT Twr_Kod,
+        Twr_Nazwa,
+        MIN(PPT_Termin) PPT_Termin,
+        CASE
+            WHEN MAG_Kod IS NULL THEN '''+@SlowoWszystkie+'''
+            ELSE MAG_Kod
+        END MAG_Kod,
+        SUM(PPT_IloscPotrzeba) IloscPotrzeba,
+        PPT_IloscOgolnieDostepna IloscOgolnieDostepna,
+        SUM(PPT_DoWykorzystania) DoWykorzystania,
+        PPT_IloscWDrodze,
+        MAX(PPT_IloscWszystkiePotrzeby) IloscWszystkiePotrzeby,
+        (
+            SELECT SUM(ZrealizowanePojedyncze.Zreazilowano)
+            FROM
+            (
+                SELECT
+                (
+                    SELECT TOP 1 PPT_IloscZrealizowana
+                    FROM #MaterialyPP
+                    WHERE PPT_CzynnoscId = TabZrealizowane.PPT_CzynnoscId
+                        AND PPT_TwrNumer = TabZrealizowane.PPT_TwrNumer
+                        AND PPT_Termin = TabZrealizowane.PPT_Termin
+                ) Zreazilowano
+                FROM
+                (
+                    SELECT DISTINCT
+                        PPT_TwrNumer,
+                        PPT_Termin,
+                        PPT_CzynnoscId
+                    FROM #MaterialyPP
+                    WHERE PPT_TwrNumer = PPT.PPT_TwrNumer
+                        AND PPT_Termin '+@PrzeliczenieRodzajFiltr+'
+                ) TabZrealizowane
+            ) ZrealizowanePojedyncze
+        ) IloscZrealizowana,
+        CASE
+        WHEN SUM(PPT_IloscPotrzeba) - SUM(PPT_DoWykorzystania) - SUM(PPT_IloscZrealizowana) &gt; 0
+            THEN SUM(PPT_IloscPotrzeba) - SUM(PPT_DoWykorzystania) - SUM(PPT_IloscZrealizowana)
+            ELSE 0
+        END IloscBrak,
+        PPT_TwrNumer,
+        SUM(PPT_DoZamowienia) + COALESCE(
+        (
+            SELECT SUM(PPTZ_IloscDoZamowienia)
+            FROM cdn.ProdPlanyMaterialyDoZamowienia
+            WHERE PPTZ_PPTGId IN
+            (
+                SELECT PPTG_Id
+                FROM cdn.ProdPlanyMaterialyGrupy
+                WHERE PPTG_PPTId IN
+                (
+                    SELECT StrValue
+                    FROM cdn.Split(Cdn.Concatenate(CAST(PPT_Id AS VARCHAR)+'',''), '','', 0)
+                )
+            )
+        ), 0) DoZamowienia,
+        PPT_ZapasBezpieczenstwa ZapasBezpieczenstwa,
+        PPT_EOQ EOQ,
+        PPT_Wielokrotnosc Wielokrotnosc,
+        PPT_Zaokraglenie Zaokraglenie,
+        PPT_CzasDostawy CzasDostawy,
+        PPT_OkresMRPOd MRPOd,
+        PPT_OkresMRPDo MRPDo,
+        COALESCE(
+        (
+            SELECT SUM(PPTZ_IloscZwiazana)
+            FROM cdn.ProdPlanyMaterialyDoZamowienia
+            WHERE PPTZ_PPTGId IN
+            (
+                SELECT PPTG_Id
+                FROM cdn.ProdPlanyMaterialyGrupy
+                WHERE PPTG_PPTId IN
+                (
+                    SELECT StrValue
+                    FROM cdn.Split(Cdn.Concatenate(CAST(PPT_Id AS VARCHAR)+'',''), '','', 0)
+                )
+            )
+        ), 0) Zwiazane,
+        Cdn.Concatenate(CAST(PPT_Id AS VARCHAR) + '','') ZgrupowaneID,
+        PoziomDlaZamiennika + 1 PoziomDlaZamiennika,
+        SUM(PPT_DoZamowienia) PPT_DoZamowienia,
+        PPT_MagNumer,
+        PPT_TerminZamowienia,
+        CASE WHEN MIN( PPT_Rodzaj)=1 THEN ''M'' ELSE ''PP'' END,
+        MIN(Org.Sort),PPT_Rodzaj,
+        Twr_Jm,
+        PPT_IloscLogWolna, 
+        PPT_IloscLogZajeta
+    FROM Org
+        JOIN
+        (
+            SELECT DISTINCT
+                   *
+            FROM CTEFiltr
+        ) CTEFiltr ON CTEFiltr.Id = Org.PPTId
+        JOIN #MaterialyPP PPT ON Org.PPTId = PPT.PPT_Id
+        INNER JOIN CDN.TwrKarty ON PPT_TwrNumer = Twr_GIDNumer
+        LEFT JOIN CDN.Magazyny ON MAG_GIDNumer = PPT_MAGNumer
+    WHERE '+@RodzajMatFiltr+' IN
+    (
+        SELECT ctep.PPT_Id
+        FROM CTEPolprodukty ctep
+    )
+    GROUP BY Twr_Kod,
+        Twr_Nazwa,
+        '+@GrupowaniePoTerminieFiltr+'
+        PPT_IloscOgolnieDostepna,
+        PPT_IloscWDrodze,
+        PPT_TwrNumer,
+        CASE
+            WHEN MAG_Kod IS NULL THEN '''+@SlowoWszystkie+'''
+            ELSE MAG_Kod
+        END,
+        PPT_ZamiennikTowaru,
+        Org.PoziomDlaZamiennika,
+        PPT_CzasDostawy,
+        PPT_Zaokraglenie,
+        PPT_EOQ,
+        PPT_Wielokrotnosc,
+        PPT_ZapasBezpieczenstwa,
+        PPT_OkresMRPOd,
+        PPT_OkresMRPDo,
+        PPT_MagNumer,
+        PPT_TerminZamowienia,
+        PPT_Rodzaj,
+        Twr_Jm,
+        PPT_IloscLogWolna, 
+        PPT_IloscLogZajeta
+        '+/*@BrakiHaving*/''+'
+    ORDER BY MIN(PPT_Termin),
+        MIN(Org.Sort);'
+    EXEC(@ZapytanieSQL);
+
+    IF @p_TylkoBraki &lt;&gt; 0
+    BEGIN
+        CREATE TABLE #ZaleznosciZamiennikow
+        (
+            Id INT IDENTITY,
+            StrukturaZamiennikow VARCHAR(300),
+            IdMaterialu INT,
+			Rodzic INT,
+            CzyJestZamiennik INT,
+            DoZamowieniaGlownego DECIMAL(15,4),
+			PoziomZamiennika INT,
+			CzySaBraki INT
+        )
+
+
+        INSERT INTO #ZaleznosciZamiennikow
+        SELECT Sort, splitted.StrValue,
+			CASE 
+				WHEN CHARINDEX(':', Sort) = 0 THEN 0
+				WHEN CHARINDEX(':', Sort) &lt;&gt; 0 AND PoziomDlaZamiennika = 1 THEN 0
+				ELSE 
+					REVERSE(LTRIM(RTRIM(SUBSTRING(REVERSE(Sort), 
+						CHARINDEX(':', REVERSE(Sort)) + 1,
+						CASE WHEN Sort LIKE '%:%:%' THEN CHARINDEX(':', REVERSE(Sort), CHARINDEX(':', REVERSE(Sort)) + 1) - CHARINDEX(':', REVERSE(Sort)) - 1
+								ELSE LEN(Sort) - CHARINDEX(':', REVERSE(Sort))
+								
+						END))
+					))
+			END,
+			CASE WHEN DoZamowienia = 0 THEN 1 ELSE 0 END, DoZamowienia, PoziomDlaZamiennika - 1, CASE WHEN DoZamowienia &lt;&gt; 0 THEN 1 ELSE 0 END
+		FROM #ProdPlanyMaterialyLista
+            CROSS APPLY CDN.Split(Sort, ':', 0) splitted
+
+		;WITH CTE AS (
+            SELECT ROW_NUMBER() OVER (PARTITION BY StrukturaZamiennikow ORDER BY StrukturaZamiennikow) AS Poziom, Id, StrukturaZamiennikow FROM #ZaleznosciZamiennikow
+        )
+        DELETE fm 
+        FROM #ZaleznosciZamiennikow fm
+            JOIN CTE cte ON cte.Id = fm.Id
+			JOIN (SELECT MAX(Poziom) maksPoziom, StrukturaZamiennikow FROM CTE GROUP BY StrukturaZamiennikow) wewcte ON wewcte.StrukturaZamiennikow = fm.StrukturaZamiennikow
+		WHERE Poziom &lt;&gt; maksPoziom
+
+		DECLARE @Poziom INT 
+		SELECT TOP 1 @Poziom = Max(PoziomZamiennika) FROM #ZaleznosciZamiennikow
+
+		DECLARE @MaxPoziom INT = @Poziom
+
+		UPDATE #ZaleznosciZamiennikow
+		SET CzyJestZamiennik = 0
+		WHERE Rodzic = 0
+
+		WHILE @Poziom &gt; 0
+		BEGIN 
+			UPDATE zm
+			SET CzyJestZamiennik = CASE CzyJestZamiennik WHEN 1 THEN CzyJestZamiennik ELSE jest END,
+				CzySaBraki = CASE brak WHEN 0 THEN 1 ELSE 0 END
+			FROM #ZaleznosciZamiennikow zm
+				JOIN (SELECT Rodzic, min(CzyJestZamiennik) jest, MIN(CzyJestZamiennik) brak FROM #ZaleznosciZamiennikow
+					WHERE PoziomZamiennika = @Poziom
+					GROUP BY Rodzic) zamienniki ON zm.IdMaterialu = zamienniki.Rodzic
+
+			SET @Poziom -= 1
+		END
+		SET @Poziom = 0
+
+		WHILE @Poziom &lt;= @MaxPoziom
+		BEGIN
+			UPDATE zm
+			SET CzyJestZamiennik = rodzic.CzyJestZamiennik,
+				CzySaBraki = rodzic.CzySaBraki,
+				DoZamowieniaGlownego = rodzic.DoZamowieniaGlownego
+			FROM #ZaleznosciZamiennikow zm
+				JOIN #ZaleznosciZamiennikow rodzic ON zm.Rodzic = rodzic.IdMaterialu
+			WHERE zm.PoziomZamiennika = @Poziom
+
+			SET @Poziom += 1
+		END
+
+        DECLARE @BrakiZamienniki VARCHAR(200) = ''
+        
+        IF @p_TylkoBraki &amp; 1 = 1
+            SET @BrakiZamienniki = ' (DoZamowieniaGlownego &lt;&gt; 0)'
+        
+        IF @p_TylkoBraki &amp; 2 = 2
+        BEGIN
+            IF LEN(@BrakiZamienniki) &lt;&gt; 0
+                SET @BrakiZamienniki = CONCAT(@BrakiZamienniki, ' OR')
+            SET @BrakiZamienniki = CONCAT(@BrakiZamienniki, ' (DoZamowieniaGlownego &lt;&gt; 0 AND CzySaBraki = 1)')
+        END
+
+        IF @p_TylkoBraki &amp; 4 = 4
+        BEGIN
+            IF LEN(@BrakiZamienniki) &lt;&gt; 0
+                SET @BrakiZamienniki = CONCAT(@BrakiZamienniki, ' OR')
+            SET @BrakiZamienniki = CONCAT(@BrakiZamienniki, ' (DoZamowieniaGlownego &lt;&gt; 0 AND CzyJestZamiennik = 1)')
+        END
+            
+        EXEC('SELECT ppml.* FROM #ProdPlanyMaterialyLista ppml JOIN #ZaleznosciZamiennikow zm ON Sort = StrukturaZamiennikow WHERE ' + @BrakiZamienniki)
+
+    END
+    ELSE
+        Select * from #ProdPlanyMaterialyLista
+
+    DROP TABLE #ProdPlanyMaterialyLista
+    DROP TABLE #MaterialyPP
+    
+   RETURN
+
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[ProdPlanyOptymalizacjaIlosciDoZamowienia]"></A><PRE>
+          <FONT SIZE="2"><I>/* [ProdPlanyOptymalizacjaIlosciDoZamowienia] */</I><BR>
+CREATE PROCEDURE [CDN].[ProdPlanyOptymalizacjaIlosciDoZamowienia](
+    @PPT_Id INT, 
+    @PPT_IloscZrealizowana DECIMAL(15,4),
+    @PPT_IloscPotrzeba DECIMAL(15,4), 
+    @TwrNumer INT, 
+    @PPT_IloscOgolnieDostepna DECIMAL(15,4), 
+    @DoZamowieniaPodst INT, 
+    @PPT_EOQ DECIMAL(15,4), 
+    @PPT_Wielokrotnosc DECIMAL(15,4), 
+    @PPT_Zaokraglenie DECIMAL (15,4), 
+    @PPT_ZapasBezpieczenstwa DECIMAL(15,4), 
+    @Dok_PPLOptymalizacjaDoZamowienia INT,
+    @ZapotrzebowanieDoAktMaterialu DECIMAL(15,4),
+    @ZapotrzebowanieDoAktDnia DECIMAL(15,4),
+    @IloscZrealizowanaDoAktDnia DECIMAL(15,4),
+    @PPT_Termin INT,
+    @IloscDostepnaSurowcaZZamiennika DECIMAL(15,4) = 0
+)
+AS
+BEGIN
+    DECLARE @DoZamowienia DECIMAL(15,4)
+    DECLARE @DoZamowieniaPrzedParam DECIMAL(15,4)
+    DECLARE @DoWykorzystania DECIMAL(15,4)
+    DECLARE @IloscOgolnieDostepnaDoObliczeniaZamowienia DECIMAL(15,4)
+    DECLARE @IloscOgolnieDostepnaDoAkt DECIMAL(15,4)
+    DECLARE @Zapas DECIMAL(15,4)
+    DECLARE @ZapasPrzedParam DECIMAL(15,4)
+    DECLARE @PotrzebaDlaWykorzystania DECIMAL(15,4)
+    DECLARE @PozostalaIloscOgolnieDostepna DECIMAL(15,4)
+
+    SET @IloscOgolnieDostepnaDoObliczeniaZamowienia =  @PPT_IloscOgolnieDostepna  - 
+        CASE WHEN (@ZapotrzebowanieDoAktMaterialu - @IloscZrealizowanaDoAktDnia) &lt; 0 THEN 0
+            ELSE (@ZapotrzebowanieDoAktMaterialu - @IloscZrealizowanaDoAktDnia) END
+
+    SET @IloscOgolnieDostepnaDoObliczeniaZamowienia = CASE WHEN @IloscOgolnieDostepnaDoObliczeniaZamowienia &lt; 0 THEN 0 ELSE @IloscOgolnieDostepnaDoObliczeniaZamowienia END
+
+    IF EXISTS(
+        SELECT *
+        FROM #tabProdPlanyMaterialyPelne pptp
+            JOIN #ProdPlanyMaterialyZPonownegoPrzeliczeniaZmianaId pptzppzi ON pptp.PPT_Id=pptzppzi.IdPPTZPP
+            JOIN cdn.ProdPlanyMaterialyGrupy pptg ON pptzppzi.IDPPT = pptg.PPTG_PPTId
+            JOIN cdn.ProdPlanyMaterialyDoZamowienia pptdz ON pptg.PPTG_Id = pptdz.PPTZ_PPTGId
+        WHERE pptp.PPT_Id=@PPT_Id AND pptdz.PPTZ_IloscDoZamowienia &lt;&gt; 0
+            AND pptdz.PPTZ_PPTGId IN (SELECT grupId FROM #UzyteGrupId)
+            -- jeśli do zamówienia było zedytowane na grupie, a ilość już dodana
+    )
+    BEGIN
+        UPDATE #tabProdPlanyMaterialyPelne
+        SET PPT_DoZamowieniaZmienioneRecznie = 1
+        WHERE PPT_Id = @PPT_Id --CURRENT OF OptymalizacjaDoZamowieniaCursor
+    
+    END
+    ELSE 
+        IF exists(
+            SELECT *
+            FROM #tabProdPlanyMaterialyPelne pptp
+                JOIN #ProdPlanyMaterialyZPonownegoPrzeliczeniaZmianaId pptzppzi ON pptp.PPT_Id = pptzppzi.IdPPTZPP
+                JOIN cdn.ProdPlanyMaterialyGrupy pptg ON pptzppzi.IDPPT = pptg.PPTG_PPTId
+                JOIN cdn.ProdPlanyMaterialyDoZamowienia pptdz ON pptg.PPTG_Id = pptdz.PPTZ_PPTGId
+            WHERE pptp.PPT_Id = @PPT_Id AND pptdz.PPTZ_IloscDoZamowienia &lt;&gt; 0
+                AND pptdz.PPTZ_PPTGId NOT IN (SELECT grupId FROM #UzyteGrupId)
+        )            -- jeśli do zamówienia było zedytowane na grupie - to w efekcie dla każdego członka grupy pobierze wartośc, a powinno tylko raz(dla tego co się pierwszy pojawi wszystko, nie 'proporcjonalnie')
+        BEGIN
+            SELECT @DoZamowienia = ppt.PPT_DoZamowienia
+            FROM #tabProdPlanyMaterialyPelne pptp
+                JOIN #ProdPlanyMaterialyZPonownegoPrzeliczeniaZmianaId pptzppzi ON pptp.PPT_Id = pptzppzi.IdPPTZPP
+                JOIN cdn.ProdPlanyMaterialy ppt ON pptzppzi.IDPPT = ppt.PPT_Id
+            WHERE pptp.PPT_Id=@PPT_Id
+
+            SELECT @DoZamowienia+=SUM(pptdz.PPTZ_IloscDoZamowienia)
+            FROM #tabProdPlanyMaterialyPelne pptp
+                JOIN #ProdPlanyMaterialyZPonownegoPrzeliczeniaZmianaId pptzppzi ON pptp.PPT_Id = pptzppzi.IdPPTZPP
+                JOIN cdn.ProdPlanyMaterialyGrupy pptg ON pptzppzi.IDPPT = pptg.PPTG_PPTId
+                JOIN cdn.ProdPlanyMaterialyDoZamowienia pptdz ON pptg.PPTG_Id = pptdz.PPTZ_PPTGId
+            WHERE pptp.PPT_Id = @PPT_Id and pptdz.PPTZ_IloscDoZamowienia &lt;&gt; 0
+                and pptdz.PPTZ_PPTGId not in (SELECT grupId FROM #UzyteGrupId)
+
+            INSERT INTO #UzyteGrupId (grupId) SELECT pptdz.PPTZ_PPTGId FROM #tabProdPlanyMaterialyPelne pptp
+                JOIN #ProdPlanyMaterialyZPonownegoPrzeliczeniaZmianaId pptzppzi ON pptp.PPT_Id = pptzppzi.IdPPTZPP
+                JOIN cdn.ProdPlanyMaterialyGrupy pptg ON pptzppzi.IDPPT = pptg.PPTG_PPTId
+                JOIN cdn.ProdPlanyMaterialyDoZamowienia pptdz ON pptg.PPTG_Id = pptdz.PPTZ_PPTGId
+            WHERE pptp.PPT_Id = @PPT_Id AND pptdz.PPTZ_IloscDoZamowienia&lt;&gt;0
+                AND pptdz.PPTZ_PPTGId NOT IN (SELECT grupId FROM #UzyteGrupId)
+            
+
+            IF @IloscOgolnieDostepnaDoObliczeniaZamowienia + @PPT_IloscZrealizowana &gt; @PPT_IloscPotrzeba
+            BEGIN
+                SET @Zapas = @DoZamowienia
+            END
+            ELSE
+            BEGIN
+                SET @Zapas = @DoZamowienia - @PPT_IloscPotrzeba + @PPT_IloscZrealizowana
+            END
+
+            UPDATE #tmpTwrZapas 
+            SET Zapas = Zapas + @Zapas
+            WHERE TwrNr = @TwrNumer AND Magazyn = -1
+
+            UPDATE #tabProdPlanyMaterialyPelne
+            SET PPT_DoZamowieniaZmienioneRecznie = 1,
+            PPT_DoWykorzystania = 0,
+            PPT_DoZamowienia = @DoZamowienia
+            WHERE PPT_Id = @PPT_Id--CURRENT OF OptymalizacjaDoZamowieniaCursor
+
+        END
+        ELSE
+        BEGIN
+            SET @DoWykorzystania = @IloscOgolnieDostepnaDoObliczeniaZamowienia
+            SET @PotrzebaDlaWykorzystania = @PPT_IloscPotrzeba
+            
+            IF @PPT_IloscZrealizowana &gt; 0 
+            BEGIN
+                SET @PotrzebaDlaWykorzystania = CASE WHEN @PotrzebaDlaWykorzystania - @PPT_IloscZrealizowana &lt; 0 THEN 0 ELSE @PotrzebaDlaWykorzystania - @PPT_IloscZrealizowana END
+            END
+
+            --niemodyfikowany ręcznie
+            SET @Zapas = 0
+
+            IF @Dok_PPLOptymalizacjaDoZamowienia = 1
+            BEGIN
+                SELECT @Zapas = Zapas FROM #tmpTwrZapas WHERE TwrNr = @TwrNumer AND Magazyn = -1
+            END
+            SET @ZapasPrzedParam = @Zapas
+            
+            SET @DoZamowienia = @PPT_IloscPotrzeba - @PPT_IloscZrealizowana - @IloscOgolnieDostepnaDoObliczeniaZamowienia --22, 21, 22
+            SET @PozostalaIloscOgolnieDostepna = CASE WHEN @IloscOgolnieDostepnaDoObliczeniaZamowienia - @PotrzebaDlaWykorzystania &lt; 0 THEN 0 
+             ELSE @IloscOgolnieDostepnaDoObliczeniaZamowienia - @PotrzebaDlaWykorzystania END
+
+            IF @DoZamowienia &gt; 0
+            BEGIN
+                SET @DoZamowieniaPrzedParam = @DoZamowienia
+                IF (@DoZamowienia - @Zapas &gt; 0)
+                BEGIN
+                    SET @DoZamowienia -= @Zapas
+                    SET @Zapas = 0
+                END
+                ELSE
+                BEGIN
+                    SET @Zapas -= @DoZamowienia
+                    SET @DoZamowienia = 0
+                END
+            END
+            ELSE
+            BEGIN
+                SET @DoZamowienia = 0
+                SET @DoZamowieniaPrzedParam = 0
+            END
+
+            IF @DoZamowienia &gt; 0 AND @DoZamowieniaPodst &amp; 2 &gt; 0
+            BEGIN
+                SET @DoZamowienia = @DoZamowienia + @PPT_ZapasBezpieczenstwa
+            END
+            ELSE IF @DoZamowienia = 0 AND @DoZamowieniaPodst &amp; 2 &gt; 0 AND @Zapas &lt; @PPT_ZapasBezpieczenstwa
+            BEGIN
+                SET @DoZamowienia = CASE WHEN @PPT_ZapasBezpieczenstwa - @PozostalaIloscOgolnieDostepna - @Zapas &lt; 0 THEN 0 
+                                        ELSE @PPT_ZapasBezpieczenstwa - @PozostalaIloscOgolnieDostepna - @Zapas END
+            END
+
+            IF @DoZamowienia &gt; 0 --fetch
+            BEGIN
+                IF @DoZamowieniaPodst &amp; 4 &gt; 0 AND @DoZamowienia &lt; @PPT_EOQ-- EQQ
+                BEGIN
+                    SET @DoZamowienia = @PPT_EOQ
+                END
+
+                IF @DoZamowieniaPodst &amp; 8 &gt; 0 AND @PPT_Wielokrotnosc&gt;0
+                BEGIN
+                    SET @DoZamowienia = CEILING(@DoZamowienia / @PPT_Wielokrotnosc) * @PPT_Wielokrotnosc
+                END
+
+                IF @DoZamowieniaPodst &amp; 16 &gt; 0 AND @PPT_Zaokraglenie&gt;0
+                BEGIN
+                    SET @DoZamowienia = ROUND(@DoZamowienia, -LOG10(@PPT_Zaokraglenie))
+                END
+            END
+                
+            SET @Zapas = @ZapasPrzedParam + @DoZamowienia - @DoZamowieniaPrzedParam 
+
+            SET @IloscOgolnieDostepnaDoAkt = @PPT_IloscOgolnieDostepna - @ZapotrzebowanieDoAktDnia + @IloscZrealizowanaDoAktDnia - @PPT_IloscZrealizowana
+            SET @PotrzebaDlaWykorzystania = CASE WHEN @PotrzebaDlaWykorzystania &gt; @IloscOgolnieDostepnaDoAkt THEN @IloscOgolnieDostepnaDoAkt ELSE @PotrzebaDlaWykorzystania END
+            SET @PotrzebaDlaWykorzystania = CASE WHEN @PotrzebaDlaWykorzystania &lt; 0 THEN 0 ELSE @PotrzebaDlaWykorzystania END
+
+            UPDATE #tmpTwrZapas
+            SET Zapas = @Zapas
+            WHERE TwrNr = @TwrNumer AND Magazyn = -1
+
+            UPDATE #tabProdPlanyMaterialyPelne
+            SET PPT_DoZamowienia = @DoZamowienia,
+                PPT_IloscOgolnieDostepna = CASE WHEN @IloscOgolnieDostepnaDoAkt &lt; 0 THEN 0 ELSE @IloscOgolnieDostepnaDoAkt END,
+                PPT_IloscPotrzeba = CASE WHEN @PPT_IloscPotrzeba &lt; 0 THEN 0 ELSE @PPT_IloscPotrzeba END,
+                PPT_DoWykorzystania = CASE WHEN @PotrzebaDlaWykorzystania &lt; @DoWykorzystania THEN @PotrzebaDlaWykorzystania
+                                            ELSE @DoWykorzystania END
+            WHERE PPT_Id = @PPT_Id --CURRENT OF OptymalizacjaDoZamowieniaCursor
+
+        END
+
+    RETURN @DoZamowienia
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="ProdPlanyOptymalizacjaIlosciDoZamowieniaMaterialow"></A><PRE>
+          <FONT SIZE="2"><I>/* ProdPlanyOptymalizacjaIlosciDoZamowieniaMaterialow */</I><BR>
+CREATE PROCEDURE CDN.ProdPlanyOptymalizacjaIlosciDoZamowieniaMaterialow(
+    @DoZamowieniaPodst INT,
+    @Dok_PPLOptymalizacjaDoZamowienia INT,
+    @RezDataAkt INT,
+    @PlanProdId INT,
+    @ZrodloMagDlaKolOgolnieDostepna INT,
+    @PrzeliczenieData INT,
+    @FrsId INT
+)
+AS
+BEGIN
+    DECLARE @PPT_PPPId INTEGER
+    DECLARE @PPT_IloscPotrzeba DECIMAL(15,4)
+    DECLARE @PPT_IloscOgolnieDostepna DECIMAL(15,4)
+    DECLARE @PPT_IloscZrealizowana DECIMAL(15,4)
+    DECLARE @PPT_ZapasBezpieczenstwa DECIMAL(15,4)
+    DECLARE @PPT_EOQ DECIMAL(15,4)
+    DECLARE @PPT_Wielokrotnosc DECIMAL(15,4)
+    DECLARE @PPT_Zaokraglenie DECIMAL (15,4)
+    DECLARE @PPT_Id INT
+    DECLARE @ZapotrzebowanieDoAktMaterialu DECIMAL (15,4)
+    DECLARE @ZapotrzebowanieDoAktDnia DECIMAL (15,4)
+    DECLARE @IloscZrealizowanaDoAktDnia DECIMAL (15,4)
+    DECLARE @IloscDostepnaSurowcaZZamiennika DECIMAL (15,4) = 0
+    DECLARE @DoZamowienia DECIMAL(15,4)
+    DECLARE @TwrNumer INT
+    DECLARE @IdZamiennikaSurowca INT = 0
+    DECLARE @MagDlaKolOgolnieDostepna INT = 1
+    DECLARE @PPT_Termin INT
+    DECLARE @Poziom INT = 1
+    DECLARE @PoziomWczesniejszy INT = 0
+
+    INSERT INTO #tmpTwrZapas(TwrNr,Zapas,Magazyn)
+    SELECT DISTINCT PPT_TwrNumer, 0, -1 FROM #tabProdPlanyMaterialyPelne;
+
+    WITH KolejnoscCTE AS
+    (
+        SELECT PPT_Id, ROW_NUMBER() OVER(order by PPT_Termin, PoziomSurowca, PPT_PPPID, PPT_Id) Kolejnosc
+        FROM #tabProdPlanyMaterialyPelne
+    )
+    UPDATE ppmp
+    SET KolejnoscPrzeliczania = Kolejnosc
+    FROM #tabProdPlanyMaterialyPelne ppmp
+        JOIN KolejnoscCTE kc ON kc.PPT_Id = ppmp.PPT_Id;
+
+    CREATE TABLE #tabProdMaterialyZBOMJeszczeNieprzeliczone (
+        PPT_Id INT,
+        PPT_Termin BIGINT,
+        PPT_PPPID int,
+        Poziom INT,
+        Kolejnosc INT)
+    INSERT INTO #tabProdMaterialyZBOMJeszczeNieprzeliczone (
+        PPT_Id,
+        PPT_Termin,
+        PPT_PPPID,
+        Poziom,
+        Kolejnosc)
+    SELECT pptp.PPT_Id, pptp.PPT_Termin, pptp.PPT_PPPID, pptp.Poziom, pptp.KolejnoscPrzeliczania FROM #tabProdPlanyMaterialyPelne pptp
+    WHERE Poziom &gt; 0
+                         --order by PPT_Termin, PPT_PPPID
+    CREATE TABLE #tabProdMaterialyZBOMDoPonownegoPrzeliczenia (PPT_Id INT,[PPT_Termin] BIGINT)
+
+    DECLARE @Etap INT 
+    DECLARE @ZamiennikTowaru INT 
+    DECLARE @Rodzic INT 
+    DECLARE @K float 
+    --sprawdzić czy na pewno SP odapa - może się uda z nim(w końcu wiersz sam siebie nie przelicza)
+    --@Etap - sterowanie powrotem z przeliczania wiersza(GOTO alternatywą dla CLR, SP odpada ze względu na łatwe zagnieżdżenie&gt;32) 
+    -- 1 - bez rozwinięcia BOM - kolejność rosnąca względem czasu
+    -- 2 - rozwinięcie BOM       - kolejność malejąca względem czasu(i ponowne przeliczanie dla już przeliczonych, których wartośc trzeba zmienić)
+    -- 3 - rozwinięcie BOM, ponowne przeliczenie        - ponowne przeliczenie wcześniejszych wpisów podczas przeliczania kolejnego wiersza z BOM(aktualizacja Zapasu)
+    DECLARE OptymalizacjaDoZamowieniaCursor  CURSOR
+    FOR SELECT pptp.PPT_PPPId, pptp.PPT_TwrNumer, pptp.PPT_IloscPotrzeba, pptp.PPT_IloscOgolnieDostepna, pptp.PPT_IloscZrealizowana, pptp.PPT_ZapasBezpieczenstwa,
+                    pptp.PPT_EOQ, pptp.PPT_Wielokrotnosc, pptp.PPT_Zaokraglenie, pptp.PPT_Id, ISNULL(
+                    (
+                        SELECT SUM(PPT_IloscPotrzeba)
+                        FROM #tabProdPlanyMaterialyPelne wew
+                        WHERE wew.PPT_TwrNumer = pptp.PPT_TwrNumer
+                            AND wew.PPT_Termin &lt;= pptp.PPT_Termin
+                            --AND wew.PPT_PPPId &lt;= pptp.PPT_PPPId
+                            AND wew.KolejnoscPrzeliczania &lt; pptp.KolejnoscPrzeliczania
+                    ), 
+                0) ZapotrzebowanieDoAktMaterialu,
+                ISNULL(
+                    (
+                        SELECT SUM(PPT_IloscPotrzeba)
+                        FROM #tabProdPlanyMaterialyPelne wew
+                        WHERE wew.PPT_TwrNumer = pptp.PPT_TwrNumer
+                            AND wew.PPT_Termin &lt; pptp.PPT_Termin
+                            --AND wew.PPT_PPPId &lt; pptp.PPT_PPPId
+                    ), 
+                0) ZapotrzebowanieDoAktDnia,                
+                ISNULL(
+                    (
+                            SELECT SUM(PPT_IloscZrealizowana)
+                            FROM #tabProdPlanyMaterialyPelne wew
+                            WHERE wew.PPT_TwrNumer = pptp.PPT_TwrNumer
+                                AND wew.PPT_Termin &lt;= pptp.PPT_Termin
+                                --AND wew.PPT_PPPId &lt;= pptp.PPT_PPPId
+                    ),
+                0) IloscZrealizowanaDoAktDnia, IdZamiennikaSurowca, PPT_Termin 
+    FROM #tabProdPlanyMaterialyPelne pptp
+    WHERE Poziom = 0
+    ORDER BY pptp.KolejnoscPrzeliczania--PPT_Termin, PPT_Id, PPT_PPPID, PoziomSurowca
+    FOR UPDATE
+
+    OPEN OptymalizacjaDoZamowieniaCursor
+    FETCH NEXT FROM OptymalizacjaDoZamowieniaCursor INTO @PPT_PPPId, @TwrNumer, @PPT_IloscPotrzeba, @PPT_IloscOgolnieDostepna, @PPT_IloscZrealizowana, 
+                                                         @PPT_ZapasBezpieczenstwa, @PPT_EOQ, @PPT_Wielokrotnosc, @PPT_Zaokraglenie, @PPT_Id, 
+                                                         @ZapotrzebowanieDoAktMaterialu, @ZapotrzebowanieDoAktDnia, @IloscZrealizowanaDoAktDnia, @IdZamiennikaSurowca, @PPT_Termin
+
+    WHILE @@FETCH_STATUS = 0
+    BEGIN
+        --SELECT @PPT_IloscOgolnieDostepna = MAX(PPT_IloscOgolnieDostepna) FROM #tabProdPlanyMaterialyPelne WHERE PPT_TwrNumer = @TwrNumer
+        EXEC CDN.ProdPlanyOptymalizacjaIlosciDoZamowienia @PPT_Id, @PPT_IloscZrealizowana, @PPT_IloscPotrzeba, @TwrNumer, @PPT_IloscOgolnieDostepna, @DoZamowieniaPodst, 
+                @PPT_EOQ, @PPT_Wielokrotnosc, @PPT_Zaokraglenie, @PPT_ZapasBezpieczenstwa, @Dok_PPLOptymalizacjaDoZamowienia, @ZapotrzebowanieDoAktMaterialu, 
+                @ZapotrzebowanieDoAktDnia, @IloscZrealizowanaDoAktDnia, @PPT_Termin
+        
+        --Ujednolicić te update
+        UPDATE mp
+        SET mp.PPT_IloscPotrzeba = msz.PPT_DoZamowienia * ds.PTZ_Ilosc / SurowiecZZamiennikiem.PTZ_Ilosc  --* Zamienniki.PTZ_Ilosc * SurowceDoZamiennikaWOrgTech.PTZ_Ilosc / (SurowiecZZamiennikiem.PTZ_Ilosc * ZamiennikWOrgTech.PTZ_Ilosc)
+        FROM #tabProdPlanyMaterialyPelne msz
+            JOIN CDN.ProdTechnologiaZasoby SurowiecZZamiennikiem ON msz.PTZ_Id = SurowiecZZamiennikiem.PTZ_Id
+            JOIN CDN.ProdTechnologiaZasoby Zamienniki ON Zamienniki.PTZ_Zamiennik = SurowiecZZamiennikiem.PTZ_Id
+            JOIN CDN.ProdTechnologiaZasoby ZamiennikWOrgTech ON Zamienniki.PTZ_TechnologiaZasob = ZamiennikWOrgTech.PTZ_Id
+            JOIN CDN.ProdTechnologiaZasoby SurowceDoZamiennikaWOrgTech ON 
+                SurowceDoZamiennikaWOrgTech.PTZ_TechnologiaCzynnosc IN (SELECT PTC_Id 
+                    FROM CDN.ProdTechnologiaCzynnosci 
+                    WHERE PTC_Technologia = (SELECT TOP 1 PTC_Technologia FROM CDN.ProdTechnologiaCzynnosci WHERE PTC_Id = ZamiennikWOrgTech.PTZ_TechnologiaCzynnosc)) 
+                AND SurowceDoZamiennikaWOrgTech.PTZ_Id &lt;&gt; ZamiennikWOrgTech.PTZ_Id AND SurowceDoZamiennikaWOrgTech.PTZ_TypZasobu = 1
+            JOIN #tabProdPlanyMaterialyPelne mp ON mp.IdZamiennikaSurowca = Zamienniki.PTZ_Id AND mp.PPT_PPPId = @PPT_PPPId AND mp.PTZ_Id = SurowceDoZamiennikaWOrgTech.PTZ_Id
+            JOIN #CTE_DrzewoSurowcow ds ON ds.Id = mp.IdSurowca
+        WHERE msz.PPT_Id = @PPT_Id
+
+        Update wew
+        SET wew.PPT_IloscPotrzeba = zew.PPT_DoZamowienia * ds.PTZ_Ilosc / SurowiecZZamiennikiem.PTZ_Ilosc -- * Zamienniki.PTZ_Ilosc * SurowceDoZamiennikaWOrgTech.PTZ_Ilosc / (SurowiecZZamiennikiem.PTZ_Ilosc * ZamiennikWOrgTech.PTZ_Ilosc)
+        FROM #tabProdPlanyMaterialyPelne zew
+            JOIN CDN.ProdTechnologiaZasoby SurowiecZZamiennikiem ON zew.PTZ_Id = SurowiecZZamiennikiem.PTZ_Id
+            JOIN CDN.ProdTechnologiaZasoby Zamienniki ON zew.PTZ_Id = Zamienniki.PTZ_Zamiennik
+            JOIN CDN.ProdTechnologiaZasoby ZamiennikWOrgTech ON Zamienniki.PTZ_TechnologiaZasob = ZamiennikWOrgTech.PTZ_Id
+            JOIN CDN.ProdTechnologiaZasoby SurowceDoZamiennikaWOrgTech ON SurowceDoZamiennikaWOrgTech.PTZ_TechnologiaCzynnosc IN (SELECT PTC_Id 
+                    FROM CDN.ProdTechnologiaCzynnosci 
+                    WHERE PTC_Technologia = (SELECT TOP 1 PTC_Technologia FROM CDN.ProdTechnologiaCzynnosci WHERE PTC_Id = ZamiennikWOrgTech.PTZ_TechnologiaCzynnosc)) 
+                AND SurowceDoZamiennikaWOrgTech.PTZ_TechnologiaCzynnosc &lt;&gt; Zamienniki.PTZ_TechnologiaCzynnosc
+                AND SurowceDoZamiennikaWOrgTech.PTZ_TypZasobu = 1 
+            JOIN #tabProdPlanyMaterialyPelne wew ON wew.PTZ_Id = SurowceDoZamiennikaWOrgTech.PTZ_Id AND wew.PPT_PPPId = @PPT_PPPId AND zew.IdZamiennikaSurowca = wew.IdZamiennikaSurowca
+            JOIN #CTE_DrzewoSurowcow ds ON ds.Id = wew.IdSurowca
+        WHERE zew.PPT_Id = @PPT_Id
+
+        FETCH NEXT FROM OptymalizacjaDoZamowieniaCursor INTO @PPT_PPPId, @TwrNumer, @PPT_IloscPotrzeba, @PPT_IloscOgolnieDostepna, @PPT_IloscZrealizowana, 
+                                                             @PPT_ZapasBezpieczenstwa, @PPT_EOQ, @PPT_Wielokrotnosc, @PPT_Zaokraglenie, @PPT_Id,
+                                                             @ZapotrzebowanieDoAktMaterialu, @ZapotrzebowanieDoAktDnia, @IloscZrealizowanaDoAktDnia, @IdZamiennikaSurowca, @PPT_Termin
+                
+    END
+
+    CLOSE OptymalizacjaDoZamowieniaCursor
+    DEALLOCATE OptymalizacjaDoZamowieniaCursor
+
+    SET @Etap=2;
+    UPDATE #tabProdPlanyMaterialyPelne SET DoZamowieniaPrzedNormowaniem = (PPT_IloscPotrzeba )--- PPT_IloscOgolnieDostepna - PPT_IloscZrealizowana) -- brak
+    BEGIN --ETAP=2 - BOM i ponowne przeliczanie jeśli potrzeba
+        
+        WHILE EXISTS(select * from #tabProdMaterialyZBOMJeszczeNieprzeliczone)
+        BEGIN
+            SELECT TOP 1 @PPT_Id = pmzbjn.PPT_Id, @Poziom = Poziom FROM #tabProdMaterialyZBOMJeszczeNieprzeliczone pmzbjn
+            --JOIN #tabKolejnoscPrzeliczaniaMaterialow kpm ON pmzbjn.PPT_Id = kpm.PPT_Id
+            ORDER BY pmzbjn.Poziom, pmzbjn.Kolejnosc
+
+            IF @Poziom &lt;&gt; @PoziomWczesniejszy
+            BEGIN
+                UPDATE msz
+                SET msz.PPT_IloscPotrzeba = CASE WHEN mszPTZ.PTZ_IloscFormat = 5 THEN CASE WHEN PTC_IloscPlan = 0 THEN msz.PPT_IloscPotrzeba
+                            ELSE CDN.Prod_WartoscAtr(mszPTZ.PTZ_Ilosc, mszPTZ.PTZ_IloscAtr, 14340, PTC_Technologia,0,0) 
+                                * CEILING(mp.PPT_DoZamowienia/CDN.Prod_WartoscAtr(mszPTC.PTC_IloscPlan, mszPTC.PTC_IloscPlanAtr, 14340, mszPTC.PTC_Technologia, 0, 0)) END
+                        ELSE mp.PPT_DoZamowienia * mszPTZ.PTZ_Ilosc / CASE WHEN SurowceDoZamiennikaWOrgTech.PTZ_Ilosc = 0 THEN 1 ELSE SurowceDoZamiennikaWOrgTech.PTZ_Ilosc END
+                    END
+                FROM #tabProdPlanyMaterialyPelne msz
+                    JOIN #tabProdPlanyMaterialyPelne mp ON msz.PPT_RodzicId = mp.PPT_Id
+                    JOIN CDN.ProdTechnologiaZasoby mszPTZ ON mszPTZ.PTZ_Id = msz.PTZ_Id
+                    JOIN CDN.ProdTechnologiaZasoby SurowceDoZamiennikaWOrgTech ON SurowceDoZamiennikaWOrgTech.PTZ_TechnologiaCzynnosc = mszPTZ.PTZ_TechnologiaCzynnosc
+                        AND SurowceDoZamiennikaWOrgTech.PTZ_TypZasobu = 0
+                    JOIN CDN.ProdTechnologiaCzynnosci mszPTC ON mszPTC.PTc_Id = mszPTZ.PTZ_TechnologiaCzynnosc
+                WHERE msz.Poziom = @Poziom AND mp.PPT_PPPId = msz.PPT_PPPId
+
+                SET @PoziomWczesniejszy = @Poziom
+            END
+
+            SELECT @PPT_PPPId = pptp.PPT_Id,
+                    @TwrNumer = pptp.PPT_TwrNumer,
+                    @PPT_IloscPotrzeba = pptp.PPT_IloscPotrzeba,
+                    @PPT_IloscZrealizowana = pptp.PPT_IloscZrealizowana,
+                    @PPT_ZapasBezpieczenstwa = pptp.PPT_ZapasBezpieczenstwa,
+                    @PPT_EOQ = pptp.PPT_EOQ,
+                    @PPT_Wielokrotnosc = pptp.PPT_Wielokrotnosc,
+                    @PPT_Zaokraglenie = pptp.PPT_Zaokraglenie,
+                    @ZamiennikTowaru = pptp.PPT_ZamiennikTowaru,
+                    @Rodzic = pptp.PPT_RodzicId,
+                    @PPT_IloscOgolnieDostepna = PPT_IloscOgolnieDostepna,
+                    @PPT_Termin = PPT_Termin,
+                    @ZapotrzebowanieDoAktMaterialu = ISNULL(
+                        (
+                            SELECT SUM(PPT_IloscPotrzeba)
+                            FROM #tabProdPlanyMaterialyPelne wew
+                            WHERE wew.PPT_TwrNumer = pptp.PPT_TwrNumer
+                                AND wew.PPT_Termin &lt;= pptp.PPT_Termin
+                                --AND wew.PPT_PPPId &lt;= pptp.PPT_PPPId
+                                AND wew.KolejnoscPrzeliczania &lt; pptp.KolejnoscPrzeliczania
+                        ), 
+                    0),
+                    @ZapotrzebowanieDoAktDnia = ISNULL(
+                        (
+                            SELECT SUM(PPT_IloscPotrzeba)
+                            FROM #tabProdPlanyMaterialyPelne wew
+                            WHERE wew.PPT_TwrNumer = pptp.PPT_TwrNumer
+                                AND wew.PPT_Termin &lt; pptp.PPT_Termin
+                                --AND wew.PPT_PPPId &lt; pptp.PPT_PPPId
+                        ), 
+                    0),                
+                    @IloscZrealizowanaDoAktDnia = ISNULL(
+                        (
+                                SELECT SUM(PPT_IloscZrealizowana)
+                                FROM #tabProdPlanyMaterialyPelne wew
+                                WHERE wew.PPT_TwrNumer = pptp.PPT_TwrNumer
+                                    AND wew.PPT_Termin &lt;= pptp.PPT_Termin
+                                    --AND wew.PPT_PPPId &lt;= pptp.PPT_PPPId
+                        ),
+                    0),
+                    @IdZamiennikaSurowca = pptp.IdZamiennikaSurowca
+            FROM #tabProdPlanyMaterialyPelne pptp 
+            WHERE pptp.PPT_Id = @PPT_Id
+            
+            
+            --wyczysc zapas(terminami idziemy wstecz, więc brak obliczonych wcześniejszych wierszy, które mogłyby generować ten zapas)
+            --UPDATE #tmpTwrZapas SET Zapas = 0 
+            DELETE #UzyteGrupId
+            --weź rodzica
+            --oblicz k = potrzebaPoNormowaniu/potrzebaPrzedNormowaniem dla rodzica
+            --select DoZamowieniaPrzedNormowaniem from #tabProdPlanyMaterialyPelne where PPT_ID=@Rodzic
+            IF ((SELECT DoZamowieniaPrzedNormowaniem FROM #tabProdPlanyMaterialyPelne WHERE PPT_ID = @Rodzic) = 0)
+            BEGIN
+                SELECT @K = 0
+            END
+            ELSE
+            BEGIN
+                SELECT @K = 1
+                --SELECT @K = 1.0 * [PPT_DoZamowienia] / DoZamowieniaPrzedNormowaniem FROM #tabProdPlanyMaterialyPelne WHERE PPT_ID = @Rodzic
+            END
+            --uwzględnić do zamówienia edytowaną ręcznie - chyba że jakoś się automatycznie uwzględnia(?)    
+            --select @K
+            SET @PPT_IloscPotrzeba = @k * @PPT_IloscPotrzeba                
+            
+            EXEC CDN.ProdPlanyOptymalizacjaIlosciDoZamowienia @PPT_Id, @PPT_IloscZrealizowana, @PPT_IloscPotrzeba, @TwrNumer, @PPT_IloscOgolnieDostepna, @DoZamowieniaPodst, 
+                @PPT_EOQ, @PPT_Wielokrotnosc, @PPT_Zaokraglenie, @PPT_ZapasBezpieczenstwa, @Dok_PPLOptymalizacjaDoZamowienia, @ZapotrzebowanieDoAktMaterialu, 
+                @ZapotrzebowanieDoAktDnia, @IloscZrealizowanaDoAktDnia, @PPT_Termin, @IloscDostepnaSurowcaZZamiennika
+            --select @K,@PPT_IloscPotrzeba,@TwrNumer
+            UPDATE #tabProdPlanyMaterialyPelne SET /*[PPT_DoZamowienia]=@DoZamowienia,*/ PPT_IloscPotrzeba = @PPT_IloscPotrzeba WHERE PPT_Id = @PPT_Id
+            DELETE #tabProdMaterialyZBOMJeszczeNieprzeliczone WHERE PPT_ID = @PPT_Id
+
+            --Ujednolicić te update
+            UPDATE mp
+            SET mp.PPT_IloscPotrzeba = msz.PPT_DoZamowienia * ds.PTZ_Ilosc  --* Zamienniki.PTZ_Ilosc * SurowceDoZamiennikaWOrgTech.PTZ_Ilosc / (SurowiecZZamiennikiem.PTZ_Ilosc * ZamiennikWOrgTech.PTZ_Ilosc)
+            FROM #tabProdPlanyMaterialyPelne msz
+                JOIN CDN.ProdTechnologiaZasoby SurowiecZZamiennikiem ON msz.PTZ_Id = SurowiecZZamiennikiem.PTZ_Id
+                JOIN CDN.ProdTechnologiaZasoby Zamienniki ON Zamienniki.PTZ_Zamiennik = SurowiecZZamiennikiem.PTZ_Id
+                JOIN CDN.ProdTechnologiaZasoby ZamiennikWOrgTech ON Zamienniki.PTZ_TechnologiaZasob = ZamiennikWOrgTech.PTZ_Id
+                JOIN CDN.ProdTechnologiaZasoby SurowceDoZamiennikaWOrgTech ON 
+                    SurowceDoZamiennikaWOrgTech.PTZ_TechnologiaCzynnosc IN (SELECT PTC_Id 
+                        FROM CDN.ProdTechnologiaCzynnosci 
+                        WHERE PTC_Technologia = (SELECT TOP 1 PTC_Technologia FROM CDN.ProdTechnologiaCzynnosci WHERE PTC_Id = ZamiennikWOrgTech.PTZ_TechnologiaCzynnosc)) 
+                    AND SurowceDoZamiennikaWOrgTech.PTZ_Id &lt;&gt; ZamiennikWOrgTech.PTZ_Id AND SurowceDoZamiennikaWOrgTech.PTZ_TypZasobu = 1
+                JOIN #tabProdPlanyMaterialyPelne mp ON mp.IdZamiennikaSurowca = Zamienniki.PTZ_Id AND mp.PPT_PPPId = @PPT_PPPId AND mp.PTZ_Id = SurowceDoZamiennikaWOrgTech.PTZ_Id
+                JOIN #CTE_DrzewoSurowcow ds ON ds.Id = mp.IdSurowca
+            WHERE msz.PPT_Id = @PPT_Id
+
+            Update wew
+            SET wew.PPT_IloscPotrzeba = zew.PPT_DoZamowienia * ds.PTZ_Ilosc -- * Zamienniki.PTZ_Ilosc * SurowceDoZamiennikaWOrgTech.PTZ_Ilosc / (SurowiecZZamiennikiem.PTZ_Ilosc * ZamiennikWOrgTech.PTZ_Ilosc)
+            FROM #tabProdPlanyMaterialyPelne zew
+                JOIN CDN.ProdTechnologiaZasoby SurowiecZZamiennikiem ON zew.PTZ_Id = SurowiecZZamiennikiem.PTZ_Id
+                JOIN CDN.ProdTechnologiaZasoby Zamienniki ON zew.PTZ_Id = Zamienniki.PTZ_Zamiennik
+                JOIN CDN.ProdTechnologiaZasoby ZamiennikWOrgTech ON Zamienniki.PTZ_TechnologiaZasob = ZamiennikWOrgTech.PTZ_Id
+                JOIN CDN.ProdTechnologiaZasoby SurowceDoZamiennikaWOrgTech ON SurowceDoZamiennikaWOrgTech.PTZ_TechnologiaCzynnosc IN (SELECT PTC_Id 
+                        FROM CDN.ProdTechnologiaCzynnosci 
+                        WHERE PTC_Technologia = (SELECT TOP 1 PTC_Technologia FROM CDN.ProdTechnologiaCzynnosci WHERE PTC_Id = ZamiennikWOrgTech.PTZ_TechnologiaCzynnosc)) 
+                    AND SurowceDoZamiennikaWOrgTech.PTZ_TechnologiaCzynnosc &lt;&gt; Zamienniki.PTZ_TechnologiaCzynnosc
+                    AND SurowceDoZamiennikaWOrgTech.PTZ_TypZasobu = 1 
+                JOIN #tabProdPlanyMaterialyPelne wew ON wew.PTZ_Id = SurowceDoZamiennikaWOrgTech.PTZ_Id AND zew.IdZamiennikaSurowca = wew.IdZamiennikaSurowca
+                JOIN #CTE_DrzewoSurowcow ds ON ds.Id = wew.IdSurowca
+            WHERE zew.PPT_Id = @PPT_Id
+
+        END
+    END
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="ProdPlanyWyliczDalszePoziomyZapotrzebowanMaterialowych"></A><PRE>
+          <FONT SIZE="2"><I>/* ProdPlanyWyliczDalszePoziomyZapotrzebowanMaterialowych */</I><BR>
+CREATE PROCEDURE CDN.ProdPlanyWyliczDalszePoziomyZapotrzebowanMaterialowych (
+    @CzyNormatywyZMagazynu            INT,
+    @PrzeliczenieRodzaj                INT,
+    @ZrodloMagDlaKolOgolnieDostepna INT,
+    @ZrodloMagDlaKolWDrodze            INT,
+    @PlanProdId                        INT,
+    @RezDataAkt                        INT,
+    @PrzeliczenieData                INT,
+    @FrsId                            INT
+)
+AS
+BEGIN
+    UPDATE #tabProdPlanyMaterialyPelne SET Poziom = 0
+    UPDATE #tabProdPlanyMaterialyPelne SET PPT_Termin = PPT_Termin*60*60*24;
+    
+    DECLARE @RowCnt INT
+    DECLARE @Poziom INT
+    DECLARE @MagDlaCalegoDokumentu    INT
+    DECLARE @MagDlaKolOgolnieDostepna INT
+    DECLARE @MagDlaKolWDrodze INT
+    DECLARE @PrzeliczenieWgOkresu    INT
+
+    SET @MagDlaCalegoDokumentu = 0
+    SET @MagDlaKolOgolnieDostepna = 1
+    SET @MagDlaKolWDrodze = 2    
+    SET @PrzeliczenieWgOkresu = 2
+
+    SET @Poziom = 0
+
+    WHILE 1 = 1 AND @Poziom &lt;100
+    BEGIN
+        SET @Poziom = @Poziom + 1
+
+        INSERT INTO #tabProdPlanyMaterialyPelne (-- rozwinięcie surowców bez wskazania na operacje z której pochodzi
+            PPT_PPPId, PPT_TwrNumer, PPT_Termin, PPT_IloscPotrzeba, PPT_IloscOgolnieDostepna, PPT_IloscWDrodze, PPT_IloscZrealizowana, PPT_CzynnoscId, PPT_MagNumer, 
+            PPT_DoZamowienia, PPT_ZapasBezpieczenstwa, PPT_EOQ, PPT_Wielokrotnosc, PPT_Zaokraglenie, PPT_CzasDostawy, PPT_OkresMRPOd, PPT_OkresMRPDo, PPT_RodzicId, 
+            PTZ_TechnologiaZasob, Poziom, PPT_ZamiennikTowaru, PTZ_Id, IdZamiennikaSurowca--, PodzielnikDlaStalejIlosciDlaBOM
+        )
+        SELECT PPT_PPPId,
+            PTZm_TwrNumer PPT_TwrNumer,
+            PPT_Termin -
+            (
+                CASE PTC_StalyCzas
+                    WHEN 0 THEN PTCCzasPlanowanyZAtr * CASE PTZp_PrzeliczajWgIlosciProduktu WHEN 1 THEN PPT_IloscPotrzeba ELSE 1 END * 
+                            CASE WHEN CDN.CzyKlasaAtrOkresowa(PTZm_IloscAtr) = 1 THEN PTZm_Ilosc
+                                ELSE PTZmIlZAtr END/
+                            CASE WHEN CDN.CzyKlasaAtrOkresowa(PTZp_IloscAtr) = 1 THEN CASE WHEN PTZp_Ilosc = 0 THEN 1 ELSE PTZp_Ilosc END
+                                ELSE CASE WHEN PTZpIlZAtr = 0 THEN 1 ELSE PTZpIlZAtr END 
+                            END
+                            + PTC_CzasPrzygotowawczy
+                    WHEN 1 THEN PTCCzasPlanowanyZAtr * CEILING(CASE PTZp_PrzeliczajWgIlosciProduktu WHEN 1 THEN PPT_IloscPotrzeba ELSE 1 END / PTC_StalyCzasDla ) + PTC_CzasPrzygotowawczy
+					WHEN 2 THEN PTCCzasPlanowanyZAtr * CEILING(CASE PTZp_PrzeliczajWgIlosciProduktu WHEN 1 THEN PPT_IloscPotrzeba ELSE 1 END) + PTC_CzasPrzygotowawczy
+                END
+            ) PPT_Termin, 
+            CASE
+                WHEN PTZm_IloscFormat = 5
+                    THEN CASE WHEN IlPlan = 0 THEN CDN.Prod_WartoscAtr(PTZm_Ilosc, PTZm_IloscAtr, 14340, PTC_Technologia,0,0)
+                        ELSE CDN.Prod_WartoscAtr(PTZm_Ilosc, PTZm_IloscAtr, 14340, PTC_Technologia,0,0) * CEILING(PPT_IloscPotrzeba/ilPlan)
+                    END
+            ELSE
+                PPT_IloscPotrzeba * 
+                CASE WHEN CDN.CzyKlasaAtrOkresowa(PTZm_IloscAtr) = 1 THEN PTZm_Ilosc
+                    ELSE PTZmIlZAtr END /
+                CASE WHEN CDN.CzyKlasaAtrOkresowa(PTZp_IloscAtr) = 1 THEN CASE WHEN PTZp_Ilosc = 0 THEN 1 ELSE PTZp_Ilosc END
+                    ELSE CASE WHEN PTZpIlZAtr = 0 THEN 1 ELSE PTZpIlZAtr END 
+                END
+            END PPT_IloscPotrzeba,
+            CAST(0 AS DECIMAL(15, 4)) PPT_IloscOgolnieDostepna,
+            CAST(0 AS DECIMAL(15, 4)) PPT_IloscWDrodze,
+            CAST(0 AS DECIMAL(15, 4)) PPT_IloscZrealizowana,
+            PPT_CzynnoscId,
+            PTZm_MagNumer,
+            CAST(0 AS DECIMAL(15, 4)) PPT_DoZamowienia,
+            CASE (@CzyNormatywyZMagazynu)
+                WHEN 1 THEN COALESCE((SELECT Tpm_IloscMin FROM cdn.TwrParMag WHERE Twr_GIDNumer=Tpm_TwrNumer AND Tpm_MagNumer=
+                        (SELECT MagNumer FROM #tabMagaynyPP WHERE MagDlaElem = @MagDlaCalegoDokumentu) ),Twr_IloscMin)
+                ELSE Twr_IloscMin
+            END  ZapasBezpieczenstwa,
+            Twr_MrpEoq EOQ,
+            CASE (@CzyNormatywyZMagazynu)
+                WHEN 1 THEN COALESCE((SELECT Tpm_IloscZam FROM cdn.TwrParMag WHERE Twr_GIDNumer=Tpm_TwrNumer AND Tpm_MagNumer=
+                        (SELECT MagNumer FROM #tabMagaynyPP WHERE MagDlaElem = @MagDlaCalegoDokumentu) ),Twr_IloscZam)
+                ELSE Twr_IloscZam
+            END Wielokrotnosc,
+            CASE
+                WHEN Twr_MrpZaok =0 THEN 0
+                WHEN Twr_MrpZaok %1000000=0 THEN 1000000
+                WHEN Twr_MrpZaok %100000=0 THEN 100000
+                WHEN Twr_MrpZaok %10000=0 THEN 10000
+                WHEN Twr_MrpZaok %1000=0 THEN 1000
+                WHEN Twr_MrpZaok %100=0 THEN 100
+                WHEN Twr_MrpZaok %10=0 THEN 10
+                WHEN Twr_MrpZaok %1=0 THEN 1
+                WHEN Twr_MrpZaok %0.1=0 THEN 0.1
+                WHEN Twr_MrpZaok %0.01=0 THEN 0.01
+                WHEN Twr_MrpZaok %0.001=0 THEN 0.001
+                WHEN Twr_MrpZaok %0.0001=0 THEN 0.0001
+            END PPT_Zaokraglenie,
+            ISNULL(TWD_Czas,Twr_CzasDst) PPT_CzasDostawy,
+            0 PPT_OkresMRPOd, --uzupełniane niżej
+            0 PPT_OkresMRPDo, --uzupełniane niżej
+            PPT_Id PPT_RodzicId, PTZm_TechnologiaZasob PTZ_TechnologiaZasob, @Poziom Poziom,
+            PTZm_Zamiennik,
+            PTZm_Id,
+            #tabPTZ_Id--,
+            --CASE WHEN COALESCE(PodzielnikDlaStalejIlosciDlaBOM, 0) = 0 THEN PTZp_Ilosc * CASE WHEN IlPlan = 0 THEN 1 ELSE IlPlan/CASE WHEN ptcIlosc = 0 THEN 1 ELSE ptcIlosc END END
+            --    ELSE PodzielnikDlaStalejIlosciDlaBOM * PTZp_Ilosc * CASE WHEN IlPlan = 0 THEN 1 ELSE IlPlan/CASE WHEN ptcIlosc = 0 THEN 1 ELSE ptcIlosc END END
+            --END
+        FROM (
+        SELECT PPT_PPPId, PTZm.PTZ_TwrNumer PTZm_TwrNumer, #tab.PPT_Termin, PTC_StalyCzas, PTC_CzasPrzygotowawczy, PTC_StalyCzasDla, PTZp.PTZ_IloscAtr PTZp_IloscAtr, PTZp.PTZ_Ilosc PTZp_Ilosc,
+            PTZp.PTZ_PrzeliczajWgIlosciProduktu PTZp_PrzeliczajWgIlosciProduktu, PPT_IloscPotrzeba, PTZm.PTZ_IloscAtr PTZm_IloscAtr, PTZm.PTZ_Ilosc PTZm_Ilosc,
+            CDN.ProdIloscAtr(1,PTZm.PTZ_Ilosc,PTZm.PTZ_IloscAtr,6,PTZm.PTZ_TypZasobu,PTC_Ilosc,PTC_IloscAtr,14340,PTC_Technologia,0,0) PTZmIlZAtr,
+            CDN.ProdIloscAtr(1,PTZp.PTZ_Ilosc,PTZp.PTZ_IloscAtr,6,PTZp.PTZ_TypZasobu,PTC_Ilosc,PTC_IloscAtr,14340,PTC_Technologia,0,0) PTZpIlZAtr,
+            CDN.Prod_WartoscAtr(PTC_CzasPlanowany, PTC_CzasPlanowanyAtr, 14340, PTC_Technologia, 0, 0) PTCCzasPlanowanyZAtr,
+            PPT_CzynnoscId, PPT_MagNumer, twrProd.Twr_GIDNumer, twrProd.Twr_IloscMin, twrProd.Twr_IloscZam, twrProd.Twr_MrpEoq, twrProd.Twr_MrpZaok, TWD_Czas, 
+            PPT_Id PPT_RodzicId, PTZm.PTZ_TechnologiaZasob PTZm_TechnologiaZasob, PTZm.PTZ_MagNumer PTZm_MagNumer,
+            #tab.Poziom Poziom, PTZm.PTZ_Zamiennik PTZm_Zamiennik, PTZm.PTZ_Id PTZm_Id, #tab.PTZ_Id #tabPTZ_Id, PTZm.PTZ_TwrTyp PTZm_TwrTyp, PPT_ZamiennikTowaru, 
+            #tab.PTZ_TechnologiaZasob #tabPTZ_TechnologiaZasob, PPT_Id, PTZm.PTZ_IloscFormat PTZm_IloscFormat, PTC.PTC_Technologia,
+            CDN.Prod_WartoscAtr(PTC.PTC_IloscPlan, PTC.PTC_IloscPlanAtr, 14340, PTC.PTC_Technologia,0,0) IlPlan, 
+            CDN.Prod_WartoscAtr(PTC.PTC_Ilosc,PTC.PTC_IloscAtr, 14340, PTC.PTC_Technologia,0,0) ptcIlosc, twrProd.Twr_CzasDst--, PodzielnikDlaStalejIlosciDlaBOM
+            FROM #tabProdPlanyMaterialyPelne #tab
+                JOIN cdn.TwrKarty ON Twr_GIDNumer = #tab.PPT_TwrNumer
+                CROSS APPLY (SELECT TOP 1 PTC_Id, PTC_StalyCzas, PTC_CzasPlanowany, PTC_CzasPlanowanyAtr, PTC_Technologia, PTC_Ilosc, PTC_IloscAtr, PTC_CzasPrzygotowawczy, 
+                                    PTC_StalyCzasDla, PTC_IloscPlan, PTC_IloscPlanAtr, PTZ_Id PTZ_Id_Produkt
+                                FROM CDN.ProdTechnologiaCzynnosci wewPTC 
+                                    JOIN CDN.ProdTechnologiaZasoby wewPTZ ON wewPTC.PTC_Id = wewPTZ.PTZ_TechnologiaCzynnosc
+                                WHERE PTC_Technologia = Twr_ProdTechnologia
+                                ORDER BY PTZ_PodstawowaTechnologiaDlaProduktu DESC, PTZ_Id DESC) PTC
+                --JOIN cdn.ProdTechnologiaCzynnosci ON PTC_Technologia = Twr_ProdTechnologia
+                JOIN cdn.ProdTechnologiaZasoby PTZm ON PTC_Id = PTZm.PTZ_TechnologiaCzynnosc
+                    AND PTZm.PTZ_TypZasobu = 1 --surowce
+                JOIN cdn.ProdTechnologiaZasoby PTZp ON PTC_Id = PTZp.PTZ_TechnologiaCzynnosc
+                    AND PTZp.PTZ_TypZasobu = 0  --towar macierzysty
+                    AND PTZP.PTZ_TwrNumer = Twr_GIDNumer --tylko czynność tworząca produkt;
+                    AND PTZp.PTZ_Id = PTZ_Id_Produkt
+                CROSS APPLY (SELECT count (*) sumaProduktowZOperacjiSurowcow 
+                                FROM cdn.ProdTechnologiaZasoby produktyZOperacjiSurowcow 
+                                WHERE produktyZOperacjiSurowcow.PTZ_TypZasobu=0 AND produktyZOperacjiSurowcow.PTZ_TechnologiaCzynnosc=PTZp.PTZ_TechnologiaCzynnosc) AS s
+                LEFT JOIN CDN.TwrKarty twrProd on twrProd.Twr_GIDNumer=PTZm.PTZ_TwrNumer
+                LEFT JOIN CDN.TwrDost on  twrProd.Twr_GIDNumer=TWD_TwrNumer AND twrProd.Twr_DstDomyslny =TWD_KodLp
+        ) zap
+        WHERE (
+                (
+                    PTZm_TwrTyp &lt;&gt; 0
+                    AND PTZm_TwrNumer &lt;&gt; 0
+                )
+                OR PTZm_TechnologiaZasob &lt;&gt; 0
+           )
+           AND Poziom = @Poziom - 1
+           AND ISNULL(#tabPTZ_TechnologiaZasob, 0) = 0
+           AND PPT_ZamiennikTowaru = 0
+                        
+        SET @RowCnt = @@ROWCOUNT
+
+        INSERT INTO #tabProdPlanyMaterialyPelne (
+        -- rozwinięcie surowców z półproduktów(wskazanie na operacje z której pochodzi materiał)
+            PPT_PPPId, PPT_TwrNumer, PPT_Termin, PPT_IloscPotrzeba, PPT_IloscOgolnieDostepna, PPT_IloscWDrodze, PPT_IloscZrealizowana, PPT_CzynnoscId, PPT_MagNumer, 
+            PPT_DoZamowienia, PPT_ZapasBezpieczenstwa, PPT_EOQ, PPT_Wielokrotnosc, PPT_Zaokraglenie, PPT_CzasDostawy, PPT_OkresMRPOd, PPT_OkresMRPDo, PPT_RodzicId, 
+            PTZ_TechnologiaZasob, Poziom, PPT_ZamiennikTowaru,PTZ_Id, IdZamiennikaSurowca--, PodzielnikDlaStalejIlosciDlaBOM
+        )
+        SELECT
+            PPT_PPPId, PTZm_TwrNumer PPT_TwrNumer,
+            PPT_Termin -
+            (
+                CASE PTC_StalyCzas
+                    WHEN 0 THEN PTCCzasPlanowanyZAtr * CASE PTZp_PrzeliczajWgIlosciProduktu WHEN 1 THEN PPT_IloscPotrzeba ELSE 1 END * 
+                        CASE WHEN CDN.CzyKlasaAtrOkresowa(PTZm_IloscAtr) = 1 THEN PTZm_Ilosc ELSE PTZmIlZAtr END /
+                        CASE WHEN CDN.CzyKlasaAtrOkresowa(PTZp_IloscAtr) = 1 THEN CASE WHEN PTZp_Ilosc = 0 THEN 1 ELSE PTZp_Ilosc END
+                            ELSE CASE WHEN PTZpIlZAtr = 0 THEN 1 ELSE PTZpIlZAtr END 
+                        END + PTC_CzasPrzygotowawczy
+                    WHEN 1 THEN PTCCzasPlanowanyZAtr * 
+                        CEILING(CASE PTZp_PrzeliczajWgIlosciProduktu WHEN 1 THEN PPT_IloscPotrzeba ELSE 1 END / PTC_StalyCzasDla ) + PTC_CzasPrzygotowawczy
+					WHEN 2 THEN PTCCzasPlanowanyZAtr * CEILING(CASE PTZp_PrzeliczajWgIlosciProduktu WHEN 1 THEN PPT_IloscPotrzeba ELSE 1 END) + PTC_CzasPrzygotowawczy
+                END
+            ) PPT_Termin,
+            CASE
+                WHEN PTZm_IloscFormat = 5
+                    THEN CASE WHEN IlPlan = 0 THEN CDN.Prod_WartoscAtr(PTZm_Ilosc, PTZm_IloscAtr, 14340, PTC_Technologia,0,0) 
+                        ELSE CDN.Prod_WartoscAtr(PTZm_Ilosc, PTZm_IloscAtr, 14340, PTC_Technologia,0,0) * CEILING(PPT_IloscPotrzeba/ilPlan)--/
+                            --CASE WHEN CDN.Prod_WartoscAtr(PTZp_Ilosc, PTZp_IloscAtr, 14340, PTC_Technologia,0,0) = 0 THEN 1 ELSE CDN.Prod_WartoscAtr(PTZp_Ilosc, PTZp_IloscAtr, 14340, PTC_Technologia,0,0) END/CASE WHEN
+                            --COALESCE(PodzielnikDlaStalejIlosciDlaBOM, 0) = 0 THEN (ilPlan/CASE WHEN ptcIlosc = 0 THEN 1 ELSE ptcIlosc END) ELSE PodzielnikDlaStalejIlosciDlaBOM END) 
+                    END
+            ELSE
+                PPT_IloscPotrzeba * CASE WHEN CDN.CzyKlasaAtrOkresowa(PTZm_IloscAtr) = 1 THEN PTZm_Ilosc ELSE PTZmIlZAtr END / 
+                CASE WHEN CDN.CzyKlasaAtrOkresowa(PTZp_IloscAtr) = 1 THEN CASE WHEN PTZp_Ilosc = 0 THEN 1 ELSE PTZp_Ilosc END
+                    ELSE CASE WHEN PTZpIlZAtr = 0 THEN 1 ELSE PTZpIlZAtr END 
+                END
+            END PPT_IloscPotrzeba,
+            CAST(999 AS DECIMAL(15, 4)) PPT_IloscOgolnieDostepna,
+            CAST(999 AS DECIMAL(15, 4)) PPT_IloscWDrodze,
+            CAST(0 AS DECIMAL(15, 4)) PPT_IloscZrealizowana,
+            PPT_CzynnoscId,
+            PPT_MagNumer,
+            CAST(0 AS DECIMAL(15, 4)) PPT_DoZamowienia,
+            COALESCE((SELECT Tpm_IloscMin FROM cdn.TwrParMag WHERE Twr_GIDNumer=Tpm_TwrNumer AND Tpm_MagNumer=PPT_MagNumer ),Twr_IloscMin) ZapasBezpieczenstwa,
+            Twr_MrpEoq EOQ,
+            COALESCE((SELECT Tpm_IloscZam FROM cdn.TwrParMag WHERE Twr_GIDNumer=Tpm_TwrNumer AND Tpm_MagNumer=PPT_MagNumer ),Twr_IloscZam) Wielokrotnosc,
+            CASE
+                WHEN Twr_MrpZaok =0 THEN 0
+                WHEN Twr_MrpZaok %1000000=0 THEN 1000000
+                WHEN Twr_MrpZaok %100000=0 THEN 100000
+                WHEN Twr_MrpZaok %10000=0 THEN 10000
+                WHEN Twr_MrpZaok %1000=0 THEN 1000
+                WHEN Twr_MrpZaok %100=0 THEN 100
+                WHEN Twr_MrpZaok %10=0 THEN 10
+                WHEN Twr_MrpZaok %1=0 THEN 1
+                WHEN Twr_MrpZaok %0.1=0 THEN 0.1
+                WHEN Twr_MrpZaok %0.01=0 THEN 0.01
+                WHEN Twr_MrpZaok %0.001=0 THEN 0.001
+                WHEN Twr_MrpZaok %0.0001=0 THEN 0.0001
+            END PPT_Zaokraglenie,
+            ISNULL(TWD_Czas,Twr_CzasDst) PPT_CzasDostawy,
+            0 PPT_OkresMRPOd, --uzupełniane niżej
+            0 PPT_OkresMRPDo, --uzupełniane niżej
+            PPT_RodzicId, PTZm_TechnologiaZasob PTZ_TechnologiaZasob, @Poziom Poziom,
+            PTZm_Zamiennik,
+            PTZm_Id,
+            #tabPTZ_Id--,
+            --CASE WHEN COALESCE(PodzielnikDlaStalejIlosciDlaBOM, 0) = 0 THEN 1 ELSE PodzielnikDlaStalejIlosciDlaBOM END * PodzielnikDlaStalejIlosciDlaBOM * PPT_IloscPotrzeba * 
+            --CASE WHEN IlPlan = 0 THEN 1 ELSE IlPlan / CASE WHEN ptcIlosc = 0 THEN 1 ELSE ptcIlosc END END
+        FROM (
+        SELECT PPT_PPPId, PTZm.PTZ_TwrNumer PTZm_TwrNumer, #tab.PPT_Termin, PTC_StalyCzas, PTC_CzasPrzygotowawczy, PTC_StalyCzasDla, PTZp.PTZ_IloscAtr PTZp_IloscAtr, PTZp.PTZ_Ilosc PTZp_Ilosc,
+            PTZp.PTZ_PrzeliczajWgIlosciProduktu PTZp_PrzeliczajWgIlosciProduktu, PPT_IloscPotrzeba, PTZm.PTZ_IloscAtr PTZm_IloscAtr, PTZm.PTZ_Ilosc PTZm_Ilosc,
+            CDN.ProdIloscAtr(1,PTZm.PTZ_Ilosc,PTZm.PTZ_IloscAtr,6,PTZm.PTZ_TypZasobu,PTC_Ilosc,PTC_IloscAtr,14340,PTC_Technologia,0,0) PTZmIlZAtr,
+            CDN.ProdIloscAtr(1,PTZp.PTZ_Ilosc,PTZp.PTZ_IloscAtr,6,PTZp.PTZ_TypZasobu,PTC_Ilosc,PTC_IloscAtr,14340,PTC_Technologia,0,0) PTZpIlZAtr,
+            CDN.Prod_WartoscAtr(PTC_CzasPlanowany, PTC_CzasPlanowanyAtr, 14340, PTC_Technologia, 0, 0) PTCCzasPlanowanyZAtr,
+            PPT_CzynnoscId, PPT_MagNumer, Twr_GIDNumer, Twr_IloscMin, Twr_IloscZam, Twr_MrpEoq, Twr_MrpZaok, TWD_Czas, PPT_Id PPT_RodzicId, PTZm.PTZ_TechnologiaZasob PTZm_TechnologiaZasob, 
+            #tab.Poziom Poziom, PTZm.PTZ_Zamiennik PTZm_Zamiennik, PTZm.PTZ_Id PTZm_Id, #tab.PTZ_Id #tabPTZ_Id, PTZm.PTZ_TwrTyp PTZm_TwrTyp, PPT_ZamiennikTowaru,
+            #tab.PTZ_TechnologiaZasob #tabPTZ_TechnologiaZasob, PPT_Id, PTZm.PTZ_IloscFormat PTZm_IloscFormat, PTC_Technologia,
+            CDN.Prod_WartoscAtr(PTC_IloscPlan, PTC_IloscPlanAtr, 14340, PTC_Technologia,0,0) IlPlan,  
+            CDN.Prod_WartoscAtr(PTC_Ilosc,PTC_IloscAtr, 14340, PTC_Technologia,0,0) ptcIlosc, twrProd.Twr_CzasDst--, PodzielnikDlaStalejIlosciDlaBOM
+        FROM #tabProdPlanyMaterialyPelne #tab
+            JOIN cdn.ProdTechnologiaZasoby PTZp ON PTZP.PTZ_Id = #tab.PTZ_TechnologiaZasob
+                AND PTZp.PTZ_TypZasobu = 0  --polprodukt macierzysty
+            JOIN cdn.ProdTechnologiaZasoby PTZm ON Ptzp.PTZ_TechnologiaCzynnosc = ptzm.PTZ_TechnologiaCzynnosc
+                AND ptzm.PTZ_TypZasobu = 1 --surowce
+            JOIN cdn.ProdTechnologiaCzynnosci ON PTC_Id=PTZm.PTZ_TechnologiaCzynnosc
+            LEFT JOIN cdn.TwrKarty twrProd on twrProd.Twr_GIDNumer=PTZm.PTZ_TwrNumer
+            LEFT JOIN cdn.TwrDost on  twrProd.Twr_GIDNumer=TWD_TwrNumer AND twrProd.Twr_DstDomyslny =TWD_KodLp
+        ) zap
+        WHERE (
+                (
+                    PTZm_TwrTyp &lt;&gt; 0
+                    AND PTZm_TwrNumer &lt;&gt; 0
+                )
+                OR PTZm_TechnologiaZasob &lt;&gt; 0
+            )
+            AND Poziom = @Poziom - 1
+            AND PPT_ZamiennikTowaru = 0
+            
+        SET @RowCnt = @RowCnt + @@ROWCOUNT
+
+        IF @RowCnt = 0 BREAK; -- osiągnięto pełne rozwinięcie
+        
+    END
+    --Zaktualizuj rodzica dla zamienników(rodzicem ma być materiał, którego jest zamiennikiem)
+    UPDATE org
+    SET org.PPT_RodzicId=mat.PPT_Id
+    FROM #tabProdPlanyMaterialyPelne org
+        JOIN cdn.ProdTechnologiaZasoby PTZz ON PTZz.PTZ_Id = org.PTZ_Id
+        JOIN cdn.ProdTechnologiaZasoby PTZp ON PTZp.PTZ_Id = PTZz.PTZ_Zamiennik
+        JOIN #tabProdPlanyMaterialyPelne mat ON mat.PTZ_Id = PTZp.PTZ_Id
+    WHERE org.PPT_ZamiennikTowaru &lt;&gt; 0 AND org.Poziom &gt; 0 AND org.PPT_PPPId = mat.PPT_PPPId
+
+    --zmiana RodzicId aby ignorowało półprodukty
+    WHILE 1=1
+    BEGIN
+        UPDATE org
+        SET org.PPT_RodzicId = rodzic.PPT_RodzicId
+        FROM #tabProdPlanyMaterialyPelne org
+             JOIN #tabProdPlanyMaterialyPelne rodzic ON org.PPT_RodzicId = rodzic.PPT_Id
+        WHERE rodzic.PTZ_TechnologiaZasob &lt;&gt; 0 OR rodzic.PPT_TwrNumer = 0 AND org.Poziom &gt; 0
+         
+        IF @@ROWCOUNT=0 BREAK;
+    END
+
+    DELETE
+    FROM #tabProdPlanyMaterialyPelne
+    WHERE PTZ_TechnologiaZasob &lt;&gt; 0 OR (PPT_TwrNumer = 0 OR PPT_IloscPotrzeba = 0) AND Poziom &gt; 0
+
+    UPDATE org
+    SET org.CzyBOMPolprodukt = 1
+    FROM #tabProdPlanyMaterialyPelne org
+        JOIN cdn.ProdTechnologiaZasoby PTZz ON PTZz.PTZ_Id = org.PTZ_Id
+        JOIN cdn.ProdTechnologiaZasoby PTZp ON PTZp.PTZ_TwrNumer = PTZz.PTZ_TwrNumer AND PTZp.PTZ_TwrTyp = PTZz.PTZ_TwrTyp AND PTZp.PTZ_PodstawowaTechnologiaDlaProduktu = 1
+        JOIN cdn.ProdTechnologiaCzynnosci PTCp ON PTZp.PTZ_TechnologiaCzynnosc = PTCp.PTC_Id
+
+    UPDATE  #tabProdPlanyMaterialyPelne SET PPT_Termin = PPT_Termin / 60/ 60 / 24;
+
+    UPDATE #tabProdPlanyMaterialyPelne
+    SET PPT_OkresMRPOd = CASE POK_CzasTrwaniaOkresuJedn
+            WHEN 0 THEN /*dni*/ POK_DataOd+(PPT_Termin-POK_DataOd)/POK_CzasTrwaniaOkresu*POK_CzasTrwaniaOkresu
+            WHEN 1 THEN /*tygodnie*/ POK_DataOd+(PPT_Termin-POK_DataOd)/POK_CzasTrwaniaOkresu/7*7*POK_CzasTrwaniaOkresu
+            WHEN 2 THEN /*miesiace*/
+                (DATEDIFF(d,convert(datetime,'1800-12-29',120),
+                DATEADD(m, DATEDIFF(m, 0, dateadd(m,
+                ((
+                        datepart(YEAR,dateadd(d,PPT_Termin,convert(datetime,'1800-12-29',120)))*12
+                        +datepart(MONTH,dateadd(d,PPT_Termin,convert(datetime,'1800-12-29',120)))
+                        -datepart(YEAR,dateadd(d,POK_DataOd,convert(datetime,'1800-12-29',120)))*12
+                        -datepart(MONTH,dateadd(d,POK_DataOd,convert(datetime,'1800-12-29',120)))
+                    )
+                    /POK_CzasTrwaniaOkresu
+                  + CASE
+                    WHEN datepart(DAY,dateadd(d,PPT_Termin,convert(datetime,'1800-12-29',120)))-datepart(DAY,dateadd(d,POK_DataOd,convert(datetime,'1800-12-29',120)))&lt;0
+                        AND (
+                            datepart(YEAR,dateadd(d,PPT_Termin,convert(datetime,'1800-12-29',120)))*12
+                            +datepart(MONTH,dateadd(d,PPT_Termin,convert(datetime,'1800-12-29',120)))
+                            -datepart(YEAR,dateadd(d,POK_DataOd,convert(datetime,'1800-12-29',120)))*12
+                            -datepart(MONTH,dateadd(d,POK_DataOd,convert(datetime,'1800-12-29',120)))
+                        )%POK_CzasTrwaniaOkresu=0 /*miesiac zmiany */  THEN -1
+                    ELSE 0
+                END
+                )*POK_CzasTrwaniaOkresu,dateadd(d,POK_DataOd,convert(datetime,'1800-12-29',120))) ), 0)  ))+1
+            WHEN 3 THEN /*lata - nieuzywane dla mrp*/ 0
+    END,
+    PPT_OkresMRPDo = CASE POK_CzasTrwaniaOkresuJedn
+            WHEN 0 THEN /*dni*/ POK_DataOd+((PPT_Termin-POK_DataOd)/POK_CzasTrwaniaOkresu+1)*POK_CzasTrwaniaOkresu-1
+            WHEN 1 THEN /*tygodnie*/ POK_DataOd+((PPT_Termin-POK_DataOd)/POK_CzasTrwaniaOkresu/7+1)*7*POK_CzasTrwaniaOkresu-1
+            WHEN 2 THEN /*miesiace*/ (DATEDIFF(d,convert(datetime,'1800-12-29',120),
+                    DATEADD(s,-1,DATEADD(mm, DATEDIFF(m,0, dateadd(m,
+                    ((
+                            datepart(YEAR,dateadd(d,PPT_Termin,convert(datetime,'1800-12-29',120)))*12
+                            +datepart(MONTH,dateadd(d,PPT_Termin,convert(datetime,'1800-12-29',120)))
+                            -datepart(YEAR,dateadd(d,POK_DataOd,convert(datetime,'1800-12-29',120)))*12
+                            -datepart(MONTH,dateadd(d,POK_DataOd,convert(datetime,'1800-12-29',120)))
+                        )
+                        /POK_CzasTrwaniaOkresu
+                        +CASE
+                            WHEN datepart(DAY,dateadd(d,PPT_Termin,convert(datetime,'1800-12-29',120)))-datepart(DAY,dateadd(d,POK_DataOd,convert(datetime,'1800-12-29',120)))&lt;0
+                                AND (
+                                    datepart(YEAR,dateadd(d,PPT_Termin,convert(datetime,'1800-12-29',120)))*12
+                                    +datepart(MONTH,dateadd(d,PPT_Termin,convert(datetime,'1800-12-29',120)))
+                                    -datepart(YEAR,dateadd(d,POK_DataOd,convert(datetime,'1800-12-29',120)))*12
+                                    -datepart(MONTH,dateadd(d,POK_DataOd,convert(datetime,'1800-12-29',120)))
+                                )%POK_CzasTrwaniaOkresu=0 /*miesiac zmiany */  THEN 0
+                            ELSE 1
+                        END
+                    )*POK_CzasTrwaniaOkresu,dateadd(d,POK_DataOd,convert(datetime,'1800-12-29',120))) ),0))  ))+1
+            WHEN 3 THEN /*lata - nieuzywane dla mrp*/ 0
+        END
+    FROM #tabProdPlanyMaterialyPelne
+        JOIN cdn.TwrKarty ON PPT_TwrNumer = twr_gidnumer
+        JOIN cdn.ProdOkresy ON Twr_MrpId = POK_Id
+    WHERE Poziom &gt; 0
+
+    --Uzupelnienie kolumn Ogolnie dostepna, w drodze
+    IF @PrzeliczenieRodzaj = @PrzeliczenieWgOkresu
+    BEGIN
+        UPDATE #tabProdPlanyMaterialyPelne set PPT_IloscOgolnieDostepna=
+        CASE
+            WHEN 0 &lt; (
+                ISNULL(CASE @ZrodloMagDlaKolOgolnieDostepna WHEN @MagDlaKolOgolnieDostepna THEN
+                                (
+                                    SELECT SUM(CASE
+                                            WHEN Rez_GIDTyp = 2576
+                                                THEN - Ilosc
+                                            ELSE Ilosc
+                                        END)
+                                    FROM (
+                                        SELECT DISTINCT Rez_GIDNumer, Rez_GIDTyp, Rez_Ilosc - Rez_Zrealizowano - Rez_IloscImp - Rez_IloscMag - Rez_IloscSAD - Rez_IloscSSC Ilosc
+                                        FROM CDN.Rezerwacje
+                                            INNER JOIN #tabMagaynyPP ON PPId = @PlanProdId AND MagDlaElem = @ZrodloMagDlaKolOgolnieDostepna
+                                            INNER JOIN CDN.RezMagazyny ON ReM_RezNumer = Rez_GIDNumer
+                                                AND ReM_RezTyp = Rez_GIDTyp
+                                        WHERE Rez_DataRealizacji &lt;= (PPMZM.PPT_Termin - @RezDataAkt)
+                                            AND (
+                                                (Rez_GIDTyp = 2576 AND Rez_ZrdTyp IN (1605, -1605) AND Rez_Typ = 1) OR (Rez_GIDTyp = 2576 AND Rez_ZrdTyp NOT IN (1605, -1605))
+                                                OR Rez_DataRealizacji &gt; @PrzeliczenieData
+                                            )
+                                            AND (
+                                                Rez_ZrdTyp NOT IN (14345, 14346)
+                                                OR Rez_GIDTyp = 2592
+                                            )
+                                            AND Rez_TwrNumer = PPMZM.PPT_TwrNumer
+                                            AND MagNumer = ReM_MagNumer
+                                            AND (
+                                                MagNumer in (select e.MagNumer  from #tabMagaynyPP e WHERE MagDlaElem = @ZrodloMagDlaKolOgolnieDostepna)
+                                            )
+                                    ) OgolnieDostepna
+                            )
+                            ELSE
+                                (
+                                    SELECT SUM(CASE
+                                            WHEN Rez_GIDTyp = 2576
+                                                THEN - Ilosc
+                                            ELSE Ilosc
+                                        END)
+                                    FROM (
+                                        SELECT DISTINCT Rez_GIDNumer, Rez_GIDTyp, Rez_Ilosc - Rez_Zrealizowano - Rez_IloscImp - Rez_IloscMag - Rez_IloscSAD - Rez_IloscSSC Ilosc
+                                        FROM CDN.Rezerwacje
+                                            INNER JOIN CDN.RezMagazyny ON ReM_RezNumer = Rez_GIDNumer
+                                                AND ReM_RezTyp = Rez_GIDTyp
+                                        WHERE Rez_DataRealizacji &lt;= (PPMZM.PPT_Termin - @RezDataAkt)
+                                            AND (
+                                                (Rez_GIDTyp = 2576 AND Rez_ZrdTyp IN (1605, -1605) AND Rez_Typ = 1) OR (Rez_GIDTyp = 2576 AND Rez_ZrdTyp NOT IN (1605, -1605))
+                                                OR Rez_DataRealizacji &gt; @PrzeliczenieData
+                                            )
+                                            AND (
+                                                Rez_ZrdTyp NOT IN (14345, 14346)
+                                                OR Rez_GIDTyp = 2592
+                                            )
+                                            AND Rez_TwrNumer = PPMZM.PPT_TwrNumer
+                                            AND (ReM_MagNumer = ptz.PTZ_MagNumer
+                                                OR ptz.PTZ_MagNumer = 0)
+                                    ) OgolnieDostepna
+                                )
+                            END, 0) + CASE
+                    WHEN Twr_Typ IN (
+                        4
+                        ,6
+                    )
+                        THEN 0
+                    ELSE 
+                        CASE @ZrodloMagDlaKolOgolnieDostepna WHEN @MagDlaKolOgolnieDostepna THEN
+                                (SELECT SUM(
+                                    ISNULL(
+                                        CAST(
+                                            CDN.SubstringEx(CDN.DokSumaStanowTowaru(wewTwr.Twr_GIDTyp, wewTwr.Twr_GIDFirma, wewTwr.Twr_GIDNumer, wewTwr.Twr_Typ, 
+                                                    32768, 1, 1, 0, MagNumer, 2, 0, 0, (wewPPMZM.PPT_Termin - @RezDataAkt), 0, 2, @FrsId, 0, 0, 0, 0, 0, 0, - 1)
+                                                , ':', 1) AS DECIMAL(15, 4))
+                                    , 0)) 
+                                    FROM #tabProdPlanyMaterialyPelne wewPPMZM
+                                        INNER JOIN CDN.TwrKarty wewTwr ON wewTwr.Twr_GIDNumer = wewPPMZM.PPT_TwrNumer
+                                        INNER JOIN #tabMagaynyPP ON PPId = @PlanProdId AND MagDlaElem = @ZrodloMagDlaKolOgolnieDostepna
+                                    WHERE wewTwr.Twr_GIDNumer = Twr_GIDNumer 
+                                        AND wewTwr.Twr_GIDTyp = Twr_GIDTyp 
+                                        AND wewPPMZM.PPT_Termin = PPMZM.PPT_Termin 
+                                        AND wewPPMZM.Poziom &gt; 0
+                                        AND wewPPMZM.PPT_PPPId = PPMZM.PPT_PPPId 
+                                        AND wewPPMZM.PPT_Id = PPMZM.PPT_Id
+                                )
+                            ELSE
+                                ISNULL(Cast(CDN.SubstringEx(CDN.DokSumaStanowTowaru(Twr_GIDTyp, Twr_GIDFirma, Twr_GIDNumer, Twr_Typ, 32768, 1, 1, 0, PPMZM.PPT_MagNumer, 2, 0, 0, 
+                                    (PPMZM.PPT_Termin - @RezDataAkt), 0, 2, @FrsId, 0, 0, 0, 0, 0, 0, - 1), ':', 1) AS DECIMAL(15, 4)), 0)
+                        END
+                        --ISNULL(Cast(CDN.SubstringEx(CDN.DokSumaStanowTowaru(Twr_GIDTyp, Twr_GIDFirma, Twr_GIDNumer, Twr_Typ, 32768, 1, 1, 0, 0, 2, 0, 0, (PPMZM.PPT_Termin - @RezDataAkt), 0, 2, 
+                        --@FrsId, 0, 0, 0, 0, 0, 0, - 1), ':', 1) AS DECIMAL(15, 4)), 0)
+                END
+            )
+                THEN (
+                    ISNULL(CASE @ZrodloMagDlaKolOgolnieDostepna WHEN @MagDlaKolOgolnieDostepna THEN
+                                (
+                                    SELECT SUM(CASE
+                                            WHEN Rez_GIDTyp = 2576
+                                                THEN - Ilosc
+                                            ELSE Ilosc
+                                        END)
+                                    FROM (
+                                        SELECT DISTINCT Rez_GIDNumer, Rez_GIDTyp, Rez_Ilosc - Rez_Zrealizowano - Rez_IloscImp - Rez_IloscMag - Rez_IloscSAD - Rez_IloscSSC Ilosc
+                                        FROM CDN.Rezerwacje
+                                            INNER JOIN #tabMagaynyPP ON PPId = @PlanProdId AND MagDlaElem = @ZrodloMagDlaKolOgolnieDostepna
+                                            INNER JOIN CDN.RezMagazyny ON ReM_RezNumer = Rez_GIDNumer
+                                                AND ReM_RezTyp = Rez_GIDTyp
+                                        WHERE Rez_DataRealizacji &lt;= (PPMZM.PPT_Termin - @RezDataAkt)
+                                            AND (
+                                                (Rez_GIDTyp = 2576 AND Rez_ZrdTyp IN (1605, -1605) AND Rez_Typ = 1) OR (Rez_GIDTyp = 2576 AND Rez_ZrdTyp NOT IN (1605, -1605))
+                                                OR Rez_DataRealizacji &gt; @PrzeliczenieData
+                                            )
+                                            AND (
+                                                Rez_ZrdTyp NOT IN (14345, 14346)
+                                                OR Rez_GIDTyp = 2592
+                                            )
+                                            AND Rez_TwrNumer = PPMZM.PPT_TwrNumer
+                                            AND MagNumer = ReM_MagNumer
+                                            AND (
+                                                MagNumer in (select e.MagNumer  from #tabMagaynyPP e WHERE MagDlaElem = @ZrodloMagDlaKolOgolnieDostepna)
+                                            )
+                                    ) OgolnieDostepna
+                            )
+                            ELSE
+                                (
+                                    SELECT SUM(CASE
+                                            WHEN Rez_GIDTyp = 2576
+                                                THEN - Ilosc
+                                            ELSE Ilosc
+                                        END)
+                                    FROM (
+                                        SELECT DISTINCT Rez_GIDNumer, Rez_GIDTyp, Rez_Ilosc - Rez_Zrealizowano - Rez_IloscImp - Rez_IloscMag - Rez_IloscSAD - Rez_IloscSSC Ilosc
+                                        FROM CDN.Rezerwacje
+                                            INNER JOIN CDN.RezMagazyny ON ReM_RezNumer = Rez_GIDNumer
+                                                AND ReM_RezTyp = Rez_GIDTyp
+                                        WHERE Rez_DataRealizacji &lt;= (PPMZM.PPT_Termin - @RezDataAkt)
+                                            AND (
+                                                (Rez_GIDTyp = 2576 AND Rez_ZrdTyp IN (1605, -1605) AND Rez_Typ = 1) OR (Rez_GIDTyp = 2576 AND Rez_ZrdTyp NOT IN (1605, -1605))
+                                                OR Rez_DataRealizacji &gt; @PrzeliczenieData
+                                            )
+                                            AND (
+                                                Rez_ZrdTyp NOT IN (14345, 14346)
+                                                OR Rez_GIDTyp = 2592
+                                            )
+                                            AND Rez_TwrNumer = PPMZM.PPT_TwrNumer
+                                            AND (ReM_MagNumer = ptz.PTZ_MagNumer
+                                                OR ptz.PTZ_MagNumer = 0)
+                                    ) OgolnieDostepna
+                                )
+                            END, 0) + CASE
+                        WHEN Twr_Typ IN (
+                            4, 6
+                        )
+                            THEN 0
+                        ELSE 
+                            CASE @ZrodloMagDlaKolOgolnieDostepna WHEN @MagDlaKolOgolnieDostepna THEN
+                                    (SELECT SUM(
+                                            ISNULL(
+                                                CAST(
+                                                    CDN.SubstringEx(CDN.DokSumaStanowTowaru(wewTwr.Twr_GIDTyp, wewTwr.Twr_GIDFirma, wewTwr.Twr_GIDNumer, wewTwr.Twr_Typ, 
+                                                        32768, 1, 1, 0, MagNumer, 2, 0, 0, (wewPPMZM.PPT_Termin - @RezDataAkt), 0, 2, @FrsId, 
+                                                        0, 0, 0, 0, 0, 0, - 1)
+                                                , ':', 1) AS DECIMAL(15, 4))
+                                            , 0)) 
+                                        FROM #tabProdPlanyMaterialyPelne wewPPMZM
+                                            INNER JOIN CDN.TwrKarty wewTwr ON wewTwr.Twr_GIDNumer = wewPPMZM.PPT_TwrNumer
+                                            INNER JOIN #tabMagaynyPP ON PPId = @PlanProdId AND MagDlaElem = @ZrodloMagDlaKolOgolnieDostepna
+                                        WHERE wewTwr.Twr_GIDNumer = Twr_GIDNumer 
+                                            AND wewTwr.Twr_GIDTyp = Twr_GIDTyp 
+                                            AND wewPPMZM.PPT_Termin = PPMZM.PPT_Termin 
+                                            AND wewPPMZM.Poziom &gt; 0 
+                                            AND wewPPMZM.PPT_PPPId = PPMZM.PPT_PPPId 
+                                            AND wewPPMZM.PPT_Id = PPMZM.PPT_Id
+                                    )
+                                ELSE
+                                    ISNULL(Cast(CDN.SubstringEx(CDN.DokSumaStanowTowaru(Twr_GIDTyp, Twr_GIDFirma, Twr_GIDNumer, Twr_Typ, 32768, 1, 1, 0, PPMZM.PPT_MagNumer, 2, 0, 0, 
+                                        (PPMZM.PPT_Termin - @RezDataAkt), 0, 2, @FrsId, 0, 0, 0, 0, 0, 0, - 1), ':', 1) AS DECIMAL(15, 4)), 0)
+                            END
+                            --ISNULL(Cast(CDN.SubstringEx(CDN.DokSumaStanowTowaru(Twr_GIDTyp, Twr_GIDFirma, Twr_GIDNumer, Twr_Typ, 32768, 1, 1, 0, 0, 2, 0, 0, (PPMZM.PPT_Termin - @RezDataAkt), 0, 2, @FrsId, 0, 0, 0, 0, 0, 0, - 1), ':', 1) AS DECIMAL(15, 4)), 0)
+                    END                                            )
+                ELSE 0
+            END , PPT_IloscWDrodze=(
+                    SELECT ISNULL(SUM(Ilosc), 0)
+                    FROM (
+                        SELECT DISTINCT Rez_GIDNumer, Rez_Ilosc - Rez_Zrealizowano - Rez_IloscImp - Rez_IloscMag - Rez_IloscSAD - Rez_IloscSSC Ilosc
+                        FROM CDN.Rezerwacje
+                            INNER JOIN #tabMagaynyPP ON PPId = @PlanProdId AND MagDlaElem = @ZrodloMagDlaKolWDrodze
+                            INNER JOIN CDN.RezMagazyny ON ReM_RezNumer = Rez_GIDNumer
+                                AND ReM_RezTyp = Rez_GIDTyp
+                        WHERE (
+                                Rez_DataRealizacji &gt; (PPMZM.PPT_Termin - @RezDataAkt)
+                                OR Rez_DataRealizacji &lt;= @PrzeliczenieData
+                            )
+                            AND Rez_GIDTyp = 2592
+                            AND Rez_TwrNumer = PPMZM.PPT_TwrNumer
+                            AND MagNumer = ReM_MagNumer
+                            AND (
+                                MagNumer in (select e.MagNumer  from #tabMagaynyPP e WHERE MagDlaElem = @ZrodloMagDlaKolWDrodze)
+                            )
+                    ) WDrodze
+                )
+        FROM #tabProdPlanyMaterialyPelne PPMZM
+            INNER JOIN CDN.TwrKarty ON Twr_GIDNumer = PPMZM.PPT_TwrNumer
+            LEFT JOIN CDN.TwrDost on  Twr_GIDNumer=TWD_TwrNumer AND Twr_DstDomyslny =TWD_KodLp
+            INNER JOIN CDN.ProdTechnologiaZasoby ptz ON ptz.PTZ_Id = PPMZM.PTZ_Id
+        WHERE --PPT_TwrNumer=PPMZM.PPT_TwrNumer AND PPT_Termin&gt;=Termin AND
+            PPMZM.Poziom &gt; 0
+    END
+
+    ELSE
+    BEGIN
+        UPDATE #tabProdPlanyMaterialyPelne 
+        SET PPT_IloscOgolnieDostepna =
+            CASE
+                WHEN 0 &lt; (
+                        ISNULL(CASE @ZrodloMagDlaKolOgolnieDostepna WHEN @MagDlaKolOgolnieDostepna THEN
+                                (
+                                    SELECT SUM(CASE
+                                            WHEN Rez_GIDTyp = 2576
+                                                THEN - Ilosc
+                                            ELSE Ilosc
+                                        END)
+                                    FROM (
+                                        SELECT DISTINCT Rez_GIDNumer, Rez_GIDTyp, Rez_Ilosc - Rez_Zrealizowano - Rez_IloscImp - Rez_IloscMag - Rez_IloscSAD - Rez_IloscSSC Ilosc
+                                        FROM CDN.Rezerwacje
+                                            INNER JOIN #tabMagaynyPP ON PPId = @PlanProdId AND MagDlaElem = @ZrodloMagDlaKolOgolnieDostepna
+                                            INNER JOIN CDN.RezMagazyny ON ReM_RezNumer = Rez_GIDNumer
+                                                AND ReM_RezTyp = Rez_GIDTyp
+                                        WHERE Rez_DataRealizacji &lt;= (PPMZM.PPT_Termin - @RezDataAkt)
+                                            AND (
+                                                (Rez_GIDTyp = 2576 AND Rez_ZrdTyp IN (1605, -1605) AND Rez_Typ = 1) OR (Rez_GIDTyp = 2576 AND Rez_ZrdTyp NOT IN (1605, -1605))
+                                                OR Rez_DataRealizacji &gt; @PrzeliczenieData
+                                            )
+                                            AND (
+                                                Rez_ZrdTyp NOT IN (14345, 14346)
+                                                OR Rez_GIDTyp = 2592
+                                            )
+                                            AND Rez_TwrNumer = PPMZM.PPT_TwrNumer
+                                            AND MagNumer = ReM_MagNumer
+                                    ) OgolnieDostepna
+                            )
+                            ELSE
+                                (
+                                    SELECT SUM(CASE
+                                            WHEN Rez_GIDTyp = 2576
+                                                THEN - Ilosc
+                                            ELSE Ilosc
+                                        END)
+                                    FROM (
+                                        SELECT DISTINCT Rez_GIDNumer, Rez_GIDTyp, Rez_Ilosc - Rez_Zrealizowano - Rez_IloscImp - Rez_IloscMag - Rez_IloscSAD - Rez_IloscSSC Ilosc
+                                        FROM CDN.Rezerwacje
+                                            INNER JOIN CDN.RezMagazyny ON ReM_RezNumer = Rez_GIDNumer
+                                                AND ReM_RezTyp = Rez_GIDTyp
+                                        WHERE Rez_DataRealizacji &lt;= (PPMZM.PPT_Termin - @RezDataAkt)
+                                            AND (
+                                                (Rez_GIDTyp = 2576 AND Rez_ZrdTyp IN (1605, -1605) AND Rez_Typ = 1) OR (Rez_GIDTyp = 2576 AND Rez_ZrdTyp NOT IN (1605, -1605))
+                                                OR Rez_DataRealizacji &gt; @PrzeliczenieData
+                                            )
+                                            AND (
+                                                Rez_ZrdTyp NOT IN (14345, 14346)
+                                                OR Rez_GIDTyp = 2592
+                                            )
+                                            AND Rez_TwrNumer = PPMZM.PPT_TwrNumer
+                                            AND (ReM_MagNumer = ptz.PTZ_MagNumer
+                                                OR ptz.PTZ_MagNumer = 0)
+                                    ) OgolnieDostepna
+                                )
+                            END, 0) + CASE
+                            WHEN Twr_Typ IN (4, 6)
+                                THEN 0
+                            ELSE 
+                                CASE @ZrodloMagDlaKolOgolnieDostepna WHEN @MagDlaKolOgolnieDostepna THEN
+                                        (SELECT SUM(
+                                                ISNULL(
+                                                    CAST(
+                                                        CDN.SubstringEx(CDN.DokSumaStanowTowaru(wewTwr.Twr_GIDTyp, wewTwr.Twr_GIDFirma, wewTwr.Twr_GIDNumer, wewTwr.Twr_Typ, 
+                                                                32768, 1, 1, 0, MagNumer, 2, 0, 0, (wewPPMZM.PPT_Termin - FLOOR(wewPPMZM.CzasProdukcji) - @RezDataAkt), 0, 2, @FrsId, 
+                                                            0, 0, 0, 0, 0, 0, - 1)
+                                                        , ':', 1) AS DECIMAL(15, 4))
+                                                , 0)) 
+                                            FROM #tabProdPlanyMaterialyPelne wewPPMZM
+                                                INNER JOIN CDN.TwrKarty wewTwr ON wewTwr.Twr_GIDNumer = wewPPMZM.PPT_TwrNumer
+                                                INNER JOIN #tabMagaynyPP ON PPId = @PlanProdId AND MagDlaElem = @ZrodloMagDlaKolOgolnieDostepna
+                                            WHERE wewPPMZM.PPT_Id = PPMZM.PPT_Id
+                                        )
+                                    ELSE
+                                        ISNULL(Cast(CDN.SubstringEx(CDN.DokSumaStanowTowaru(Twr_GIDTyp, Twr_GIDFirma, Twr_GIDNumer, Twr_Typ, 32768, 1, 1, 0, PPMZM.PPT_MagNumer, 2, 0, 0, 
+                                        (PPMZM.PPT_Termin - FLOOR(PPMZM.CzasProdukcji) - @RezDataAkt), 0, 2, @FrsId, 0, 0, 0, 0, 0, 0, - 1), ':', 1) AS DECIMAL(15, 4)), 0)
+                                END
+                                --ISNULL(CAST(CDN.SubstringEx(CDN.DokSumaStanowTowaru(Twr_GIDTyp, Twr_GIDFirma, Twr_GIDNumer, Twr_Typ, 32768, 1, 1, 0, 0, 2, 0, 0, (PPMZM.PPT_Termin - @RezDataAkt), 0, 2, @FrsId, 0, 0, 0, 0, 0, 0, - 1), ':', 1) AS DECIMAL(15, 4)), 0)
+                            END
+                    )
+                        THEN (
+                            ISNULL(CASE @ZrodloMagDlaKolOgolnieDostepna WHEN @MagDlaKolOgolnieDostepna THEN
+                                (
+                                    SELECT SUM(CASE
+                                            WHEN Rez_GIDTyp = 2576
+                                                THEN - Ilosc
+                                            ELSE Ilosc
+                                        END)
+                                    FROM (
+                                        SELECT DISTINCT Rez_GIDNumer, Rez_GIDTyp, Rez_Ilosc - Rez_Zrealizowano - Rez_IloscImp - Rez_IloscMag - Rez_IloscSAD - Rez_IloscSSC Ilosc
+                                        FROM CDN.Rezerwacje
+                                            INNER JOIN #tabMagaynyPP ON PPId = @PlanProdId AND MagDlaElem = @ZrodloMagDlaKolOgolnieDostepna
+                                            INNER JOIN CDN.RezMagazyny ON ReM_RezNumer = Rez_GIDNumer
+                                                AND ReM_RezTyp = Rez_GIDTyp
+                                        WHERE Rez_DataRealizacji &lt;= (PPMZM.PPT_Termin - @RezDataAkt)
+                                            AND (
+                                                (Rez_GIDTyp = 2576 AND Rez_ZrdTyp IN (1605, -1605) AND Rez_Typ = 1) OR (Rez_GIDTyp = 2576 AND Rez_ZrdTyp NOT IN (1605, -1605))
+                                                OR Rez_DataRealizacji &gt; @PrzeliczenieData
+                                            )
+                                            AND (
+                                                Rez_ZrdTyp NOT IN (14345, 14346)
+                                                OR Rez_GIDTyp = 2592
+                                            )
+                                            AND Rez_TwrNumer = PPMZM.PPT_TwrNumer
+                                            AND MagNumer = ReM_MagNumer
+                                            AND (
+                                                MagNumer in (select e.MagNumer  from #tabMagaynyPP e WHERE MagDlaElem = @ZrodloMagDlaKolOgolnieDostepna)
+                                            )
+                                    ) OgolnieDostepna
+                            )
+                            ELSE
+                                (
+                                    SELECT SUM(CASE
+                                            WHEN Rez_GIDTyp = 2576
+                                                THEN - Ilosc
+                                            ELSE Ilosc
+                                        END)
+                                    FROM (
+                                        SELECT DISTINCT Rez_GIDNumer, Rez_GIDTyp, Rez_Ilosc - Rez_Zrealizowano - Rez_IloscImp - Rez_IloscMag - Rez_IloscSAD - Rez_IloscSSC Ilosc
+                                        FROM CDN.Rezerwacje
+                                            INNER JOIN CDN.RezMagazyny ON ReM_RezNumer = Rez_GIDNumer
+                                                AND ReM_RezTyp = Rez_GIDTyp
+                                        WHERE Rez_DataRealizacji &lt;= (PPMZM.PPT_Termin - @RezDataAkt)
+                                            AND (
+                                                (Rez_GIDTyp = 2576 AND Rez_ZrdTyp IN (1605, -1605) AND Rez_Typ = 1) OR (Rez_GIDTyp = 2576 AND Rez_ZrdTyp NOT IN (1605, -1605))
+                                                OR Rez_DataRealizacji &gt; @PrzeliczenieData
+                                            )
+                                            AND (
+                                                Rez_ZrdTyp NOT IN (14345, 14346)
+                                                OR Rez_GIDTyp = 2592
+                                            )
+                                            AND Rez_TwrNumer = PPMZM.PPT_TwrNumer
+                                            AND (ReM_MagNumer = ptz.PTZ_MagNumer
+                                                OR ptz.PTZ_MagNumer = 0)
+                                    ) OgolnieDostepna
+                                )
+                            END, 0) + CASE
+                                WHEN Twr_Typ IN (4, 6)
+                                    THEN 0
+                                ELSE 
+                                    CASE @ZrodloMagDlaKolOgolnieDostepna WHEN @MagDlaKolOgolnieDostepna THEN
+                                            (SELECT SUM(
+                                                ISNULL(
+                                                    CAST(
+                                                        CDN.SubstringEx(CDN.DokSumaStanowTowaru(wewTwr.Twr_GIDTyp, wewTwr.Twr_GIDFirma, wewTwr.Twr_GIDNumer, wewTwr.Twr_Typ, 
+                                                                32768, 1, 1, 0, MagNumer, 2, 0, 0, (wewPPMZM.PPT_Termin - FLOOR(wewPPMZM.CzasProdukcji) - @RezDataAkt), 0, 2, @FrsId, 
+                                                            0, 0, 0, 0, 0, 0, - 1)
+                                                        , ':', 1) AS DECIMAL(15, 4))
+                                                    , 0)) 
+                                                FROM #tabProdPlanyMaterialyPelne wewPPMZM
+                                                    INNER JOIN CDN.TwrKarty wewTwr ON wewTwr.Twr_GIDNumer = PPMZM.PPT_TwrNumer
+                                                    INNER JOIN #tabMagaynyPP ON PPId = @PlanProdId AND MagDlaElem = @ZrodloMagDlaKolOgolnieDostepna
+                                                WHERE wewPPMZM.PPT_Id = PPMZM.PPT_Id
+                                            )
+                                        ELSE
+                                            ISNULL(Cast(CDN.SubstringEx(CDN.DokSumaStanowTowaru(Twr_GIDTyp, Twr_GIDFirma, Twr_GIDNumer, Twr_Typ, 32768, 1, 1, 0, PPMZM.PPT_MagNumer, 2, 0, 0, 
+                                            (PPMZM.PPT_Termin - FLOOR(PPMZM.CzasProdukcji) - @RezDataAkt), 0, 2, @FrsId, 0, 0, 0, 0, 0, 0, - 1), ':', 1) AS DECIMAL(15, 4)), 0)
+                                    END
+                                    --ISNULL(CAST(CDN.SubstringEx(CDN.DokSumaStanowTowaru(Twr_GIDTyp, Twr_GIDFirma, Twr_GIDNumer, Twr_Typ, 32768, 1, 1, 0, 0, 2, 0, 0, (PPMZM.PPT_Termin - @RezDataAkt), 0, 2, @FrsId, 0, 0, 0, 0, 0, 0, - 1), ':', 1) AS DECIMAL(15, 4)), 0)
+                            END
+                        )
+                    ELSE 0
+                END, 
+                PPT_IloscWDrodze = CASE @ZrodloMagDlaKolWDrodze WHEN @MagDlaKolWDrodze THEN 
+                    (
+                        SELECT ISNULL(SUM(Ilosc), 0)
+                        FROM (
+                            SELECT DISTINCT Rez_GIDNumer, Rez_Ilosc - Rez_Zrealizowano - Rez_IloscImp - Rez_IloscMag - Rez_IloscSAD - Rez_IloscSSC Ilosc
+                            FROM CDN.Rezerwacje
+                                INNER JOIN #tabMagaynyPP ON PPId = @PlanProdId AND MagDlaElem = @ZrodloMagDlaKolWDrodze
+                                INNER JOIN CDN.RezMagazyny ON ReM_RezNumer = Rez_GIDNumer
+                                    AND ReM_RezTyp = Rez_GIDTyp
+                            WHERE (
+                                    Rez_DataRealizacji &gt; (PPMZM.PPT_Termin - @RezDataAkt)
+                                    OR Rez_DataRealizacji &lt;= @PrzeliczenieData
+                                )
+                                AND Rez_GIDTyp = 2592
+                                AND Rez_TwrNumer = PPMZM.PPT_TwrNumer
+                                AND MagNumer = ReM_MagNumer
+                                AND (
+                                    MagNumer in (SELECT e.MagNumer FROM #tabMagaynyPP e WHERE MagDlaElem = @ZrodloMagDlaKolWDrodze)
+                                )
+                        ) WDrodze
+                    )
+                ELSE
+                    (
+                        SELECT ISNULL(SUM(Ilosc), 0)
+                        FROM (
+                            SELECT DISTINCT Rez_GIDNumer, Rez_Ilosc - Rez_Zrealizowano - Rez_IloscImp - Rez_IloscMag - Rez_IloscSAD - Rez_IloscSSC Ilosc
+                            FROM CDN.Rezerwacje
+                                INNER JOIN CDN.RezMagazyny ON ReM_RezNumer = Rez_GIDNumer
+                                    AND ReM_RezTyp = Rez_GIDTyp
+                            WHERE (
+                                    Rez_DataRealizacji &gt; (PPMZM.PPT_Termin - @RezDataAkt)
+                                    OR Rez_DataRealizacji &lt;= @PrzeliczenieData
+                                )
+                                AND Rez_GIDTyp = 2592
+                                AND Rez_TwrNumer = PPMZM.PPT_TwrNumer
+                                AND (ReM_MagNumer = ptz.PTZ_MagNumer
+                                    OR ptz.PTZ_MagNumer = 0)
+                        ) WDrodze
+                    )
+                END
+        FROM #tabProdPlanyMaterialyPelne PPMZM
+            INNER JOIN CDN.TwrKarty ON Twr_GIDNumer = PPMZM.PPT_TwrNumer 
+            LEFT JOIN CDN.TwrDost ON Twr_GIDNumer = TWD_TwrNumer AND Twr_DstDomyslny = TWD_KodLp
+            INNER JOIN CDN.ProdTechnologiaZasoby ptz ON ptz.PTZ_Id = PPMZM.PTZ_Id
+        WHERE PPMZM.Poziom &gt; 0
+
+    END
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

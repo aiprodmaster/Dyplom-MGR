@@ -1,0 +1,136 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Usuwanie procedury CDN.ProdWybierzDokumentyDoPrzeliczenia"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Usuwanie procedury CDN.ProdWybierzDokumentyDoPrzeliczenia */</I><BR>
+if exists(select * from sysobjects where name='ProdWybierzDokumentyDoPrzeliczenia' and type='P')
+	drop procedure CDN.ProdWybierzDokumentyDoPrzeliczenia
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie funkcji CDN.ProdWybierzDokumentyDoPrzeliczenia"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie funkcji CDN.ProdWybierzDokumentyDoPrzeliczenia */</I><BR>
+CREATE PROCEDURE CDN.ProdWybierzDokumentyDoPrzeliczenia
+	@TypDok int,
+	@DataOdOkreslona TINYINT,
+	@DataOd INT,
+	@DataDoOkreslona TINYINT,
+	@DataDo INT
+AS
+BEGIN	
+	IF @TypDok = 14343
+	BEGIN
+	INSERT INTO CDN.ProdDoPrzeliczenia(PDL_GIDTyp,PDL_GIDNumer) 
+	SELECT DISTINCT 14343,PZL_Id from
+            (SELECT PZL_Id,PZA_Id,PZA_Koszt,SUM(KosztDok) KosztDok FROM ( select PZL_ID, (     
+            sum(isnull(TrsRw.trs_kosztksiegowy,0))  
+            	+ ( select isnull(( select isnull(produkty.PZA_Koszt*p1.PZA_Ilosc/CASE WHEN produkty.PZA_Ilosc &gt;0 THEN produkty.PZA_Ilosc ELSE 1 END ,0) from CDN.ProdZasoby produkty where produkty.PZA_id =   p1.PZA_zasob),0))
+            	+ (select isnull(SUM(TrsKkRwk.trs_kosztksiegowy),0)+ isnull(SUM(TrsKkRwk_kk.trs_kosztksiegowy),0)           
+            	from CDN.TraSElem TrsKkRwk  
+            	left outer join  (     
+            	select isnull(sum(TrS_KosztKsiegowy),0) as TrS_KosztKsiegowy,isnull(sum(TrS_KosztRzeczywisty),0) as TrS_KosztRzeczywisty,              
+            	TrS_ZwrNumer,TrS_ZwrTyp,TrS_ZwrLp,TrS_SubZwrLp       
+            	from CDN.TraSElem      
+            	where TRS_GidTyp = 2003  
+            	group by TrS_ZwrNumer,TrS_ZwrTyp,TrS_ZwrLp,TrS_SubZwrLp ) as TrsKKRwK_KK  on TrsKKRwK_KK.TrS_ZwrNumer = TrsKkRwk.TrS_GIDNumer and TrsKKRwK_KK.TrS_ZwrTyp = TrsKkRwk.TrS_GIDTyp                   	and TrsKKRwK_KK.TrS_ZwrLp = TrsKkRwk.TrS_GIDLp and TrsKKRwK_KK.TrS_SubZwrLp = TrsKkRwk.TrS_SubGIDLp  
+            	where TrsKkRwk.TRS_ZwrNumer = TrsRw.TRS_GidNumer and TrsRw.Trs_GidTyp = TrsKkRwk.Trs_ZwrTyp           
+            	and TrsRw.Trs_GidLp = TrsKkRwk.Trs_ZwrLp and TrsRw.Trs_SubGidLp = TrsKkRwk.Trs_SubZwrLp        
+            	and (TrsKkRwk.TRS_GidTyp = 2003 or (TrsKkRwk.TRS_GidTyp = 1624 and TrsKkRwk.TrS_ZlcTyp= 14346       
+            	and TrsKkRwk.trs_zlcnumer = p1.PZA_ID ) ) ) ) as KosztDok , PZA_Koszt, PZA_ID 
+            from CDN.ProdZlecenia 
+            inner join CDN.ProdProcesy on PPC_Zlecenie = PZL_Id
+            inner join CDN.ProdCzynnosci on PCZ_Proces = PPC_Id
+            inner join cdn.ProdZasoby p1  on p1.PZA_Czynnosc = PCZ_Id and  p1.PZA_TypZasobu &lt;&gt; 0 AND p1.PZA_TypZasobu &lt;&gt; 4 AND P1.PZA_Planowany = 0 AND P1.PZA_TypKosztu = 0
+            inner join CDN.TwrKarty on p1.pza_twrNumer = twr_gidNumer and p1.pza_twrTyp = twr_gidTyp 
+            left join cdn.TrasElem TrsRw on  TrsRw.trs_zlctyp = 14346 and TrsRw.trs_zlcnumer = p1.PZA_ID and TrsRw.trs_gidtyp =1616 
+            left join CDN.TraNag TrnRw on TrnRw.Trn_GIDNumer = TrsRw.Trs_GIDNumer and TrnRw.Trn_GIDTyp = TrsRw.Trs_GIDTyp 
+            WHERE PZL_PrjId = 0 AND PZL_DataZamkniecia &lt;&gt; 0 AND (@DataOdOkreslona = 0 OR (@DataOdOkreslona = 1 AND @DataOd &lt;= PZL_DataWystawienia )) AND
+				(@DataDoOkreslona = 0 OR (@DataDoOkreslona = 1 AND PZL_DataWystawienia &lt;= @DataDo))
+            GROUP BY p1.PZA_ID , p1.PZA_Zasob,PZA_Ilosc, p1.PZA_Koszt,   TrsRw.TrS_GIDNumer, TrsRw.TrS_GIDTyp, TrsRw.Trs_GidLp,TrsRw.Trs_SubGidLp ,PZL_Id)K 
+			GROUP BY PZL_Id,PZA_Id,PZA_Koszt) Koszty
+            WHERE PZA_Koszt &lt;&gt; KosztDok
+	END
+	ELSE
+	BEGIN
+		INSERT INTO CDN.ProdDoPrzeliczenia(PDL_GIDTyp,PDL_GIDNumer) 
+		SELECT DISTINCT 4192,ZCE_GIDNumer FROM
+		(
+			SELECT P.ZcE_GIDNumer,P.ZcE_GIDLp,SUM(KosztKsiegowy) + ISNULL(Niezwiazane.KosztNiezwiazanych,0) +
+			SUM(ISNULL(CASE WHEN Z.ZcE_Typ IN (13,14,23,24,43,44 ) THEN Z.ZcE_KosztEwidencyjny ELSE 0 END,0)) as KosztSurowca,ISNULL(KosztPW,0) KosztProduktu FROM
+			( 
+				SELECT ZcN_GIDNumer,ZcN_GIDTyp FROM CDN.ZlcNag WHERE  ZcN_GIDTyp = 4192 AND ZcN_Stan &gt; = 64
+					AND (@DataOdOkreslona = 0 OR (@DataOdOkreslona = 1 AND ZcN_DataWystawienia &gt;= @DataOd)) 
+					AND (@DataDoOkreslona = 0 OR (@DataDoOkreslona = 1 AND @DataDo &gt;= ZcN_DataWystawienia))) AS ZlcNag
+			JOIN CDN.ZlcElem Z ON ZcN_GIDNumer = Z.ZCE_GIDNumer 
+			LEFT JOIN(
+				select (SUM(ISNULL(CASE WHEN TrsRw.TrS_GIDTyp = 1617 THEN (-1) ELSE 1 END * KosztTrsKKRWK,0)) +
+				SUM(CASE WHEN TrsRw.TrS_GIDTyp = 1617 THEN (-1) ELSE 1 END *TrsRw.trs_kosztksiegowy)) KosztKsiegowy, TrsRw.trs_zlctyp ,TrsRw.trs_zlcnumer, trsrw.TrS_ZlcLp
+				from  cdn.TrasElem TrsRw 
+				left join CDN.TraNag TrnRw on TrnRw.Trn_GIDNumer = TrsRw.Trs_GIDNumer and TrnRw.Trn_GIDTyp = TrsRw.Trs_GIDTyp
+				left outer join 
+				(
+					SELECT TrsKkRwk.TRS_ZwrNumer,TrsKkRwk.Trs_ZwrTyp,TrsKkRwk.Trs_ZwrLp,TrsKkRwk.Trs_SubZwrLp,
+					SUM(TrsKkRwk.Trs_kosztksiegowy) + SUM(ISNULL(TrsKKRwK_KK.Trs_KosztKsiegowy,0))  KosztTrsKKRWK
+					FROM CDN.TrasElem TrsKkRwk  
+					left outer join  ( 
+						select isnull(sum(TrS_KosztKsiegowy),0) as TrS_KosztKsiegowy,isnull(sum(TrS_KosztRzeczywisty),0) as TrS_KosztRzeczywisty,TrS_ZwrNumer,
+							TrS_ZwrTyp,TrS_ZwrLp,TrS_SubZwrLp	
+ 						from CDN.TraSElem    
+						join cdn.TraNag ON TrN_GIDNumer = TrS_GIDNumer 
+ 						where TRS_GidTyp = 2003 AND TrN_Stan &gt;= 3
+ 						group by TrS_ZwrNumer,TrS_ZwrTyp,TrS_ZwrLp,TrS_SubZwrLp  ) as TrsKKRwK_KK
+					on TrsKKRwK_KK.TrS_ZwrNumer = TrsKkRwk.TrS_GIDNumer and TrsKKRwK_KK.TrS_ZwrTyp = TrsKkRwk.TrS_GIDTyp and TrsKKRwK_KK.TrS_ZwrLp = TrsKkRwk.TrS_GIDLp
+ 						and TrsKKRwK_KK.TrS_SubZwrLp = TrsKkRwk.TrS_SubGIDLp
+					WHERE (TrsKkRwk.TRS_GidTyp = 2003 or TrsKkRwk.TRS_GidTyp = 1624 or TrsKkRwk.TrS_GIDTyp = 1625) 
+					GROUP BY TrsKkRwk.TRS_ZwrNumer,TrsKkRwk.Trs_ZwrTyp,TrsKkRwk.Trs_ZwrLp,TrsKkRwk.Trs_SubZwrLp) TrsKkRwk
+				ON TrsKkRwk.TRS_ZwrNumer = TrsRw.TRS_GidNumer and TrsRw.Trs_GidTyp = TrsKkRwk.Trs_ZwrTyp
+ 					and TrsRw.Trs_GidLp = TrsKkRwk.Trs_ZwrLp and TrsRw.Trs_SubGidLp = TrsKkRwk.Trs_SubZwrLp	
+				where TrN_Stan &gt;= 3-- and TrsRw.trs_gidtyp =1616
+				group by TrsRw.trs_zlctyp ,TrsRw.trs_zlcnumer, trsrw.TrS_ZlcLp   ) as Wew 
+			ON Wew.TrS_ZlcTyp = Z.ZcE_GIDTyp AND Wew.TrS_ZlcNumer = Z.ZcE_GIDNumer AND Wew.TrS_ZlcLp = Z.ZcE_GIDLp 
+			JOIN CDN.ZlcElem P ON P.ZcE_GIDNumer = Z.ZcE_ProdNumer AND P.ZcE_GIDLp = Z.ZcE_ProdLp
+			LEFT JOIN (
+			SELECT SUM(N.ZcE_KosztEwidencyjny) KosztNiezwiazanych,N.ZcE_GIDTyp,N.ZcE_GIDNumer
+			FROM CDN.ZlcElem N			
+			WHERE N.ZcE_ProdTyp = 0 AND N.ZcE_Typ IN (4)
+			GROUP BY N.ZcE_GIDTyp,N.ZcE_GIDNumer
+			) Niezwiazane ON Niezwiazane.ZcE_GIDNumer = Z.ZcE_GIDNumer AND Niezwiazane.ZcE_GIDTyp = Z.ZcE_GIDTyp
+			JOIN(
+				SELECT ORYG.TrS_ZlcTyp, ORYG.TrS_ZlcNumer,ORYG.TrS_ZlcLp,ISNULL(SUM(KOR.TrS_KosztKsiegowy),0) KosztPW 
+				FROM CDN.TraSElem ORYG 
+				JOIN CDN.TraSElem KOR ON  KOR.TrS_OrgTyp = ORYG.TrS_GIDTyp AND KOR.TrS_OrgNumer = ORYG.TrS_GIDNumer AND KOR.TrS_OrgLp = ORYG.TrS_GIDLp AND KOR.TrS_SubOrgLp = ORYG.TrS_SubGIDLp
+				JOIN CDN.TraNag NagKor ON kor.TrS_GIDNumer = NagKor.TrN_GIDNumer and NagKor.TrN_Stan &gt;=3
+				JOIN CDN.TraNag NagOryg ON oryg.TrS_GIDNumer = NagOryg.TrN_GIDNumer and NagOryg.TrN_Stan &gt;=3 WHERE ORYG.TrS_GIDTyp =1617 AND ORYG.TrS_ZlcTyp = 4192 
+				GROUP BY ORYG.TrS_ZlcTyp, ORYG.TrS_ZlcNumer,ORYG.TrS_ZlcLp) PW ON PW.TrS_ZlcTyp = P.ZcE_GIDTyp AND  PW.TrS_ZlcNumer = P.ZcE_GIDNumer AND PW.TrS_ZlcLp = P.ZcE_GIDLp
+		where z.ZcE_ProdLp &lt;&gt; z.ZcE_GIDLp and Z.ZcE_ProdNumer &lt;&gt; 0 AND P.ZcE_Typ = 1 
+		GROUP BY P.ZcE_GIDNumer,P.ZcE_GIDLp,KosztPW,Niezwiazane.KosztNiezwiazanych) Zlecenia
+        WHERE KosztProduktu &lt;&gt; KosztSurowca
+
+	END
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do funkcji CDN.ProdWybierzDokumentyDoPrzeliczenia"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do funkcji CDN.ProdWybierzDokumentyDoPrzeliczenia */</I><BR>
+GRANT EXECUTE ON CDN.ProdWybierzDokumentyDoPrzeliczenia TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

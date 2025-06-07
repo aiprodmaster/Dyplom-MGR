@@ -1,0 +1,312 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="WFL_Inbox"></A><PRE>
+          <FONT SIZE="2"><I>/* WFL_Inbox */</I><BR>
+Create FUNCTION cdn.WFL_Inbox (
+@Prc_GIDNumer int, --GIDNumer pracownika  
+@Ope_GIDNumer int, --GIDNumer operatora
+@Frs_GIDNumer int = 0, --GIDNumer centrum praw
+@Automat smallint = 0, --czy skrzynka automatu
+@InniOper smallint = 1, --w przypadku podania operatora czy zwracac zadania innych operatorow pracownika tego operatora
+@Zamkniete smallint , --czy wyswietlac zadania zamkniete
+@NieZamkniete smallint , --czy wyswietlac zadania niezamkniete
+@Przeterminowane smallint , --czy wyswietlac zadania tylko przeterminowane
+@ZwiazaneZKsiegowaniem smallint, --czy wyswietlac tylko zadania zwiazane z ksiegowaniem
+@NiePrzeterminowane smallint , --czy wyswietlac zadania nieprzeterminowane
+@Podlegli smallint, -- czy wyswietlac zadania podleglych
+@DataTS int, --data na dzien (format TS XL)
+@DataOd int, --data obowiazywania Od (struktura firmy)
+@DataDo int, --data obowiazywania Do
+@NumerAutomatu int = 0, --Numer automatu (0 lub ze słownika)
+@UwzglNieaktywne smallint = 0) --Czy uzwgledniać nieaktywne automaty
+RETURNS @Inbox TABLE 
+(
+WFZ_WfPID int, 
+WFZ_ID int, 
+WFP_Nazwa varchar(255),
+WFP_ObiTyp smallint,
+WFP_ObiNumer int,
+WFP_ObiLp smallint,
+WFP_NazwaObiektu varchar(40),
+WFP_Priorytet int,
+WFP_WDPID int,
+WDS_Nazwa varchar(255),
+WDS_Priorytet int,
+Priorytet_Zadania int,
+WFZ_OpiTyp smallint,
+WFZ_OpiNumer int, 
+Opi_Nazwa varchar(50),
+WFZ_DataUtworzenia int,
+WFZ_TerminRealizacji int, 
+WFZ_DataWaznosci int, 
+WFZ_DataRealizacji int, 
+WFZ_CzasRealizacji int,
+WFZ_WDSID int,
+WFZ_WDZID int,
+WFZ_PRCTyp smallint,
+WFZ_PRCNumer int,
+WFZ_DataZamkniecia int,
+WFZ_Opis varchar(1023),
+WFZ_Przypomnienie smallint,
+WFZ_DataPrzypomnienia int,
+Rodzaj smallint,
+PrcPodleglyGIDNumer int
+)
+AS
+BEGIN
+
+
+declare @PrcTyp smallint
+declare @OpeTyp smallint
+declare @FrsTyp smallint
+declare @XLAutoTyp smallint
+set @FrsTyp = -4272
+set @PrcTyp = 944
+set @OpeTyp = 128
+set @XLAutoTyp = 12289
+
+declare @tmpPrcNumer int
+
+declare @AK_Ksiegowanie smallint
+declare @AK_Predekretuj smallint
+declare @AK_UruchomKsi smallint
+set @AK_Ksiegowanie = 1025
+set @AK_Predekretuj = 1026
+set @AK_UruchomKsi = 135
+
+declare @sNazwaPredefiniowanego Varchar(256)
+select @sNazwaPredefiniowanego = Slw_WartoscS
+from cdn.Slowniki
+join cdn.SlownikiStruktura
+on Slw_SlsId = Sls_Id
+where 
+Sls_Predefiniowany = 140
+and Slw_Predefiniowany = 1
+/*
+przypadki param wejsciowych (priorytet):
+1. ope (2) --operator
+2. prc (3) --pracownik
+3. Frs (1) --centrum
+*/
+
+declare @tmpOpi table (Frs_GIDTyp smallint, Frs_GIDNumer int, Frs_Poziom smallint, PrcPodleglyGIDNumer int)
+
+	if @Automat &lt;&gt; 0
+		if @NumerAutomatu &lt;&gt; -1
+		begin
+			insert into @tmpOpi (Frs_GIDTyp , Frs_GIDNumer , Frs_Poziom , PrcPodleglyGIDNumer )
+			VALUES(@XLAutoTyp, @NumerAutomatu, 0, 0) -- VALUES(@XLAutoTyp, 0, 0, 0), TFS 144931
+		end
+		else
+		begin
+			if @UwzglNieaktywne &lt;&gt; 0
+				insert into @tmpOpi(Frs_GIDTyp , Frs_GIDNumer , Frs_Poziom , PrcPodleglyGIDNumer )
+				select @XlAutoTyp, case Slw_Predefiniowany when 1 then 0 else Slw_Id end, 0, 0
+				from cdn.Slowniki
+				join CDN.SlownikiStruktura on SLW_SLSId = SLS_id
+				where Sls_Predefiniowany = 140
+			else
+				insert into @tmpOpi(Frs_GIDTyp , Frs_GIDNumer , Frs_Poziom , PrcPodleglyGIDNumer )
+				select @XlAutoTyp, case Slw_Predefiniowany when 1 then 0 else Slw_Id end, 0, 0
+				from cdn.Slowniki
+				join CDN.SlownikiStruktura on SLW_SLSId = SLS_id
+				where Sls_Predefiniowany = 140 and Slw_Aktywny &lt;&gt; 0
+		end
+	else
+	begin
+		insert into @tmpOpi
+		select distinct FrS_GIDTyp, FrS_GIDNumer, max(FRS_Poziom), 0 as PrcPodleglyGIDNumer 
+		from cdn.WFL_Opiekunowie(@Prc_GIDNumer, @Ope_GIDNumer, @Frs_GIDNumer, @InniOper, @DataOd, @DataDo) 
+		group by FrS_GIDTyp, FrS_GIDNumer
+	
+		if @Podlegli &lt;&gt; 0
+		begin
+	
+			if @Prc_GIDNumer = 0 and @Ope_GIDNumer &lt;&gt; 0
+				select @tmpPrcNumer = Ope_PrcNumer from cdn.OpeKarty where Ope_GIDNumer = @Ope_GIDNumer
+			else
+				set @tmpPrcNumer = @Prc_GIDNumer 
+	
+	
+			--wszyscy opiekunowie dla podleglych
+			DECLARE cursPodl CURSOR
+			READ_ONLY
+			FOR select FrS_GIDNumer
+				from cdn.FrSPracownik(@tmpPrcNumer, @DataOd, @DataDo, 0, '22')
+				where FRS_Poziom &gt;= 0 and Frs_GIDTyp = @PrcTyp
+			
+			
+			OPEN cursPodl
+			
+			FETCH NEXT FROM cursPodl INTO @tmpPrcNumer
+			WHILE (@@fetch_status &lt;&gt; -1)
+			BEGIN
+				IF (@@fetch_status &lt;&gt; -2)
+				BEGIN
+					insert into @tmpOpi
+					select distinct FrS_GIDTyp, FrS_GIDNumer, 1 as Frs_Poziom, @tmpPrcNumer as PrcPodleglyGIDNumer
+					from cdn.WFL_Opiekunowie(@tmpPrcNumer, 0, 0, 0, @DataOd, @DataDo) 
+				END
+				FETCH NEXT FROM cursPodl INTO @tmpPrcNumer
+			END
+			
+			CLOSE cursPodl
+			DEALLOCATE cursPodl
+		end
+	end
+
+
+	insert into @Inbox
+	select 
+		WFZ_WfPID,
+		min(WFZ_ID),
+		WFP_Nazwa,
+		WFP_ObiTyp,
+		WFP_ObiNumer,
+		WFP_ObiLp,
+		WFP_NazwaObiektu,
+		WFP_Priorytet,
+		WFP_WDPID,
+		WDS_Nazwa,
+		WDS_Priorytet,
+		round(isnull(WFP_Priorytet,0) * convert(decimal,isnull(WDS_Priorytet,0))/100,0) as Priorytet_Zadania,
+		WFZ_OpiTyp,
+		WFZ_OpiNumer, 
+		case 
+			when not f1.Frs_GIDNumer is null then
+				f1.Frs_Nazwa
+			else
+				case 
+					when not p2.Prc_GIDNumer is null then 
+						p2.Prc_Imie1 + ' ' + p2.Prc_Nazwisko
+					when not Ope_GIDNumer is null then
+						Ope_Ident	
+					when WFZ_OpiTyp = @XLAutoTyp then
+						--'Automat XL'
+						IsNull(s1.Slw_WartoscS, @sNazwaPredefiniowanego)
+					--s1.Slw_WartoscS
+					else
+						''
+				end	
+		end as Opi_Nazwa, 
+		WFZ_DataUtworzenia,
+		WFZ_TerminRealizacji, 
+		WFZ_DataWaznosci, 
+		WFZ_DataRealizacji, 
+		WFZ_CzasRealizacji,
+		WFZ_WDSID,
+		min(WFZ_WDZID),
+		WFZ_PRCTyp,
+		WFZ_PRCNumer,
+		WFZ_DataZamkniecia,
+		WFZ_Opis,
+		WFZ_Przypomnienie,
+		WFZ_DataPrzypomnienia,
+		case 
+			when Opi.FRS_Poziom = 0 then 
+				1 --jestem opiekunem
+			when Opi.FRS_Poziom &lt; 0 then
+				2 --centra nadrzedne sa opiekunem
+			when Opi.FRS_Poziom = 1 then
+				3 --podlegli oraz ich centra nadrzedne sa opiekunem
+		end as Rodzaj,
+		PrcPodleglyGIDNumer -- GIDNumer pracownika podleglego
+	from cdn.WF_Zadania 
+		inner join @tmpOpi as Opi
+			on
+			(WFZ_OpiTyp = Opi.FrS_GIDTyp and WFZ_OpiNumer = Opi.FrS_GIDNumer)
+			and (@DataTS = 0 or (@DataTS &lt;&gt; 0 and ((@Przeterminowane &lt;&gt; 0 and isnull(WFZ_TerminRealizacji,0) &lt; @DataTS) or (@Przeterminowane = 0)))) 
+			and (WFZ_DataZamkniecia IS NULL OR WFZ_DataZamkniecia = 0)
+			
+		inner join cdn.WF_Procesy 
+			on 
+			WFZ_WfPID = WFP_ID
+		inner join cdn.WF_DefStatusy
+			on 
+			WFZ_WDSID = WDS_ID
+		left join cdn.PrcKarty as p2
+			on 
+			WFZ_OpiTyp = @PrcTyp and WFZ_OpiTyp = p2.Prc_GIDTyp and WFZ_OpiNumer = p2.Prc_GIDNumer
+		left join cdn.OpeKarty
+			on 
+			WFZ_OpiTyp = @OpeTyp and WFZ_OpiTyp = Ope_GIDTyp and WFZ_OpiNumer = Ope_GIDNumer
+		left join cdn.FrmStruktura as f1
+			on 
+			WFZ_OpiTyp = @FrsTyp and WFZ_OpiTyp = f1.Frs_GIDTyp and WFZ_OpiNumer = f1.Frs_GIDNumer
+		left outer join cdn.Slowniki as s1
+			on
+			WFZ_OpiTyp = @XLAutoTyp and WFZ_OpiNumer = s1.Slw_Id			
+	where isnull(@ZwiazaneZKsiegowaniem,0) = 0 
+		or (isnull(@ZwiazaneZKsiegowaniem,0) &lt;&gt; 0 
+			and exists(select WDA_WDPID from cdn.WF_DefAkcje where WDA_WDPID = WFP_WDPID and WDA_KLUCZOWA in (@AK_Ksiegowanie, @AK_Predekretuj, @AK_UruchomKsi)))
+	group by
+            WFZ_WfPID,
+            WFP_Nazwa,
+            WFP_ObiTyp,
+            WFP_ObiNumer,
+            WFP_ObiLp,
+            WFP_NazwaObiektu,
+            WFP_Priorytet,
+            WFP_WDPID,
+            WDS_Nazwa,
+            WDS_Priorytet,
+			WFP_Priorytet,
+            WFZ_OpiTyp,
+            WFZ_OpiNumer,
+			f1.Frs_GIDNumer,
+			f1.Frs_Nazwa,
+			p2.Prc_GIDNumer,
+			p2.Prc_Imie1,
+			p2.Prc_Nazwisko,
+			Ope_GIDNumer,
+			Ope_Ident,
+            WFZ_DataUtworzenia,
+            WFZ_TerminRealizacji,
+            WFZ_DataWaznosci,
+            WFZ_DataRealizacji,
+            WFZ_CzasRealizacji,
+            WFZ_WDSID,
+            WFZ_PRCTyp,
+            WFZ_PRCNumer,
+            WFZ_DataZamkniecia,
+            WFZ_Opis,
+            WFZ_Przypomnienie,
+            WFZ_DataPrzypomnienia,
+			Opi.FRS_Poziom,
+			PrcPodleglyGIDNumer,
+			s1.Slw_WartoscS
+	--usun zduplikowane zadania dla danego pracownika (ta sama definicja zadania , ten sam opiekun )
+	--np. opiekun zadania zmienia opiekuna tego zadania na innego pracownika ktory juz jest opiekunem zadania
+	delete a1 
+	from @Inbox as a1 inner join 
+			(select Rodzaj, PrcPodleglyGIDNumer, WFZ_WfPID, WFZ_WDZID, WFZ_OpiTyp, WFZ_OpiNumer, max(WFZ_ID) as maxWFZID
+			from @Inbox	
+			group by Rodzaj, PrcPodleglyGIDNumer, WFZ_WfPID, WFZ_WDZID, WFZ_OpiTyp, WFZ_OpiNumer, WFZ_WDSID, WDS_Nazwa
+			having count(WFZ_WDZID) &gt; 1) 
+			as a2
+		on a1.Rodzaj = a2.Rodzaj and 
+		a1.PrcPodleglyGIDNumer = a2.PrcPodleglyGIDNumer and 
+		a1.WFZ_WfPID = a2.WFZ_WfPID and 
+		a1.WFZ_WDZID = a2.WFZ_WDZID and 
+		a1.WFZ_OpiTyp = a2.WFZ_OpiTyp and 
+		a1.WFZ_OpiNumer = a2.WFZ_OpiNumer and 
+		a1.WFZ_ID = a2.maxWFZID
+		
+
+	return
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

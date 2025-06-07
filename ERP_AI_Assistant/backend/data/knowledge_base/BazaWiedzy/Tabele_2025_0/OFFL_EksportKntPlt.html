@@ -1,0 +1,76 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[OFFL_EksportKntPlt]"></A><PRE>
+          <FONT SIZE="2"><I>/* [OFFL_EksportKntPlt] */</I><BR>
+CREATE PROCEDURE  [CDN].[OFFL_EksportKntPlt] 
+@ID             INT -- ID oddziału  (PK z tabeli CDN.PicoKonfig)
+AS
+DECLARE @Typ_GrK SMALLINT
+DECLARE @TimeStamp INT
+SET @Typ_GrK = -32
+SET @TimeStamp = DATEDIFF(s,CONVERT(datetime,'1990-01-01',120),CONVERT(datetime,GetDate(),120))
+
+SELECT TrP_GIDTyp,
+       TrP_GIDNumer,
+       TrP_KntNumer,
+       TrP_Typ,
+       Knt_Akronim,
+       MAX(TrN_Dokument) TrN_NumerDokumentu,
+       MAX(TrN_Data2) TrN_Data,
+       MIN(TrP_Termin) TrP_Termin,
+       MAX(TrP_FormaNr) TrP_FormaNr,
+       SUM(TrP_Pozostaje) TrP_Pozostaje
+       FROM CDN.KntKarty
+       JOIN
+       (
+          SELECT TrP_GIDTyp,TrP_GIDNumer,TrP_KntTyp,TrP_KntNumer,TrP_Typ,TrP_Pozostaje,TrP_Termin,TrN_Data2,TrP_FormaNr, CDN.NumerDOkumentu(TrN_GIDTyp,TrN_SpiTyp,TrN_TrnTyp,TrN_TrnNumer,TrN_TrNRok,Trn_TrnSeria,TrN_TrNMiesiac) AS TrN_Dokument, TrN_FrSId, TrN_OddDokId
+          FROM CDN.TraPlat JOIN CDN.TraNag ON TrN_GIDTyp=TrP_SpiTyp AND TrN_GIDNumer=TrP_SpiNumer AND TrP_Rozliczona=0 AND TrP_Pozostaje&gt;0
+          UNION ALL
+          SELECT TrP_GIDTyp,TrP_GIDNumer,TrP_KntTyp,TrP_KntNumer,TrP_Typ,TrP_Pozostaje,TrP_Termin, BOS_Data, TrP_FormaNr, CDN.NumerDOkumentuK(BON_GIDTyp,BOS_GIDLp,BOS_SubGIDLp,BON_Numer,BON_RokMiesiac/100,'',BON_RokMiesiac%100, BON_OkrSymbol,0,0,0,0), 0, 0
+          FROM CDN.TraPlat JOIN CDN.BilansOtwarciaSElem ON BOS_TrpTyp=TrP_GIDTyp AND BOS_TrPNumer=TrP_GIDNumer AND BOS_TrpLp=TrP_GIDLp JOIN CDN.BilansOtwarciaNag on BON_GIDTyp=BOS_GIDTyp AND BON_GIDNumer=BOS_GIDNumer AND TrP_Rozliczona=0 AND TrP_Pozostaje&gt;0
+       )AS TRP ON Knt_GIDTyp=TrP_KntTyp AND Knt_GIDNumer=TrP_KntNumer
+       JOIN CDN.PicoKonfig WITH(NOLOCK) ON PcK_PicoID=@ID
+       WHERE Knt_GIDNumer &gt; 0 
+	   AND 1=(CASE WHEN Pck_Typ = 1 AND LEN(Knt_NipE) &gt; 13 THEN 0 ELSE 1 END)
+	   AND (
+			   ( PcK_KnGETyp = @Typ_GrK AND EXISTS(SELECT KnL_GrONumer FROM CDN.KntLinki WHERE Knt_GIDTyp = KnL_GIDTyp AND Knt_GIDNumer = KnL_GIDNumer AND KnL_GrONumer = PcK_KnGENumer ) )
+		    OR ( PcK_KnGETyp != @Typ_GrK AND Knt_AkwTyp = PcK_KnGETyp AND Knt_AkwNumer = PcK_KnGENumer )
+		    OR ( TrN_FrSId = PcK_CentrumId AND TrN_OddDokId &gt; 0)
+			)
+       GROUP BY TrP_GIDTyp,TrP_GIDNumer,TrP_KntNumer,Knt_Akronim,TrP_Typ
+       ORDER BY Knt_Akronim,TrP_Termin
+
+SELECT distinct Knt_GIDNumer,
+       Knt_Akronim,
+       coalesce(LimitK.KLK_MaxLimitWart,0) as Knt_MaxLimitWart, --Knt_MaxLimitWart,
+       CDN.SumaWartosciKredytuKontrahenta(@TimeStamp,Knt_GIDNumer,0,0,1,0,0) Knt_LimitWykorzystany
+       FROM CDN.KntLinki WITH(NOLOCK)
+       JOIN CDN.KntKarty WITH(NOLOCK)ON KnL_GIDTyp=Knt_GIDTyp AND KnL_GIDNumer=Knt_GIDNumer
+	   LEFT OUTER JOIN (select KLK_MaxLimitWart, klk_knttyp, klk_kntnumer from cdn.kntlimityk 
+			where DATEDIFF(d,convert(datetime,'1800-12-28',120),getdate()) between klk_dataod and klk_datado
+		) LimitK on LimitK.klk_knttyp=Knt_GIDTyp and LimitK.klk_kntnumer=Knt_GIDNumer       
+       JOIN CDN.PicoKonfig WITH(NOLOCK) ON PcK_PicoID=@ID
+       WHERE Knt_GIDNumer &gt; 0 
+	   AND ( 
+	  		   ( PcK_KnGETyp = @Typ_GrK AND EXISTS(SELECT KnL_GrONumer FROM CDN.KntLinki WHERE Knt_GIDTyp = KnL_GIDTyp AND Knt_GIDNumer = KnL_GIDNumer AND KnL_GrONumer = PcK_KnGENumer ) )
+		    OR ( PcK_KnGETyp != @Typ_GrK AND Knt_AkwTyp = PcK_KnGETyp AND Knt_AkwNumer = PcK_KnGENumer )
+	  	   )  
+       ORDER BY Knt_Akronim
+
+
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

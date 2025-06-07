@@ -1,0 +1,93 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="ProdCzynnosciOdstep"></A><PRE>
+          <FONT SIZE="2"><I>/* ProdCzynnosciOdstep */</I><BR>
+CREATE FUNCTION CDN.ProdCzynnosciOdstep (@TechnologiaCzynnosc int, @Proces int, @SposobLiczeniaOdstepu smallint, @Termin int,@Czas INT)
+RETURNS int
+as
+begin
+	--funkcja zwraca wartość odstępu między czynnościami
+	--wyznaczenie odstępu jest zależne od parametru w konfiguracji który przekazywany jest do funkcji
+	--parametry:
+			--@TechnologiaCzynnosc - identyfikator czynności w technologii
+			--@Proces - identyfikator procesu, jeśli ujemny oznacza że planujemy wstecz
+			--@SposobLiczeniaOdstepu - wartość parametru z konfiguracji
+					-- 0 - funkcja zwraca wartości wprost, czyli np. ustawienie że odstęp jest jeden dzień oznacza że czynność będzie planowana dokładnie 24 h po zakończeniu poprzedniej czynności
+					-- 1 - tryb w którym odstęp rozumiemy jako planowanie następnego dnia, następnej godziny etc. Przykładowo jeśli odstęp wynosi jeden dzień planowanie powinniśmy zacząć od godziny 00:00 następnego dnia
+					
+  declare @Odstep int
+  declare @TerminOdstep int
+  declare @Wspolczynnik int  
+  
+  if @Termin &lt; 0		--planowanie wstecz
+	begin
+  		if @SposobLiczeniaOdstepu = 1
+		begin	
+			select @TerminOdstep = case when PTC_OdstepPrzed = 0 
+										  then 0 
+								   WHEN PTC_OdstepPrzedJm = 4 THEN
+										(@Czas*PTC_OdstepPrzed)/100 
+									ELSE  @Termin + PTC_OdstepPrzed 
+								   end,
+				   @Wspolczynnik = case when PTC_OdstepPrzedJm = 0 then 1			--sekundy
+										when PTC_OdstepPrzedJm = 1 then 60			--minuty
+							   			when PTC_OdstepPrzedJm = 2 then 3600		--godziny
+										when PTC_OdstepPrzedJm = 3 then 86400		--dni
+										WHEN PTC_OdstepPrzedJm = 4 THEN 1			--%
+					    		   end
+			from CDN.ProdTechnologiaCzynnosci where PTC_ID = @TechnologiaCzynnosc
+			
+			if @TerminOdstep = 0 
+				return 0
+				
+			select @Odstep = @TerminOdstep - @TerminOdstep%@Wspolczynnik - @Termin	--wyliczenie odstępu
+		end
+		else
+			select @Odstep = CASE WHEN PTC_OdstepPrzedJm = 4 THEN
+										(@Czas*PTC_OdstepPrzed)/100 
+							 ELSE PTC_OdstepPrzed END from CDN.ProdTechnologiaCzynnosci where PTC_ID = @TechnologiaCzynnosc
+	end
+  else					--planowanie w przód
+	begin
+  		if @SposobLiczeniaOdstepu = 1
+		begin
+			select @TerminOdstep = case when PTC_OdstepPo = 0 then 0 
+									WHEN PTC_OdstepPoJm = 4 THEN
+										(@Czas*PTC_OdstepPo)/100 
+			                       else @Termin + PTC_OdstepPo 
+			                       end,
+				   @Wspolczynnik = case when PTC_OdstepPoJm = 0 then 1				--sekundy
+										when PTC_OdstepPoJm = 1 then 60				--minuty											
+							   	        when PTC_OdstepPoJm = 2 then 3600			--godziny
+								        when PTC_OdstepPoJm = 3 then 86400			--dni
+										WHEN PTC_OdstepPoJm = 4 THEN 1				--%
+					    	       end					    
+			from CDN.ProdTechnologiaCzynnosci where PTC_ID = @TechnologiaCzynnosc
+
+			if @TerminOdstep = 0 
+				return 0										
+
+			select @Odstep = @TerminOdstep - @TerminOdstep%@Wspolczynnik - @Termin	--wyliczenie odstępu
+		end
+		else
+			select @Odstep = CASE WHEN PTC_OdstepPoJm = 4 THEN
+										(@Czas*PTC_OdstepPo)/100 ELSE PTC_OdstepPo END from CDN.ProdTechnologiaCzynnosci where PTC_ID = @TechnologiaCzynnosc
+	end
+	
+  return @Odstep
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

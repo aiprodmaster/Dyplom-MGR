@@ -1,0 +1,120 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[IMALL_ImportGrupTowarow]"></A><PRE>
+          <FONT SIZE="2"><I>/* [IMALL_ImportGrupTowarow] */</I><BR>
+CREATE  PROCEDURE [CDN].[IMALL_ImportGrupTowarow]
+ @XML XML
+ AS
+SET NOCOUNT ON
+
+CREATE TABLE #Errors
+(
+	Blad	VARCHAR(512)
+)
+
+DECLARE @index                  INT,
+		@max_index              INT,
+        @buffer_size			INT,
+        @xml_buffer             XML,
+        @xml_tmp                XML
+        
+DECLARE @Kat_ID					INT,
+		@Kat_IDM				INT,
+		@Kat_RootID				INT,
+		@Kat_ParIDM				INT,
+		@Kat_Name				VARCHAR(100)
+		
+DECLARE @Opis                   VARCHAR(512),
+		@IloscWierszy			INT,
+		@Aktywna				INT
+
+SET @Kat_ID		= 0;
+SET @Kat_IDM	= 0;
+SET @Kat_ParIDM	= 0;
+SET @Kat_Name	= '';
+SET @Opis       = '';
+SET	@IloscWierszy	= 0;
+SELECT TOP 1 @Kat_RootID = KGT_ID FROM CDN.KatGrupyTwr WHERE KGT_OjciecId = 0;
+
+SET @XML = @xml.query('/Categories/Category')
+SELECT  @index = 0,
+                @max_index = CAST(CAST(@xml.query ('count(Category)') AS VARCHAR(20)) AS INT),
+                @buffer_size = 200
+
+	WHILE @index &lt; @max_index
+    BEGIN
+		SET XACT_ABORT ON;
+
+		BEGIN TRY
+			BEGIN TRANSACTION;
+			IF @index % @buffer_size = 0
+				SET @xml_buffer = ( SELECT @xml.query('Category[position()&gt; sql:variable("@index") and position() &lt;= sql:variable("@index") + sql:variable("@buffer_size") ] ')  )
+			SET @xml_tmp = ( SELECT @xml_buffer.query('Category[position()= (sql:variable("@index") mod sql:variable("@buffer_size")) + 1 ] ')  )
+			SELECT
+				@Kat_IDM			= KAT.Category.value('@ID','INT'),
+				@Kat_ParIDM			= KAT.Category.value('@ParentID','INT'),
+				@Kat_Name			= KAT.Category.value('@Name','VARCHAR(100)'),
+				@Aktywna			= KAT.Category.value('@Active','INT')
+			FROM @xml_tmp.nodes('Category') AS KAT(Category)	
+					
+			SET @Kat_ID = 0;
+			SELECT @Kat_ID = KGT_ID FROM CDN.KatGrupyTwr WITH (NOLOCK) WHERE KGT_IdM = @Kat_IDM
+			IF @Kat_ID = 0 AND  @Aktywna = 1
+			BEGIN
+				INSERT INTO CDN.KatGrupyTwr(
+					KGT_OjciecId
+					,KGT_IdM
+					,KGT_Nazwa
+					,KGT_CzasModyfikacji)
+				SELECT TOP 1 ISNULL(KGT_Id,@Kat_RootID), @Kat_IDM, @Kat_Name, datediff(s,convert(datetime,'1990-01-01',120),getdate())
+				FROM CDN.KatGrupyTwr
+				WHERE KGT_IdM = @Kat_ParIDM
+				SET @IloscWierszy = @IloscWierszy + 1
+			END
+			ELSE
+			BEGIN
+				-- odświeżenie nazwy
+				IF @Kat_ID &gt; 0 AND @Aktywna = 1 AND EXISTS
+				(
+					SELECT * FROM CDN.KatGrupyTwr
+					WHERE KGT_ID = @Kat_ID AND KGT_Nazwa &lt;&gt; @Kat_Name
+				)
+				BEGIN
+					UPDATE CDN.KatGrupyTwr
+					SET KGT_Nazwa = @Kat_Name
+						,KGT_CzasModyfikacji = datediff(s,convert(datetime,'1990-01-01',120),getdate())
+					WHERE KGT_ID = @Kat_ID
+					SET @IloscWierszy = @IloscWierszy + 1
+				END
+			END
+			COMMIT TRANSACTION;
+		END TRY
+		BEGIN CATCH
+			IF XACT_STATE() &lt;&gt; 0
+				ROLLBACK TRANSACTION;
+				INSERT INTO #Errors(Blad) VALUES ('Błąd podczas dodawania kategorii o ID='+ CAST(@Kat_IDM AS VARCHAR(20)) + ': ' + CDN.Log_SzczegolyBledu(ERROR_NUMBER(),ERROR_PROCEDURE(),ERROR_LINE(),ERROR_MESSAGE()))
+		END CATCH
+		SET @index = @index + 1
+	END
+	IF EXISTS(SELECT * FROM #Errors)
+	  SELECT #Errors.Blad AS Blad, '' AS Informacja FROM #Errors
+	ELSE
+	  SELECT '' AS Blad, 'Ilość zaimportowanych kategorii: '+ CAST(@IloscWierszy AS VARCHAR(10)) AS Informacja
+	DROP TABLE #Errors
+RETURN 0
+SET NOCOUNT OFF
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

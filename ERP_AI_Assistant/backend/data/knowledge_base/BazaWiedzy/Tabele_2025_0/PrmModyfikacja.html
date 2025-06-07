@@ -1,0 +1,474 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="PrmModyfikacja"></A><PRE>
+          <FONT SIZE="2"><I>/* PrmModyfikacja */</I><BR>
+CREATE PROCEDURE CDN.PrmModyfikacja
+	@ID		int, --ID promocji
+	@Akcja		smallint, --Update(0),Insert(1) czy Delete(2) (delete nie dotyczy prmkarty)
+	@SesjaID	int, --ID bieżącej sesji
+	@TStamp		int, --Timestamp modyfikacji
+	
+	@KntAkronim	varchar(20) = '', --Akronim kontrahenta
+	@KntTyp		smallint = NULL, --gid kontrahenta na promocji
+	@KntFirma 	int = NULL,
+	@KntNumer	int = NULL,
+	@KntLp		smallint = NULL,
+	@KngTyp		smallint = NULL, --gid grupy nadrzednej kontrahenta
+	@KngFirma	int = NULL,
+	@KngNumer	int = NULL,
+	@KngLp		smallint = NULL,
+
+	@TwrKod		varchar(40) = '', --kod towaru
+	@TwrTyp		smallint = NULL, --GIDTowaru
+	@TwrFirma	int = NULL,
+	@TwrNumer	int = NULL,
+	@TwrLp		smallint = NULL,
+	@TwgTyp		smallint = NULL, --GID grupy nadrzednej towaru
+	@TwgFirma	int = NULL,
+	@TwgNumer	int = NULL,
+	@TwgLp		smallint = NULL,
+	@TwrUpust	int = NULL, --Typ upustu
+	@TwrWartosc	decimal(15,4) = NULL, --Wartość Upustu
+	@TwrProg	decimal(15,4) = NULL, --Wartość progowa
+	@TwrWaluta	varchar(3) = NULL, --Waluta
+	@TwrNB		varchar(1) = NULL, --Dla stałej ceny określa czy cena netto czy brutto
+	@TwrNotatki	varchar(200) = NULL, --Notatki
+	@TwrRodzajCeny	int = 0, --numer ceny początkowej
+	@TwrLimitTyp	smallint = NULL,
+	@TwrLimitWartosc decimal(15,4) = NULL,
+	@TwrProgTyp		smallint = NULL,
+	@TwrProgWartosc decimal(15,4) = NULL,
+	@FrsID		int = NULL, --ID centrum w strukturze praw
+
+	@PRMAkronim	varchar(200) = NULL,
+	@PRMDataOD	int = NULL,
+	@PRMDataDo	int = NULL,
+	@PRMPriorytet	int = NULL,
+	@PRMSStos	smallint = NULL,
+	@PRMPominPoz	smallint = NULL,
+	@PRMUwagi	varchar(512) = NULL,
+	@PRMDokument	smallint = NULL,
+	@PRMPriorytetLp int = NULL,
+	@PRMCykliczna	int = NULL,
+	@TwrLimitRodzaj	smallint = NULL
+
+AS
+SET NOCOUNT ON
+DECLARE @ZapytanieKNT 	int
+DECLARE @ZapytanieTWR 	int
+DECLARE @ZapytanieFRS 	int
+DECLARE @ZapytaniePRM	int
+DECLARE @TPRLp 		int
+DECLARE	@DozwStan 	varchar(25)
+DECLARE @PRMStan 	int
+DECLARE @CheckTyp	int
+DECLARE @CheckPakietowa smallint
+DECLARE @CheckRodzajDok smallint
+
+
+SET @ZapytanieKNT = 0
+SET @ZapytanieTWR = 0
+SET @ZapytanieFRS = 0
+SET @ZapytaniePRM = 0
+SET @DozwStan = ' AND PRM_Stan IN (0,1) '
+
+BEGIN TRAN
+
+SET @PRMStan = NULL
+SELECT @PRMStan = PRM_Stan,@CheckTyp = PRM_Typ,@CheckPakietowa = PRM_Pakietowa,@CheckRodzajDok=PRM_Dokument FROM CDN.PrmKarty WHERE PRM_Id = @ID AND PRM_Aktywna = @SesjaID
+IF @PRMStan IS NULL
+BEGIN
+	ROLLBACK TRAN
+	SELECT 1 AS ERROR,0 AS DELSTAT
+	RETURN 1
+END
+IF @PRMStan &gt; 2
+BEGIN
+	ROLLBACK TRAN
+	SELECT 6 AS ERROR,0 AS DELSTAT
+	RETURN 6
+END
+IF @Akcja = 0
+BEGIN
+	IF @PRMPriorytet IS NOT NULL
+	BEGIN
+		IF EXISTS(SELECT A.PRM_ID FROM CDN.PrmKarty A JOIN CDN.PrmKarty B ON A.PRM_PriorytetLP = B.PRM_PriorytetLP WHERE B.PRM_Priorytet = @PRMPriorytet AND A.PRM_ID = @ID AND B.PRM_ID &lt;&gt; A.PRM_ID)
+		BEGIN
+			SELECT 11 AS ERROR,0 AS DELSTAT
+			ROLLBACK TRAN
+			RETURN 11
+		END
+	END
+	IF @PRMPriorytetLP IS NOT NULL
+	BEGIN
+		IF EXISTS(SELECT A.PRM_ID FROM CDN.PrmKarty A JOIN CDN.PrmKarty B ON A.PRM_Priorytet = B.PRM_Priorytet WHERE B.PRM_PriorytetLP = @PRMPriorytetLP AND A.PRM_ID = @ID AND B.PRM_ID &lt;&gt; A.PRM_ID)
+		BEGIN
+			SELECT 11 AS ERROR,0 AS DELSTAT
+			ROLLBACK TRAN
+			RETURN 11
+		END
+	END
+	IF @PRMAkronim IS NOT NULL 
+	BEGIN
+		SET @ZapytaniePRM = 1
+		UPDATE CDN.PrmKarty SET PRM_Akronim = @PRMAkronim ,PRM_LastMod = @TStamp WHERE PRM_Id = @ID AND PRM_Stan &lt; 2 AND PRM_Typ &lt;&gt; 4
+		IF @@ERROR &lt;&gt; 0
+		BEGIN
+			ROLLBACK TRAN
+			RAISERROR('Błąd modyfikacji CDN.PrmKarty',16,1)
+			RETURN 1
+		END
+	END
+	IF @PRMDataOD IS NOT NULL
+	BEGIN
+		SET @ZapytaniePRM = 1
+		UPDATE CDN.PrmKarty SET PRM_DataOd = @PRMDataOd ,PRM_LastMod = @TStamp WHERE PRM_Id = @ID AND PRM_Stan &lt; 2 AND PRM_Typ &lt;&gt; 4
+		IF @@ERROR &lt;&gt; 0
+		BEGIN
+			ROLLBACK TRAN
+			RAISERROR('Błąd modyfikacji CDN.PrmKarty',16,1)
+			RETURN 1
+		END
+	END
+	IF @PRMDataDo IS NOT NULL
+	BEGIN
+		SET @ZapytaniePRM = 1
+		UPDATE CDN.PrmKarty SET PRM_DataDo = @PRMDataDo ,PRM_LastMod = @TStamp WHERE PRM_Id = @ID AND PRM_Stan &lt; 2 AND PRM_Typ &lt;&gt; 4
+		IF @@ERROR &lt;&gt; 0
+		BEGIN
+			ROLLBACK TRAN
+			RAISERROR('Błąd modyfikacji CDN.PrmKarty',16,1)
+			RETURN 1
+		END
+	END
+	IF @PRMPriorytet IS NOT NULL
+	BEGIN
+		SET @ZapytaniePRM = 1
+		UPDATE CDN.PrmKarty SET PRM_Priorytet = @PRMPriorytet ,PRM_LastMod = @TStamp WHERE PRM_Id = @ID AND PRM_Stan &lt; 2
+		IF @@ERROR &lt;&gt; 0
+		BEGIN
+			ROLLBACK TRAN
+			RAISERROR('Błąd modyfikacji CDN.PrmKarty',16,1)
+			RETURN 1
+		END
+	END
+	IF @PRMSStos IS NOT NULL
+	BEGIN
+		SET @ZapytaniePRM = 1
+		UPDATE CDN.PrmKarty SET PRM_SposobStosowania = @PRMSStos ,PRM_LastMod = @TStamp WHERE PRM_Id = @ID AND PRM_Stan &lt; 2
+		IF @@ERROR &lt;&gt; 0
+		BEGIN
+			ROLLBACK TRAN
+			RAISERROR('Błąd modyfikacji CDN.PrmKarty',16,1)
+			RETURN 1
+		END
+	END
+	IF @PRMPominPoz IS NOT NULL
+	BEGIN
+		SET @ZapytaniePRM = 1
+		UPDATE CDN.PrmKarty SET PRM_PominPozostale = @PRMPominPoz ,PRM_LastMod = @TStamp WHERE PRM_Id = @ID AND PRM_Stan &lt; 2
+		IF @@ERROR &lt;&gt; 0
+		BEGIN
+			ROLLBACK TRAN
+			RAISERROR('Błąd modyfikacji CDN.PrmKarty',16,1)
+			RETURN 1
+		END
+	END
+	IF @PRMUwagi IS NOT NULL
+	BEGIN
+		SET @ZapytaniePRM = 1
+		UPDATE CDN.PrmKarty SET PRM_Uwagi = @PRMUwagi ,PRM_LastMod = @TStamp WHERE PRM_Id = @ID AND PRM_Stan &lt; 2
+		IF @@ERROR &lt;&gt; 0
+		BEGIN
+			ROLLBACK TRAN
+			RAISERROR('Błąd modyfikacji CDN.PrmKarty',16,1)
+			RETURN 1
+		END
+	END
+	IF @PRMDokument IS NOT NULL
+	BEGIN
+		SET @ZapytaniePRM = 1
+		UPDATE CDN.PrmKarty SET PRM_Dokument = @PRMDokument ,PRM_LastMod = @TStamp WHERE PRM_Id = @ID AND PRM_Stan &lt; 2
+		IF @@ERROR &lt;&gt; 0
+		BEGIN
+			ROLLBACK TRAN
+			RAISERROR('Błąd modyfikacji CDN.PrmKarty',16,1)
+			RETURN 1
+		END
+	END
+	IF @PRMPriorytetLp IS NOT NULL
+	BEGIN
+		SET @ZapytaniePRM = 1
+		UPDATE CDN.PrmKarty SET PRM_PriorytetLp = @PRMPriorytetLp ,PRM_LastMod = @TStamp WHERE PRM_Id = @ID
+		IF @@ERROR &lt;&gt; 0
+		BEGIN
+			ROLLBACK TRAN
+			RAISERROR('Błąd modyfikacji CDN.PrmKarty',16,1)
+			RETURN 1
+		END
+	END
+	IF @PRMCykliczna IS NOT NULL
+	BEGIN
+		SET @ZapytaniePRM = 1
+		UPDATE CDN.PrmKarty SET PRM_Cykliczna = @PRMCykliczna ,PRM_LastMod = @TStamp WHERE PRM_Id = @ID AND PRM_Stan &lt; 2 AND PRM_Typ &lt;&gt; 4
+		IF @@ERROR &lt;&gt; 0
+		BEGIN
+			ROLLBACK TRAN
+			RAISERROR('Błąd modyfikacji CDN.PrmKarty',16,1)
+			RETURN 1
+		END
+	END
+END
+IF NOT (@KntTyp &lt;&gt; 0 AND @KntNumer &gt;= 0)
+BEGIN
+	IF LEN(@KntAkronim) &gt; 0
+	BEGIN
+		SELECT @KntTyp = Knt_GIDTyp,@KntNumer = Knt_GIDNumer,@KntFirma = Knt_GIDFirma FROM CDN.KntKarty WHERE Knt_Akronim = @KntAkronim
+	END
+END
+IF (@KntTyp &lt;&gt; 0 AND @KntNumer &gt;= 0)
+BEGIN
+	IF @Akcja = 1
+	BEGIN
+		IF @CheckTyp = 4
+		BEGIN
+			IF EXISTS(SELECT PRM_ID FROM CDN.PrmKarty JOIN CDN.KntPromocje ON KPR_PrmID = PRM_ID WHERE PRM_Typ = 4 AND KPR_KntTyp = @KntTyp AND KPR_KntNumer = @KntNumer)
+			BEGIN
+				SELECT 13 AS ERROR, 0 AS DELSTAT
+				ROLLBACK TRAN
+				RETURN 13
+			END
+		END
+		SET @ZapytanieKNT = 1
+		INSERT INTO CDN.KntPromocje (KPR_PrmID,KPR_KntTyp,KPR_KntFirma,KPR_KntNumer,KPR_KntLp,KPR_KngTyp,KPR_KngFirma,KPR_KngNumer,KPR_KngLp,KPR_Typ,KPR_Wartosc,KPR_Punkty) 
+		VALUES (@ID,@KntTyp,ISNULL(@KntFirma,0),@KntNumer,ISNULL(@KntLP,0),ISNULL(@KngTyp,0),ISNULL(@KngFirma,0),ISNULL(@KngNumer,0),ISNULL(@KngLp,0),0,0,0)
+		IF @@ERROR &lt;&gt; 0
+		BEGIN
+			ROLLBACK TRAN
+			RAISERROR('Błąd modyfikacji CDN.KntPromocje',16,1)
+			RETURN 1
+		END
+		IF @CheckTyp = 4
+			UPDATE CDN.PrmKarty SET PRM_Akronim = 'KNU: '+(SELECT Knt_Akronim FROM CDN.KntKarty WHERE Knt_GIDTyp = @KntTyp AND Knt_GIDNumer = @KntNumer),PRM_LastMod = @TStamp WHERE PRM_Id = @ID AND PRM_Stan = 0
+	END
+	ELSE IF @Akcja = 2
+	BEGIN
+		IF @CheckTyp = 4
+		BEGIN
+			SELECT 14 AS ERROR, 0 AS DELSTAT
+			ROLLBACK TRAN
+			RETURN 14
+		END
+		SET @ZapytanieKNT = 1
+		DELETE FROM CDN.KntPromocje WHERE KPR_PrmID = @ID AND KPR_KntTyp = @KntTyp AND KPR_KntNumer = @KntNumer AND @CheckTyp &lt;&gt; 4
+		IF @@ERROR &lt;&gt; 0
+		BEGIN
+			ROLLBACK TRAN
+			RAISERROR('Błąd modyfikacji CDN.KntPromocje',16,1)
+			RETURN 1
+		END
+	END
+END
+IF NOT (@TwrTyp &lt;&gt; 0 AND @TwrNumer &gt;= 0)
+BEGIN
+	IF LEN(@TwrKod) &gt; 0
+	BEGIN
+		SELECT @TwrTyp = Twr_GIDTyp,@TwrNumer = Twr_GIDNumer,@TwrFirma = Twr_GIDFirma FROM CDN.TwrKarty WHERE Twr_Kod = @TwrKod
+	END
+END
+IF (@TwrTyp &lt;&gt; 0 AND @TwrNumer &gt;= 0)
+BEGIN
+	IF @TwrUpust NOT IN (1,2,3,4,5,6) AND @Akcja IN (0,1)
+	BEGIN
+		SELECT 11 AS ERROR,1 AS DELSTAT
+		ROLLBACK TRAN
+		RETURN 11
+	END
+	IF @TwrUpust &lt;&gt; 4 
+	BEGIN
+		IF EXISTS(SELECT PRM_ID FROM CDN.PrmKarty WHERE PRM_ID = @ID AND PRM_Typ = 7)
+			SET @TwrUpust = 4
+	END
+	IF @TwrUpust = 4 AND @Akcja IN (0,1)
+	BEGIN
+		IF NOT EXISTS(SELECT PRM_ID FROM CDN.PrmKarty WHERE PRM_ID = @ID AND PRM_Typ = 7)
+		BEGIN
+			SELECT 11 AS ERROR,1 AS DELSTAT
+			ROLLBACK TRAN
+			RETURN 11
+		END
+		
+	END
+	ELSE
+	BEGIN
+		SET @TwrRodzajCeny = 0
+	END	
+	IF @TwrRodzajCeny &gt; 0
+	BEGIN
+		IF NOT EXISTS(SELECT TwC_TwrTyp FROM CDN.TwrCeny WHERE TwC_TwrLp = @TwrRodzajCeny AND TwC_TwrNumer = @TwrNumer AND TwC_TwrTyp = @TwrTyp)
+		BEGIN
+			SELECT 12 AS ERROR,1 AS DELSTAT
+			ROLLBACK TRAN
+			RETURN 12
+		END
+	END
+
+	SELECT @TwrLimitTyp=isnull(@TwrLimitTyp,-1),@TwrLimitWartosc=isnull(@TwrLimitWartosc,-1),@TwrLimitRodzaj=isnull(@TwrLimitRodzaj,-1)
+	IF @TwrLimitTyp=0
+		SELECT @TwrLimitWartosc = 0, @TwrLimitRodzaj = 0
+	ELSE IF NOT (@TwrLimitTyp in(1,2) and @TwrLimitRodzaj in(0,1) and @TwrLimitWartosc&gt;=0 and (@TwrLimitRodzaj = 0 OR @TwrLimitWartosc&gt;CDN.WykorzystaneLimityZPromocji(@ID,@TwrLimitTyp,@CheckRodzajDok,@TwrNumer,NULL,NULL,NULL,NULL,NULL)))
+		BEGIN
+			IF EXISTS(SELECT TPR_ID from cdn.TwrPromocje where TPR_PrmID = @ID AND TPR_TwrTyp = @TwrTyp AND TPR_TwrNumer = @TwrNumer)
+				(SELECT TOP 1 @TwrLimitTyp=TPR_LimitTyp,@TwrLimitWartosc=Tpr_LimitWartosc,@TwrLimitRodzaj=TPR_LimitRodzaj
+					from cdn.TwrPromocje 
+					where TPR_PrmID = @ID AND TPR_TwrTyp = @TwrTyp AND TPR_TwrNumer = @TwrNumer)
+			ELSE
+				SELECT @twrLimitTyp=0,@TwrLimitWartosc=0,@TwrLimitRodzaj = 0
+		END
+
+	SELECT @TwrProgTyp=isnull(@TwrProgTyp,-1),@TwrProgWartosc=isnull(@TwrProgWartosc,-1)
+	IF @TwrProgTyp = 0 
+		SET @TwrProgWartosc = 0
+	ELSE IF NOT (@TwrProgTyp in(1,2) and @TwrProgWartosc&gt;=0 and @CheckRodzajDok &gt;0/*and @TwrLimitWartosc&gt;CDN.WykorzystaneLimityZPromocji(@ID,@TwrLimitTyp,@CheckRodzajDok,@TwrNumer,NULL,NULL,NULL)*/)
+		BEGIN
+			IF EXISTS(SELECT TPR_ID from cdn.TwrPromocje where TPR_PrmID = @ID AND TPR_TwrTyp = @TwrTyp AND TPR_TwrNumer = @TwrNumer)
+				(SELECT TOP 1 @TwrProgTyp=TPR_ProgTyp,@TwrProgWartosc=TPR_ProgWartosc
+					from cdn.TwrPromocje 
+					where TPR_PrmID = @ID AND TPR_TwrTyp = @TwrTyp AND TPR_TwrNumer = @TwrNumer)
+			ELSE
+				SELECT @TwrProgTyp=0,@TwrProgWartosc=0
+		END
+	IF @Akcja = 0
+	BEGIN
+		IF @TwrWartosc &gt; 0
+		BEGIN
+			SET @ZapytanieTWR = 1
+			UPDATE CDN.TwrPromocje SET TPR_Wartosc = @TwrWartosc,TPR_Typ = @TwrUpust,TPR_Prog = ISNULL(@TwrProg,0),TPR_Waluta = ISNULL(@TwrWaluta,''),TPR_FlagaNB = ISNULL(@TwrNB,''),
+				TPR_Notatki = ISNULL(@TwrNotatki,'') ,TPR_RodzajCeny = ISNULL(@TwrRodzajCeny,0), TPR_LimitTyp=(CASE WHEN @CheckTyp=5 and @CheckPakietowa=0 THEN @TwrLimitTyp ELSE TPR_LimitTyp END),
+				TPR_LimitWartosc=(CASE WHEN @CheckTyp=5 and @CheckPakietowa=0 THEN @TwrLimitWartosc ELSE TPR_LimitWartosc END), 
+				TPR_LimitRodzaj=(CASE WHEN @CheckTyp=5 and @CheckPakietowa=0 THEN @TwrLimitRodzaj ELSE TPR_LimitRodzaj END), 
+				TPR_ProgTyp=(CASE WHEN @CheckTyp=5 and @CheckPakietowa=0 THEN @TwrProgTyp ELSE TPR_ProgTyp END),
+				TPR_ProgWartosc=(CASE WHEN @CheckTyp=5 and @CheckPakietowa=0 THEN @TwrProgWartosc ELSE TPR_ProgWartosc END)
+			WHERE TPR_PrmID = @ID AND TPR_TwrTyp = @TwrTyp AND TPR_TwrNumer = @TwrNumer
+			IF @@ERROR &lt;&gt; 0
+			BEGIN
+				ROLLBACK TRAN
+				RAISERROR('Błąd modyfikacji CDN.TwrPromocje',16,1)
+				RETURN 1
+			END
+		END
+	END
+	ELSE IF @Akcja = 1
+	BEGIN
+		SET @ZapytanieTWR = 1
+		SET @TPRLp = (SELECT MAX(TPR_Lp)+1 FROM CDN.TwrPromocje WHERE TPR_PrmID = @ID)
+		INSERT INTO CDN.TwrPromocje (TPR_PrmID,TPR_TwrTyp,TPR_TwrFirma,TPR_TwrNumer,TPR_TwrLp,TPR_TwgTyp,TPR_TwgFirma,TPR_TwgNumer,TPR_TwgLp,TPR_Typ,TPR_Wartosc,TPR_Prog,TPR_Waluta,TPR_FlagaNB,TPR_Notatki,TPR_Lp,
+										TPR_ZstID,TPR_RodzajCeny,TPR_Wymagany, TPR_LimitTyp,TPR_LimitWartosc,TPR_ProgTyp, TPR_ProgWartosc,TPR_LimitRodzaj) 
+		VALUES (@ID,@TwrTyp,ISNULL(@TwrFirma,0),@TwrNumer,ISNULL(@TwrLP,0),ISNULL(@TwgTyp,0),ISNULL(@TwgFirma,0),ISNULL(@TwgNumer,0),ISNULL(@TwgLP,0),@TwrUpust,@TwrWartosc,ISNULL(@TwrProg,0),ISNULL(@TwrWaluta,''),
+										ISNULL(@TwrNB,'N'),ISNULL(@TwrNotatki,''),ISNULL(@TPRLp,1),0,ISNULL(@TwrRodzajCeny,0),0,0,0,ISNULL(@TwrProgTyp,0),ISNULL(@TwrProgWartosc,0),ISNULL(@TwrLimitRodzaj,0))
+		IF @@ERROR &lt;&gt; 0
+		BEGIN
+			ROLLBACK TRAN
+			RAISERROR('Błąd modyfikacji CDN.TwrPromocje',16,1)
+			RETURN 1
+		END
+		IF @CheckTyp=5 and @CheckPakietowa=0
+			BEGIN
+				UPDATE CDN.TwrPromocje SET TPR_LimitTyp=@TwrLimitTyp,TPR_LimitWartosc=@TwrLimitWartosc,TPR_LimitRodzaj=@TwrLimitRodzaj
+				WHERE TPR_PrmID = @ID AND TPR_TwrTyp = @TwrTyp AND TPR_TwrNumer = @TwrNumer
+				IF @@ERROR &lt;&gt; 0
+				BEGIN
+					ROLLBACK TRAN
+                    RAISERROR('Błąd modyfikacji CDN.TwrPromocje',16,1)
+                    RETURN 1
+				END
+			END
+		IF @CheckTyp=5 and @CheckPakietowa=0 and @CheckRodzajDok &gt; 0
+			BEGIN
+				UPDATE CDN.TwrPromocje SET TPR_ProgTyp=@TwrProgTyp,TPR_ProgWartosc=@TwrProgWartosc
+				WHERE TPR_PrmID = @ID AND TPR_TwrTyp = @TwrTyp AND TPR_TwrNumer = @TwrNumer
+				IF @@ERROR &lt;&gt; 0
+				BEGIN
+					ROLLBACK TRAN
+                    RAISERROR('Błąd modyfikacji CDN.TwrPromocje',16,1)
+                    RETURN 1
+				END
+			END
+	END
+	ELSE IF @Akcja = 2
+	BEGIN
+		SET @ZapytanieTWR = 1
+		DELETE FROM CDN.TwrPromocje WHERE TPR_PrmID = @ID AND TPR_TwrTyp = @TwrTyp AND TPR_TwrNumer = @TwrNumer
+		IF @@ERROR &lt;&gt; 0
+		BEGIN
+			ROLLBACK TRAN
+			RAISERROR('Błąd modyfikacji CDN.TwrPromocje',16,1)
+			RETURN 1
+		END
+	END
+END
+IF @FrsID &gt; 0 AND @CheckTyp &lt;&gt; 4
+BEGIN
+	IF @Akcja = 1
+	BEGIN
+		SET @ZapytanieFRS = 1
+		INSERT INTO CDN.FrsPromocje (FPR_PrmID,FPR_FrsID) VALUES (@ID,@FrsID)
+		IF @@ERROR &lt;&gt; 0
+		BEGIN
+			ROLLBACK TRAN
+			RAISERROR('Błąd modyfikacji CDN.FrsPromocje',16,1)
+			RETURN 1
+		END
+	END
+	ELSE IF @Akcja = 2
+	BEGIN
+		SET @ZapytanieFRS = 1
+		DELETE FROM CDN.FrsPromocje WHERE FPR_PrmID = @ID AND FPR_FrsID = @FrsID
+		IF @@ERROR &lt;&gt; 0
+		BEGIN
+			ROLLBACK TRAN
+			RAISERROR('Błąd modyfikacji CDN.FrsPromocje',16,1)
+			RETURN 1
+		END
+	END
+END
+ELSE IF @FrsID &gt; 0 AND @CheckTyp = 4
+BEGIN
+	SELECT 6 AS ERROR
+	ROLLBACK TRAN
+	RETURN 6
+END
+
+IF @Akcja &lt; 2
+BEGIN
+	IF @ZapytaniePRM = 1
+		SELECT 0 AS ERROR,1 AS CHANGESTAT
+	IF @ZapytanieKNT = 1
+		SELECT KPR_ID,KPR_PrmID,KPR_KntTyp,KPR_KntFirma,KPR_KntNumer,KPR_KntLp,KPR_KngTyp,KPR_KngFirma,KPR_KngNumer,KPR_KngLp FROM CDN.KntPromocje WHERE KPR_Id = (SELECT MAX(KPR_Id) FROM CDN.KntPromocje)
+	IF @ZapytanieTWR = 1
+		SELECT TPR_ID,TPR_PrmID,TPR_TwrTyp,TPR_TwrFirma,TPR_TwrNumer,TPR_TwrLp,TPR_TwgTyp,TPR_TwgFirma,TPR_TwgNumer,TPR_TwgLp,TPR_Typ,TPR_Wartosc,
+		TPR_Prog,TPR_Waluta,TPR_FlagaNB,TPR_Notatki,TPR_RodzajCeny,TPR_LimitTyp,TPR_LimitWartosc,TPR_ProgTyp, TPR_ProgWartosc FROM CDN.TwrPromocje WHERE TPR_Id = (SELECT MAX(TPR_Id) FROM CDN.TwrPromocje)
+	IF @ZapytanieFRS = 1
+		SELECT FPR_ID,FPR_PrmID,FPR_FrsID FROM CDN.FrsPromocje WHERE FPR_ID = (SELECT MAX(FPR_ID) FROM CDN.FrsPromocje)
+	IF NOT (@ZapytaniePRM = 1 OR @ZapytanieKNT = 1 OR @ZapytanieTWR = 1 OR @ZapytanieFRS = 1)
+		SELECT 0 AS ERROR,1 AS DELSTAT
+END
+ELSE
+	SELECT 0 AS ERROR,1 AS DELSTAT
+COMMIT TRAN
+SET NOCOUNT OFF
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

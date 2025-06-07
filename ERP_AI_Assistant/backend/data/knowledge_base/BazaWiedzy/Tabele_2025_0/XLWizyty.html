@@ -1,0 +1,482 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="XLDodajPrzejazdWH"></A><PRE>
+          <FONT SIZE="2"><I>/* XLDodajPrzejazdWH */</I><BR>
+CREATE PROCEDURE CDN.XLDodajPrzejazdWH
+(
+/* ==========================================================================================
+	SQL API: Procedura serwerowa do dodawania przejazdu dla wizyty handlowej
+
+	Parametry wejściowe: 
+   ========================================================================================== */
+	@CWENumer INT,						-- @CWENumer elementu wizyty handlowej
+	@CWELp SMALLINT,					-- @CWELp elementu wizyty handlowej
+    @OpeNumer INT,						-- Numer operatora modyfikującego
+    @SamId INT,							-- Identyfikator samochodu
+    @KierTyp INT=NULL,					-- GidTyp   \ kierowcy
+    @KierNumer INT=NULL,				-- GidNumer / jeśli NULL brany jest obsługujący WH
+	@LicznikPocz DECIMAL(9,2),			-- Stan licznika w chwili wyjazdu
+	@LicznikKon DECIMAL(9,2),			-- Stan licznika w chwili przyjazdu
+	@DataWyjazdu INT=NULL,				-- Data wyjazdu
+    @DataPrzyjazdu INT=NULL,			-- Data przyjazdu
+    @WyjazdZ VARCHAR(100)=NULL,			-- Miejsce wyjazdu
+    @PrzyjazdDo VARCHAR(100)=NULL,		-- Miejsce przyjazdu    
+    @RodzajPrzejazdu INT=NULL,
+	@Potwierdzony tinyint=0,					-- Czy potwierdzony 
+	@OpeNumerZ int=NULL,						-- Identyfikator operatora potwierdzającego
+	@Opis VARCHAR(1025)=NULL,
+    @GPSSz DECIMAL(9,6) = NULL,
+	@GPSDl DECIMAL(9,6) = NULL,
+	@GPSDataPobrania INT = NULL,
+	@GPSGodzinaPobrania INT = NULL
+
+/* ==========================================================================================
+	Return:
+	 0 : Operacja zakończona sukcesem
+	-1 : Błędne parametry wejściowe przekazane do procedury
+	-2 : Nie powiodło się dodawanie wpisu do tabeli CDN.SamPrzejazdy
+	-3 : Stan wizyty &gt; potwierdzona, tj. zakończona lub anulowana
+   ========================================================================================== */   	
+)
+AS
+BEGIN
+	DECLARE @PrzejazdRok int
+	DECLARE @PrzejazdNumer int
+	DECLARE @SrodekTransportu int=0
+
+	IF @LicznikPocz IS NULL OR @LicznikKon IS NULL OR (@LicznikKon-@LicznikPocz&lt;0) BEGIN
+		RAISERROR('Błędne parametry wejściowe przekazane do procedury CDN.XLDodajPrzejazdWH.',16,1)		
+		RETURN -1
+	END
+
+	IF (SELECT IsNull(CWN_Stan,0) FROM CDN.CRMWizytyNag WHERE CWN_ID=@CWENumer) NOT IN (2,5) BEGIN
+		RAISERROR('Rejestracja nowego przejazdu jest możliwa tylko na wizycie potwierdzonej bądź w realizacji.',16,1)		
+		RETURN -3
+	END
+	
+	SET @PrzejazdRok = YEAR(DATEADD(second,IsNull(@DataWyjazdu,DATEDIFF(s,'19900101',GETDATE())),CONVERT(DATETIME,'1990-01-01',120)))
+		
+	select @PrzejazdNumer = (isnull(max(SaP_PrzejazdNumer),0)+1) 
+	from cdn.SamPrzejazdy 
+	where SaP_SamId = @SamId and  YEAR(DATEADD(second,IsNull(SaP_DataWyjazdu,DATEDIFF(s,'19900101',GETDATE())),CONVERT(DATETIME,'1990-01-01',120))) = @PrzejazdRok
+
+	select @SrodekTransportu = SLW_Id from cdn.Slowniki where slw_kategoria='Środki transportu' and SLW_WartoscS='Samochód służbowy'
+			
+	INSERT INTO CDN.SamPrzejazdy
+           (SaP_PrzejazdNumer
+		   ,SaP_PrzejazdRok
+		   ,SaP_DataWyjazdu
+           ,SaP_DataPrzyjazdu
+           ,SaP_Odleglosc
+           ,SaP_SamId
+           ,SaP_KierTyp
+           ,SaP_KierNumer
+           ,SaP_RodzajPrzejazdu
+           ,SaP_OpeNumer
+           ,SaP_DataZapisu
+		   ,SaP_Potwierdzony
+		   ,SaP_OpeNumerZ
+		   ,SaP_DataPotwierdzenia
+           ,SaP_ZrdTyp
+           ,SaP_ZrdNumer
+           ,SaP_ZrdLp
+           ,SaP_WyjazdZ
+           ,SaP_PrzyjazdDo
+           ,SaP_LicznikPocz
+           ,SaP_LicznikKon
+		   ,SaP_PrzyjazdGPSSz
+		   ,SaP_PrzyjazdGPSDl
+		   ,SaP_PrzyjazdGPSDataPobrania
+		   ,SaP_PrzyjazdGPSGodzinaPobrania
+           ,SaP_Opis
+		   ,SaP_SrodekTransportu)
+    SELECT
+			@PrzejazdNumer
+		   ,@PrzejazdRok
+           ,IsNull(@DataWyjazdu,DATEDIFF(s,'19900101',GETDATE()))--SaP_DataWyjazdu
+           ,IsNull(@DataPrzyjazdu,DATEDIFF(s,'19900101',GETDATE()))--SaP_DataPrzyjazdu
+           ,@LicznikKon-@LicznikPocz --SaP_Odleglosc
+           ,@SamId --SaP_SamId
+           ,IsNull(@KierTyp,944) --SaP_KierTyp
+           ,IsNull(@KierNumer,CWN_Obsluga)--SaP_KierNumer
+           ,IsNull(@RodzajPrzejazdu,0)--SaP_RodzajPrzejazdu
+           ,@OpeNumer
+           ,DATEDIFF(s,'19900101',GETDATE())--SaP_DataZapisu
+		   ,@Potwierdzony
+		   ,ISNull(@OpeNumerZ,@OpeNumer)
+		   ,DATEDIFF(s,'19900101',GETDATE())--SaP_DataPotwierdzenia
+           ,4180--SaP_ZrdTyp
+           ,@CWENumer--SaP_ZrdNumer
+           ,@CWELp--SaP_ZrdLp
+           ,IsNull(@WyjazdZ,'')--SaP_WyjazdZ
+           ,IsNull(@PrzyjazdDo,'')--SaP_PrzyjazdDo
+           ,@LicznikPocz--SaP_LicznikPocz
+           ,@LicznikKon--SaP_LicznikKon
+           ,COALESCE(@GPSSz,0) --SaP_PrzyjazdGPSSz
+		   ,COALESCE(@GPSDl,0)--SaP_PrzyjazdGPSDl
+		   ,COALESCE(@GPSDataPobrania,0) --SaP_PrzyjazdGPSDataPobrania
+		   ,COALESCE(@GPSGodzinaPobrania,0) --SaP_PrzyjazdGPSGodzinaPobrania
+           ,IsNull(@Opis,'')--SaP_Opis
+		   ,@SrodekTransportu --SaP_SrodekTransportu
+	FROM CDN.Samochody
+	INNER JOIN CDN.OpeKarty ON Ope_GIDNumer=@OpeNumer
+	INNER JOIN CDN.CRMWizytyNag ON CWN_ID=@CWENumer
+	INNER JOIN CDN.CRMWizytyElem ON CWE_GidTyp=4180 AND CWE_GidNumer=@CWENumer AND CWE_GidLp=@CWELp
+	WHERE SaM_Id=@SamId
+	
+	IF @@ROWCOUNT=0 BEGIN
+		RAISERROR ('Nie powiodło się dodawanie wpisu do tabeli CDN.SamPrzejazdy', 16, 1)
+		RETURN -2
+	END
+	
+	RETURN 0
+	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="XLZakonczWH"></A><PRE>
+          <FONT SIZE="2"><I>/* XLZakonczWH */</I><BR>
+CREATE PROCEDURE CDN.XLZakonczWH
+(
+/* ==========================================================================================
+	SQL API: Procedura serwerowa do zakańczania/wykonywania wizyty handlowej
+	
+	Parametry wejściowe:
+   ========================================================================================== */   
+	@CWNId INT,				-- CWN_Id zakańczanej wizyty handlowej
+    @OpeNumer INT,			-- GidNumer operatora, który wykonuje tą operacje
+    @Zakonczono TINYINT,	-- 1 - zakończona/wykonana, 2 - zakończona/niewykonana (CWN_Zakonczono)
+    @DataZakOd INT = NULL,	-- Data/godzina rozpoczęcia realizacji wizyty
+    @DataZak INT = NULL,	-- Data/godzina zakończenia realizacji wizyty
+	@Opis VARCHAR(1025) = NULL	-- Data/godzina zakończenia realizacji wizyty
+/* ==========================================================================================    
+	Return:
+	 0 : Operacja zakończona sukcesem
+	-1 : Błędne parametry wejściowe przekazane do procedury
+	-2 : Błąd podczas aktualizacji rekordu tabeli CDN.CRMWizytyNag
+	-3 : Niezakończono wszystkich wymaganych elementów.
+	-4 : Stan wizyty &lt;&gt; potwierdzona.
+   ========================================================================================== */    
+)
+AS
+BEGIN
+	IF @Zakonczono NOT IN (1,2) OR @CWNId IS NULL OR @OpeNumer IS NULL OR @Zakonczono IS NULL BEGIN
+		RAISERROR('Błędne parametry wejściowe przekazane do procedury CDN.XLZakonczWH.',16,1)		
+		RETURN -1
+	END
+		
+	IF EXISTS(SELECT * FROM CDN.CRMWizytyElem WHERE CWE_GidTyp=4180 AND CWE_GidNumer=@CWNId AND CWE_Wymagany=1 AND CWE_Wykonano=0 AND CWE_PowodNiewykonaniaId=0 AND CWE_PowodNiewykonania='') BEGIN
+		RAISERROR('Zakończenie wizyty nie jest możliwe. Niezakończono wszystkich wymaganych elementów.',16,1)		
+		RETURN -3
+	END
+
+	IF (SELECT CWN_Stan FROM CDN.CRMWizytyNag WHERE CWN_ID=@CWNId) NOT IN (2,5) BEGIN
+		RAISERROR('Operacja anulowana. Zakończyć można jedynie wizyty potwierdzone bądź w realizacji.',16,1)		
+		RETURN -4
+	END
+			
+	UPDATE CDN.CRMWizytyNag
+	   SET CWN_Stan = 4
+		  ,CWN_DataZakonczeniaOd = IsNull(@DataZakOd,DATEDIFF(s,'19900101',GETDATE()))
+		  ,CWN_DataZakonczenia = IsNull(@DataZak,DATEDIFF(s,'19900101',GETDATE()))
+		  ,CWN_Zakonczono = @Zakonczono
+		  ,CWN_OpeNumerM = @OpeNumer
+		  ,CWN_OpeNumerK = @OpeNumer
+	      ,CWN_CzasModyfikacji = DATEDIFF(s,'19900101',GETDATE())
+		  ,CWN_Opis = IsNull(@Opis,'')
+	 WHERE CWN_ID=@CWNId
+	 
+	IF @@error &lt;&gt; 0 BEGIN
+		RAISERROR ('Wystąpił błąd podczas aktualizacji rekordu tabeli CDN.CRMWizytyNag.', 16, 1)
+		RETURN -2
+	END
+	
+	RETURN 0
+	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="XLWykonajElemWH"></A><PRE>
+          <FONT SIZE="2"><I>/* XLWykonajElemWH */</I><BR>
+CREATE PROCEDURE CDN.XLWykonajElemWH
+(
+/* ==========================================================================================
+	SQL API: Procedura serwerowa do wykonywania(*) elementów wizyty handlowej
+	* - jeśli podano powód niewykonania bądź 
+	
+	Parametry wejściowe: 
+   ========================================================================================== */
+	@GidTyp SMALLINT,					-- GidTyp   \
+	@GidNumer INT,						-- GidNumer  ) obiektu, który wykonujemy
+	@GidLp SMALLINT,					-- GidLp 	/
+    @OpeNumer INT,						-- Numer operatora modyfikującego
+    @Wykonano TINYINT,					-- Czy wykonano: 0 - nie, 1 - tak
+	@OpisWykonania TEXT=NULL,			-- Opis wykonania elementu wizyty 
+	/* jeśli przekazano parametr @Wykonano=0 to wymaganym jest aby podać parametr z powodem
+	   nie wykonania - id ze słownika bądź opisy powód niewykonania
+	*/   
+    @PowodNiewykonaniaId INT=NULL,		-- Identyfikator powodu niewykonania wizyty	
+    @PowodNiewykonania VARCHAR(49)=NULL -- Powód niewykonania elementu wizyty
+/* ==========================================================================================
+	Return:
+	 0 : Operacja zakończona sukcesem
+	-1 : Błędne parametry wejściowe przekazane do procedury
+	-2 : Błąd podczas aktualizacji rekordu tabeli CDN.CRMWizytyElem
+	-3 : Stan wizyty &gt; potwierdzona, tj. zakończona lub anulowana
+   ========================================================================================== */	
+)
+AS
+BEGIN
+	IF @GidTyp IS NULL OR @GidNumer IS NULL OR @GidLp IS NULL OR @OpeNumer IS NULL OR @Wykonano NOT IN (0,1) 
+		OR (@Wykonano=0 AND @PowodNiewykonaniaId IS NULL AND @PowodNiewykonania IS NULL) BEGIN
+		RAISERROR('Błędne parametry wejściowe przekazane do procedury CDN.XLWykonajElemWH.',16,1)		
+		RETURN -1
+	END
+
+	IF @GidTyp=4180 AND (SELECT IsNull(CWN_Stan,0) FROM CDN.CRMWizytyNag WHERE CWN_ID=@GidNumer) NOT IN (2,5) BEGIN
+		RAISERROR('Operacja anulowana. Stan wizyty uniemożliwia edycję jej elementów.',16,1)		
+		RETURN -3
+	END
+			
+	UPDATE CDN.CRMWizytyElem
+	   SET CWE_Wykonano = @Wykonano
+		  ,CWE_PowodNiewykonaniaId = IsNull(@PowodNiewykonaniaId,0)
+		  ,CWE_PowodNiewykonania = IsNull(@PowodNiewykonania,'')
+		  ,CWE_OpisWykonania = IsNull(@OpisWykonania,'')
+		  ,CWE_OpeNumerM = @OpeNumer
+	 WHERE CWE_GidTyp=@GidTyp AND CWE_GidNumer=@GidNumer AND CWE_GidLp=@GidLp
+	 
+	IF @@error &lt;&gt; 0 BEGIN
+		RAISERROR ('Wystąpił błąd podczas aktualizacji rekordu tabeli CDN.CRMWizytyElem.', 16, 1)
+		RETURN -2
+	END
+	
+	RETURN 0
+	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="(OdpId int, Tresc VARCHAR(1025));"></A><PRE>
+          <FONT SIZE="2"><I>/* (OdpId int, Tresc VARCHAR(1025)); */</I><BR>
+CREATE TYPE CDN.tTablicaOdpowiedzi AS TABLE (OdpId int, Tresc VARCHAR(1025));
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="XLUdzielOdpWH"></A><PRE>
+          <FONT SIZE="2"><I>/* XLUdzielOdpWH */</I><BR>
+CREATE PROCEDURE CDN.XLUdzielOdpWH
+(
+/* ==========================================================================================
+	SQL API: Procedura serwerowa do udzielania odpowiedzi na pytania ankiety wygenerowanej
+			 dla wizyty handlowej
+	
+	Parametry wejściowe:
+	Uwaga: Wymaganymi parametrami są:
+	@PytId i @ZadId
+	lub 
+	@PytId i @CWETyp i @CWENumer i @CWELp i @AntId i @TwrTyp i @TwrNumer
+   ========================================================================================== */   
+    @PytId INT,
+    @ZadId INT=NULL,    
+	@CWETyp SMALLINT=NULL,					-- GidTyp   \
+	@CWENumer INT=NULL,						-- GidNumer  ) elementu WH
+	@CWELp SMALLINT=NULL,					-- GidLp 	/
+    @AntId INT=NULL,
+	@TwrTyp SMALLINT=NULL,					-- GidTyp   \
+	@TwrNumer INT=NULL,						-- GidNumer / towaru
+    @Opis VARCHAR(255)=NULL,
+	@ListaOdp CDN.tTablicaOdpowiedzi readonly,
+    @RodpId INT=NULL,
+	@PytWaga DECIMAL(5,2)=NULL,
+    @GrupWaga DECIMAL(5,2)=NULL,
+    @Punkty DECIMAL(5,2)=NULL,
+    @PunktyWazone DECIMAL(5,2)=NULL,
+    @Zatwierdzona SMALLINT=NULL
+/* ==========================================================================================    
+	Return:
+	 0 : Operacja zakończona sukcesem
+	-1 : Błędne parametry wejściowe przekazane do procedury
+	-2 : Nie powiodło się dodawanie wpisu do tabeli CDN.OdpowiedziZadania
+	-3 : Wystąpił błąd podczas aktualizacji rekordu tabeli CDN.OdpowiedziZadania. 
+	-4 : Nie udało się pobrać identyfikatora zadania związanego z ankietą.
+	-5 : Stan wizyty uniemożliwia edycję jej elementów.
+	-6 : Zadanie związane z ankietą zostało już oznaczone jako wykonane.
+	-7 : Nie przekazano udzielonych odpowiedzi.
+	-8 : Wystąpił błąd podczas aktualizacji rekordu tabeli CDN.OdpowiedziZadaniaWielokrotne.
+   ========================================================================================== */    
+)
+AS
+BEGIN
+
+	IF @PytId IS NULL OR (@ZadId IS NULL AND (@CWETyp IS NULL OR @CWENumer IS NULL OR @CWELp IS NULL
+	                                          OR @AntId IS NULL OR @TwrTyp IS NULL OR @TwrNumer IS NULL))BEGIN
+		RAISERROR('Błędne parametry wejściowe przekazane do procedury CDN.XLUdzielOdpWH.',16,1)		
+		RETURN -1
+	END
+
+	IF @ZadId IS NULL BEGIN
+		SELECT @ZadId=CWA_ZadId FROM CDN.CRMWizytyAnkiety WHERE CWA_CWETyp=@CWETyp AND CWA_CWENumer=@CWENumer
+			AND CWA_CWELp=@CWELp AND CWA_ANTId=@AntId AND CWA_TWRTyp=@TwrTyp AND CWA_TWRNumer=@TwrNumer
+		IF @ZadId IS NULL BEGIN	
+			RAISERROR('Nie udało się pobrać identyfikatora zadania związanego z ankietą.',16,1)		
+			RETURN -4
+		END
+	END
+
+	IF (SELECT IsNull(CWN_Stan,0) FROM CDN.CRMWizytyNag WHERE CWN_ID=@CWENumer) NOT IN (2,5) BEGIN
+		RAISERROR('Operacja anulowana. Stan wizyty uniemożliwia edycję jej elementów.',16,1)		
+		RETURN -5
+	END
+	
+	IF EXISTS(SELECT * FROM CDN.Zadania WHERE Zad_ID=@ZadId AND (Zad_CzasWykonania&gt;0 OR Zad_OpeWNumer&gt;0)) BEGIN
+		RAISERROR('Operacja anulowana. Zadanie związane z ankietą zostało już oznaczone jako wykonane.',16,1)		
+		RETURN -6	
+	END
+	 
+	DECLARE @IloscOdp INT
+	SELECT @IloscOdp=COUNT(*) FROM @ListaOdp
+		
+	IF @IloscOdp = 0 BEGIN
+		RAISERROR('Operacja anulowana. Nie przekazano udzielonych odpowiedzi.',16,1)		
+		RETURN -7	
+	END
+
+	DECLARE @SumaWag DECIMAL(10,2)
+		
+	SELECT @SumaWag = SUM(PYZ_PytWaga)
+	FROM CDN.PytaniaZadania
+	JOIN CDN.Pytania ON PYZ_PytId = PYT_Id
+	WHERE PYZ_ZadId=@ZadId AND PYT_GrupaId = (SELECT PYT_GrupaId FROM CDN.Pytania WHERE PYT_Id=@PytId)
+	GROUP BY PYT_GrupaId
+	
+	IF ISNULL(@SumaWag,0.0)=0.0 SET @SumaWag = 1.0
+			 
+	DELETE FROM CDN.OdpowiedziZadaniaWielokrotne WHERE OZW_ZadId=@ZadId AND OZW_PytId=@PytId
+
+	DECLARE @lOdpId INT
+	DECLARE @sTresc VARCHAR(1025)=''
+
+	IF @IloscOdp &gt; 1 
+	BEGIN
+		SELECT @sTresc=@sTresc+CASE WHEN len(Tresc)&gt;0 THEN Tresc+',' ELSE case when len(IsNull(SLW_WartoscS,''))&gt;0 then SLW_WartoscS+',' else '' end END FROM @ListaOdp
+		LEFT JOIN CDN.Slowniki ON SLW_ID=OdpId
+
+		SET @sTresc = SUBSTRING(@sTresc,1,LEN(@sTresc)-1)
+
+		SELECT @Punkty=SUM(SLW_WartoscN1) FROM @ListaOdp
+		JOIN CDN.Slowniki ON SLW_ID=OdpId
+
+		SET @lOdpId = null
+
+	END	ELSE
+	BEGIN
+		SELECT @sTresc=case when Tresc is null or Tresc='' then IsNull(SLW_WartoscS,'') else Tresc end,@lOdpId=OdpId FROM @ListaOdp
+		LEFT JOIN CDN.Slowniki ON SLW_ID=OdpId
+	END
+
+	IF EXISTS(SELECT * FROM CDN.OdpowiedziZadania WHERE ODZ_ZadId=@ZadId AND ODZ_PytId=@PytId) BEGIN
+		
+		-- jest odpowiedź i należy ją zaktualizować:
+		UPDATE CDN.OdpowiedziZadania
+		SET ODZ_Opis = IsNull(@Opis,PZ.PYZ_Opis)
+			,ODZ_Tresc = IsNull(@sTresc,'')
+			,ODZ_RodpId = IsNull(@RodpId,P.PYT_RodpId)
+			,ODZ_OdpId = IsNull(@lOdpId,0)
+			,ODZ_PytWaga = IsNull(@PytWaga,PZ.PYZ_PytWaga)
+			,ODZ_GrupWaga = IsNull(@GrupWaga,PZ.PYZ_GrupWaga)
+			,ODZ_Punkty = IsNull(@Punkty,ISNULL(S.SLW_WartoscN1,0.0))
+			,ODZ_PunktyWazone = IsNull(@PunktyWazone,IsNull(@Punkty,ISNULL(S.SLW_WartoscN1,0.0))/@SumaWag)
+			,ODZ_Zatwierdzona = IsNull(@Zatwierdzona,0)
+		FROM CDN.PytaniaZadania PZ, CDN.Pytania P, CDN.Slowniki S	
+		WHERE ODZ_ZadId=@ZadId AND ODZ_PytId=@PytId AND PZ.PYZ_PytId=@PytId AND PZ.PYZ_ZadId = @ZadId AND P.PYT_Id=@PytId 
+			  AND (@lOdpId IS NULL OR S.SLW_ID=@lOdpId)
+		
+		IF @@error &lt;&gt; 0 BEGIN
+			RAISERROR ('Wystąpił błąd podczas aktualizacji rekordu tabeli CDN.OdpowiedziZadania.', 16, 1)
+			RETURN -3
+		END
+		
+	END	ELSE BEGIN
+	
+		-- nie było jeszcze odpowiedzi:
+		INSERT INTO CDN.OdpowiedziZadania
+           ([ODZ_ZadId]
+           ,[ODZ_PytId]
+           ,[ODZ_AntId]
+           ,[ODZ_Opis]
+           ,[ODZ_Tresc]
+           ,[ODZ_RodpId]
+           ,[ODZ_OdpId]
+           ,[ODZ_PytWaga]
+           ,[ODZ_GrupWaga]
+           ,[ODZ_Punkty]
+           ,[ODZ_PunktyWazone]
+           ,[ODZ_Zatwierdzona])
+		SELECT
+           @ZadId
+           ,@PytId
+           ,IsNull(@AntId,PYZ_AntId)
+           ,IsNull(@Opis,PYZ_Opis)
+           ,IsNull(@sTresc,'')
+           ,IsNull(@RodpId,PYT_RodpId)
+           ,IsNull(@lOdpId,0)
+           ,IsNull(@PytWaga,PYZ_PytWaga)
+           ,IsNull(@GrupWaga,PYZ_GrupWaga)
+           ,IsNull(@Punkty,ISNULL(SLW_WartoscN1,0.0))
+           ,IsNull(@PunktyWazone,IsNull(@Punkty,ISNULL(SLW_WartoscN1,0.0))/@SumaWag)
+           ,IsNull(@Zatwierdzona,0)
+        FROM CDN.PytaniaZadania
+        JOIN CDN.Pytania ON PYT_Id=@PytId 
+        LEFT JOIN CDN.Slowniki ON SLW_ID=@lOdpId
+		WHERE PYZ_ZadId=@ZadId AND PYZ_PytId=@PytId
+			  	
+		IF @@ROWCOUNT=0 BEGIN
+			RAISERROR ('Nie powiodło się dodawanie wpisu do tabeli CDN.OdpowiedziZadania.', 16, 1)
+			RETURN -2
+		END
+		
+	END
+
+	IF @IloscOdp &gt; 1 
+	BEGIN
+		INSERT INTO CDN.OdpowiedziZadaniaWielokrotne(OZW_ZadId,OZW_PytId,OZW_Tresc,OZW_OdpId)
+		SELECT @ZadId,@PytId,Tresc,OdpId FROM @ListaOdp
+		IF @@ROWCOUNT=0 BEGIN
+			RAISERROR ('Wystąpił błąd podczas aktualizacji rekordu tabeli CDN.OdpowiedziZadaniaWielokrotne.', 16, 1)
+			RETURN -8
+		END
+	END
+
+	RETURN 0
+
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

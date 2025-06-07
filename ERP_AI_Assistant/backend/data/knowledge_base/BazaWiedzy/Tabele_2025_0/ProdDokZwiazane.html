@@ -1,0 +1,267 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Usuwanie funkcji CDN.ProdDokZwiazane"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Usuwanie funkcji CDN.ProdDokZwiazane */</I><BR>
+if exists(SELECT name from sysobjects where name='ProdDokZwiazane' and type='TF')
+	drop function CDN.ProdDokZwiazane
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie funkcji CDN.ProdDokZwiazane"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie funkcji CDN.ProdDokZwiazane */</I><BR>
+
+CREATE FUNCTION CDN.ProdDokZwiazane (@ZlcTyp smallint, @ZlcNumer int, @Typ int) 
+RETURNS @Dokumenty TABLE (
+  Data int,
+  GidTyp smallint,
+  GidNumer int ,
+  GidLp smallint ,
+  SubGidLp smallint,
+  Pozycja smallint,
+  Ilosc Decimal(11,4),
+  Dokument varchar(200),
+  c2 varchar(100),
+  Stan smallint,
+  TwrKod varchar(40),
+  c3 int,
+  Poziom int,
+  Identyfikator varchar(1000)
+)
+AS
+BEGIN
+
+INSERT INTO @Dokumenty
+        SELECT DISTINCT TRN_Data2, TRN_GIDTyp, Trs_GIDNumer, Trs_GIDLp, Trs_SubGIDLp,Tre_Pozycja,TRS_Ilosc,
+			CDN.NumerDokumentu(TRN_GIDTyp,0,TrN_TrNTyp,Trn_TrnNumer,Trn_TrnRok,Trn_TrnSeria,Trn_TrnMiesiac),
+			'',Case When TrN_Stan&lt;3 then 0 else (case when Trn_Zaksiegowano =1 then 2 else 1 end) end as Trn_Stan ,
+            isnull (Twr_Kod, '') ,0, 1 Poziom , 
+			'1' + right(space(10)+convert(varchar,Trs_gidNumer),10)
+				+ right(space(5)+convert(varchar,Trs_gidLP),5) 
+				+ right(space(5)+convert(varchar,Trs_SubGIDLp),5)
+
+        FROM Cdn.TrasElem
+			inner join Cdn.TraElem on TrS_GIDNumer = Tre_GIDNumer and Trs_GIDLp = TrE_GIDLP
+            inner join CDN.TraNag on TRE_GIDNUmer = TRN_GIDNumer
+			left outer join Cdn.ProdCzynnosci on Trs_ZlcNumer = Pcz_Id and trs_ZlcTyp = 14345 and Pcz_Realizuje = 0 
+			left outer join Cdn.ProdTechnologiaCzynnosci on Ptc_Id = Pcz_TechnologiaCzynnosc
+			left outer join Cdn.ProdTechnologiaZasoby on    PTZ_TechnologiaCzynnosc = Ptc_Id  and PTZ_KopNumer &lt;&gt; 0     
+			left outer join Cdn.ProdZasoby on PZa_Id = Trs_ZlcNumer and Trs_ZlcTyp = @ZlcTyp 
+			left outer  join Cdn.TwrKarty on  Twr_GIDTyp = 16  and  
+					Twr_GIDNumer = TrE_TwrNumer and Twr_GidNumer in(PTZ_KopNumer,PZA_KopNumer)
+        WHERE Trs_ZlcTyp = @ZlcTyp and Trs_ZlcNumer = @ZlcNumer and Trs_GidTyp not in (1625,1624)
+
+        UNION  ALL
+
+        SELECT DISTINCT MaN_Data3, Man_GidTyp, MaS_GidNumer, Mas_GidLp, Mas_SubGidLp, Mae_Pozycja, Mas_Ilosc, 
+			CDN.NumerDokumentuZ(Man_GIDTyp,0,MaN_TrNTyp,MaN_TrNNumer,Man_TrnRok,Man_TrnSeria,Man_TrnMiesiac,0,0,MaN_WMS),
+			'',	Case When Man_Stan&lt;3 then 0 else 1 end  Man_Stan, '' ,0 ,1 Poziom  , 
+			'2' + right(space(10)+convert(varchar,MaS_GidNumer),10)
+                + right(space(5)+convert(varchar,MaS_GidLP),5) 
+				+ right(space(5)+convert(varchar,MaS_SubGidLp),5)
+        FROM Cdn.MagSElem
+			inner join Cdn.MagNag on  MaN_GIDNumer=MaS_GIDNumer
+            inner join Cdn.MagElem on MaN_GIDNumer=MaE_GIDNumer and MaS_GIDNumer = MaE_GIDNumer  and Mas_GidLp = MaE_GIDLp
+            inner join Cdn.TwrKarty on Twr_GIDNumer=MaS_TwrNumer
+        WHERE Mas_ZlcTyp = @ZlcTyp and Mas_ZlcNumer  = @ZlcNumer and (Mas_ZrdTyp not in (1616, 1617))
+
+INSERT INTO @Dokumenty
+        SELECT MaN_Data3, Man_GidTyp, MaS_GidNumer, Mas_GidLp, Mas_SubGidLp, Mae_Pozycja,
+			Mas_Ilosc, CDN.NumerDokumentuZ(Man_GIDTyp,0,MaN_TrNTyp,Man_TrnNumer,Man_TrnRok,Man_TrnSeria,Man_TrnMiesiac,0,0,MaN_WMS),'',
+            Case When Man_Stan&lt;3 then 0 else 1 end  Man_Stan, '' ,0 , Poziom + 1, 
+			Identyfikator + '2'+right(space(10)+convert(varchar,MaS_GidNumer),10)
+        FROM @Dokumenty
+            inner join  Cdn.MagSElem on   MaS_ZrdNumer = GidNumer and Mas_ZrdTyp = GidTyp and Mas_ZrdLp = GidLp and MaS_SubZrdLp =  subGidLp
+            inner join Cdn.MagNag on  MaN_GIDNumer=MaS_GIDNumer
+            inner join Cdn.MagElem on MaN_GIDNumer=MaE_GIDNumer and MaE_GIDLp = mas_Gidlp
+            inner join Cdn.TwrKarty on Twr_GIDNumer=MaS_TwrNumer
+INSERT INTO @Dokumenty
+        SELECT TRN_Data2, TRN_GIDTyp, TrsKK.Trs_GIDNumer, TrsKK.Trs_GIDLp, TrsKK.Trs_SubGIDLp, 
+            Tre_Pozycja, TrsKK.TRS_Ilosc,CDN.NumerDokumentu(TRN_GIDTyp,0,TrN_TrNTyp,Trn_TrnNumer,
+            Trn_TrnRok,Trn_TrnSeria,Trn_TrnMiesiac),'',
+            Case When TrN_Stan&lt;3 then 0 else (case when Trn_Zaksiegowano =1 then 2 else 1 end) end as Trn_Stan,
+            '' ,0, Poziom + 1 ,  
+			Identyfikator +'3'+ right(space(10)+convert(varchar,TrsKK.TrS_GidNumer),10)
+        FROM @Dokumenty
+
+             inner join CDN.TrasElem TrsKK on TrsKK.TRS_ZwrNumer = GidNumer and GidTyp = TrsKK.Trs_ZwrTyp and GidLp = TrsKK.Trs_ZwrLp and SubGidLp = TrsKK.Trs_SubZwrLp
+			 inner join CDN.TraNag on Trn_GidNumer = TrsKK.TRS_GidNumer and TRN_GIdTyp = TrsKK.Trs_GidTyp
+
+             inner join Cdn.TraElem on TrsKK.TrS_GIDNumer = Tre_GIDNumer and TrsKK.Trs_GIDLp = TrE_GIDLP             
+        where  GidTyp = 1616 and TrsKK.TRS_GidTyp = 2003
+INSERT INTO @Dokumenty
+        SELECT 
+    		TRN_Data2, TRN_GIDTyp, Korekta.Trs_GIDNumer, Korekta.Trs_GIDLp, Korekta.Trs_SubGIDLp, 
+            Tre_Pozycja, Korekta.TRS_Ilosc,CDN.NumerDokumentu(TRN_GIDTyp,0,TrN_TrNTyp,Trn_TrnNumer,
+            Trn_TrnRok,Trn_TrnSeria,Trn_TrnMiesiac),'',
+            Case When TrN_Stan&lt;3 then 0 else (case when Trn_Zaksiegowano =1 then 2 else 1 end) end as Trn_Stan,
+            '' ,0,  Poziom + 1 ,  
+			Identyfikator +'1'
+			+ right(space(10)+convert(varchar,Korekta.Trs_gidNumer),10)
+			+ right(space(10)+convert(varchar,Korekta.Trs_gidLP),10) 
+			+ right(space(10)+convert(varchar,Korekta.Trs_SubGIDLp),10)
+        FROM @Dokumenty
+            inner join CDN.TrasElem Korekta on Korekta.TRS_ZwrNumer = GidNumer and GidTyp = Korekta.Trs_ZwrTyp and GidLp = Korekta.Trs_ZwrLp and SubGidLp = Korekta.Trs_SubZwrLp
+    		inner join CDN.TraNag on Trn_GidNumer = Korekta.TRS_GidNumer and TRN_GIdTyp = Korekta.Trs_GidTyp
+            inner join Cdn.TraElem on Korekta.TrS_GIDNumer = Tre_GIDNumer and Korekta.Trs_GIDLp = TrE_GIDLP             
+        WHERE  Korekta.Trs_GidTyp in (1624, 1625)    
+
+IF @ZlcTyp = 14346
+	BEGIN
+		IF @Typ = 0
+			BEGIN
+				INSERT INTO @Dokumenty
+					SELECT PCZ_TerminRozpoczecia, 14346,p2.PZA_ID,0,0, 0, p1.PZA_Ilosc,
+						CDN.NumerDokumentu(CASE WHEN PZL_PrjId = 0 THEN 14343 ELSE 14350 END,0,
+							CASE WHEN PZL_PrjId = 0 THEN 14343 ELSE 14350 END,Zl.PZL_Numer,Zl.PZL_Rok,Zl.PZL_Seria, Zl.PZL_Miesiac) +'  '
+						+(select convert(varchar, count(p.ppc_id))
+							from CDN.ProdProcesy P
+								inner join Cdn.ProdProcesy P1 on p.PPC_id &gt;= p1.PPC_ID
+								inner join CDN.ProdTechnologia on PTE_Id=P.PPC_Technologia and P1.PPC_Technologia = PTE_Id
+							where P.PPC_Zlecenie=Zl.Pzl_Id and P1.PPC_Zlecenie=Zl.Pzl_Id and p.ppc_id = CZ.PCZ_Proces--z.ppc_id
+							group by PTE_Kod, PTE_Nazwa, p.PPC_ID)+ ':' 
+						+ PTE_Kod+'  '
+						+CASE WHEN CZ.PCZ_Realizuje = -1 AND CZ.PCZ_TechnologiaCzynnosc = 0 THEN '' ELSE (select convert(varchar, count(c1.pcz_id))
+							from Cdn.Prodczynnosci C
+								inner join Cdn.ProdCzynnosci C1 on C.Pcz_Id &gt;= C1.Pcz_Id and c.Pcz_TechnologiaCzynnosc = c1.Pcz_TechnologiaCzynnosc and c.Pcz_realizuje = c1.Pcz_realizuje
+									AND C.PCZ_Proces = C1.PCZ_Proces AND Zl.PZL_Id = C1.PCZ_PZLId
+							where c.PCZ_Proces = c1.PCZ_Proces and c.Pcz_Id = cz.Pcz_Id
+							group by c.Pcz_Id) END + ':'
+						+ COALESCE(PTC_Kod,PCZ_Kod) + ' ' , COALESCE(Twr_Kod,t2.PTZ_Kod, P2.PZA_Kod) PTZ_Kod,
+						Case when Zl.PZL_DataZamkniecia = 0 then 0 else (case when Zl.PZL_Zaksiegowano=1 then 2 else 1 end ) end as Trn_Stan, '' ,0 
+						, 1 Poziom , '0'
+					FROM cdn.ProdZasoby p1
+						Join CDN.prodZasoby p2 on p1.pza_Zasob = p2.pza_id
+						join CDN.ProdCzynnosci cz on p2.PZA_Czynnosc = cz.PCZ_ID
+						left join CDN.ProdTechnologiaCzynnosci on cz.PCZ_TechnologiaCZynnosc = PTC_ID
+						left join CDN.ProdTechnologiaZasoby t2 on p2.PZA_TechnologiaZasob = t2.PTZ_ID
+						LEFT JOIN CDN.TwrKarty ON Twr_GIDNumer = P2.PZA_TwrNumer AND P2.PZA_TwrTyp = 16
+						join CDN.ProdProcesy z on z.PPC_ID = cz.PCZ_Proces
+						join CDN.ProdTechnologia on PTE_ID = z.PPC_Technologia
+						join CDN.ProdZlecenia Zl on Zl.PZL_ID = CZ.PCZ_PZLId
+					WHERE p1.PZA_ID = @ZlcNumer
+					
+					INSERT INTO @Dokumenty
+					SELECT PCZ_TerminRozpoczecia, 14346 ,p1.PZA_ID,1,0, 0,PZP_Ilosc,
+						CDN.NumerDokumentu(CASE WHEN PZL_PrjId = 0 THEN 14343 ELSE 14350 END,0,
+							CASE WHEN PZL_PrjId = 0 THEN 14343 ELSE 14350 END,Zl.PZL_Numer,Zl.PZL_Rok,Zl.PZL_Seria,Zl.PZL_Miesiac)+'  '
+						+(select convert(varchar, count(p.ppc_id))
+							from CDN.ProdProcesy P
+								inner join Cdn.ProdProcesy P1 on p.PPC_id &gt;= p1.PPC_ID
+                                inner join CDN.ProdTechnologia on PTE_Id=P.PPC_Technologia and P1.PPC_Technologia = PTE_Id
+                            where P.PPC_Zlecenie= Zl.Pzl_id and P1.PPC_Zlecenie=Zl.Pzl_Id and p.ppc_id = CZ.PCZ_Proces--z.ppc_id
+                            group by PTE_Kod, PTE_Nazwa, p.PPC_ID)+ ':' 
+							+PTE_Kod+'  '
+							+CASE WHEN CZ.PCZ_Realizuje = -1 AND CZ.PCZ_TechnologiaCzynnosc = 0 THEN '' ELSE (select convert(varchar, count(c1.pcz_id))
+								from Cdn.Prodczynnosci C
+									inner join Cdn.ProdCzynnosci C1 on C.Pcz_Id &gt;= C1.Pcz_Id and c.Pcz_TechnologiaCzynnosc = c1.Pcz_TechnologiaCzynnosc and c.Pcz_realizuje = c1.Pcz_realizuje
+                                    inner join Cdn.ProdProcesy on PPC_ID = c.PCz_Proces and c1.Pcz_Proces = PPC_ID and PPC_Zlecenie = Zl.Pzl_ID
+                                where c.PCZ_Proces = c1.PCZ_Proces and c.Pcz_Id = cz.Pcz_Id
+                                group by c.Pcz_Id) END + ':'
+							+ COALESCE(PTC_Kod,PCZ_Kod)+' ', COALESCE(Twr_Kod,t2.PTZ_Kod,P1.PZA_Kod) PTZ_Kod,
+                             Case when PZL_DataZamkniecia = 0 then 0 else (case when Zl.PZL_Zaksiegowano=1 then 2 else 1 end ) end as Trn_Stan,
+                             '', 0, 1 Poziom , '0'
+                    FROM cdn.ProdZwiazanePolprodukty
+						join CDN.ProdZasoby p1 ON PZP_PZAIDWykonany = p1.PZA_Id
+						join CDN.ProdCzynnosci cz on p1.PZA_Czynnosc = cz.PCZ_ID
+                        left join CDN.ProdTechnologiaCzynnosci on cz.PCZ_TechnologiaCZynnosc = PTC_ID
+                        left join CDN.ProdTechnologiaZasoby t2 on p1.PZA_TechnologiaZasob = t2.PTZ_ID
+                        LEFT JOIN CDN.TwrKarty ON Twr_GIDNumer = P1.PZA_TwrNumer AND P1.PZA_TwrTyp = 16
+						join CDN.ProdProcesy z on z.PPC_ID = cz.PCZ_Proces
+                        join CDN.ProdTechnologia on PTE_ID = PPC_Technologia
+                        join CDN.ProdZlecenia Zl on Zl.PZL_ID = CZ.PCZ_PZLId
+                    WHERE PZP_PZAIDPlanowany = @ZlcNumer
+			END
+		ELSE
+			BEGIN
+				INSERT INTO @Dokumenty
+					SELECT PCZ_TerminRozpoczecia, 14346 ,p1.PZA_ID,0,0, 0,p1.PZA_Ilosc,
+						CDN.NumerDokumentu(CASE WHEN PZL_PrjId = 0 THEN 14343 ELSE 14350 END,0,
+							CASE WHEN PZL_PrjId = 0 THEN 14343 ELSE 14350 END,Zl.PZL_Numer,Zl.PZL_Rok,Zl.PZL_Seria,Zl.PZL_Miesiac)+'  '
+						+(select convert(varchar, count(p.ppc_id))
+							from CDN.ProdProcesy P
+								inner join Cdn.ProdProcesy P1 on p.PPC_id &gt;= p1.PPC_ID
+                                inner join CDN.ProdTechnologia on PTE_Id=P.PPC_Technologia and P1.PPC_Technologia = PTE_Id
+                            where P.PPC_Zlecenie= Zl.Pzl_id and P1.PPC_Zlecenie=Zl.Pzl_Id and p.ppc_id = CZ.PCZ_Proces--z.ppc_id
+                            group by PTE_Kod, PTE_Nazwa, p.PPC_ID)+ ':' 
+							+PTE_Kod+'  '
+							+CASE WHEN CZ.PCZ_Realizuje = -1 AND CZ.PCZ_TechnologiaCzynnosc = 0 THEN '' ELSE (select convert(varchar, count(c1.pcz_id))
+								from Cdn.Prodczynnosci C
+									inner join Cdn.ProdCzynnosci C1 on C.Pcz_Id &gt;= C1.Pcz_Id and c.Pcz_TechnologiaCzynnosc = c1.Pcz_TechnologiaCzynnosc and c.Pcz_realizuje = c1.Pcz_realizuje
+                                    inner join Cdn.ProdProcesy on PPC_ID = c.PCz_Proces and c1.Pcz_Proces = PPC_ID and PPC_Zlecenie = Zl.Pzl_ID
+                                where c.PCZ_Proces = c1.PCZ_Proces and c.Pcz_Id = cz.Pcz_Id
+                                group by c.Pcz_Id) END + ':'
+								+ COALESCE(PTC_Kod,PCZ_Kod)+' ', COALESCE(Twr_Kod,t2.PTZ_Kod,PZA_Kod) PTZ_Kod,
+                             Case when PZL_DataZamkniecia = 0 then 0 else (case when Zl.PZL_Zaksiegowano=1 then 2 else 1 end ) end as Trn_Stan,
+                             '', 0, 1 Poziom , '0'
+                    FROM cdn.ProdZasoby p1
+						join CDN.ProdCzynnosci cz on p1.PZA_Czynnosc = cz.PCZ_ID
+                        left join CDN.ProdTechnologiaCzynnosci on cz.PCZ_TechnologiaCZynnosc = PTC_ID
+                        left join CDN.ProdTechnologiaZasoby t2 on p1.PZA_TechnologiaZasob = t2.PTZ_ID
+                        LEFT JOIN CDN.TwrKarty ON Twr_GIDNumer = P1.PZA_TwrNumer AND P1.PZA_TwrTyp = 16
+						join CDN.ProdProcesy z on z.PPC_ID = cz.PCZ_Proces
+                        join CDN.ProdTechnologia on PTE_ID = PPC_Technologia
+                        join CDN.ProdZlecenia Zl on Zl.PZL_ID = CZ.PCZ_PZLId
+                    WHERE p1.PZA_Zasob = @ZlcNumer
+                    
+                    INSERT INTO @Dokumenty
+					SELECT PCZ_TerminRozpoczecia, 14346 ,p1.PZA_ID,1,0, 0,PZP_Ilosc,
+						CDN.NumerDokumentu(CASE WHEN PZL_PrjId = 0 THEN 14343 ELSE 14350 END,0,
+							CASE WHEN PZL_PrjId = 0 THEN 14343 ELSE 14350 END,Zl.PZL_Numer,Zl.PZL_Rok,Zl.PZL_Seria,Zl.PZL_Miesiac)+'  '
+						+(select convert(varchar, count(p.ppc_id))
+							from CDN.ProdProcesy P
+								inner join Cdn.ProdProcesy P1 on p.PPC_id &gt;= p1.PPC_ID
+                                inner join CDN.ProdTechnologia on PTE_Id=P.PPC_Technologia and P1.PPC_Technologia = PTE_Id
+                            where P.PPC_Zlecenie= Zl.Pzl_id and P1.PPC_Zlecenie=Zl.Pzl_Id and p.ppc_id = CZ.PCZ_Proces--z.ppc_id
+                            group by PTE_Kod, PTE_Nazwa, p.PPC_ID)+ ':' 
+							+PTE_Kod+'  '
+							+CASE WHEN CZ.PCZ_Realizuje = -1 AND CZ.PCZ_TechnologiaCzynnosc = 0 THEN '' ELSE (select convert(varchar, count(c1.pcz_id))
+								from Cdn.Prodczynnosci C
+									inner join Cdn.ProdCzynnosci C1 on C.Pcz_Id &gt;= C1.Pcz_Id and c.Pcz_TechnologiaCzynnosc = c1.Pcz_TechnologiaCzynnosc and c.Pcz_realizuje = c1.Pcz_realizuje
+                                    inner join Cdn.ProdProcesy on PPC_ID = c.PCz_Proces and c1.Pcz_Proces = PPC_ID and PPC_Zlecenie = Zl.Pzl_ID
+                                where c.PCZ_Proces =c1.PCZ_Proces and c.Pcz_Id = cz.Pcz_Id
+                                group by c.Pcz_Id) END + ':'
+							+ COALESCE(PTC_Kod,PCZ_Kod)+' ', COALESCE(Twr_Kod,t2.PTZ_Kod,PZA_Kod) PTZ_Kod,
+                             Case when PZL_DataZamkniecia = 0 then 0 else (case when Zl.PZL_Zaksiegowano=1 then 2 else 1 end ) end as Trn_Stan,
+                             '', 0, 1 Poziom , '0'
+                    FROM cdn.ProdZwiazanePolprodukty
+						join CDN.ProdZasoby p1 ON PZP_PZAIDPlanowany = p1.PZA_Id
+						LEFT join CDN.ProdCzynnosci cz on p1.PZA_Czynnosc = cz.PCZ_ID
+                        LEFT join CDN.ProdTechnologiaCzynnosci on cz.PCZ_TechnologiaCZynnosc = PTC_ID
+                        join CDN.ProdTechnologiaZasoby t2 on p1.PZA_TechnologiaZasob = t2.PTZ_ID
+						LEFT JOIN CDN.TwrKarty ON Twr_GIDNumer = P1.PZA_TwrNumer AND P1.PZA_TwrTyp = 16
+                        join CDN.ProdProcesy z on z.PPC_ID = cz.PCZ_Proces
+                        join CDN.ProdTechnologia on PTE_ID = PPC_Technologia
+                        join CDN.ProdZlecenia Zl on Zl.PZL_ID = CZ.PCZ_PZLId
+                    WHERE PZP_PZAIDWykonany = @ZlcNumer
+			END
+END
+RETURN
+END
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do funkcji CDN.ProdDokZwiazane"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do funkcji CDN.ProdDokZwiazane */</I><BR>
+GRANT SELECT ON CDN.ProdDokZwiazane TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

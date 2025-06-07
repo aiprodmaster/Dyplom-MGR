@@ -1,0 +1,400 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[OFFLXLSrv_ImportAtr]"></A><PRE>
+          <FONT SIZE="2"><I>/* [OFFLXLSrv_ImportAtr] */</I><BR>
+CREATE PROCEDURE [CDN].[OFFLXLSrv_ImportAtr]
+   @Atr_ObiTyp SMALLINT = NULL
+  ,@Atr_ObiNumer INT = NULL
+  ,@xml TEXT
+  ,@LogID INT = -1
+  ,@PicoTyp SMALLINT = NULL
+  ,@Atr_ObiLp SMALLINT = NULL
+  ,@Atr_ObiSubLp	SMALLINT = NULL
+AS
+	RAISERROR('Procedura OFFLXLSrv_ImportAtr nie jest obługiwana na MSSQL 2000',16,1)
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="OFFLXLSrv_ImportAtr"></A><PRE>
+          <FONT SIZE="2"><I>/* OFFLXLSrv_ImportAtr */</I><BR>
+CREATE PROCEDURE CDN.OFFLXLSrv_ImportAtr
+   @Atr_ObiTyp SMALLINT = NULL
+  ,@Atr_ObiNumer INT = NULL
+  ,@xml XML
+  ,@LogID INT = -1
+  ,@PicoTyp SMALLINT = NULL
+  ,@Atr_ObiLp	SMALLINT = NULL
+  ,@Atr_ObiSubLp	SMALLINT = NULL
+AS
+SET NOCOUNT ON
+SET ARITHABORT ON
+
+DECLARE @Atr_Id					BIGINT,
+		@Atr_IdC				BIGINT,
+		@Atr_ObiFirma			INT,
+		@Atr_ObiLp2				SMALLINT,
+		@Atr_ObiSubLp2			SMALLINT,
+		@Atr_AtkId				INT,
+		@Atr_Wartosc			VARCHAR(512),
+		@Atr_AtrTyp				SMALLINT,
+		@Atr_AtrFirma			INT,
+		@Atr_AtrNumer			INT,
+		@Atr_AtrLp				SMALLINT,
+		@Atr_AtrSubLp			SMALLINT,
+		@Atr_OptimaId			INT,
+		@Atr_CzasModyfikacji	INT,
+        @Atr_ObiTyp2			SMALLINT, 		
+		@Atr_ObiNumer2			INT
+		
+DECLARE	@AtK_Wielowart			TINYINT,
+		@AtH_TimeStamp			INT,
+		@AtH_TimeStampDo		INT,
+		@Ope_Typ				SMALLINT,
+		@Ope_Numer				INT,
+		@TS						INT,
+		@Modyfikuj				SMALLINT,
+		@AtK_Hist			TINYINT,
+		@AtK_Okres			TINYINT,
+		@AtH_GUID			UNIQUEIDENTIFIER
+
+DECLARE @index			INT,
+		@max_index		INT,
+		@buffer_size	INT,
+		@xml_buffer		XML,
+		@xml_tmp		XML
+
+DECLARE	@Opis			VARCHAR(512)
+DECLARE @OpeIdent		VARCHAR(512)
+
+SET @xml = @xml.query('/ATRI/ATR')
+SELECT  @index = 0, 
+		@max_index = CAST(CAST(@xml.query ('count(ATR)') AS VARCHAR(20)) AS INT), 
+		@buffer_size = 200
+
+
+WHILE @index &lt; @max_index
+BEGIN
+	SET XACT_ABORT ON;
+
+	BEGIN TRY
+		BEGIN TRANSACTION;
+
+		IF @index % @buffer_size = 0 	
+			SET @xml_buffer = ( SELECT @xml.query('ATR[position()&gt; sql:variable("@index") and position() &lt;= sql:variable("@index") + sql:variable("@buffer_size") ] ')  )
+		SET @xml_tmp = ( SELECT @xml_buffer.query('ATR[position()= (sql:variable("@index") mod sql:variable("@buffer_size")) + 1 ] ')  )
+
+		-- Dla synchronizacji XL-Retail zmiana zachowania
+		IF ISNULL(@PicoTyp,0) = 5
+		BEGIN
+			SET @Atr_ObiNumer2 = @Atr_ObiNumer
+            SET @Atr_ObiTyp2 = @Atr_ObiTyp
+            SET @Atr_ObiLp2 = @Atr_ObiLp
+            SET @Atr_ObiSubLp2= @Atr_ObiSubLp
+		END
+		ELSE
+		BEGIN
+			IF (@Atr_ObiNumer IS NULL OR @Atr_ObiTyp IS NULL)
+			BEGIN
+				SET @Atr_ObiNumer2 = NULL 
+			 	SET   @Atr_ObiTyp2 = NULL
+			 	SET @Atr_ObiLp2 = NULL
+			 	SET @Atr_ObiSubLp2= NULL
+			END               
+			ELSE
+			BEGIN
+				SET @Atr_ObiNumer2 = @Atr_ObiNumer
+				SET   @Atr_ObiTyp2 = @Atr_ObiTyp
+				SET @Atr_ObiLp2	= @Atr_ObiLp
+				SET @Atr_ObiSubLp2= NULL
+			END
+		END
+			
+		SELECT
+			@Atr_IdC				= ATR.Attribute.value('@Id','BIGINT')
+			,@Atr_ObiTyp2			= ISNULL(@Atr_ObiTyp2,ATR.Attribute.value('@ObiTyp','SMALLINT'))
+			,@Atr_ObiFirma			= CDN.GIDFirma()
+			,@Atr_ObiNumer2			= ISNULL(@Atr_ObiNumer2,ATR.Attribute.value('@ObiNumer','INT'))
+			,@Atr_ObiLp2			= ISNULL(@Atr_ObiLp2,ATR.Attribute.value('@ObiLp','SMALLINT'))
+			,@Atr_ObiSubLp2			= COALESCE(@Atr_ObiSubLp,ATR.Attribute.value('@ObiSubLp','SMALLINT'),0)
+			,@Atr_AtkId				= ATR.Attribute.value('@AtkId','INT')
+			,@Atr_Wartosc			= ATR.Attribute.value('@Wartosc','VARCHAR(512)')
+			,@Atr_AtrTyp			= ISNULL(ATR.Attribute.value('@AtrTyp','SMALLINT'),0)
+			,@Atr_AtrFirma			= CDN.GIDFirma()
+			,@Atr_AtrNumer			= ISNULL(ATR.Attribute.value('@AtrNumer','INT'),0)
+			,@Atr_AtrLp				= ISNULL(ATR.Attribute.value('@AtrLp','SMALLINT'),0)
+			,@Atr_AtrSubLp			= ISNULL(ATR.Attribute.value('@AtrSubLp','SMALLINT'),0)
+			,@Atr_OptimaId			= ISNULL(ATR.Attribute.value('@OptimaId','INT'),0)
+			,@Atr_CzasModyfikacji	= ATR.Attribute.value('@CzasModyfikacji','INT')
+			,@Modyfikuj				= ATR.Attribute.value('@Modyfikuj','SMALLINT')
+			,@AtH_TimeStamp         = ATR.Attribute.value('@Od','INT')
+			,@AtH_TimeStampDo       = ATR.Attribute.value('@Do','INT')
+			,@AtH_GUID       = ATR.Attribute.value('@AtHGUID','UNIQUEIDENTIFIER')
+		FROM @xml_tmp.nodes('ATR') AS ATR(Attribute)
+
+		/**** Sprawdzamy istnienie atrybuty wg unikalnego klucza AtrObiGID ****/
+		SET @Atr_Id = NULL -- usuwanie ID znalezionego w poprzednim kroku pętli. 
+        SELECT @Atr_Id = Atr_Id
+        FROM CDN.Atrybuty 
+        WHERE Atr_ObiTyp = @Atr_ObiTyp2 AND Atr_ObiNumer = @Atr_ObiNumer2 AND 
+			Atr_ObiLp = @Atr_ObiLp2 AND Atr_ObiSubLp = @Atr_ObiSubLp2 AND Atr_AtkId = @Atr_AtkId
+			
+		/**** Pobranie parametrów z klasy atrybutu ****/
+		SELECT @AtK_Wielowart = AtK_Wielowart,@AtK_Hist = AtK_Historia,@AtK_Okres = AtK_Okresowe
+		FROM CDN.AtrybutyKlasy 
+		WHERE AtK_ID = @Atr_AtkId
+		
+		SELECT @TS = DATEDIFF(ss,CONVERT(DATETIME,'1990-01-01',120),CONVERT(DATETIME,GETDATE(),120))
+
+		IF @Atr_Id IS NOT NULL
+		BEGIN
+			IF @Modyfikuj IN (0,1)
+			BEGIN
+				IF @AtK_Okres = 1
+				BEGIN
+					IF EXISTS(SELECT * FROM CDN.AtrybutyHist WHERE AtH_Id = @Atr_Id AND AtH_TimestampDo &gt;= @AtH_TimeStamp AND AtH_TimeStamp &lt;= @AtH_TimeStampDo AND AtH_GUID &lt;&gt; @AtH_GUID)
+					BEGIN
+						SET @Opis = 'Daty obowiązywania atrybutu muszą być rozłączne ('+@Atr_Wartosc+' - '+CAST(@AtH_GUID AS varchar(MAX))+')'
+						RAISERROR(@Opis,16,1)
+					END
+				END
+				IF @AtK_Hist = 1 OR @AtK_Okres = 1
+				BEGIN
+					select @OpeIdent = isnull(CDN.PolaczenieInfo(4),'')
+					if @OpeIdent = ''
+					begin
+						select top 1 @OpeIdent = SES_OpeIdent from cdn.Sesje with(nolock) where (SES_ClarionSPID = @@SPID or SES_ADOSPID = @@SPID) and SES_Aktywna = 0 order by SES_Start desc
+						if @@ROWCOUNT = 0
+						begin 
+							set @OpeIdent = 'SQL:' + left(SYSTEM_USER,16)
+						end
+					end
+
+					SELECT @Ope_Typ = Ope_GIDTyp, @Ope_Numer = Ope_GIDNumer
+					FROM CDN.OpeKarty
+					WHERE Ope_Ident = @OpeIdent
+					IF @AtK_Okres = 1 AND @AtH_GUID IS NOT NULL
+					BEGIN
+						DELETE FROM CDN.AtrybutyHist WHERE AtH_GUID = @AtH_GUID
+					END
+					
+					INSERT INTO CDN.AtrybutyHist
+					(
+						AtH_Id
+						,AtH_ObiTyp
+						,AtH_ObiFirma
+						,AtH_ObiNumer
+						,AtH_ObiLp
+						,AtH_ObiSubLp
+						,AtH_AtkId
+						,AtH_Wartosc
+						,AtH_AtrTyp
+						,AtH_AtrFirma
+						,AtH_AtrNumer
+						,AtH_AtrLp
+						,AtH_AtrSubLp
+						,AtH_TimeStamp
+						,AtH_OpeTyp
+						,AtH_OpeFirma
+						,AtH_OpeNumer
+						,AtH_OpeLp
+						,AtH_TimeStampDo
+						,AtH_GUID
+					)
+					SELECT Atr_Id
+						,Atr_ObiTyp
+						,Atr_ObiFirma
+						,Atr_ObiNumer
+						,Atr_ObiLp
+						,Atr_ObiSubLp
+						,Atr_AtkId
+						,CASE WHEN @AtK_Okres = 1 THEN @Atr_Wartosc ELSE Atr_Wartosc END
+						,Atr_AtrTyp
+						,Atr_AtrFirma
+						,Atr_AtrNumer
+						,Atr_AtrLp
+						,Atr_AtrSubLp
+						,CASE WHEN @AtK_Okres = 1 THEN @AtH_TimeStamp ELSE DATEDIFF(s,CONVERT(DATETIME,'1990-01-01',120),GETDATE()) END
+						,ISNULL(@Ope_Typ,0)		-- AtH_OpeTyp
+						,CDN.GIDFirma()			-- AtH_OpeFirma
+						,ISNULL(@Ope_Numer,0)	-- AtH_OpeNumer
+						,0						-- AtH_OpeLp
+						,CASE WHEN @AtK_Okres = 1 THEN @AtH_TimeStampDo ELSE DATEDIFF(s,CONVERT(DATETIME,'1990-01-01',120),GETDATE()) END
+						,CASE WHEN @AtK_Okres = 1 THEN @AtH_GUID ELSE NEWID() END
+					FROM CDN.Atrybuty WHERE Atr_Id = @Atr_Id
+				END
+				UPDATE CDN.Atrybuty 
+				SET	Atr_Wartosc = CASE WHEN @AtK_Okres = 1 THEN '&lt;OKRESOWY&gt; time:'+CAST(DATEDIFF(s,CONVERT(DATETIME,'1990-01-01',120),GETDATE()) AS varchar(MAX)) ELSE @Atr_Wartosc END,
+					Atr_AtrTyp = @Atr_AtrTyp,
+					Atr_AtrFirma = @Atr_AtrFirma,
+					Atr_AtrNumer = @Atr_AtrNumer,
+					Atr_AtrLp = @Atr_AtrLp,
+					Atr_AtrSubLp = @Atr_AtrSubLp,
+					Atr_OptimaId = @Atr_OptimaId
+				WHERE Atr_Id = @Atr_Id		
+				IF @AtK_Okres = 1 
+					SET @Atr_Id = NULL --Pomiń drugie dodawanie rekordu do AtrybutyHist
+			END			
+			ELSE IF @Modyfikuj = 2
+			BEGIN
+				IF @AtK_Okres = 1 AND @AtH_GUID IS NOT NULL
+				BEGIN
+					DELETE FROM CDN.AtrybutyHist WHERE AtH_GUID = @AtH_GUID
+				END
+				ELSE
+				BEGIN
+					DELETE FROM CDN.Atrybuty WHERE Atr_Id = @Atr_Id
+				END
+			END
+		END
+		ELSE IF @Modyfikuj = 2 AND ISNULL(@Atr_IdC,0) &gt; 0
+			BEGIN
+				DELETE FROM CDN.Atrybuty WHERE Atr_Id = @Atr_IdC
+			END
+		ELSE
+		BEGIN			
+			INSERT INTO CDN.Atrybuty
+			(
+				Atr_ObiTyp
+				,Atr_ObiFirma
+				,Atr_ObiNumer
+				,Atr_ObiLp
+				,Atr_ObiSubLp
+				,Atr_AtkId
+				,Atr_Wartosc
+				,Atr_AtrTyp
+				,Atr_AtrFirma
+				,Atr_AtrNumer
+				,Atr_AtrLp
+				,Atr_AtrSubLp
+				,Atr_OptimaId 
+                ,Atr_Grupujacy
+			)
+			VALUES 
+			( 
+				@Atr_ObiTyp2
+				,@Atr_ObiFirma
+				,@Atr_ObiNumer2
+				,@Atr_ObiLp2
+				,@Atr_ObiSubLp2
+				,@Atr_AtkId
+				,CASE @AtK_Wielowart WHEN 1 THEN '&lt;...&gt; time:'+CAST(@TS AS VARCHAR(11)) ELSE 
+					CASE WHEN @AtK_Okres = 1 THEN '&lt;OKRESOWY&gt; time:'+CAST(DATEDIFF(s,CONVERT(DATETIME,'1990-01-01',120),GETDATE()) AS varchar(MAX)) ELSE @Atr_Wartosc END 
+				END
+				,@Atr_AtrTyp
+				,@Atr_AtrFirma
+				,@Atr_AtrNumer
+				,@Atr_AtrLp
+				,@Atr_AtrSubLp
+				,@Atr_OptimaId
+                ,0 
+			)
+			SELECT @Atr_Id = SCOPE_IDENTITY()
+		END
+		IF @Atr_Id IS NOT NULL AND ISNULL(@Modyfikuj,0) = 0
+		BEGIN
+			IF (@AtK_Okres = 1 OR ISNULL(@AtK_Wielowart,0) = 1) AND @Atr_Id IS NOT NULL AND ISNULL(@PicoTyp,0) = 5
+			BEGIN
+				IF @AtH_TimeStamp IS NULL AND @AtH_TimeStampDo IS NULL
+				BEGIN
+					SET @AtH_TimeStamp = ISNULL((SELECT MAX(AtH_TimeStamp) FROM CDN.AtrybutyHist WHERE AtH_Id = @Atr_Id),0)+1
+					SET @AtH_TimeStampDo = ISNULL((SELECT MAX(AtH_TimeStampDo) FROM CDN.AtrybutyHist WHERE AtH_Id = @Atr_Id),0)+1
+				END
+				select @OpeIdent = isnull(CDN.PolaczenieInfo(4),'')
+				if @OpeIdent = ''
+				begin
+					select top 1 @OpeIdent = SES_OpeIdent from cdn.Sesje with(nolock) where (SES_ClarionSPID = @@SPID or SES_ADOSPID = @@SPID) and SES_Aktywna = 0 order by SES_Start desc
+					if @@ROWCOUNT = 0
+					begin 
+						set @OpeIdent = 'SQL:' + left(SYSTEM_USER,16)
+					end
+				end
+
+				SELECT @Ope_Typ = Ope_GIDTyp, @Ope_Numer = Ope_GIDNumer
+				FROM CDN.OpeKarty
+				WHERE Ope_Ident = @OpeIdent
+
+				
+				INSERT INTO CDN.AtrybutyHist
+				(
+					AtH_Id
+					,AtH_ObiTyp
+					,AtH_ObiFirma
+					,AtH_ObiNumer
+					,AtH_ObiLp
+					,AtH_ObiSubLp
+					,AtH_AtkId
+					,AtH_Wartosc
+					,AtH_AtrTyp
+					,AtH_AtrFirma
+					,AtH_AtrNumer
+					,AtH_AtrLp
+					,AtH_AtrSubLp
+					,AtH_TimeStamp
+					,AtH_OpeTyp
+					,AtH_OpeFirma
+					,AtH_OpeNumer
+					,AtH_OpeLp
+					,AtH_TimeStampDo
+					,AtH_GUID
+				)
+				VALUES
+				(
+					@Atr_Id					-- AtH_Id
+					,@Atr_ObiTyp2			-- AtH_ObiTyp
+					,@Atr_ObiFirma			-- AtH_ObiFirma
+					,@Atr_ObiNumer2			-- AtH_ObiNumer
+					,@Atr_ObiLp2			-- AtH_ObiLp
+					,@Atr_ObiSubLp2			-- AtH_ObiSubLp
+					,@Atr_AtkId				-- AtH_AtkId
+					,@Atr_Wartosc			-- AtH_Wartosc
+					,@Atr_AtrTyp			-- AtH_AtrTyp
+					,@Atr_AtrFirma			-- AtH_AtrFirma
+					,@Atr_AtrNumer			-- AtH_AtrNumer
+					,@Atr_AtrLp				-- AtH_AtrLp
+					,@Atr_AtrSubLp			-- AtH_AtrSubLp
+					,@AtH_TimeStamp			-- AtH_TimeStamp
+					,ISNULL(@Ope_Typ,0)		-- AtH_OpeTyp
+					,CDN.GIDFirma()			-- AtH_OpeFirma
+					,ISNULL(@Ope_Numer,0)	-- AtH_OpeNumer
+					,0						-- AtH_OpeLp
+					,@AtH_TimeStampDo		-- AtH_TimeStampDo
+					,COALESCE(@AtH_GUID,NEWID())
+				)
+			END
+		END
+		-- Uaktualnic karte kontrahenta	
+		IF @Atr_ObiTyp2 = 32	
+		BEGIN
+			UPDATE CDN.KntKarty SET Knt_LastModC = DATEDIFF(SECOND,CONVERT(DATETIME,'1990-01-01',120),GETDATE()) 
+			WHERE Knt_GIDTyp=@Atr_ObiTyp2 AND Knt_GIDNumer=@Atr_ObiNumer2
+		END
+			 
+		COMMIT TRANSACTION;
+	END TRY
+	BEGIN CATCH
+		IF XACT_STATE() &lt;&gt; 0 ROLLBACK TRANSACTION;
+		SELECT @Opis = 'Błąd podczas dodawania atrybutu o ID='+ CAST(@Atr_Id AS VARCHAR(20)) + ': ' + CDN.Log_SzczegolyBledu(ERROR_NUMBER(),ERROR_PROCEDURE(),ERROR_LINE(),ERROR_MESSAGE()) 
+		EXEC CDN.Log_Dopisz @LogID, @Opis, 2
+	END CATCH
+	SET @index = @index + 1
+END
+	
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

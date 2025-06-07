@@ -1,0 +1,237 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="OdbudujWolne"></A><PRE>
+          <FONT SIZE="2"><I>/* OdbudujWolne */</I><BR>
+CREATE PROCEDURE CDN.OdbudujWolne
+	@lRokP 		smallint,	-- okresla z ktorego roku maja byc sprawdzane dokumenty
+	@PoprawWolne 	smallint        -- = 1 poprawia bezposrednio CDN.Wolne, = 0 Nie rusza CDN.Wolne a wyniki wpisuje do CDN.Wolne2
+AS 
+SET NOCOUNT ON 
+DECLARE @typTmp   		smallint
+DECLARE @rokTmp   		smallint
+DECLARE @seriaTmp 		varchar(5)
+DECLARE @magazynTmp		integer
+DECLARE @miesiacTmp		integer
+DECLARE @CzyArchwilane  	smallint
+DECLARE @IleRazy        	smallint
+DECLARE @typ   		smallint
+DECLARE @rok   		smallint
+DECLARE @seria 		varchar(5)
+DECLARE @numer 		integer
+DECLARE @data  		integer
+DECLARE @firma 		integer
+DECLARE @magazyn	integer
+DECLARE @miesiac	integer
+DECLARE @firmaID	integer
+DECLARE @PierwszNr    	integer
+DECLARE @OstatniNr    	integer
+DECLARE @AktualnyNr   	integer
+DECLARE @DataOD       	integer
+DECLARE @DataDo       	integer
+CREATE TABLE #Wolne2
+  (
+      WO2_GIDFirma                    INTEGER        , --- LONG
+      WO2_Typ                         SMALLINT       , --- SHORT
+      WO2_Rok                         SMALLINT       , --- SHORT
+      WO2_MagNumer                    INTEGER        , --- LONG
+      WO2_Miesiac                     SMALLINT       , --- SHORT
+      WO2_Seria                       VARCHAR (   10)   COLLATE Polish_CI_AS, --- CSTRING(11)
+      WO2_DataOd                      INTEGER        , --- LONG
+      WO2_DataDo                      INTEGER        , --- LONG
+      WO2_NumerOd                     INTEGER        , --- LONG
+      WO2_NumerDo                     INTEGER        , --- LONG
+      WO2_Archiwalne		      INTEGER        , --- LONG
+      CONSTRAINT WOL_Primary3 PRIMARY KEY
+        (
+                          WO2_Typ                       ,
+                          WO2_Rok                       ,
+                          WO2_Miesiac                   ,
+                          WO2_MagNumer                  ,
+                          WO2_Seria                     ,
+                          WO2_DataOd                    ,
+                          WO2_NumerOd                   
+        )
+  );
+set @IleRazy = 1
+
+if (@PoprawWolne = 1)
+Begin
+	delete from CDN.Wolne where WOL_Rok=@lRokP AND (WOL_Typ IN (select DISTINCT TrN_TrNTyp from CDN.TraNag (NOLOCK)) 
+												OR WOL_Typ IN (select DISTINCT MaN_TrNTyp from CDN.MagNag (NOLOCK))
+												OR WOL_Typ IN (select DISTINCT ImN_ImNTyp from CDN.ImpNag (NOLOCK))
+												OR WOL_Typ IN (select DISTINCT SaN_SaNTyp from CDN.SaDNag (NOLOCK))
+												OR WOL_Typ IN (select DISTINCT ShN_GidTyp from CDN.SrtHistNag (NOLOCK)) 
+												OR WOL_Typ = 2600		-- UML
+												)
+End
+
+WHILE (@IleRazy&lt;=6)
+BEGIN
+	set @typTmp = 0
+	if  (@IleRazy=1)
+	BEGIN
+		DECLARE Dokumenty_Cursor CURSOR FOR
+		SELECT * FROM 
+			 ( 
+			 SELECT distinct TrN_TrNTyp, TrN_TrNRok, TrN_TrNSeria,0 TrN_TrNNumer, MIN(TrN_Data2) TrN_Data2, TrN_GIDFirma,1 c,TrN_TrNMiesiac
+                from CDN.TraNag (NOLOCK)
+                where TRN_TrnLp=127 AND TrN_TrNRok = @lRokP
+			 GROUP BY  TrN_TrNTyp, TrN_TrNRok, TrN_TrNSeria, TrN_GIDFirma,TrN_TrNMiesiac
+
+			 UNION ALL
+			 select TrN_TrNTyp, TrN_TrNRok, TrN_TrNSeria, TrN_TrNNumer, TrN_Data2, TrN_GIDFirma,1 c,TrN_TrNMiesiac
+                from CDN.TraNag (NOLOCK)
+                where TRN_TrnLp=127 AND TrN_TrNRok = @lRokP) a
+        order by TrN_TrNTyp, TrN_TrNRok, TrN_TrnMiesiac, TrN_TrNSeria, TrN_TrNNumer, TrN_Data2
+	END
+	if  (@IleRazy=2)
+	BEGIN
+		DECLARE Dokumenty_Cursor CURSOR FOR
+		SELECT * FROM 
+			 ( 
+		select MaN_TrNTyp, MaN_TrNRok, MaN_TrNSeria, 0 MaN_TrNNumer, min(MaN_Data3) MaN_Data3, MaN_GIDFirma, MaN_TrMNumer, MaN_TrNMiesiac
+		from CDN.MagNag (NOLOCK)
+		where MaN_TrnLp=127 AND MaN_TrNRok = @lRokP
+		GROUP BY MaN_TrNTyp, MaN_TrNRok, MaN_TrNSeria,  MaN_GIDFirma, MaN_TrMNumer, MaN_TrNMiesiac
+		UNION ALL 
+		select MaN_TrNTyp, MaN_TrNRok, MaN_TrNSeria, MaN_TrNNumer, MaN_Data3, MaN_GIDFirma, MaN_TrMNumer, MaN_TrNMiesiac
+		from CDN.MagNag (NOLOCK)
+		where MaN_TrnLp=127 AND MaN_TrNRok = @lRokP) a
+		order by MaN_TrNTyp, MaN_TrNRok, MaN_TrnMiesiac, MaN_TrNSeria, MaN_TrMNumer, MaN_TrNNumer, MaN_Data3
+	END
+	if  (@IleRazy=3)
+	BEGIN
+		DECLARE Dokumenty_Cursor CURSOR FOR
+		SELECT * FROM 
+			 (select ImN_ImNTyp, ImN_ImNRok, ImN_ImNSeria, 0 ImN_ImNNumer, MIN(ImN_DataWplywu) ImN_DataWplywu, ImN_GIDFirma, 1 c, ImN_ImNMiesiac
+		from CDN.ImPNag (NOLOCK)
+		where ImN_ImnLp=127 AND ImN_ImnRok = @lRokP
+		group by ImN_ImNTyp, ImN_ImNRok, ImN_ImNSeria, ImN_GIDFirma, ImN_ImNMiesiac
+		UNION ALL
+		select ImN_ImNTyp, ImN_ImNRok, ImN_ImNSeria, ImN_ImNNumer, ImN_DataWplywu, ImN_GIDFirma, 1 c, ImN_ImNMiesiac
+		from CDN.ImPNag (NOLOCK)
+		where ImN_ImnLp=127 AND ImN_ImnRok = @lRokP) a
+		order by ImN_ImNTyp, ImN_ImNRok, ImN_ImnMiesiac, ImN_ImNSeria, ImN_ImNNumer, ImN_DataWplywu
+	END
+	if  (@IleRazy=4)
+	BEGIN
+		DECLARE Dokumenty_Cursor CURSOR FOR
+		SELECT * FROM 
+			 (select SaN_SaNTyp, SaN_SaNRok, SaN_SaNSeria, 0 SaN_SaNNumer, MIN(SaN_DataWplywu) SaN_DataWplywu, SaN_GIDFirma, 1 c, SaN_SaNMiesiac
+		from CDN.SadNag (NOLOCK)
+		where SaN_SaNLp=127 AND SaN_SaNRok = @lRokP
+		GROUP BY SaN_SaNTyp, SaN_SaNRok, SaN_SaNSeria, SaN_GIDFirma, SaN_SaNMiesiac
+		UNION ALL
+		select SaN_SaNTyp, SaN_SaNRok, SaN_SaNSeria, SaN_SaNNumer, SaN_DataWplywu, SaN_GIDFirma, 1, SaN_SaNMiesiac
+		from CDN.SadNag (NOLOCK)
+		where SaN_SaNLp=127 AND SaN_SaNRok = @lRokP) a
+		order by SaN_SaNTyp, SaN_SaNRok, SaN_SaNMiesiac, SaN_SaNSeria, SaN_SaNNumer, SaN_DataWplywu
+	END
+	if  (@IleRazy=5)
+	BEGIN
+                                               
+                  DECLARE Dokumenty_Cursor CURSOR FOR
+                  SELECT * FROM 
+			 (select SHN_gidtyp, SHN_RokO, SHN_Seria, 0 SHN_Nr, MIN(SHN_Data) SHN_Data, SHN_GIDFirma, 1 c,0 d
+                  from CDN.SrtHistNag (NOLOCK)
+                  where SHN_RokO = @lRokP
+				  GROUP BY SHN_gidtyp, SHN_RokO, SHN_Seria, SHN_GIDFirma
+				  UNION ALL
+				  select SHN_gidtyp, SHN_RokO, SHN_Seria, SHN_Nr, SHN_Data, SHN_GIDFirma, 1 c,0 d
+                  from CDN.SrtHistNag (NOLOCK)
+                  where SHN_RokO = @lRokP) a
+                  order by SHN_GIDTyp, SHN_RokO, SHN_Seria, SHN_Nr, SHN_Data
+    END
+    if  (@IleRazy=6)  
+	BEGIN
+			select @firmaID = Naz_GIDFirma from CDN.Nazwy
+			
+			DECLARE Dokumenty_Cursor CURSOR FOR
+			 SELECT * FROM 
+			 (select 2600 typ, ULN_UlnRok, ULN_UlnSeria, 0 ULN_UlnNumer, 1 a, @firmaID b, 1 c, 0 d
+			from CDN.UmlNag (NOLOCK)
+			where ULN_UlnRok = @lRokP
+			GROUP BY  ULN_UlnRok, ULN_UlnSeria
+			UNION ALL 
+			select 2600 typ, ULN_UlnRok, ULN_UlnSeria, ULN_UlnNumer, 1 a, @firmaID b, 1 c , 0 d
+			from CDN.UmlNag (NOLOCK)
+			where ULN_UlnRok = @lRokP) a
+			order by ULN_UlnRok, ULN_UlnSeria, ULN_UlnNumer
+	END
+
+	OPEN Dokumenty_Cursor
+	FETCH NEXT FROM Dokumenty_Cursor INTO @typ, @rok, @seria, @numer, @data, @firma, @magazyn, @miesiac
+
+	WHILE @@FETCH_STATUS = 0 
+	BEGIN
+		if ((@typTmp&lt;&gt;@typ) OR (@rokTmp&lt;&gt;@rok) OR (@seriaTmp&lt;&gt;@seria) OR (@magazynTmp &lt;&gt; @magazyn) OR (@miesiacTmp &lt;&gt; @miesiac))
+		BEGIN
+			set @typTmp   = @typ
+			set @rokTmp   = @rok
+			set @seriaTmp = @seria
+			set @AktualnyNr = @numer
+			set @magazynTmp = @magazyn
+			set @miesiacTmp = @miesiac
+		END
+		ELSE
+		BEGIN
+			set @AktualnyNr = @AktualnyNr + 1
+			if (@AktualnyNr&lt;&gt;@numer)
+			BEGIN
+				set @PierwszNr = @AktualnyNr
+				set @OstatniNr = @numer-1
+				
+			IF @typ = 2600
+            BEGIN
+				set @DataOd = DateDiff(d, convert(datetime,'28-12-1800',105), CONVERT(datetime, '01-01-'+convert(varchar(4), @lRokP), 105))                             
+				set @DataDo = DateDiff(d, convert(datetime,'28-12-1800',105), CONVERT(datetime, '31-12-'+convert(varchar(4), @lRokP), 105))
+            END
+                        
+            IF @typ IN (select DISTINCT ShN_GidTyp from CDN.SrtHistNag (NOLOCK))
+            BEGIN
+                set @DataOd = DateDiff(d, convert(datetime,'28-12-1800',105), CONVERT(datetime, '01-01-'+convert(varchar(4), @lRokP), 105))                             
+                set @DataDo = DateDiff(d, convert(datetime,'28-12-1800',105), CONVERT(datetime, '31-12-'+convert(varchar(4), @lRokP), 105))
+            END
+                        
+            ELSE  
+            BEGIN
+                set @DataDo = @data
+            END
+					
+				set @CzyArchwilane = (select case when EXISTS(select * from CDN.TraNag where TrN_TrNTyp = @Typ AND TrN_TrNRok=@rok AND TrN_TrnSeria=@seria
+						AND TrN_TrNLp&lt;&gt;127 AND TrN_TrNNumer BETWEEN @PierwszNr AND @OstatniNr) then 1 else 0 end)
+
+				if (@PoprawWolne = 1)
+					insert into CDN.Wolne (WOL_GIDFirma, WOL_Typ,WOL_Rok,WOL_Miesiac,WOL_Seria,WOL_DataOd,WOL_DataDo,WOL_NumerOd,WOL_NumerDo,WOL_MagNumer) 
+					 select @firma, @Typ, @Rok , @miesiac, @Seria, @DataOd, @DataDo, @PierwszNr, @OstatniNr,@magazyn 
+				--else
+				insert into #Wolne2 select @firma, @Typ, @Rok  ,@magazyn, @miesiac , @Seria, @DataOd, @DataDo, @PierwszNr, @OstatniNr,  @CzyArchwilane
+			
+				set @AktualnyNr = @numer
+			END
+		END
+		set @DataOD = @data
+		FETCH NEXT FROM Dokumenty_Cursor INTO @typ, @rok, @seria, @numer, @data, @firma, @magazyn, @miesiac
+	END
+
+	CLOSE Dokumenty_Cursor 
+	DEALLOCATE Dokumenty_Cursor
+	set @IleRazy = @IleRazy + 1
+END
+select * from #Wolne2
+drop table #Wolne2
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

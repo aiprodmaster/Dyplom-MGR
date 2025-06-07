@@ -1,0 +1,474 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="KsiWycenaKWProponuj"></A><PRE>
+          <FONT SIZE="2"><I>/* KsiWycenaKWProponuj */</I><BR>
+CREATE PROCEDURE cdn.KsiWycenaKWProponuj (
+@Rejestr varchar(5),
+@Kolejnosc smallint,
+@KARUwzglPozniejsze tinyint,
+@KWKwota decimal(15,2) output,
+@CzasZapisu int,
+@WalutaSys varchar(3),
+@GIDNumer int,
+@KrpLp smallint,
+@SesjaID int,
+@Tryb smallint -- 0 - tylko proponowane do wyceny, 1 - proponowane i rzeczywista wycena dla KW, 2- zapisy KW ktore wycenial
+)
+as
+begin
+set nocount on
+
+declare @KAZGIDNumer int
+set @KAZGIDNumer = 0
+declare @KAZCzasZapisu int
+set @KAZCzasZapisu = 0
+declare @KAZKrpLp smallint
+set @KAZKrpLp = 0
+declare @UwzglPozniejsze tinyint
+
+
+	create table #tmpKP (UwzglPozniejsze tinyint, KAZ_CzasZapisu int, KAZ_KrpLp smallint, KAZ_GIDNumer int, KAZ_KwotaWycena decimal(15,2), KAZ_KursL decimal(15,10), KAZ_KursM decimal(5), KAZ_Aktywny int)
+
+
+
+	if @Kolejnosc = 2 and @KARUwzglPozniejsze &lt;&gt; 0 --lifo
+		set @UwzglPozniejsze = 0 --najpierw tylko wczesniejsze
+	else
+		set @UwzglPozniejsze = @KARUwzglPozniejsze
+
+
+		
+	while @KWKwota &lt;&gt; 0
+	begin
+		insert into #tmpKP
+		exec cdn.KsiWycenaKWProponujX @Rejestr, @Kolejnosc, @UwzglPozniejsze, @KWKwota output, @CzasZapisu, @KrpLp, @WalutaSys, @SesjaID, @KAZGIDNumer output, @KAZCzasZapisu output, @KAZKrpLp output
+		
+		if @@ROWCOUNT = 0
+		begin
+			if @Kolejnosc = 2 and @KARUwzglPozniejsze &lt;&gt; 0 and @UwzglPozniejsze = 0
+			begin
+				set @UwzglPozniejsze = 1				
+				set @KAZGIDNumer = 0	
+				set @KAZCzasZapisu = 0
+				set @KAZKrpLp = 0
+			end				
+			else
+				break
+		end
+	end
+
+
+
+
+
+	if @Tryb = 0
+	begin
+		if @Kolejnosc = 1
+			select * from #tmpKP order by KAZ_CzasZapisu, KAZ_KrpLp
+		else
+			select * from #tmpKP order by UwzglPozniejsze asc, KAZ_CzasZapisu desc, KAZ_KrpLp desc
+	end
+	else if @Tryb = 1
+	begin
+		select
+			1 DoWyceny,
+			a.KAZ_CzasZapisu as KAZCzasZapisu,
+			a.KAZ_GIDNumer as KAZGIDNumer,
+			CDN.NumerDokumentu(784,784,b.KAZ_RaportBO,KRP_Numer,b.KAZ_Rok,b.KAZ_Seria,b.KAZ_KrpLp) as KAZNumer,
+			b.KAZ_NumerDokumentu as KAZNumerDokumentu,
+			a.KAZ_KwotaWycena as KAZKwotaWal,
+			0 as KAZKwotaSys,
+			b.KAZ_KursL as KAZKursL,
+			b.KAZ_KursM as KAZKursM,
+			case when b.KAZ_CzasZapisu &gt; @CzasZapisu OR b.KAZ_CzasZapisu = @CzasZapisu and b.KAZ_KRPLp &gt; @KrpLp then 1 else 0 end as KAZPozniejszy,
+
+			NULL as RKKWGIDNumer,
+			NULL as RKKWNumer,
+			NULL as RKKWNumerDokumentu,
+			NULL as RKKWKwotaWal,
+			NULL as RKKWKwotaSys,
+			NULL as RKKWKursL,
+			NULL as RKKWKursM,
+
+			NULL as RKKPGIDNumer,			
+			NULL as RKKPNumer,
+			NULL as RKKPNumerDokumentu,
+			NULL as RKKPKwotaWal,
+			NULL as RKKPKwotaSys,
+			NULL as RKKPKursL,
+			NULL as RKKPKursM,
+			99999999999999999 as R2_ParID
+		from #tmpKP a
+			join cdn.Zapisy b
+				on a.KAZ_GIDNumer = b.KAZ_GIDNumer
+			join cdn.Raporty
+					on KRP_GIDTyp=b.KAZ_KRPTyp AND KRP_GIDNumer=b.KAZ_KRPNumer			
+		union all
+		select 
+			max(DoWyceny) DoWyceny,
+			
+			--zapis KP
+			max(KAZCzasZapisu) as KAZCzasZapisu,
+			max(KAZGIDNumer) as KAZGIDNumer,
+			max(KAZNumer) KAZNumer,
+			max(KAZNumerDokumentu) as KAZNumerDokumentu,
+			max(case when not KAZGIDNumer IS null then KAZKwotaWal else 0 end) as KAZKwotaWal,
+			max(case when not KAZGIDNumer IS null then KAZKwotaSys else 0 end) as KAZKwotaSys,
+			max(KAZKursL) as KAZKursL,
+			max(KAZKursM) as KAZKursM,
+			max(KAZPozniejszy) as KAZPozniejszy,				
+			
+			--RK KW
+			max(RKKWGIDNumer) as RKKWGIDNumer,
+			max(RKKWNumer) as RKKWNumer,
+			max(RKKWNumerDokumentu) as RKKWNumerDokumentu,
+			max(RKKWKwotaWal) as RKKWKwotaWal,
+			max(RKKWKwotaSys) as RKKWKwotaSys,
+			max(RKKWKursL) as RKKWKursL,
+			max(RKKWKursM) as RKKWKursM,
+
+			--RK KP
+			max(RKKPGIDNumer) as RKKPGIDNumer,
+			max(RKKPNumer) as RKKPNumer,
+			max(RKKPNumerDokumentu) as RKKPNumerDokumentu,
+			max(RKKPKwotaWal) as RKKPKwotaWal,
+			max(RKKPKwotaSys) as RKKPKwotaSys,
+			max(RKKPKursL) as RKKPKursL,
+			max(RKKPKursM) as RKKPKursM,
+			R2_ParId as R2_ParID		
+		from (
+			select 
+				a.R2_ParID R2_ParId,
+				
+				0 as DoWyceny,		
+				--zapis KP
+				KAZ_CzasZapisu as KAZCzasZapisu,
+				KAZ_GIDNumer as KAZGIDNumer,
+				CDN.NumerDokumentu(784,784,KAZ_RaportBO,KRP_Numer,KAZ_Rok,KAZ_Seria,KAZ_KrpLp) as KAZNumer,
+				KAZ_NumerDokumentu as KAZNumerDokumentu,
+				a.R2_KwotaWal2 as KAZKwotaWal,
+				a.R2_KwotaSys as KAZKwotaSys,
+				KAZ_KursL as KAZKursL,
+				KAZ_KursM as KAZKursM,
+				case when KAZ_CzasZapisu &gt; @CzasZapisu OR KAZ_CzasZapisu = @CzasZapisu and KAZ_KRPLp &gt; @KrpLp then 1 else 0 end as KAZPozniejszy,				
+				
+				--RK KW
+				rkKW.RKN_ID as RKKWGIDNumer,
+				CDN.NumerDokumentu(435,435,435,rkKW.RKN_Numer,rkKW.RKN_Rok,rkKW.RKN_Seria,0) as RKKWNumer,
+				rkKW.RKN_DokumentObcy as RKKWNumerDokumentu,
+				0 as RKKWKwotaWal,
+				rkKW.RKN_Kwota as RKKWKwotaSys,
+				0 as RKKWKursL,
+				0 as RKKWKursM,
+
+				--RK KP
+				rkKP.RKN_ID as RKKPGIDNumer,
+				CDN.NumerDokumentu(435,435,435,rkKP.RKN_Numer,rkKP.RKN_Rok,rkKP.RKN_Seria,0) as RKKPNumer,
+				rkKP.RKN_DokumentObcy as RKKPNumerDokumentu,
+				0 as RKKPKwotaWal,
+				rkKP.RKN_Kwota as RKKPKwotaSys,
+				0 as RKKPKursL,
+				0 as RKKPKursM
+			from cdn.Rozliczenia a
+					left join cdn.Zapisy
+						on a.R2_Dok2Typ = 784 and a.R2_Dok2Numer = KAZ_GIDNumer and a.R2_Dok2Lp = 0
+					left join cdn.Raporty
+						on KRP_GIDTyp=KAZ_KRPTyp AND KRP_GIDNumer=KAZ_KRPNumer					
+					left join cdn.RozniceKursowe rkKW
+						on a.R2_Dok2Typ = 435 and a.R2_Dok2Numer = rkKW.RKN_ID and a.R2_Dok2Lp = 0	
+					left join (select
+									R2_ID ID,
+									R2_ParID ParID,
+									R2_Dok1Typ DokTyp,
+									R2_Dok1Numer DokNumer,
+									R2_Dok1Lp DokLp,
+									R2_Dok2Typ Dok2Typ,
+									R2_Dok2Numer Dok2Numer,
+									R2_Dok2Lp Dok2Lp
+								from cdn.Rozliczenia
+								where R2_Wycena = 1
+								union all
+								select
+									R2_ID ID,
+									R2_ParID ParID,
+									R2_Dok2Typ DokTyp,
+									R2_Dok2Numer DokNumer,
+									R2_Dok2Lp DokLp,
+									R2_Dok1Typ Dok2Typ,
+									R2_Dok1Numer Dok2Numer,
+									R2_Dok1Lp Dok2Lp
+								from cdn.Rozliczenia
+								where R2_Wycena = 1
+								) as rozKP
+									on rozKP.Id &lt;&gt; a.R2_ID and rozKP.ParId = a.R2_ParID and rozKP.DokTyp = 784 and rozKP.DokNumer = KAZ_GIDNumer and rozKP.DokLp = 0
+					left join cdn.RozniceKursowe rkKP
+						on rozKP.Dok2Typ = 435 and rozKP.Dok2Numer = rkKP.RKN_ID and rozKP.Dok2Lp = 0				
+			where a.R2_Dok1Typ = 784 and a.R2_Dok1Numer = @GIDNumer and a.R2_Dok1Lp = 0 and a.R2_Wycena = 1
+			union all 	
+			select 
+				a.R2_ParID R2_ParId,
+				
+				0 as DoWyceny,		
+				--zapis KP
+				KAZ_CzasZapisu as KAZCzasZapisu,
+				KAZ_GIDNumer as KAZGIDNumer,
+				CDN.NumerDokumentu(784,784,KAZ_RaportBO,KRP_Numer,KAZ_Rok,KAZ_Seria,KAZ_KrpLp) as KAZNumer,
+				KAZ_NumerDokumentu as KAZNumerDokumentu,
+				a.R2_KwotaWal1 as KAZKwotaWal,
+				a.R2_KwotaSys as KAZKwotaSys,
+				KAZ_KursL as KAZKursL,
+				KAZ_KursM as KAZKursM,
+				case when KAZ_CzasZapisu &gt; @CzasZapisu OR KAZ_CzasZapisu = @CzasZapisu and KAZ_KRPLp &gt; @KrpLp then 1 else 0 end as KAZPozniejszy,		
+				
+				--RK KW
+				rkKW.RKN_ID as RKKWGIDNumer,
+				CDN.NumerDokumentu(435,435,435,rkKW.RKN_Numer,rkKW.RKN_Rok,rkKW.RKN_Seria,0) as RKKWNumer,
+				rkKW.RKN_DokumentObcy as RKKWNumerDokumentu,
+				0 as RKKWKwotaWal,
+				rkKW.RKN_Kwota as RKKWKwotaSys,
+				0 as RKKWKursL,
+				0 as RKKWKursM,
+
+				--RK KP
+				rkKP.RKN_ID as RKKPGIDNumer,
+				CDN.NumerDokumentu(435,435,435,rkKP.RKN_Numer,rkKP.RKN_Rok,rkKP.RKN_Seria,0) as RKKPNumer,
+				rkKP.RKN_DokumentObcy as RKKPNumerDokumentu,
+				0 as RKKPKwotaWal,
+				rkKP.RKN_Kwota as RKKPKwotaSys,
+				0 as RKKPKursL,
+				0 as RKKPKursM
+			from cdn.Rozliczenia a
+					left join cdn.Zapisy
+						on a.R2_Dok1Typ = 784 and a.R2_Dok1Numer = KAZ_GIDNumer and a.R2_Dok1Lp = 0
+					left join cdn.Raporty
+						on KRP_GIDTyp=KAZ_KRPTyp AND KRP_GIDNumer=KAZ_KRPNumer					
+					left join cdn.RozniceKursowe rkKW
+						on a.R2_Dok1Typ = 435 and a.R2_Dok1Numer = rkKW.RKN_ID and a.R2_Dok1Lp = 0	
+					left join (select
+									R2_ID ID,
+									R2_ParID ParID,
+									R2_Dok1Typ DokTyp,
+									R2_Dok1Numer DokNumer,
+									R2_Dok1Lp DokLp,
+									R2_Dok2Typ Dok2Typ,
+									R2_Dok2Numer Dok2Numer,
+									R2_Dok2Lp Dok2Lp
+								from cdn.Rozliczenia
+								where R2_Wycena = 1
+								union all
+								select
+									R2_ID ID,
+									R2_ParID ParID,
+									R2_Dok2Typ DokTyp,
+									R2_Dok2Numer DokNumer,
+									R2_Dok2Lp DokLp,
+									R2_Dok1Typ Dok2Typ,
+									R2_Dok1Numer Dok2Numer,
+									R2_Dok1Lp Dok2Lp
+								from cdn.Rozliczenia
+								where R2_Wycena = 1
+								) as rozKP
+									on rozKP.Id &lt;&gt; a.R2_ID and rozKP.ParId = a.R2_ParID and rozKP.DokTyp = 784 and rozKP.DokNumer = KAZ_GIDNumer and rozKP.DokLp = 0
+					left join cdn.RozniceKursowe rkKP
+						on rozKP.Dok2Typ = 435 and rozKP.Dok2Numer = rkKP.RKN_ID and rozKP.Dok2Lp = 0				
+			where a.R2_Dok2Typ = 784 and a.R2_Dok2Numer = @GIDNumer and a.R2_Dok2Lp = 0 and a.R2_Wycena = 1
+		) a
+		group by R2_ParID
+		order by R2_ParID
+	end
+	else if @Tryb = 2
+	begin
+		select 
+			max(DoWyceny) DoWyceny,
+			
+			--zapis KW
+			max(KAZCzasZapisu) as KAZCzasZapisu,
+			max(KAZGIDNumer) as KAZGIDNumer,
+			max(KAZNumer) KAZNumer,
+			max(KAZNumerDokumentu) as KAZNumerDokumentu,
+			max(case when not KAZGIDNumer IS null then KAZKwotaWal else 0 end) as KAZKwotaWal,
+			max(case when not KAZGIDNumer IS null then KAZKwotaSys else 0 end) as KAZKwotaSys,
+			max(KAZKursL) as KAZKursL,
+			max(KAZKursM) as KAZKursM,
+			max(KAZPozniejszy) as KAZPozniejszy,				
+			
+			--RK KW
+			max(RKKWGIDNumer) as RKKWGIDNumer,
+			max(RKKWNumer) as RKKWNumer,
+			max(RKKWNumerDokumentu) as RKKWNumerDokumentu,
+			max(RKKWKwotaWal) as RKKWKwotaWal,
+			max(RKKWKwotaSys) as RKKWKwotaSys,
+			max(RKKWKursL) as RKKWKursL,
+			max(RKKWKursM) as RKKWKursM,
+
+			--RK KP
+			max(RKKPGIDNumer) as RKKPGIDNumer,
+			max(RKKPNumer) as RKKPNumer,
+			max(RKKPNumerDokumentu) as RKKPNumerDokumentu,
+			max(RKKPKwotaWal) as RKKPKwotaWal,
+			max(RKKPKwotaSys) as RKKPKwotaSys,
+			max(RKKPKursL) as RKKPKursL,
+			max(RKKPKursM) as RKKPKursM,
+			R2_ParId as R2_ParID
+		from (
+			select
+				a.R2_ParID R2_ParId, 
+				
+				0 as DoWyceny,		
+				--zapis KW
+				KAZ_CzasZapisu as KAZCzasZapisu,
+				KAZ_GIDNumer as KAZGIDNumer,
+				CDN.NumerDokumentu(784,784,KAZ_RaportBO,KRP_Numer,KAZ_Rok,KAZ_Seria,KAZ_KrpLp) as KAZNumer,
+				KAZ_NumerDokumentu as KAZNumerDokumentu,
+				a.R2_KwotaWal2 as KAZKwotaWal,
+				a.R2_KwotaSys  as KAZKwotaSys,
+				KAZ_KursL as KAZKursL,
+				KAZ_KursM as KAZKursM,
+				case when KAZ_CzasZapisu &lt; @CzasZapisu OR KAZ_CzasZapisu = @CzasZapisu and KAZ_KRPLp &lt; @KrpLp then 1 else 0 end as KAZPozniejszy,			
+				
+				--RK KW
+				rkKW.RKN_ID as RKKWGIDNumer,
+				CDN.NumerDokumentu(435,435,435,rkKW.RKN_Numer,rkKW.RKN_Rok,rkKW.RKN_Seria,0) as RKKWNumer,
+				rkKW.RKN_DokumentObcy as RKKWNumerDokumentu,
+				0 as RKKWKwotaWal,
+				rkKW.RKN_Kwota as RKKWKwotaSys,
+				0 as RKKWKursL,
+				0 as RKKWKursM,
+
+				--RK KP
+				rkKP.RKN_ID as RKKPGIDNumer,
+				CDN.NumerDokumentu(435,435,435,rkKP.RKN_Numer,rkKP.RKN_Rok,rkKP.RKN_Seria,0) as RKKPNumer,
+				rkKP.RKN_DokumentObcy as RKKPNumerDokumentu,
+				0 as RKKPKwotaWal,
+				rkKP.RKN_Kwota as RKKPKwotaSys,
+				0 as RKKPKursL,
+				0 as RKKPKursM
+			from cdn.Rozliczenia a
+					left join cdn.Zapisy
+						on a.R2_Dok2Typ = 784 and a.R2_Dok2Numer = KAZ_GIDNumer and a.R2_Dok2Lp = 0
+					left join cdn.Raporty
+						on KRP_GIDTyp=KAZ_KRPTyp AND KRP_GIDNumer=KAZ_KRPNumer					
+					left join cdn.RozniceKursowe rkKP
+						on a.R2_Dok2Typ = 435 and a.R2_Dok2Numer = rkKP.RKN_ID and a.R2_Dok2Lp = 0	
+					left join (select
+									R2_ID ID,
+									R2_ParID ParID,
+									R2_Dok1Typ DokTyp,
+									R2_Dok1Numer DokNumer,
+									R2_Dok1Lp DokLp,
+									R2_Dok2Typ Dok2Typ,
+									R2_Dok2Numer Dok2Numer,
+									R2_Dok2Lp Dok2Lp
+								from cdn.Rozliczenia
+								where R2_Wycena = 1
+								union all
+								select
+									R2_ID ID,
+									R2_ParID ParID,
+									R2_Dok2Typ DokTyp,
+									R2_Dok2Numer DokNumer,
+									R2_Dok2Lp DokLp,
+									R2_Dok1Typ Dok2Typ,
+									R2_Dok1Numer Dok2Numer,
+									R2_Dok1Lp Dok2Lp
+								from cdn.Rozliczenia
+								where R2_Wycena = 1
+								) as rozKW
+									on rozKW.Id &lt;&gt; a.R2_ID and rozKW.ParId = a.R2_ParID and rozKW.DokTyp = 784 and rozKW.DokNumer = KAZ_GIDNumer and rozKW.DokLp = 0
+					left join cdn.RozniceKursowe rkKW
+						on rozKW.Dok2Typ = 435 and rozKW.Dok2Numer = rkKW.RKN_ID and rozKW.Dok2Lp = 0				
+			where a.R2_Dok1Typ = 784 and a.R2_Dok1Numer = @GIDNumer and a.R2_Dok1Lp = 0 and a.R2_Wycena = 1
+			union all 	
+			select 
+				a.R2_ParID R2_ParId,
+				
+				0 as DoWyceny,
+				--zapis KW
+				KAZ_CzasZapisu as KAZCzasZapisu,
+				KAZ_GIDNumer as KAZGIDNumer,
+				CDN.NumerDokumentu(784,784,KAZ_RaportBO,KRP_Numer,KAZ_Rok,KAZ_Seria,KAZ_KrpLp) as KAZNumer,
+				KAZ_NumerDokumentu as KAZNumerDokumentu,
+				a.R2_KwotaWal1 as KAZKwotaWal,
+				a.R2_KwotaSys  as KAZKwotaSys,
+				KAZ_KursL as KAZKursL,
+				KAZ_KursM as KAZKursM,
+				case when KAZ_CzasZapisu &lt; @CzasZapisu OR KAZ_CzasZapisu = @CzasZapisu and KAZ_KRPLp &lt; @KrpLp then 1 else 0 end as KAZPozniejszy,			
+				
+				--RK KW
+				rkKW.RKN_ID as RKKWGIDNumer,
+				CDN.NumerDokumentu(435,435,435,rkKW.RKN_Numer,rkKW.RKN_Rok,rkKW.RKN_Seria,0) as RKKWNumer,
+				rkKW.RKN_DokumentObcy as RKKWNumerDokumentu,
+				0 as RKKWKwotaWal,
+				rkKW.RKN_Kwota as RKKWKwotaSys,
+				0 as RKKWKursL,
+				0 as RKKWKursM,
+
+				--RK KP
+				rkKP.RKN_ID as RKKPGIDNumer,
+				CDN.NumerDokumentu(435,435,435,rkKP.RKN_Numer,rkKP.RKN_Rok,rkKP.RKN_Seria,0) as RKKPNumer,
+				rkKP.RKN_DokumentObcy as RKKPNumerDokumentu,
+				0 as RKKPKwotaWal,
+				rkKP.RKN_Kwota as RKKPKwotaSys,
+				0 as RKKPKursL,
+				0 as RKKPKursM
+			from cdn.Rozliczenia a
+					left join cdn.Zapisy
+						on a.R2_Dok1Typ = 784 and a.R2_Dok1Numer = KAZ_GIDNumer and a.R2_Dok1Lp = 0
+					left join cdn.Raporty
+						on KRP_GIDTyp=KAZ_KRPTyp AND KRP_GIDNumer=KAZ_KRPNumer					
+					left join cdn.RozniceKursowe rkKP
+						on a.R2_Dok1Typ = 435 and a.R2_Dok1Numer = rkKP.RKN_ID and a.R2_Dok1Lp = 0	
+					left join (select
+									R2_ID ID,
+									R2_ParID ParID,
+									R2_Dok1Typ DokTyp,
+									R2_Dok1Numer DokNumer,
+									R2_Dok1Lp DokLp,
+									R2_Dok2Typ Dok2Typ,
+									R2_Dok2Numer Dok2Numer,
+									R2_Dok2Lp Dok2Lp
+								from cdn.Rozliczenia
+								where R2_Wycena = 1
+								union all
+								select
+									R2_ID ID,
+									R2_ParID ParID,
+									R2_Dok2Typ DokTyp,
+									R2_Dok2Numer DokNumer,
+									R2_Dok2Lp DokLp,
+									R2_Dok1Typ Dok2Typ,
+									R2_Dok1Numer Dok2Numer,
+									R2_Dok1Lp Dok2Lp
+								from cdn.Rozliczenia
+								where R2_Wycena = 1
+								) as rozKW
+									on rozKW.Id &lt;&gt; a.R2_ID and rozKW.ParId = a.R2_ParID and rozKW.DokTyp = 784 and rozKW.DokNumer = KAZ_GIDNumer and rozKW.DokLp = 0
+					left join cdn.RozniceKursowe rkKW
+						on rozKW.Dok2Typ = 435 and rozKW.Dok2Numer = rkKW.RKN_ID and rozKW.Dok2Lp = 0				
+			where a.R2_Dok2Typ = 784 and a.R2_Dok2Numer = @GIDNumer and a.R2_Dok2Lp = 0 and a.R2_Wycena = 1
+		) a
+		group by R2_ParID
+		order by R2_ParID
+	end
+
+
+	drop table #tmpKP
+
+
+set nocount off
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

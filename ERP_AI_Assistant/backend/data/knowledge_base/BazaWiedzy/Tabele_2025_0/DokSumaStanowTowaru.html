@@ -1,0 +1,1167 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="DokSumaStanowTowaru"></A><PRE>
+          <FONT SIZE="2"><I>/* DokSumaStanowTowaru */</I><BR>
+CREATE FUNCTION CDN.DokSumaStanowTowaru (
+	@p_gt INTEGER,
+	@p_gf INTEGER,
+	@p_gn INTEGER,
+	@p_typ SMALLINT,
+	@p_NumerCeny INT,
+	@p_ZeroweSpr INTEGER,
+	@p_ZeroweMag INTEGER,
+	@p_MagFirma INTEGER,
+	@p_MagNumer INTEGER,
+	@p_TypIlosci INTEGER,
+	@p_RezDst INTEGER,
+	@p_DstNumer INTEGER,
+	@p_biezacadata INTEGER,
+	@p_TylkoCeny INTEGER,
+	@p_IloscDostepna INTEGER,
+	@p_FrsId INTEGER,
+	@p_FrsIdW INTEGER = 0,
+	@p_TypDok SMALLINT = 0,
+	@p_ZrdTyp SMALLINT,
+	@p_ZrdNumer INTEGER,
+	@p_FrsIDZrd INTEGER,
+	@p_TypDokZrd SMALLINT,
+	@p_KntNumer INTEGER = - 1
+	)
+	-- TS mały tips: MSSMS 2008 nie dodaje mi automatycznie + przy begin lub if przez co czytanie tej funckji jest ciezkie, by to naprawić należy usunąć powyższy nawias - ten zamykający parametry funkcji, odczekać chwilę, aż MSSMS zwaliduje, że funkcja ma niepoprawną składnie i wtedy doda plusiki, potem należy przywrócić nawias.
+	--
+	-- Funkcja zwraca sume stanow danego towaru i jego cenę oraz wartosc stanu
+	--
+	-- Format wyniku:
+	-- ilosc_do_sprzedazy:ilosc_magazynowa:ilosc_rezerwacji:Cena:waluta:wartosc_stanu:jest_zamienik:rodzaj_towaru:kategoria_ABCXYZ:ilosc_rzeczywista
+	--
+	-- Wersja 1.05   30.08.2000
+	-- Wersja 2.00   30.05.2001
+	-- wersja 3.0a   20.01.2003 KK
+	--        dodana obsługa magazynów globalnych (MagNumer = 0 and MagFirma &lt; 0 )
+	-- wersja 3.0b    18.03.2003 KK
+	--              definicja dokumentów
+	--               04.04.2003 KK - dla podanego konretnego magazynu dodatkowe sprawdzenie czy istnieje na liscie dostepnych magazynów ( w razie wyraźnego spowolnienia dzialania modyfikacje wycofac)
+	-- wersja 3.0c   06.06.2003 KK - w przypadku pobierania zasobów dla konkretnego magazynu
+	--				 funkcja nie powinna uwzględniać rezerwacji na magazyny wszystkie
+	--				 Rozszerzona została funkcjonalność parametru @p_IloscDostepna
+	-- wersja 3.1 /3.02  
+	--		 28.08.2003 KK - optymalizacja: zrezygnowanie z wywolania funkcji DokDostepneMagazyny w JOIN i zastąpienie
+	--				 jej funkcjonalności nową funkcją DokSprawdzDostepnyMagazyn
+	--
+	--
+	-- wersja 3.2a
+	--		 18.02.2004 KK - rozszerzenie funcjonalności parametru @p_TylkoCeny
+	--				 teraz możliwe określenie jaka cena (brutto,netto) mabyć zwracana
+	--
+	-- wersja 4.0 
+	--		 29.09.2004 KK - nowy  parametr @p_RezDst	 
+	--
+	--	wersja 4.0
+	--		21.10.2004	KK - rozszerzenie funkcjonalności parametru @p_RezDst dla wywołań z niezerowym @p_DstNumer
+	--
+	--		27.10.2004 KK - rozdzielenie funkcjonalności parametru @p_RezDst na parametr @p_TypIlosc
+	--
+	--	wersja 7.1
+	--		10.10.2007 MF - dodanie wyliczenia domyślnej ceny sprzedaży w kontekście centrum struktury firmy, w którym pracuje operator
+	--
+	-- wersja 10.5
+	--		30.08.2011 TS - TID:181759
+	-- wersja 11.0
+	--		03.07.2012 TS - optymalizacja listy twr, wciągniecie do tej funkcji sprawdzania zamienników, rodzaju towaru i kategoriiABCXYZ, zmiana działania parametru @p_FrsId
+	-- wersja 2015.0
+	--		20.03.2014 TS - dodatkowa informacja jest zwracana - wartość rzeczywista
+	-- wersja 2016.0
+	--		27.03.2015 TS - Nie wliczać w ilość prezentowaną w kolumnie: Magazyn, ilości wynikającej ze stanu magazynowego, znajdującego się na magazynie obsługiwanym przez Comarch WMS
+	--		09.06.2016 TS - Pobieranie aktualnej ceny i waluty
+	-- wersja 2016.2
+	--		07-01-2016 AA - komentarz Nomad na potrzeby WMS odliczanie warunkowe zrealizowanej rezerwacji.	
+	--
+	-- Parametry:
+	-- @p_gt         GIDTyp towaru
+	-- @p_gf         GIDFirma towaru
+	-- @p_gn         GIDNumer towaru
+	-- @p_typ        typ towaru (towar/usluga/koszt/itp...)
+	-- @p_NumerCeny  numer ceny ktora ma byc zwrocona, w przypadku gdy przekazana ujemna oznacza numer centrum (-FrS_ID), 
+	--				 w takim przypadku wyliczana jest domyślna cena z uwzględnieniem cen dostępnych w centrum operatora
+	-- @p_ZeroweSpr  Czy zwracac wartosci dla stanow zerowych na TWZ_ilSpr?
+	-- @p_ZeroweMag  Czy zwracac wartosci dla stanow zerowych na TWZ_ilMag?
+	-- @p_MagFirma   Firma magazynu w ktorym maja byc liczone stany
+	-- @p_MagNumer   numer magazynu w ktorym ma byc liczony stan
+	--              =0 - wszystkie magazyny
+	--                   (jeżeli MagFirma &lt; 0 to szukaj globalnych)
+	--              &lt;0 - nalezy korzystać z tabeli MagWybor
+	-- @p_TypIlosci Sposób uwzględniania rezerwacji z zasobami  (istotne tylko gdy @p_DstNumer&lt;&gt;0)
+	--		 0 - wyliczenia dla ilości handlowych
+	--		 1 - wyliczenia dla ilosci magazynowcyh  
+	--		 2 - działanie jak w wersji 3.2 - sprawdza istnienie rezerwacji dla danego zasobu (bez dodatkowego sprawdznia dla magazynu) 
+	-- @p_RezDst     Sposób uwzględniania rezerwacji z zasobami 
+	--		 0 - uwzględniaj wszystkie rezerwacje (działanie domyślne, do wesrji 3.2 włącznie)
+	--		 1 - uwzgędniaj tylko rezerwacje z zasobami
+	--		 2 - uwzględniaj tylko rezerwacje bez zasobów
+	-- @p_DstNumer   Numer dostawy dla ktorej maja byc liczone stany
+	--              =0 – wszystkie dostawy
+	-- @p_biezacadata - biezaca data systemowa koncowki - jezeli data waznosci jest od niej &gt;= --                  rezerwacja jest brana pod uwage
+	-- @p_TylkoCeny czy zwracac tylko ceny 1 - tak, 0 - nie zwraca wszystko co dotychczas
+	--    2004.02.18:dodatkowa funkcjonalność parametru
+	--	+4 zawsze ceny netto (   czyli odpowiednio 5,4)
+	--	+8 zawsze ceny brutto ( 9,8)
+	-- @p_IloscDostepna określa, czy zwracana będzie ilość dostępna (@p_IloscDostepna = 1)
+	-- 		dla listy towarów parametr zwiększony o 2 (@p_IloscDostepna = 3)
+	-- czy stany towarów (@p_IloscDostepna = 0)
+	-- poniższe parametrydotyczą magazynów wszystkich (definicje dokumentów: 2003.03.18)
+	-- @lFrSID   -	identfikator miejsca w strukturze firmy ( gdy 0 - warunek na magazyny
+	--		w węźle pomijany) 
+	--	TS gdy mniejsze do zera to wartość bezwględna to FrsId i warunek na magazyny w węzle pomijany, bo zamienniki potrzebują oryginalnego FrsId
+	-- @lFrSIDW   -	identfikator miejsca w strukturze firmy właściciela dokumentu( gdy 0 - warunek na magazyny
+	--		w węźle pomijany
+	-- @lTypDok  -	typ dokumentu (gdy 0 - warunek pomijany)
+	--    w przypadku gdy oba parametry zerowe to zwracana lista magazynów z CDN.Magazyny
+RETURNS VARCHAR(255)
+AS
+BEGIN
+	DECLARE @retval VARCHAR(255);
+	DECLARE @opuscic INTEGER;
+	DECLARE @iloscSpr DECIMAL(28, 4);
+	DECLARE @iloscMag DECIMAL(28, 4);
+	DECLARE @iloscRez DECIMAL(28, 4);
+	DECLARE @Cena VARCHAR(20);
+	DECLARE @Waluta VARCHAR(3);
+	DECLARE @ZnakZero VARCHAR(1);
+	DECLARE @statusUsluga INTEGER;
+	DECLARE @wartoscstanu DECIMAL(28, 2);
+	DECLARE @rzeczywistaNetto DECIMAL(28, 2);
+	DECLARE @lTypRez SMALLINT;
+	DECLARE @lRezWsz SMALLINT;
+	DECLARE @lFlagaBN SMALLINT;-- 0 - netto, 1-brutto
+	DECLARE @sGrupaVat CHAR(1)
+	DECLARE @lStawkaVat DECIMAL(9, 2)
+	DECLARE @lCEna DECIMAL(19, 4)
+	DECLARE @iloscSprW DECIMAL(28, 4);
+	DECLARE @iloscMagW DECIMAL(28, 4);
+	DECLARE @iloscRezW DECIMAL(28, 4);
+	DECLARE @iloscZablokowanaZwm DECIMAL(28, 4);
+	DECLARE @JestZamiennik BIT
+	DECLARE @KatergoriaABCXYZ VARCHAR(2)
+	DECLARE @RodzajNazwa VARCHAR(20)
+	DECLARE @FrsIdSav INT -- TS zapamiętuje oryginalen FrsID dla zamienników
+	DECLARE @CzyMagWms BIT --Bug 332202: [WMS 22_Q3] Magazyn WMS - zerowanie się ilości w kolumnie Sprzedaż przy wyłączonym checku: „Stany zerowe magazyn
+
+	SELECT @FrsIdSav = ABS(@p_FrsId)
+
+	IF (@p_FrsId &lt; 0)
+		SELECT @p_FrsId = 0
+
+	SET @lTypRez = 1
+	SET @lRezWsz = 0 -- v.3.2
+
+	IF (@p_IloscDostepna &gt; 1)
+	BEGIN
+		SET @lRezWsz = 1
+		SET @p_IloscDostepna = @p_IloscDostepna - 2
+	END
+
+	IF (@p_MagNumer &lt;&gt; 0)
+	BEGIN
+		SET @p_ZrdTyp = 0
+		SET @p_ZrdNumer = 0
+		SET @p_FrsIDZrd = 0
+		SET @p_TypDokZrd = 0
+	END
+
+	SELECT @CzyMagWms = CASE WHEN EXISTS(SELECT 1 FROM CDN.Magazyny WHERE MAG_WMS = 1 and MAG_GIDNumer = @p_MagNumer) THEN 1 ELSE 0 END
+
+	-- rozroznienie obiektow, ktore nie maja stanow
+	IF (
+			@p_typ = 0
+			OR @p_typ = 3
+			OR @p_typ = 4
+			OR @p_typ = 6
+			OR @p_typ IS NULL
+			)
+		OR (
+			@p_TylkoCeny = 1
+			OR @p_TylkoCeny = 5
+			OR @p_TylkoCeny = 9
+			)
+		-- obiekty bezstanowe lub przypadek, gdy interesują nas tylko ceny
+	BEGIN
+		SET @ZnakZero = '-'
+		SET @statusUsluga = 1
+	END
+	ELSE
+		-- obiekty stanowe
+	BEGIN
+		SET @ZnakZero = '0'
+		SET @statusUsluga = 0
+	END
+
+	-- Koniec rozrozniania obiektow
+	IF (@statusUsluga = 0) -- jest to towar dla ktorego stany mają sens
+	BEGIN -- pobranie ilosci
+		IF (@p_MagNumer &gt; 0) --                  z konkretnego magazynu
+			--
+			--
+			IF (@p_DstNumer &gt; 0) -- z konkretnej dostawy
+				SELECT @IloscSpr = CASE @p_IloscDostepna
+						WHEN 1
+							THEN sum(CASE 
+										WHEN TwZ_IlSpr &lt; TWZ_Ilosc
+											THEN TwZ_IlSpr
+										ELSE TwZ_Ilosc
+										END)
+						ELSE sum(TwZ_IlSpr)
+						END,
+					@iloscMag = CASE @p_IloscDostepna
+						WHEN 1
+							THEN sum(CASE 
+										WHEN MAG_WMS = 0
+											THEN CASE 
+													WHEN TwZ_IlMag &lt; TWZ_Ilosc
+														THEN TwZ_IlMag
+													ELSE TwZ_Ilosc
+													END
+										ELSE 0
+										END)
+						ELSE sum(CASE 
+									WHEN MAG_WMS = 0
+										THEN TwZ_IlMag
+									ELSE 0
+									END)
+						END,
+					@wartoscstanu = sum(TwZ_KsiegowaNetto),
+					@rzeczywistaNetto = sum(TwZ_RzeczywistaNetto)
+				FROM cdn.TwrZasoby
+				JOIN cdn.Magazyny ON MAG_GIDNumer = @p_MagNumer
+				-- JOIN  cdn.DokDostepneMagazyny(@p_FrSID,@p_FrSIDW,@p_typDok, @p_ZrdTyp, @p_ZrdNumer, @p_FrsIDZrd, @p_TypDokZrd)
+				-- ON (TwZ_MagTyp = Mag_GIDTyp AND TwZ_MagFirma = Mag_GIDFirma AND TwZ_MagNumer = Mag_GIDNumer)
+				WHERE TwZ_TwrNumer = @p_gn
+					AND TwZ_MagNumer = @p_MagNumer
+					AND TwZ_DstNumer = @p_DstNumer;
+			ELSE -- ze wszystkich dostaw
+				SELECT @IloscSpr = CASE @p_IloscDostepna
+						WHEN 1
+							THEN sum(CASE 
+										WHEN TwZ_IlSpr &lt; TWZ_Ilosc
+											THEN TwZ_IlSpr
+										ELSE TwZ_Ilosc
+										END)
+						ELSE sum(TwZ_IlSpr)
+						END,
+					@iloscMag = CASE @p_IloscDostepna
+						WHEN 1
+							THEN sum(CASE 
+										WHEN MAG_WMS = 0
+											THEN CASE 
+													WHEN TwZ_IlMag &lt; TWZ_Ilosc
+														THEN TwZ_IlMag
+													ELSE TwZ_Ilosc
+													END
+										ELSE 0
+										END)
+						ELSE sum(CASE 
+									WHEN MAG_WMS = 0
+										THEN TwZ_IlMag
+									ELSE 0
+									END)
+						END,
+					@wartoscstanu = sum(TwZ_KsiegowaNetto),
+					@rzeczywistaNetto = sum(TwZ_RzeczywistaNetto)
+				FROM cdn.TwrZasoby
+				JOIN cdn.Magazyny ON MAG_GIDNumer = @p_MagNumer
+				--  JOIN  cdn.DokDostepneMagazyny(@p_FrSID,@p_FrSIDW,@p_typDok, @p_ZrdTyp, @p_ZrdNumer, @p_FrsIDZrd, @p_TypDokZrd)
+				--  ON (TwZ_MagTyp = Mag_GIDTyp AND TwZ_MagFirma = Mag_GIDFirma AND TwZ_MagNumer = Mag_GIDNumer)
+				WHERE TwZ_TwrNumer = @p_gn
+					AND TwZ_MagNumer = @p_MagNumer;
+					--
+					--
+					-- koniec pobrania ilosci z konkretnego magazynu
+					--
+		ELSE
+		--
+		--
+		IF (@p_MagNumer = 0) --                    ze wszystkich magazynow
+			IF (@p_DstNumer &gt; 0) -- z konkretnej dostawy
+				SELECT @IloscSpr = CASE @p_IloscDostepna
+						WHEN 1
+							THEN sum(CASE 
+										WHEN TwZ_IlSpr &lt; TWZ_Ilosc
+											THEN TwZ_IlSpr
+										ELSE TwZ_Ilosc
+										END)
+						ELSE sum(TwZ_IlSpr)
+						END,
+					@iloscMag = CASE @p_IloscDostepna
+						WHEN 1
+							THEN sum(CASE 
+										WHEN MAG_WMS = 0
+											THEN CASE 
+													WHEN TwZ_IlMag &lt; TWZ_Ilosc
+														THEN TwZ_IlMag
+													ELSE TwZ_Ilosc
+													END
+										ELSE 0
+										END)
+						ELSE sum(CASE 
+									WHEN MAG_WMS = 0
+										THEN TwZ_IlMag
+									ELSE 0
+									END)
+						END,
+					@wartoscstanu = sum(TwZ_KsiegowaNetto),
+					@rzeczywistaNetto = sum(TwZ_RzeczywistaNetto)
+				FROM cdn.TwrZasoby
+				JOIN cdn.Magazyny ON MAG_GIDNumer = TwZ_MagNumer
+				-- JOIN  cdn.DokDostepneMagazyny(@p_FrSID,@p_FrSIDW,@p_typDok, @p_ZrdTyp, @p_ZrdNumer, @p_FrsIDZrd, @p_TypDokZrd)
+				-- ON (TwZ_MagTyp = Mag_GIDTyp AND TwZ_MagFirma = Mag_GIDFirma AND TwZ_MagNumer = Mag_GIDNumer)
+				WHERE TwZ_TwrNumer = @p_gn
+					AND TwZ_DstNumer = @p_DstNumer
+					AND Cdn.DokSprawdzDostepnyMagazyn(@p_FrSID, @p_FrSIDW, @p_typDok, @p_ZrdTyp, @p_ZrdNumer, @p_FrsIDZrd, @p_TypDokZrd, TwZ_MagTyp, TwZ_MAgNumer, - 1) &gt; 0;--TID:150067
+			ELSE -- ze wszystkich dostaw
+				SELECT @IloscSpr = CASE @p_IloscDostepna
+						WHEN 1
+							THEN sum(CASE 
+										WHEN TwZ_IlSpr &lt; TWZ_Ilosc
+											THEN TwZ_IlSpr
+										ELSE TwZ_Ilosc
+										END)
+						ELSE sum(TwZ_IlSpr)
+						END,
+					@iloscMag = CASE @p_IloscDostepna
+						WHEN 1
+							THEN sum(CASE 
+										WHEN MAG_WMS = 0
+											THEN CASE 
+													WHEN TwZ_IlMag &lt; TWZ_Ilosc
+														THEN TwZ_IlMag
+													ELSE TwZ_Ilosc
+													END
+										ELSE 0
+										END)
+						ELSE sum(CASE 
+									WHEN MAG_WMS = 0
+										THEN TwZ_IlMag
+									ELSE 0
+									END)
+						END,
+					@wartoscstanu = sum(TwZ_KsiegowaNetto),
+					@rzeczywistaNetto = sum(TwZ_RzeczywistaNetto)
+				FROM cdn.TwrZasoby
+				JOIN cdn.Magazyny ON MAG_GIDNumer = TwZ_MagNumer
+				--JOIN  cdn.DokDostepneMagazyny(@p_FrSID,@p_FrSIDW,@p_typDok, @p_ZrdTyp, @p_ZrdNumer, @p_FrsIDZrd, @p_TypDokZrd)
+				-- ON (TwZ_MagTyp = Mag_GIDTyp AND TwZ_MagFirma = Mag_GIDFirma AND
+				--   TwZ_MagNumer = Mag_GIDNumer)
+				WHERE TwZ_TwrNumer = @p_gn
+					AND Cdn.DokSprawdzDostepnyMagazyn(@p_FrSID, @p_FrSIDW, @p_typDok, @p_ZrdTyp, @p_ZrdNumer, @p_FrsIDZrd, @p_TypDokZrd, TwZ_MagTyp, TwZ_MAgNumer, - 1) &gt; 0;--TID:150067
+					--
+					--
+					-- Koniec ze wszystkich magazynów
+					--
+		ELSE --                Informacja o magazynach w tabeli pomocniczej
+		--
+		--
+		IF (@p_DstNumer &gt; 0) -- z konkretnej dostawy
+			SELECT @IloscSpr = CASE @p_IloscDostepna
+					WHEN 1
+						THEN sum(CASE 
+									WHEN TwZ_IlSpr &lt; TWZ_Ilosc
+										THEN TwZ_IlSpr
+									ELSE TwZ_Ilosc
+									END)
+					ELSE sum(TwZ_IlSpr)
+					END,
+				@iloscMag = CASE @p_IloscDostepna
+					WHEN 1
+						THEN sum(CASE 
+									WHEN MAG_WMS = 0
+										THEN CASE 
+												WHEN TwZ_IlMag &lt; TWZ_Ilosc
+													THEN TwZ_IlMag
+												ELSE TwZ_Ilosc
+												END
+									ELSE 0
+									END)
+					ELSE sum(CASE 
+								WHEN MAG_WMS = 0
+									THEN TwZ_IlMag
+								ELSE 0
+								END)
+					END,
+				@wartoscstanu = sum(TwZ_KsiegowaNetto),
+				@rzeczywistaNetto = sum(TwZ_RzeczywistaNetto)
+			FROM cdn.TwrZasoby,
+				cdn.MagWybor,
+				cdn.Magazyny
+			WHERE TwZ_TwrNumer = @p_gn
+				AND TwZ_MagNumer = MgW_MagNumer
+				AND MgW_SesjaID = - @p_MagFirma
+				AND MgW_Watek = - @p_MagNumer
+				AND TwZ_DstNumer = @p_DstNumer
+				AND MAG_GIDNumer = TwZ_MagNumer
+		ELSE -- ze wszystkich dostaw
+			SELECT @IloscSpr = CASE @p_IloscDostepna
+					WHEN 1
+						THEN sum(CASE 
+									WHEN TwZ_IlSpr &lt; TWZ_Ilosc
+										THEN TwZ_IlSpr
+									ELSE TwZ_Ilosc
+									END)
+					ELSE sum(TwZ_IlSpr)
+					END,
+				@iloscMag = CASE @p_IloscDostepna
+					WHEN 1
+						THEN sum(CASE 
+									WHEN MAG_WMS = 0
+										THEN CASE 
+												WHEN TwZ_IlMag &lt; TWZ_Ilosc
+													THEN TwZ_IlMag
+												ELSE TwZ_Ilosc
+												END
+									ELSE 0
+									END)
+					ELSE sum(CASE 
+								WHEN MAG_WMS = 0
+									THEN TwZ_IlMag
+								ELSE 0
+								END)
+					END,
+				@wartoscstanu = sum(TwZ_KsiegowaNetto),
+				@rzeczywistaNetto = sum(TwZ_RzeczywistaNetto)
+			FROM cdn.TwrZasoby,
+				cdn.MagWybor,
+				cdn.Magazyny
+			WHERE TwZ_TwrNumer = @p_gn
+				AND TwZ_MagNumer = MgW_MagNumer
+				AND MgW_SesjaID = - @p_MagFirma
+				AND MgW_Watek = - @p_MagNumer
+				AND MAG_GIDNumer = TwZ_MagNumer
+
+		--
+		--
+		-- Koniec z wybranych magazynów
+		--
+		-- IF (@p_MagNumer &gt; 0) --konkretny magazyn	
+			-- SELECT @iloscZablokowanaZwm = ISNULL(SUM(SUMA),0) FROM
+			-- (
+				-- SELECT ISNULL(sum(AMaS_Ilosc) - MAX(MaS_Ilosc),0) AS SUMA
+				-- FROM cdn.MagElem
+				-- JOIN cdn.MagSElem ON MaS_GIDNumer = MaE_GIDNumer AND MaS_GIDLp = MaE_GIDLp
+				-- JOIN cdn.MagSElemArc ON AMaS_GIDNumer = MaS_GIDNumer AND AMaS_GIDLp = MaS_GIDLp
+				-- WHERE MaE_GIDTyp = 1605 /*Typ_ZWM*/
+							-- AND MaE_Status &lt; 4 /*e_wms_lZamkniety*/
+							-- AND MaE_TwrNumer = @p_gn
+							-- AND MaS_MagNumer = @p_MagNumer
+				-- group by MaS_GIDNumer,MaS_GIDLp
+			-- ) A
+		-- ELSE IF (@p_MagNumer = 0) --wszystkie magazyny (dostępne)
+			-- SELECT @iloscZablokowanaZwm = ISNULL(SUM(SUMA),0) FROM
+			-- (
+				-- SELECT ISNULL(sum(AMaS_Ilosc) - MAX(MaS_Ilosc),0) AS SUMA
+				-- FROM cdn.MagElem
+				-- JOIN cdn.MagSElem ON MaS_GIDNumer = MaE_GIDNumer AND MaS_GIDLp = MaE_GIDLp
+				-- JOIN cdn.MagSElemArc ON AMaS_GIDNumer = MaS_GIDNumer AND AMaS_GIDLp = MaS_GIDLp
+				-- WHERE MaE_GIDTyp = 1605 /*Typ_ZWM*/
+							-- AND MaE_Status &lt; 4 /*e_wms_lZamkniety*/
+							-- AND MaE_TwrNumer = @p_gn
+							-- AND Cdn.DokSprawdzDostepnyMagazyn(@p_FrSID, @p_FrSIDW, @p_typDok, @p_ZrdTyp, @p_ZrdNumer, @p_FrsIDZrd, @p_TypDokZrd, MaS_MagTyp, MaS_MagNumer, - 1) &gt; 0
+				-- group by MaS_GIDNumer,MaS_GIDLp
+			-- ) A
+		-- ELSE --wybrane magazyny
+			-- SELECT @iloscZablokowanaZwm = ISNULL(SUM(SUMA),0) FROM
+			-- (
+				-- SELECT ISNULL(sum(AMaS_Ilosc) - MAX(MaS_Ilosc),0) AS SUMA
+				-- FROM cdn.MagElem
+				-- JOIN cdn.MagSElem ON MaS_GIDNumer = MaE_GIDNumer AND MaS_GIDLp = MaE_GIDLp
+				-- JOIN cdn.MagSElemArc ON AMaS_GIDNumer = MaS_GIDNumer AND AMaS_GIDLp = MaS_GIDLp
+				-- JOIN cdn.MagWybor ON MgW_MagNumer = MaS_MagNumer
+						-- WHERE MaE_GIDTyp = 1605 /*Typ_ZWM*/
+							-- AND MaE_Status &lt; 4 /*e_wms_lZamkniety*/
+							-- AND MaE_TwrNumer = @p_gn
+							-- AND MgW_SesjaID = - @p_MagFirma
+							-- AND MgW_Watek = - @p_MagNumer
+				-- group by MaS_GIDNumer,MaS_GIDLp
+			-- ) A
+
+		SET @iloscSpr = IsNull(@iloscSpr, 0)
+		SET @iloscMag = IsNull(@iloscMag, 0)
+		SET @wartoscstanu = IsNull(@wartoscstanu, 0)
+		SET @rzeczywistaNetto = IsNull(@rzeczywistaNetto, 0)
+		--IF @p_IloscDostepna &gt; 0 SET @iloscSpr = @iloscSpr - @iloscZablokowanaZwm  --dla opcji stany nie zmniejszamy ilości sprzedażowej
+		--SET @iloscMag = @iloscMag - @iloscZablokowanaZwm
+
+		--
+		--
+		IF (
+				NOT (
+					(
+						@p_ZeroweSpr = 0
+						AND @iloscSpr = 0
+						)
+					OR (
+						@p_ZeroweMag = 0
+						AND @iloscMag = 0
+						AND @CzyMagWms = 0
+						)
+					)
+				)
+			--
+			-- nie jest to stan zerowy trzeba pobrac dalsze informacje
+			--
+		BEGIN
+			SET @opuscic = 0
+
+			IF (@p_MagNumer &gt; 0) --                  z konkretnego magazynu
+			BEGIN
+				IF (@lRezWsz = 0)
+					IF (@p_DstNumer &gt; 0) -- z konkretnej dostawy
+					BEGIN
+						IF (@p_TypIlosci &lt;&gt; 2)
+						BEGIN
+							-- napierw sprawdzamy dla wszystkich zasobów dla danego magazynu
+							SELECT @IloscSprW = CASE @p_IloscDostepna
+									WHEN 1
+										THEN sum(CASE 
+													WHEN TwZ_IlSpr &lt; TWZ_Ilosc
+														THEN TwZ_IlSpr
+													ELSE TwZ_Ilosc
+													END)
+									ELSE sum(TwZ_IlSpr)
+									END,
+								@iloscMagW = CASE @p_IloscDostepna
+									WHEN 1
+										THEN sum(CASE 
+													WHEN MAG_WMS = 0
+														THEN CASE 
+																WHEN TwZ_IlMag &lt; TWZ_Ilosc
+																	THEN TwZ_IlMag
+																ELSE TwZ_Ilosc
+																END
+													ELSE 0
+													END)
+									ELSE sum(CASE 
+												WHEN MAG_WMS = 0
+													THEN TwZ_IlMag
+												ELSE 0
+												END)
+									END
+							FROM cdn.TwrZasoby
+							JOIN cdn.Magazyny ON MAG_GIDNumer = TwZ_MagNumer
+							WHERE TwZ_TwrNumer = @p_gn
+								AND TwZ_MagNumer = @p_MagNumer;
+
+							-- następnie rezerwacje na magazynie
+							SET @IloscRezW = (
+									SELECT sum(CASE 
+												WHEN @p_TypIlosci = 1
+													THEN Rez_Ilosc - Rez_Zrealizowano - Rez_IloscMag
+												ELSE Rez_Ilosc - Rez_Zrealizowano
+												END)
+									FROM cdn.Rezerwacje
+									WHERE rez_gidtyp = 2576
+										AND Rez_twrnumer = @p_gn
+										AND ReZ_MagNumer = @p_MagNumer
+										--                and Rez_MagNumer=@p_MagNumer
+										AND Rez_DataWaznosci &gt;= @p_biezacadata -- data waznosci &gt; dzis
+										AND (
+											CASE 
+												WHEN Rez_DstNumer &lt;&gt; 0
+													THEN 1
+												WHEN Rez_DstNumer = 0
+													AND Rez_DataAktywacji &lt;= @p_biezacadata
+													THEN 1
+												ELSE 0
+												END
+											) = 1
+										AND Rez_Typ = @lTypRez
+										AND Rez_aktywna = 1
+										AND Rez_Ilosc &lt;&gt; 0 -- aby nie brac anulowanych zamowien
+										AND (
+											CASE 
+												WHEN @p_RezDst = 0
+													THEN 1
+												WHEN @p_RezDst = 1
+													AND Rez_DstNumer &lt;&gt; 0
+													THEN 1
+												WHEN @p_RezDst = 2
+													AND Rez_DstNumer = 0
+													THEN 1
+												ELSE 0
+												END
+											) = 1
+									)
+
+							IF (@p_RezDst &lt;&gt; 1)
+								SET @IloscRezW = isnull(@IloscRezW, 0) + CDN.DokStanRezerwacjiWszystkich(@p_gT, @p_gF, @p_gN, @p_biezacadata, 0, -- @p_FrsId
+										0, -- @p_FrsIdW,
+										0, -- @p_TypDok,
+										208, @p_MagNumer, 0, 0, 0, 0, 0, 5, CASE 
+											WHEN @p_TypIlosci = 1
+												THEN 1
+											ELSE 0
+											END, 0)
+						END -- @p_RezDst&lt;&gt;2
+
+						--				teraz ilosc rezeracji dla zasobu		
+						SET @IloscRez = --TID: 123817 - dodałem w poniższej linii: OR @p_TypIlosci = 2 
+							(
+								SELECT sum(CASE 
+											WHEN @p_TypIlosci = 1
+												OR @p_TypIlosci = 2
+												THEN Rez_Ilosc - Rez_Zrealizowano - (
+														CASE 
+															WHEN IsNull(MAG_WMS, 0) = 0
+																THEN Rez_IloscMag
+															ELSE 0
+															END
+														)
+											ELSE Rez_Ilosc - Rez_Zrealizowano
+											END) --Momad
+								FROM cdn.Rezerwacje
+								LEFT JOIN cdn.Magazyny ON MAG_GIDNumer = Rez_MagNumer --Nomad
+								WHERE rez_gidtyp = 2576
+									AND ReZ_MagNumer = @p_MagNumer
+									AND Rez_twrnumer = @p_gn
+									AND Rez_DataWaznosci &gt;= @p_biezacadata -- data waznosci &gt; dzis
+									--                and Rez_DataAktywacji&lt;=@p_biezacadata -- dataAktywacji &gt; dzis
+									AND Rez_aktywna = 1
+									AND Rez_Typ = @lTypRez
+									AND Rez_Ilosc &lt;&gt; 0 -- aby nie brac anulowanych zamowien
+									AND Rez_DstNumer = @p_DstNumer
+								)
+
+						IF (@p_TypIlosci &lt;&gt; 2)
+						BEGIN
+							SET @IloscSprW = IsNull(@IloscSprW, 0)
+							SET @IloscMagW = IsNull(@IloscMagW, 0)
+							SET @IloscRez = IsNull(@IloscRez, 0)
+
+							-- i teraz liczymy zależnie od @p_RezDst
+							IF (@p_TypIlosci = 0)
+							BEGIN
+								IF (@IloscSPr - (@IloscSprW - @IloscRezW) &gt; @IloscRez)
+									SET @IloscRez = @IloscSPr - (@IloscSprW - @IloscRezW)
+							END
+							ELSE
+							BEGIN
+								IF (@IloscMag - (@IloscMagW - @IloscRezW) &gt; @IloscRez)
+									SET @IloscRez = @IloscMag - (@IloscMagW - @IloscRezW)
+							END
+						END
+					END
+					ELSE -- ze wszystkich dostaw
+						SET @IloscRez = (
+								SELECT --sum(Rez_Ilosc-Rez_Zrealizowano) TID:109127
+									sum(CASE 
+											WHEN @p_TypIlosci = 1
+												THEN Rez_Ilosc - Rez_Zrealizowano - Rez_IloscMag
+											ELSE Rez_Ilosc - Rez_Zrealizowano
+											END)
+								FROM cdn.Rezerwacje
+								WHERE rez_gidtyp = 2576
+									AND Rez_twrnumer = @p_gn
+									AND ReZ_MagNumer = @p_MagNumer
+									--                and Rez_MagNumer=@p_MagNumer
+									AND Rez_DataWaznosci &gt;= @p_biezacadata -- data waznosci &gt; dzis
+									AND (
+										CASE 
+											WHEN Rez_DstNumer &lt;&gt; 0
+												THEN 1
+											WHEN Rez_DstNumer = 0
+												AND Rez_DataAktywacji &lt;= @p_biezacadata
+												THEN 1
+											ELSE 0
+											END
+										) = 1
+									AND Rez_Typ = @lTypRez
+									AND Rez_aktywna = 1
+									AND Rez_Ilosc &lt;&gt; 0 -- aby nie brac anulowanych zamowien
+									AND (
+										CASE 
+											WHEN @p_RezDst = 0
+												THEN 1
+											WHEN @p_RezDst = 1
+												AND Rez_DstNumer &lt;&gt; 0
+												THEN 1
+											WHEN @p_RezDst = 2
+												AND Rez_DstNumer = 0
+												THEN 1
+											ELSE 0
+											END
+										) = 1
+								)
+				ELSE IF (@p_DstNumer &gt; 0) -- z konkretnej dostawy
+					SET @IloscRez = (
+							SELECT sum(Rez_Ilosc - Rez_Zrealizowano)
+							FROM cdn.Rezerwacje,
+								CDN.RezMagazyny
+							WHERE rez_gidtyp = 2576
+								AND Rez_GIDNumer = ReM_RezNumer
+								AND ReM_RezTyp = 2576
+								AND ReM_MagNumer = @p_MagNumer
+								AND Rez_twrnumer = @p_gn
+								AND Rez_DataWaznosci &gt;= @p_biezacadata -- data waznosci &gt; dzis
+								--                and Rez_DataAktywacji&lt;=@p_biezacadata -- dataAktywacji &gt; dzis
+								AND Rez_aktywna = 1
+								AND Rez_Typ = @lTypRez
+								AND Rez_Ilosc &lt;&gt; 0 -- aby nie brac anulowanych zamowien
+								AND Rez_DstNumer = @p_DstNumer
+							)
+				ELSE -- ze wszystkich dostaw
+					SET @IloscRez =
+						--(select sum(Rez_Ilosc-Rez_Zrealizowano)  --TID: 113610
+						(
+							SELECT sum(Rez_Ilosc - Rez_Zrealizowano - (
+										CASE 
+											WHEN IsNull(MAG_WMS, 0) = 0
+												THEN Rez_IloscMag
+											ELSE 0
+											END
+										)) --Nomad
+							FROM cdn.Rezerwacje,
+								CDN.Rezmagazyny,
+								CDN.Magazyny --Nomad								
+							WHERE rez_gidtyp = 2576
+								AND Rez_twrnumer = @p_gn
+								AND Rez_GIDNumer = ReM_RezNumer
+								AND ReM_RezTyp = 2576
+								AND ReM_MagNumer = @p_MagNumer
+								AND MAG_GIDNumer = @p_MagNumer --Nomad
+								--                and Rez_MagNumer=@p_MagNumer
+								AND Rez_DataWaznosci &gt;= @p_biezacadata -- data waznosci &gt; dzis
+								AND (
+									CASE 
+										WHEN Rez_DstNumer &lt;&gt; 0
+											THEN 1
+										WHEN Rez_DstNumer = 0
+											AND Rez_DataAktywacji &lt;= @p_biezacadata
+											THEN 1
+										ELSE 0
+										END
+									) = 1
+								AND Rez_Typ = @lTypRez
+								AND Rez_aktywna = 1
+								AND Rez_Ilosc &lt;&gt; 0 -- aby nie brac anulowanych zamowien
+								AND (
+									CASE 
+										WHEN @p_RezDst = 0
+											THEN 1
+										WHEN @p_RezDst = 1
+											AND Rez_DstNumer &lt;&gt; 0
+											THEN 1
+										WHEN @p_RezDst = 2
+											AND Rez_DstNumer = 0
+											THEN 1
+										ELSE 0
+										END
+									) = 1
+							)
+
+				--
+				-- koniec z konkretnego magazynu
+				--
+				IF (@lRezWsz = 0)
+					IF (@p_DstNumer &lt;= 0)
+						IF (@p_RezDst = 0)
+						BEGIN
+							SET @IloscRez = isnull(@IloscRez, 0) + CDN.DokStanRezerwacjiWszystkich(@p_gT, @p_gF, @p_gN, @p_biezacadata, 0, -- @p_FrsId
+									0, -- @p_FrsIdW,
+									0, -- @p_TypDok,
+									208, @p_MagNumer, 0, 0, 0, 0, 0, 5, 0, 0)
+						END
+								--
+			END
+			ELSE IF (@p_MagNumer = 0) --                  ze wszystkich magazynow lub globalnych
+				IF (@p_MagFirma &lt; 0) --   z magazynow globalnych
+					IF (@p_DstNumer &gt; 0) -- z konkretnej dostawy
+						SET @IloscRez = (
+								SELECT sum(Rez_Ilosc - Rez_Zrealizowano)
+								FROM cdn.Rezerwacje
+								WHERE Rez_gidtyp = 2576
+									AND Rez_twrnumer = @p_gn
+									AND Rez_MagFirma = (- @p_MagFirma)
+									AND Rez_MagNumer = 0
+									AND Rez_DataWaznosci &gt;= @p_biezacadata -- data waznosci &gt; dzis
+									--                          and Rez_DataAktywacji&lt;=@p_biezacadata -- dataAktywacji &gt; dzis
+									AND Rez_Typ = @lTypRez
+									AND Rez_aktywna = 1
+									AND Rez_Ilosc &lt;&gt; 0 -- aby nie brac anulowanych zamowien
+									AND Rez_DstNumer = @p_DstNumer
+								)
+					ELSE -- ze wszystkich dostaw
+						SET @IloscRez = (
+								SELECT sum(Rez_Ilosc - Rez_Zrealizowano)
+								FROM cdn.Rezerwacje
+								WHERE Rez_gidtyp = 2576
+									AND Rez_twrnumer = @p_gn
+									AND Rez_MagFirma = (- @p_MagFirma)
+									AND Rez_MagNumer = 0
+									AND Rez_DataWaznosci &gt;= @p_biezacadata -- data waznosci &gt; dzis
+									AND (
+										CASE 
+											WHEN Rez_DstNumer &lt;&gt; 0
+												THEN 1
+											WHEN Rez_DstNumer = 0
+												AND Rez_DataAktywacji &lt;= @p_biezacadata
+												THEN 1
+											ELSE 0
+											END
+										) = 1
+									AND Rez_Typ = @lTypRez
+									AND Rez_aktywna = 1
+									AND Rez_Ilosc &lt;&gt; 0 -- aby nie brac anulowanych zamowien
+									AND (
+										CASE 
+											WHEN @p_RezDst = 0
+												THEN 1
+											WHEN @p_RezDst = 1
+												AND Rez_DstNumer &lt;&gt; 0
+												THEN 1
+											WHEN @p_RezDst = 2
+												AND Rez_DstNumer = 0
+												THEN 1
+											ELSE 0
+											END
+										) = 1
+								)
+				ELSE -- ze wszystkich
+				IF (@lRezWsz = 0)
+				BEGIN
+					IF (@p_DstNumer &gt; 0) -- z konkretnej dostawy
+						SET @IloscRez = (
+								SELECT sum(Rez_Ilosc - Rez_Zrealizowano)
+								FROM cdn.Rezerwacje
+								WHERE Rez_gidtyp = 2576
+									AND ReZ_MagNumer &lt;&gt; 0
+									AND Rez_twrnumer = @p_gn
+									AND Rez_DataWaznosci &gt;= @p_biezacadata -- data waznosci &gt; dzis
+									--                          and Rez_DataAktywacji&lt;=@p_biezacadata -- dataAktywacji &gt; dzis
+									AND Rez_Typ = @lTypRez
+									AND Rez_aktywna = 1
+									AND Rez_Ilosc &lt;&gt; 0 -- aby nie brac anulowanych zamowien
+									AND Rez_DstNumer = @p_DstNumer
+								)
+					ELSE -- ze wszystkich dostaw
+						SET @IloscRez = (
+								SELECT sum(Rez_Ilosc - Rez_Zrealizowano)
+								FROM cdn.Rezerwacje
+								WHERE Rez_gidtyp = 2576
+									AND ReZ_MagNumer &lt;&gt; 0
+									AND Rez_twrnumer = @p_gn
+									AND Rez_DataWaznosci &gt;= @p_biezacadata -- data waznosci &gt; dzis
+									AND (
+										CASE 
+											WHEN Rez_DstNumer &lt;&gt; 0
+												THEN 1
+											WHEN Rez_DstNumer = 0
+												AND Rez_DataAktywacji &lt;= @p_biezacadata
+												THEN 1
+											ELSE 0
+											END
+										) = 1
+									AND Rez_Typ = @lTypRez
+									AND Rez_aktywna = 1
+									AND Rez_Ilosc &lt;&gt; 0
+									AND (
+										CASE 
+											WHEN @p_RezDst = 0
+												THEN 1
+											WHEN @p_RezDst = 1
+												AND Rez_DstNumer &lt;&gt; 0
+												THEN 1
+											WHEN @p_RezDst = 2
+												AND Rez_DstNumer = 0
+												THEN 1
+											ELSE 0
+											END
+										) = 1
+								)
+
+					IF (
+							@p_DstNumer &lt;= 0
+							AND @p_RezDst = 0
+							)
+					BEGIN
+						SET @IloscRez = isnull(@IloscRez, 0) + CDN.DokStanRezerwacjiWszystkich(@p_gT, @p_gF, @p_gN, @p_biezacadata, @p_FrSID, @p_FrSIDW, @p_TypDok, @p_ZrdTyp, @p_ZrdNumer, @p_FrsIDZrd, @p_TypDokZrd, 0, 0, 0, 5, 0, 0)
+					END
+				END
+				ELSE
+				BEGIN
+					IF (@p_DstNumer &gt; 0) -- z konkretnej dostawy
+						SET @IloscRez = (
+								SELECT sum(Rez_Ilosc - Rez_Zrealizowano)
+								FROM cdn.Rezerwacje
+								WHERE Rez_gidtyp = 2576
+									AND Rez_twrnumer = @p_gn
+									AND Rez_DataWaznosci &gt;= @p_biezacadata -- data waznosci &gt; dzis
+									--                          and Rez_DataAktywacji&lt;=@p_biezacadata -- dataAktywacji &gt; dzis
+									AND Rez_Typ = @lTypRez
+									AND Rez_aktywna = 1
+									AND Rez_Ilosc &lt;&gt; 0 -- aby nie brac anulowanych zamowien
+									AND Rez_DstNumer = @p_DstNumer
+									AND EXISTS (
+										SELECT *
+										FROM cdn.Rezmagazyny -- , CDN.DokDostepneMagazyny(@p_FrSID,@p_FrSIDW,@p_TypDok, @p_ZrdTyp, @p_ZrdNumer, @p_FrsIDZrd, @p_TypDokZrd)
+										WHERE ReZ_GIDNumer = ReM_RezNumer
+											AND ReM_RezTyp = Rez_GIDTyp
+											AND Cdn.DokSprawdzDostepnyMagazyn(@p_FrSID, @p_FrSIDW, @p_typDok, @p_ZrdTyp, @p_ZrdNumer, @p_FrsIDZrd, @p_TypDokZrd, Rem_MagTyp, Rem_MAgNumer, 0) &gt; 0
+											--and ReM_MagNumer = Mag_GIDNumer
+											--AND (mag_wewnetrzny IS NULL OR mag_wewnetrzny = 0 )
+										)
+								)
+					ELSE -- ze wszystkich dostaw
+						SET @IloscRez = (
+								SELECT sum(Rez_Ilosc - Rez_Zrealizowano - (
+											CASE 
+												WHEN IsNull(MAG_WMS, 0) = 0
+													THEN Rez_IloscMag
+												ELSE 0
+												END
+											)) --Nomad
+								FROM cdn.Rezerwacje
+								LEFT JOIN cdn.Magazyny ON MAG_GIDNumer = Rez_MagNumer --Nomad			 			 
+								WHERE Rez_gidtyp = 2576
+									AND Rez_twrnumer = @p_gn
+									AND Rez_DataWaznosci &gt;= @p_biezacadata -- data waznosci &gt; dzis
+									AND (
+										CASE 
+											WHEN Rez_DstNumer &lt;&gt; 0
+												THEN 1
+											WHEN Rez_DstNumer = 0
+												AND Rez_DataAktywacji &lt;= @p_biezacadata
+												THEN 1
+											ELSE 0
+											END
+										) = 1
+									AND Rez_Typ = @lTypRez
+									AND Rez_aktywna = 1
+									AND Rez_Ilosc &lt;&gt; 0
+									AND (
+										CASE 
+											WHEN @p_RezDst = 0
+												THEN 1
+											WHEN @p_RezDst = 1
+												AND Rez_DstNumer &lt;&gt; 0
+												THEN 1
+											WHEN @p_RezDst = 2
+												AND Rez_DstNumer = 0
+												THEN 1
+											ELSE 0
+											END
+										) = 1
+									AND EXISTS (
+										SELECT *
+										FROM cdn.Rezmagazyny -- , CDN.DokDostepneMagazyny(@p_FrSID,@p_FrSIDW,@p_TypDok, @p_ZrdTyp, @p_ZrdNumer, @p_FrsIDZrd, @p_TypDokZrd)
+										WHERE ReZ_GIDNumer = ReM_RezNumer
+											AND ReM_RezTyp = Rez_GIDTyp
+											AND Cdn.DokSprawdzDostepnyMagazyn(@p_FrSID, @p_FrSIDW, @p_typDok, @p_ZrdTyp, @p_ZrdNumer, @p_FrsIDZrd, @p_TypDokZrd, Rem_MagTyp, Rem_MAgNumer, 0) &gt; 0
+											--and ReM_MagNumer = Mag_GIDNumer
+											--AND (mag_wewnetrzny IS NULL OR mag_wewnetrzny = 0 )
+										)
+								)
+				END
+						--
+						-- koniec ze wszystkich magazynow
+						--
+			ELSE -- Informacja o magazynach w tabeli pomocniczej
+			IF (@p_DstNumer &gt; 0) -- z konkretnej dostawy
+				SET @IloscRez = (
+						SELECT sum(Rez_Ilosc - Rez_Zrealizowano)
+						FROM cdn.Rezerwacje,
+							cdn.MagWybor
+						WHERE Rez_gidtyp = 2576
+							AND Rez_twrnumer = @p_gn
+							AND Rez_MagNumer = MgW_MagNumer
+							AND MgW_SesjaID = - @p_MagFirma
+							AND MgW_Watek = - @p_MagNumer
+							AND Rez_DataWaznosci &gt;= @p_biezacadata -- data waznosci &gt; dzis
+							--                  and Rez_DataAktywacji&lt;=@p_biezacadata -- dataAktywacji &gt; dzis
+							AND Rez_Typ = @lTypRez
+							AND Rez_aktywna = 1
+							AND Rez_Ilosc &lt;&gt; 0
+							AND Rez_DstNumer = @p_DstNumer
+						) -- aby nie brac anulowanych zamowien
+			ELSE -- ze wszystkich dostaw
+				SET @IloscRez = (
+						SELECT sum(Rez_Ilosc - Rez_Zrealizowano - Rez_IloscMag)
+						--(select sum(Rez_Ilosc-Rez_Zrealizowano) --TID:181759
+						FROM cdn.Rezerwacje,
+							cdn.MagWybor
+						WHERE Rez_gidtyp = 2576
+							AND Rez_twrnumer = @p_gn
+							AND Rez_MagNumer = MgW_MagNumer
+							AND MgW_SesjaID = - @p_MagFirma
+							AND MgW_Watek = - @p_MagNumer
+							AND Rez_DataWaznosci &gt;= @p_biezacadata -- data waznosci &gt; dzis
+							AND (
+								CASE 
+									WHEN Rez_DstNumer &lt;&gt; 0
+										THEN 1
+									WHEN Rez_DstNumer = 0
+										AND Rez_DataAktywacji &lt;= @p_biezacadata
+										THEN 1
+									ELSE 0
+									END
+								) = 1
+							AND Rez_Typ = @lTypRez
+							AND Rez_aktywna = 1
+							AND Rez_Ilosc &lt;&gt; 0 -- aby nie brac anulowanych zamowien
+							AND (
+								CASE 
+									WHEN @p_RezDst = 0
+										THEN 1
+									WHEN @p_RezDst = 1
+										AND Rez_DstNumer &lt;&gt; 0
+										THEN 1
+									WHEN @p_RezDst = 2
+										AND Rez_DstNumer = 0
+										THEN 1
+									ELSE 0
+									END
+								) = 1
+						)
+
+			--
+			-- koniec z wybranych magazynow
+			--
+			SET @iloscRez = IsNull(@iloscRez, 0)
+				--
+				--
+		END
+				-- koniec pobierania dalszych informacji
+		ELSE
+			-- nie trzeba pobierac dalszych inforamcji
+			SET @opuscic = 1
+	END
+			-- koniec obsługi dla towarów (nie usług)
+	ELSE -- towar ma specjalny status (usluga/koszt...)
+	BEGIN
+		SET @opuscic = 0
+	END
+
+	--
+	--
+	IF (@opuscic = 0) --       nie opuszczamy tego towaru - pobranie ceny i waluty
+	BEGIN
+		IF @p_KntNumer &gt;= 0 --TID:89527
+		BEGIN
+			SELECT TOP 1 @Cena = CAST(TwD_Cena AS VARCHAR(28)),
+				@Waluta = TwD_Waluta
+			FROM CDN.TwrDost
+			WHERE TwD_TwrNumer = @p_gn
+				AND TwD_KntNumer = @p_KntNumer
+				AND Twd_KntTyp = 32
+		END
+		ELSE
+		BEGIN
+			IF @p_NumerCeny &lt; 32768
+			BEGIN
+				IF @p_NumerCeny &lt; 0
+				BEGIN
+					DECLARE @FrsID INT
+
+					SET @FrsID = - @p_NumerCeny
+
+					SELECT TOP 1 @p_NumerCeny = isnull(FRO_GIDLp, CASE 
+								WHEN B.FRS_Id = 1
+									THEN Twr_Cenaspr
+								ELSE NULL
+								END)
+					FROM CDN.FrsCentra(1, 0, @FrsID, 0, 0) A
+					JOIN CDN.FrmStruktura B ON A.Frs_Id = B.Frs_Id
+					INNER JOIN CDN.TwrKarty ON Twr_GIDNumer = @p_gn
+					LEFT OUTER JOIN CDN.FrmObiekty ON B.FRS_Id = FRO_FrmID
+						AND FRO_GIDLp = Twr_CenaSpr
+					WHERE (
+							B.Frs_CenyZRodzica = 0
+							OR B.Frs_ID = 1
+							)
+					ORDER BY A.Frs_Poziom DESC
+
+					IF @p_NumerCeny IS NULL
+						SELECT @p_NumerCeny = FRS_CenaDomyslna
+						FROM CDN.FrmStruktura
+						WHERE FRS_Id = @FrsID
+				END
+
+				/*select @Cena=CAST(Twc_Wartosc AS VARCHAR(28)), @Waluta=Twc_Waluta from CDN.TwrCeny
+					where
+					Twc_TwrNumer=@p_gn
+					and Twc_TwrLp=@p_NumerCeny*/
+				SELECT @Cena = CAST(TwC_Wartosc AS VARCHAR(28)),
+					@Waluta = TwC_Waluta
+				FROM cdn.ZwrocCeneAktualna(@p_gn, @p_NumerCeny, DATEDIFF(S, '19900101', GETDATE()))
+			END
+		END
+
+		IF EXISTS (
+				SELECT *
+				FROM cdn.TwrPodm
+				JOIN cdn.FrsZamienniki ON TwP_Id = FRZ_TwPId
+				WHERE FRZ_FrsId IN (
+						SELECT FrS_Id
+						FROM CDN.FrsCentra(1, - 4272, @FrsIdSav, 0, 0)
+						)
+					AND (
+						(
+							TwP_ZamNumer = @p_gn
+							AND TwP_ZamTyp = @p_gt
+							AND TwP_TwrTyp = 0
+							AND TwP_Warstwa &gt; 1
+							)
+						OR (
+							TwP_TwrNumer = @p_gn
+							AND TwP_TwrTyp = @p_gt
+							AND TwP_Warstwa &lt;&gt; 1
+							)
+						)
+				)
+			SET @JestZamiennik = 1
+		ELSE
+			SET @JestZamiennik = 0
+
+		IF (@statusUsluga = 0)
+		BEGIN
+			IF (@p_MagNumer &gt; 0)
+				SELECT @RodzajNazwa = isnull(SLW_WartoscS, ''),
+					@KatergoriaABCXYZ = isnull(Tpm_KategoriaABCXYZ, '')
+				FROM cdn.TwrParMag
+				LEFT OUTER JOIN CDN.Slowniki ON Tpm_RodzajId = SLW_ID
+				WHERE Tpm_TwrNumer = @p_gn
+					AND Tpm_MagNumer = @p_MagNumer
+			ELSE
+				SELECT @RodzajNazwa = isnull(SLW_WartoscS, ''),
+					@KatergoriaABCXYZ = isnull(Twr_KategoriaABCXYZ, '')
+				FROM cdn.TwrKarty
+				LEFT OUTER JOIN CDN.Slowniki ON Twr_RodzajId = SLW_ID
+				WHERE Twr_GIDNumer = @p_gn
+		END
+
+		--
+		--
+		-- podstawienie obliczonych ilosci
+		IF (@statusUsluga = 0)
+			SET @retval = cast(@iloscSpr AS VARCHAR(28)) + ':' + cast(@iloscMag AS VARCHAR(28)) + ':' + cast(@iloscRez AS VARCHAR(28)) + ':' + IsNull(@Cena, '-') + ':' + IsNull(@Waluta, '-') + ':' + cast(@wartoscstanu AS VARCHAR(28)) + ':' + IsNull(cast(@JestZamiennik AS VARCHAR(1)), '0') + ':' + IsNull(@RodzajNazwa, '') + ':' + IsNull(@KatergoriaABCXYZ, '') + ':' + cast(@rzeczywistaNetto AS VARCHAR(28))
+		ELSE
+			SET @retval = @ZnakZero + ':' + @ZnakZero + ':' + @ZnakZero + ':' + IsNull(@Cena, '-') + ':' + IsNull(@Waluta, '-') + ':' + @ZnakZero + ':' + IsNull(cast(@JestZamiennik AS VARCHAR(1)), '0') + ':' + @ZnakZero + ':' + @ZnakZero + ':' + @ZnakZero
+	END
+			-- koniec braku opuszczania
+	ELSE
+		-- jest to opuszczony stan zerowy funkcja zwraca null
+		SET @retval = NULL
+
+	RETURN @retval
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,92 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="ObrotyMagazynuZestawienie"></A><PRE>
+          <FONT SIZE="2"><I>/* ObrotyMagazynuZestawienie */</I><BR>
+CREATE  PROCEDURE CDN.ObrotyMagazynuZestawienie(@DataOd int, @DataDo int, @CDN_MagSesja int, @CDN_MagWatek int, @CDN_Filtr varchar(2048))
+AS 
+DECLARE @MAGTyp SMALLINT
+SET NOCOUNT ON
+
+SET @MAGTyp = 208
+
+CREATE TABLE #TmpTwrKarty
+(
+	GIDNumer int
+	PRIMARY KEY(GIDNumer) 
+)
+ 
+IF IsNull(@CDN_Filtr,'')=''
+  EXEC (N'Insert Into #TmpTwrKarty Select TwrKarty.Twr_GIDNumer FROM CDN.TwrKarty TwrKarty WHERE TwrKarty.Twr_Typ in (1,2)');
+Else
+  EXEC (N'Insert Into #TmpTwrKarty Select TwrKarty.Twr_GIDNumer FROM CDN.TwrKarty TwrKarty WHERE TwrKarty.Twr_Typ in (1,2) AND ' + @CDN_Filtr)
+
+SET NOCOUNT OFF
+
+SELECT 
+IsNull(DOK.BO_P_R,0) As BO_P_R, DOK.GIDTYP, DOK.GIDNUMER, DOK.Ilosc, DOK.Wartosc, DOK.NrDok, DOK.Data
+FROM 
+(
+  SELECT -- BO
+  [BO_P_R] = 0,
+  [GIDTYP]=0, [GIDNUMER]=0, [Data]=0, [NrDok]='',
+  ISNULL(SUM(CDN.TrSIlosc(TrS_Ilosc,TrN_GIDTyp,TrN_GIDNumer,TrS_GIDLp,TrS_SubGIDLp,TrS_ZwrTyp,TrN_Stan)),0) AS Ilosc,
+  ISNULL(SUM(CDN.TrSKsiegowa(TrS_KosztKsiegowy,TrS_Ilosc,TrN_GIDTyp,TrN_GIDNumer,TrS_GIDLp,TrS_SubGIDLp,TrS_ZwrTyp,TrN_Stan,TrN_ZmodyfikowanoZasob)),0) AS Wartosc
+  FROM 
+  #TmpTwrKarty 
+  JOIN CDN.TwrKarty ON Twr_GIDNumer=GIDNumer 
+  JOIN CDN.TraElem ON Twr_GIDNumer=TrE_TwrNumer 
+  JOIN CDN.TraSElem ON TrS_GIDNumer=TrE_GIDNumer AND TrS_GIDLp=TrE_GIDLp AND TrS_MagTyp=@MAGTyp
+  JOIN CDN.MagWybor ON TrS_MagNumer=MgW_MagNumer AND MgW_SesjaID=@CDN_MagSesja AND MgW_Watek=@CDN_MagWatek
+  JOIN CDN.TraNag ON TrN_GIDNumer=TrE_GIDNumer 
+  WHERE Trn_DataMag &lt; @DataOd --and (TrN_Stan &gt;= 3 or (TrN_Stan &lt; 3 and (trn_gidtyp = 1616 or (trn_gidtyp = 1624 and Tre_Ilosc &gt;0) or (trn_gidtyp = 1625 and Tre_Ilosc &lt;0))))
+UNION ALL
+SELECT -- DOKUMENTY NIE SPIETE
+  [BO_P_R] = case when (trn_gidtyp not in (1600,1616,1617,1625,1624) and trn_gidtyp&amp;512 = 0) or (trn_gidtyp in (1604,1617,1625,2002,2010)) or (TrN_GIDTyp=1600 and TrN_MagDNumer=MgW_MagNumer) then 2 else 1 end, --przychod + korekty, rozchod + korekty
+  Trn_GIDTyp, Trn_GIDNumer, TrN_DataMag
+  ,CDN.NumerDokumentu(TrN_GIDTyp,TrN_SpiTyp,TrN_TrNTyp,TrN_TrNNumer,TrN_TrNRok,TrN_TrNSeria,TrN_TrNMiesiac)
+  ,sum(Trs_Ilosc)
+  ,ISNULL(SUM(CDN.TrSKsiegowa(TrS_KosztKsiegowy,TrS_Ilosc,TrN_GIDTyp,TrN_GIDNumer,TrS_GIDLp,TrS_SubGIDLp,TrS_ZwrTyp,TrN_Stan,TrN_ZmodyfikowanoZasob)),0)
+  FROM 
+  #TmpTwrKarty 
+  JOIN CDN.TwrKarty ON Twr_GIDNumer=GIDNumer 
+  JOIN CDN.TraElem ON Twr_GIDNumer=TrE_TwrNumer 
+  JOIN CDN.TraSElem ON TrS_GIDNumer=TrE_GIDNumer AND TrS_GIDLp=TrE_GIDLp AND TrS_MagTyp=@MAGTyp
+  JOIN CDN.MagWybor ON TrS_MagNumer=MgW_MagNumer AND MgW_SesjaID=@CDN_MagSesja AND MgW_Watek=@CDN_MagWatek
+  JOIN CDN.TraNag ON TrN_GIDNumer=TrE_GIDNumer 
+  WHERE Trn_DataMag BETWEEN @DataOd AND @DataDo
+  and (TrN_SpiTyp = TrN_GIDTyp or TrN_SpiTyp&lt;=0) -- Eliminacja dokumentów które sa do czegoś spięte np PZ-&gt;(S)FZ.
+  GROUP BY TrN_GIDTyp,TrN_GIDNumer, TrN_SpiTyp,TrN_TrNTyp,TrN_TrNNumer,TrN_TrNRok,TrN_TrNSeria,TrN_MagDNumer,MgW_MagNumer, TrN_DataMag,TrN_TrNMiesiac
+UNION ALL
+SELECT --SPINACZE
+  [BO_P_R] = case when SPI.trn_gidtyp&amp;512 = 512 then 3 else 4 end, --rozchod + korekty, przychod + korekty
+  SPI.Trn_GIDTyp, SPI.Trn_GIDNumer, SPI.TrN_DataMag
+  ,CDN.NumerDokumentu(SPI.TrN_GIDTyp,SPI.TrN_SpiTyp,SPI.TrN_TrNTyp,SPI.TrN_TrNNumer,SPI.TrN_TrNRok,SPI.TrN_TrNSeria,SPI.TrN_TrNMiesiac)
+  ,sum(Trs_Ilosc)
+  ,ISNULL(SUM(CDN.TrSKsiegowa(TrS_KosztKsiegowy,TrS_Ilosc,ORG.TrN_GIDTyp,ORG.TrN_GIDNumer,TrS_GIDLp,TrS_SubGIDLp,TrS_ZwrTyp,ORG.TrN_Stan,ORG.TrN_ZmodyfikowanoZasob)),0)
+  FROM 
+  #TmpTwrKarty 
+  JOIN CDN.TwrKarty ON Twr_GIDNumer=GIDNumer 
+  JOIN CDN.TraElem ON Twr_GIDNumer=TrE_TwrNumer 
+  JOIN CDN.TraSElem ON TrS_GIDNumer=TrE_GIDNumer AND TrS_GIDLp=TrE_GIDLp AND TrS_MagTyp=@MAGTyp
+  JOIN CDN.MagWybor ON TrS_MagNumer=MgW_MagNumer AND MgW_SesjaID=@CDN_MagSesja AND MgW_Watek=@CDN_MagWatek
+  JOIN CDN.TraNag ORG ON TrN_GIDNumer=TrE_GIDNumer 
+  JOIN CDN.TraNag SPI ON ORG.TrN_SPINumer=SPI.TrN_GIDNumer 
+  WHERE ORG.Trn_DataMag BETWEEN @DataOd AND @DataDo 
+  and (SPI.TrN_SpiTyp &lt;&gt; SPI.TrN_GIDTyp) -- Tylko dokumenty które sa do czegoś spięte np PZ-&gt;(S)FZ.
+  GROUP BY SPI.TrN_GIDTyp,SPI.TrN_GIDNumer,SPI.TrN_SpiTyp,SPI.TrN_TrNTyp,SPI.TrN_TrNNumer,SPI.TrN_TrNRok,SPI.TrN_TrNSeria, SPI.TrN_DataMag,SPI.TrN_TrNMiesiac
+) AS DOK
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

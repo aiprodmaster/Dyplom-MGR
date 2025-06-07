@@ -1,0 +1,74 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[POS_EksportCenniki]"></A><PRE>
+          <FONT SIZE="2"><I>/* [POS_EksportCenniki] */</I><BR>
+CREATE PROCEDURE [CDN].[POS_EksportCenniki]
+	@rowVersion bigint,
+	@PointOfSaleId int
+AS
+BEGIN
+SET NOCOUNT ON;
+
+		DECLARE @tCN TABLE([@Id] int,[@PriceTypeId] int,[@ValidityStartDate] datetime, [@AcceptanceDate] datetime, [@IsActive] varchar(5), [@IsSubjectToDiscounts] varchar(5), [@IsThresholdPriceList] varchar(5), [@Name] varchar(100) ,RW INT, [@CompanyUnitId] INT)
+		INSERT INTO @tCN 
+		select distinct * from 
+			(
+				select distinct 
+						TCN_ID as [@Id],
+						TcN_RodzajCeny as [@PriceTypeId],
+						CDN.TSToDate(TCN_DataOd,1) as [@ValidityStartDate],
+						CDN.TSToDate(TCN_DataOd,1) as [@AcceptanceDate],
+						'true'  as [@IsActive],
+						'true' as [@IsSubjectToDiscounts],
+						'false' as [@IsThresholdPriceList],
+						RTRIM(TcN_Nazwa) as [@Name],
+						CASE WHEN @PointOfSaleId is null and oddzialBylWyslany = 0 then (SELECT MAX(rw) FROM (VALUES (TCN_CzasModyfikacji),(TwrLastMod),(PSaDataDodania)) AS rws(rw)) else 
+						CASE WHEN TcN_CzasModyfikacji &gt; TwrLastMod then TcN_CzasModyfikacji ELSE TwrLastMod END END AS RW,
+						CASE WHEN @PointOfSaleId is null then PckCentrumID else null end as [@CompanyUnitId]
+				from cdn.POS_OddzialyDoEksportu(@PointOfSaleId, @rowVersion)
+				cross apply cdn.POS_TwrDoEksportu(PSaID,0) 
+				join cdn.TwrCeny on TwC_TwrNumer = TwrGIDNumer
+				join cdn.TwrCenyNag on TwC_TcnId = TCN_Id
+				cross apply CDN.POS_TCNDoEksportu(PSaID) 
+				where tcn_stan = 5 AND (CASE WHEN TcN_CzasModyfikacji &gt; TwrLastMod then TcN_CzasModyfikacji ELSE TwrLastMod END &gt; @rowVersion OR @rowVersion = 0 OR (@PointOfSaleId is null and oddzialBylWyslany = 0)) and cenalp = TCN_RodzajCeny
+		
+				union
+				select distinct 
+						TCN_ID as [@Id],
+						TcN_RodzajCeny as [@PriceTypeId],
+						CDN.TSToDate(TCN_DataOd,1)  as [@ValidityStartDate],
+						CDN.TSToDate(TCN_DataOd,1)  as [@AcceptanceDate],
+						'false'  as [@IsActive],
+						'true' as [@IsSubjectToDiscounts],
+						'false' as [@IsThresholdPriceList],
+						RTRIM(TcN_Nazwa) as [@Name],
+						TcN_CzasModyfikacji,
+						CASE WHEN @PointOfSaleId is null then PckCentrumID else null end as [@CompanyUnitId]
+				from  cdn.TwrCenyNag
+				cross join cdn.POS_OddzialyDoEksportu(@PointOfSaleId, @rowVersion)
+				cross apply CDN.POS_TCNDoEksportu(PSaID) 
+				where tcn_stan = 6 AND (TcN_CzasModyfikacji &gt; @rowVersion OR @rowVersion = 0 OR (@PointOfSaleId is null and oddzialBylWyslany = 0)) and cenalp = TCN_RodzajCeny
+			) A
+
+		SELECT (SELECT case when MAX(RW) &gt; @rowVersion then MAX(RW) else @rowVersion end FROM @tCN) AS [@RowVersion]
+		,(
+			SELECT distinct [@Id],[@PriceTypeId],[@ValidityStartDate], [@AcceptanceDate],[@IsActive],[@IsSubjectToDiscounts],[@IsThresholdPriceList],[@Name], [@CompanyUnitId] FROM @tCN
+		for xml path('PriceList'), type)
+	for xml path('PriceLists')
+	SET NOCOUNT OFF;	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

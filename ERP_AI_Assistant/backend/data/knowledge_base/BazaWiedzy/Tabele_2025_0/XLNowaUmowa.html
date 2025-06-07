@@ -1,0 +1,622 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="XLNowaUmowa"></A><PRE>
+          <FONT SIZE="2"><I>/* XLNowaUmowa */</I><BR>
+CREATE PROCEDURE CDN.XLNowaUmowa
+(
+	@PodTyp SMALLINT, --typ podmiotu umowy (bank 48, knt 32)
+	@PodNumer INT, --numer identyfikacyjny podmiotu umowy
+	@PodKod VARCHAR(20)=null, --gdy wyszukiwanie po numerach identyfikacyjnych nie powiodło się to nastąpi szukanie po kodzie najpierw wśród kontrahentów potem banków
+		
+	@TypId	INT, --identyfikator typu umowy
+	@TypSciezka VARCHAR(512)=null, --gdy wyszukiwanie pod identyfikatorze nie powiodło się to nastąpi szukanie po kodzie typu lub po ścieżce (kody typów oddzielone \ ukośnikiem) gdy nie znajdzie danego kodu
+	
+	@RodzajId INT, --identyfikator rodzaju umowy ze słownika kategorii
+	@RodzajNazwa VARCHAR(128)=null, --gdy wyszukiwanie po identyfikatrze rodzaju nie powidło się to nastąpi szukanie po nazwie rodzaju
+	
+	@AneksowanaId INT=null,--identyfikator umowy do której dodać aneks
+	
+	--szukanie umowy do której dodać aneks po numeratorze dokumentu
+	@AneksowanaNumer INT=null,--numer umowy do której dodać aneks
+	@AneksowanaMiesiac TINYINT=null,--miesiąc umowy do której dodać aneks
+	@AneksowanaRok SMALLINT=null,--rok umowy do której dodać aneks
+	@AneksowanaSeria VARCHAR(5)=null,--seria umowy do której dodać aneks
+		
+	@OpeWystNumer INT, --numer operatora wystawiającego
+	@OpeWystKod VARCHAR(8)=null, --kod operatora wystawiającego, gdy nie znajdzie po numerze
+	@DataCzasWyst INT=NULL, --data i czas wystawienia dokumentu, ilość sekund po 01-01-1990
+	
+	@OpeModNumer INT=null, --numer operatora modyfikującego
+	@OpeModKod VARCHAR(8)=null, --kod operatora modyfikującego, gdy nie znajdzie po numerze
+	@DataCzasMod INT=NULL, --data i czas modyfikacji dokumentu, ilość sekund po 01-01-1990
+		
+	@DataZawarcia INT=null, --data zawarcia umowy, zapisana jako liczba dni po 28-12-1800, gdy nie przekazano to aktualna data
+	@DataRozpoczecia INT=null, --data ropoczęcia obowiązywania umowy, zapisana jako liczba dni po 28-12-1800, gdy nie przekazano to data zawarcia umowy
+	@DataZakonczenia INT=null, --data zakończenia obowiązywania umowy, zapisana jako liczba dni po 28-12-1800 lub 93890 jako nieograniczona, gdy nie przekazano to nieograniczona
+	
+	@WalutaSymbol VARCHAR(3)=null, --symbol waluty, gdy nie przekazano to systemowa
+	@TypKursu TINYINT=null, --typ kursu: 1 - bieżący, 2 - ustalony
+	@NrKursu SMALLINT=null, --numer kursu
+	@KursM DECIMAL(5)=null, --mianownik kursu
+	@KursL DECIMAL(7,2)=null, --licznik kursu 
+
+	@Uwagi VARCHAR(2000)=null, --uwagi do predefinowanego wpisu wartość umowy
+		
+	@WartoscNetto DECIMAL(15,2)=null, --wartość netto dokumentu, gdy większa od 0 to zostanie dodany jeden wpis do UmwVat
+	@StawkaVat VARCHAR(7)=null, --stawka vat w formacie '&lt;grupa&gt;&lt;spacja&gt;&lt;stawka&gt;' np 'A 22.00', gdy jest wartość netto, a nie przekazano stawki vat to "Stawka VAT podstawowa" z konfiguracji
+	
+	@OpiekunNumer INT=null, --numer identyfikacyjny opiekuna (Prc_GIDNumer)
+	
+	@NumerDok INT=null, --numer z numeratora dokumentu
+	@SeriaDok VARCHAR(5)=null, --seria z numeratora dokumentu 
+	
+	@DokumentObcy VARCHAR(40)=null, --numerator dokumentu obcego 
+	
+	@PrjId INT=null, --identyfikator projektu	
+	@Opis VARCHAR(1024)=null, --opis nagłówka umowy
+	@FrsId INT=null, --identyfikator właściciela dokumentu, gdy nie ma to pobranie zostane domyślne centrum operatora wystawiającego
+	@Url VARCHAR(255)=null, --adres url
+	@FlagaNB VARCHAR(1)=null, --czy dokument liczony od brutto ('B') czy netto ('N')
+	
+	@KntOsobaLp SMALLINT=null, --numer porządkowy osoby u kontrahenta	
+	@OdbiorcaOsobaLp SMALLINT=null, --numer porządkowy osoby u odbiorcy
+	@CechaOpis VARCHAR(250)=null, --opis cechy nagłówka
+	@PowodAneksuId INT = null, -- numer identyfikacyjny opisu powodu dodania aneksu ze słowika
+	@AneksowanaNettoTyp TINYINT = null -- typ uwzględnienia kwoty netto 0 - różnicowy, 1 - na wskazaną
+)
+AS
+BEGIN
+
+	DECLARE @TimeStamp INT
+	
+	DECLARE @Miesiac INT
+	DECLARE @Rok INT
+	
+	DECLARE @Typ_Um SMALLINT
+	DECLARE @Typ_UmT SMALLINT	
+	DECLARE @Typ_Knt SMALLINT
+	DECLARE @Typ_Bnk SMALLINT
+	DECLARE @FirmaId INT
+	
+	DECLARE @SprZak TINYINT
+	
+	DECLARE @UmwId INT
+	
+	DECLARE @FrmNumer INT
+	
+	DECLARE @KnATyp SMALLINT
+	DECLARE @KnANumer INT
+	DECLARE @KnALp SMALLINT
+	
+	DECLARE @StawkaWartosc DECIMAL(5,2)
+	DECLARE @StawkaGrupa VARCHAR(1)
+	DECLARE @FlagaVat TINYINT
+	
+	DECLARE @WalSys VARCHAR(3) --waluta systemowa
+	
+	DECLARE @OstatniAneks INT
+	
+	DECLARE @Stan TINYINT
+	DECLARE @Stan_Potwierdzona TINYINT
+	
+	SET @Stan_Potwierdzona=1 --e_Umw_nStanPotwierdzona               EQUATE(1)      
+	SET @OstatniAneks=0
+	SET @UmwId=0
+	SET @Typ_Um=4800
+	SET @Typ_UmT=4801
+	SET @Typ_Knt=32
+	SET @Typ_Bnk=48
+	SET @FirmaId=CDN.GIDFirma()
+	SET @WalSys=COALESCE((select Kon_Wartosc from CDN.Konfig where Kon_Numer=211),'PLN')
+	
+	SET @TimeStamp=DATEDIFF(s,'19900101',GETDATE())
+
+	IF ISNULL(@DataZawarcia,0)=0 
+		SET @DataZawarcia = @TimeStamp/86400+69035 
+		
+	SET @OpeWystNumer = COALESCE((SELECT Ope_GIDNumer FROM CDN.OpeKarty WHERE Ope_GIDNumer=@OpeWystNumer),(SELECT Ope_GIDNumer FROM CDN.OpeKarty WHERE Ope_Ident=@OpeWystKod))
+	
+	IF @OpeWystNumer IS NULL
+	BEGIN
+		RAISERROR ('XLNowaUmowa: Podany operator nie istnieje w bazie.', 16, 1)
+		RETURN -2
+	END	
+	
+	SET @OpeModNumer = COALESCE((SELECT Ope_GIDNumer FROM CDN.OpeKarty WHERE Ope_GIDNumer=@OpeModNumer),(SELECT Ope_GIDNumer FROM CDN.OpeKarty WHERE Ope_Ident=@OpeModKod),@OpeWystNumer)	
+			
+	SET @FrsId = COALESCE((SELECT Frs_Id FROM CDN.FrmStruktura WHERE FRS_Id=@FrsId),(SELECT Ope_FrSId FROM CDN.OpeKarty WHERE Ope_GIDNumer=@OpeWystNumer))
+ 
+	IF @FrsId IS NULL 
+	BEGIN 
+		RAISERROR ('XLNowaUmowa: Podane centrum dla właściciela nie istnieje w bazie.', 16, 1)
+		RETURN -3
+	END	
+	
+	select @FrmNumer=FRS_FrmNumer from CDN.FrmStruktura where FRS_ID=@FrsId	
+
+	IF EXISTS(SELECT * FROM CDN.Konfig WHERE kon_numer=992 AND (CHARINDEX('6',Kon_wartosc)&gt;0 OR CHARINDEX('7',Kon_wartosc)&gt;0)) -- czy numeracja z miesiącem
+		SET @Miesiac = MONTH(DATEADD(dd,@DataZawarcia,CONVERT(DATETIME,'18001228',11)))
+	ELSE
+		SET @Miesiac = 0
+		
+	SET @Rok = YEAR(DATEADD(dd,@DataZawarcia,CONVERT(DATETIME,'18001228',11)))
+	
+	--TS przydało by się bardziej szczegółowe sprawdzanie serii - dostępne dla danego centrum dla definicji dokumentu umowy
+	set @SeriaDok=COALESCE((select SER_Nazwa from CDN.Serie where SER_Nazwa=@SeriaDok),null)
+	
+	IF @SeriaDok IS NULL -- pobieramy z definicji dokumentu domyślną serie:
+		SET @SeriaDok=COALESCE((SELECT SER_Nazwa FROM CDN.DokDefinicje JOIN CDN.Serie ON Dok_SerNumer=SER_GIDNumer WHERE Dok_GIDTyp=@Typ_Um AND Dok_FrsId=@FrsId),'')
+	
+	IF ISNULL(@NumerDok,0)&lt;&gt;0 AND EXISTS(SELECT * FROM CDN.UmwNag WHERE UmN_Rok=@Rok AND UmN_Miesiac=@Miesiac AND UmN_Seria=@SeriaDok AND UmN_Numer=@NumerDok)
+    BEGIN 
+		RAISERROR ('XLNowaUmowa: Dokument o takim numeratorze już istnieje w bazie.', 16, 1)
+		RETURN -5
+	END
+	
+	SET @AneksowanaId =  COALESCE((select UmN_Id from CDN.UmwNag where UmN_Id=@AneksowanaId and UmN_UmowaId=0),(select a.UmN_Id from CDN.UmwNag a join CDN.UmwNag b on a.UmN_Id=b.UmN_UmowaId where b.UmN_Id=@AneksowanaId and a.UmN_UmowaId=0),(select case when isnull(@AneksowanaId,0)=0 then 0 end))
+
+	IF @AneksowanaId IS NULL 
+	BEGIN 
+		RAISERROR ('XLNowaUmowa: Umowa o podanym identyfikatorze do której należy wystawić aneks nie istnieje w bazie lub nie jest potwierdzona.', 16, 1)
+		RETURN -10
+	END
+	
+	IF @AneksowanaId = 0
+	BEGIN
+		SET @AneksowanaId =  COALESCE((select UmN_Id from CDN.UmwNag where UmN_Numer=@AneksowanaNumer and UmN_Miesiac=@AneksowanaMiesiac and UmN_Rok=@AneksowanaRok and UmN_Seria=@AneksowanaSeria and UmN_UmowaId=0),(select a.UmN_Id from CDN.UmwNag a join CDN.UmwNag b on a.UmN_Id=b.UmN_UmowaId where b.UmN_Numer=@AneksowanaNumer and b.UmN_Miesiac=@AneksowanaMiesiac and b.UmN_Rok=@AneksowanaRok and b.UmN_Seria=@AneksowanaSeria and a.UmN_UmowaId=0),(select case when isnull(@AneksowanaNumer,0)=0 and isnull(@AneksowanaMiesiac,0)=0 and isnull(@AneksowanaRok,0)=0 and isnull(@AneksowanaSeria,0)=0 then 0 end))
+		
+		IF @AneksowanaId IS NULL 
+		BEGIN 
+			RAISERROR ('XLNowaUmowa: Umowa o podanym numeratorze do której należy wystawić aneks nie istnieje w bazie lub nie jest potwierdzona.', 16, 1)
+			RETURN -11
+		END	
+	END
+	
+	IF @AneksowanaId&gt;0
+	BEGIN
+		select @OstatniAneks=case when UmN_AneksId=0 then UmN_Id else UmN_AneksId end  from CDN.UmwNag where UmN_Id=@AneksowanaId
+		
+		select @Stan=UmN_Stan,@PrjId=UmN_PrjId,@PodNumer=UmN_PodNumer,@PodTyp=UmN_PodTyp,@RodzajId=UmN_RodzajUmowyId,@TypId=UmN_UmTId,@FlagaNB=UmN_FlagaNB,@NrKursu=UmN_NrKursu,@WalutaSymbol=UmN_Waluta,@KursL=UmN_KursL,@KursM=UmN_KursM,@TypKursu=UmN_TypKursu,@SprZak=UmN_SprZak from CDN.UmwNag where UmN_Id=@OstatniAneks
+		
+		IF @Stan&lt;&gt;@Stan_Potwierdzona
+		BEGIN 
+			RAISERROR ('XLNowaUmowa: Ostatni dokument musi być w stanie zatwierdzonym by wystawić do niego aneks.', 16, 1)
+			RETURN -14
+		END
+
+		IF @PowodAneksuId is not null and not exists(select SLW_ID from CDN.SlownikiStruktura inner join CDN.Slowniki on SLW_SLSId=SLS_Id where SLS_Predefiniowany=138/*e_sls_UmowyPowodWystawieniaAneksu*/ and SLW_Aktywny=1 and SLW_ID=@PowodAneksuId)
+		BEGIN 
+			RAISERROR ('XLNowaUmowa: Nie znaleziono w słowniku powodu aneksowania umowy o przekazanym identyfikatorze', 16, 1)
+			RETURN -15
+		END
+	END
+	
+	SET @PodNumer = COALESCE((select Knt_GIDNumer from CDN.KntKarty where Knt_GIDNumer=@PodNumer and Knt_GIDTyp=@PodTyp),(select Knt_GIDNumer from CDN.KntKarty where Knt_Akronim=@PodKod and Knt_GIDTyp=@PodTyp),(select Bnk_GIDNumer from CDN.Banki where Bnk_GIDNumer=@PodNumer and Bnk_GIDTyp=@PodTyp),(select Bnk_GIDNumer from CDN.Banki where Bnk_Kod=@PodKod and Bnk_GIDTyp=@PodTyp),(select Knt_GIDNumer from CDN.KntKarty where Knt_Akronim=@PodKod),(select -Bnk_GIDNumer from CDN.Banki where Bnk_Kod=@PodKod))
+
+	IF @PodNumer IS NULL 
+	BEGIN 
+		RAISERROR ('XLNowaUmowa: Podany podmiot nie istnieje w bazie.', 16, 1)
+		RETURN -1
+	END
+	
+	if	@PodTyp=0
+		if @PodNumer &gt;= 0 
+			set @PodTyp=@Typ_Knt
+		else
+			select @PodTyp=@Typ_Bnk,@PodNumer=abs(@PodNumer)
+						
+	
+	IF	@PodTyp=@Typ_Knt
+		select @KnATyp=Knt_KnATyp,@KnANumer=Knt_KnANumer, @KnALp=Knt_KnALp from CDN.KntKarty where Knt_GIDNumer=@PodNumer
+	ELSE
+		select @KnATyp=0,@KnANumer=0, @KnALp=0
+	
+	SET @TypId = COALESCE((select UmT_Id from CDN.UmwTypy where UmT_Id=@TypId),(select UmT_Id from CDN.UmwTypy where UmT_Kod=@TypSciezka),(select Id from (select UmT_Id Id,CDN.PobierzSciezkeTypuUmowy(UmT_Id) Sciezka from CDN.UmwTypy) a where a.Sciezka=@TypSciezka))
+
+	IF @TypId IS NULL 
+	BEGIN 
+		RAISERROR ('XLNowaUmowa: Podany typ umowy nie istnieje w bazie.', 16, 1)
+		RETURN -4
+	END
+	
+	--TS max(..) by ustawił null na polach gdy nie ma rekordu
+	select @RodzajId=max(SLW_ID), @SprZak=max(SLW_WartoscL2) from CDN.SlownikiStruktura inner join CDN.Slowniki on SLW_SLSId=SLS_Id where SLS_Predefiniowany=132/*e_sls_UmowyRodzajeUmow*/ and SLW_Aktywny=1 and SLW_ID=@RodzajId
+	
+	IF @RodzajId IS NULL 
+		select @RodzajId=max(SLW_ID), @SprZak=max(SLW_WartoscL2) from CDN.SlownikiStruktura inner join CDN.Slowniki on SLW_SLSId=SLS_Id where SLS_Predefiniowany=132/*e_sls_UmowyRodzajeUmow*/ and SLW_Aktywny=1 and SLW_WartoscS=@RodzajNazwa
+						
+	IF @RodzajId IS NULL 
+	BEGIN 
+		RAISERROR ('XLNowaUmowa: Podany rodzaj umowy nie istnieje w bazie.', 16, 1)
+		RETURN -6
+	END
+	
+	SET @NrKursu=COALESCE((select Naz_GIDLp from CDN.Nazwy where Naz_GIDTyp=96 and Naz_GIDLp=@NrKursu),(select Kon_Wartosc from CDN.Konfig where Kon_Numer=11),1)
+	SET @WalutaSymbol=COALESCE((select WaN_Symbol from CDN.WalNag where WaN_Symbol=@WalutaSymbol),@WalSys)
+	
+	IF @WalutaSymbol = @WalSys
+		SELECT @KursL=1, @KursM=1, @TypKursu=1 		 
+	ELSE
+		IF isnull(@TypKursu,1)&lt;&gt;2 /*1-bieżący, 2-ustalony*/
+			select top 1 @TypKursu=1, @KursL=WaE_KursL, @KursM=WaE_KursM from CDN.WalElem where WaE_Symbol=@WalutaSymbol and WaE_Lp=@NrKursu order by WaE_KursTS desc			
+
+	SET @OpiekunNumer = COALESCE((select Prc_GIDNumer from CDN.PrcKarty where Prc_GIDNumer=@OpiekunNumer),0)
+	
+	SET @PrjId = COALESCE((select PRJ_ID from CDN.PrjStruktura where PRJ_ID=@PrjId),0)
+	
+	IF isnull(@FlagaNB,'N')&lt;&gt;'B'
+		SET @FlagaNB = 'N'
+		
+	SET @KntOsobaLp = COALESCE((select KnS_KntLp from CDN.KntOsoby where KnS_KntLp=@KntOsobaLp and KnS_KntNumer=@PodNumer and KnS_KntTyp=@PodTyp),0)			
+
+	SET @OdbiorcaOsobaLp = COALESCE((select KnS_KntLp from CDN.KntOsoby where KnS_KntLp=@OdbiorcaOsobaLp and KnS_KntNumer=@PodNumer and KnS_KntTyp=@PodTyp),0)
+	
+	SET @CechaOpis =COALESCE((select Naz_Nazwa from CDN.Nazwy where Naz_GIDTyp=2720/*cechy transakcji*/ and Naz_Nazwa=@CechaOpis),'')		
+
+	SET @StawkaVat=COALESCE((select Naz_Nazwa from CDN.Nazwy where Naz_GIDTyp=624 and Naz_Nazwa=@StawkaVat),(select Kon_Wartosc from CDN.Konfig where Kon_Numer=981))
+		
+	SET @StawkaGrupa=substring(@StawkaVat,1,1)	
+	SET @StawkaWartosc=substring(@StawkaVat,3,5)
+	SET @FlagaVAT=(select substring(Naz_Nazwa1,11,1) from CDN.Nazwy where Naz_GIDTyp=624 and Naz_Nazwa=@StawkaVat)
+	
+    if isnull(@NumerDok,0)=0
+		select @NumerDok=isnull(max(UmN_Numer),0)+1 from CDN.UmwNag where UmN_Rok=@Rok and UmN_Seria=@SeriaDok and UmN_Miesiac= isnull(@Miesiac, UmN_Miesiac)
+
+	 
+ begin tran
+	INSERT INTO [CDN].[UmwNag]
+           ([UmN_UmTId]
+           ,[UmN_PozycjaTwr]
+           ,[UmN_DataRozpoczecia]
+           ,[UmN_DataZakonczenia]
+           ,[UmN_DataZawarcia]
+           ,[UmN_UmowaId]
+           ,[UmN_AneksId]
+           ,[UmN_PodTyp]
+           ,[UmN_PodNumer]
+           ,[UmN_KnANumer]
+           ,[UmN_KnATyp]
+           ,[UmN_KnDTyp]
+           ,[UmN_KnDNumer]
+           ,[UmN_AdWNumer]
+           ,[UmN_AdWTyp]
+           ,[UmN_KnPTyp]
+           ,[UmN_KnPNumer]
+           ,[UmN_AdPNumer]
+           ,[UmN_OpeWNumer]
+           ,[UmN_OpePNumer]
+           ,[UmN_OpeMNumer]
+           ,[UmN_OpiekunNumer]
+           ,[UmN_DataCzasW]
+           ,[UmN_DataCzasP]
+           ,[UmN_DataCzasM]
+           ,[UmN_RodzajUmowyId]
+           ,[UmN_SprZak]
+           ,[UmN_FormaNr]
+           ,[UmN_FormaNazwa]
+           ,[UmN_FormaRabat]
+           ,[UmN_TerminPlatnosci]
+           ,[UmN_Rok]
+           ,[UmN_Miesiac]
+           ,[UmN_Seria]
+           ,[UmN_Numer]
+           ,[UmN_DokumentObcy]
+           ,[UmN_ExpoNorm]
+           ,[UmN_Waluta]
+           ,[UmN_NrKursu]
+           ,[UmN_KursM]
+           ,[UmN_KursL]
+           ,[UmN_TypKursu]
+           ,[UmN_Rabat]
+           ,[UmN_RabatW]
+           ,[UmN_RabatPromocyjnyGlobalny]
+           ,[UmN_Promocje]
+           ,[UmN_SpDostawy]
+           ,[UmN_CechaOpis]
+           ,[UmN_Stan]
+           ,[UmN_OpisStanuId]
+           ,[UmN_Aktywny]
+           ,[UmN_Wsk]
+           ,[UmN_KnSTyp]
+           ,[UmN_KnSFirma]
+           ,[UmN_KnSNumer]
+           ,[UmN_KnSLp]
+           ,[UmN_KnSTypOdb]
+           ,[UmN_KnSFirmaOdb]
+           ,[UmN_KnSNumerOdb]
+           ,[UmN_KnSLpOdb]
+           ,[UmN_Url]
+           ,[UmN_FrSID]
+           ,[UmN_FlagaNB]
+           ,[UmN_Opis]
+           ,[UmN_CenaSpr]
+           ,[UmN_PrjId]
+           ,[UmN_FrmNumer]
+           ,[UmN_CzasObow]
+           ,[UmN_CzasObowJedn]
+           ,[UmN_NieUzywac]
+		   ,[UmN_PowodAneksuId])
+     VALUES
+			(@TypId,--UmN_UmTId, int,&gt;
+			0,--UmN_PozycjaTwr, tinyint,&gt;
+			isnull(@DataRozpoczecia,@DataZawarcia),--UmN_DataRozpoczecia, int,&gt;
+			isnull(@DataZakonczenia,93890),--UmN_DataZakonczenia, int,&gt;
+			@DataZawarcia,--UmN_DataZawarcia, int,&gt;
+			@AneksowanaId,--UmN_UmowaId, int,&gt;
+			@OstatniAneks,--UmN_AneksId, int,&gt;
+			@PodTyp,--UmN_PodTyp, smallint,&gt;
+			@PodNumer,--UmN_PodNumer, int,&gt;
+			@KnANumer,--UmN_KnANumer, int,&gt;
+			@KnATyp,--UmN_KnATyp, smallint,&gt;S
+			CASE WHEN @PodTyp&lt;&gt;@Typ_Knt THEN 0 ELSE @PodTyp END ,--UmN_KnDTyp, smallint,&gt;
+			CASE WHEN @PodTyp&lt;&gt;@Typ_Knt THEN 0 ELSE @PodNumer END,--UmN_KnDNumer, int,&gt;
+			@KnANumer,--UmN_AdWNumer, int,&gt;
+			@KnATyp,--UmN_AdWTyp, smallint,&gt;
+           0,--UmN_KnPTyp, smallint,&gt;
+           0,--UmN_KnPNumer, int,&gt;
+           0,--UmN_AdPNumer, int,&gt;
+           @OpeWystNumer,--UmN_OpeWNumer, int,&gt;
+           0,--UmN_OpePNumer, int,&gt;
+           @OpeModNumer,--UmN_OpeMNumer, int,&gt;
+           @OpiekunNumer,--UmN_OpiekunNumer, int,&gt;
+           isnull(@DataCzasWyst,@TimeStamp),--UmN_DataCzasW, int,&gt;
+           0,--UmN_DataCzasP, int,&gt;
+           isnull(@DataCzasMod,@TimeStamp),--UmN_DataCzasM, int,&gt;
+           @RodzajId,--UmN_RodzajUmowyId, int,&gt;
+           @SprZak,--UmN_SprZak, tinyint,&gt;
+           0,--UmN_FormaNr, tinyint,&gt;
+           '',--UmN_FormaNazwa, varchar(15),&gt;
+           0,--UmN_FormaRabat, decimal(5,2),&gt;
+           0,--UmN_TerminPlatnosci, int,&gt;
+           @Rok,--UmN_Rok, smallint,&gt;
+           @Miesiac,--UmN_Miesiac, tinyint,&gt;
+           @SeriaDok,--UmN_Seria, varchar(5),&gt;
+           @NumerDok,--UmN_Numer, int,&gt;
+           isnull(@DokumentObcy,''),--UmN_DokumentObcy, varchar(40),&gt;
+           0,--UmN_ExpoNorm, tinyint,&gt;
+           @WalutaSymbol,--UmN_Waluta, varchar(3),&gt;
+           isnull(@NrKursu,1),--UmN_NrKursu, smallint,&gt;
+           isnull(@KursM,1),--UmN_KursM, decimal(5,0),&gt;
+           isnull(@KursL,1),--UmN_KursL, decimal(7,2),&gt;
+           isnull(@TypKursu,1),--UmN_TypKursu, tinyint,&gt;
+           0,--UmN_Rabat, decimal(15,2),&gt;
+           0,--UmN_RabatW, decimal(15,2),&gt;
+           0,--UmN_RabatPromocyjnyGlobalny, decimal(15,4),&gt;
+           0,--UmN_Promocje, int,&gt;
+           '',--UmN_SpDostawy, varchar(20),&gt;
+           @CechaOpis,--UmN_CechaOpis, varchar(250),&gt;
+           0,--UmN_Stan, tinyint,&gt;
+           0,--UmN_OpisStanuId, int,&gt;
+           0,--UmN_Aktywny, int,&gt;
+           0,--UmN_Wsk, tinyint,&gt;
+           CASE WHEN @KntOsobaLp&gt;0 THEN @PodTyp ELSE 0 END,--UmN_KnSTyp, smallint,&gt;
+           CASE WHEN @KntOsobaLp&gt;0 THEN @FirmaId ELSE 0 END,--UmN_KnSFirma, int,&gt;
+           CASE WHEN @KntOsobaLp&gt;0 THEN @PodNumer ELSE 0 END,--UmN_KnSNumer, int,&gt;
+           @KntOsobaLp,--UmN_KnSLp, smallint,&gt;
+           CASE WHEN @OdbiorcaOsobaLp&gt;0 THEN @PodTyp ELSE 0 END,--UmN_KnSTypOdb, smallint,&gt;
+           CASE WHEN @OdbiorcaOsobaLp&gt;0 THEN @FirmaId ELSE 0 END,--UmN_KnSFirmaOdb, int,&gt;
+           CASE WHEN @OdbiorcaOsobaLp&gt;0 THEN @PodNumer ELSE 0 END,--UmN_KnSNumerOdb, int,&gt;
+           @OdbiorcaOsobaLp,--UmN_KnSLpOdb, smallint,&gt;
+           isnull(@Url,''),--UmN_Url, varchar(255),&gt;
+           @FrsId,--UmN_FrSID, int,&gt;
+           @FlagaNB,--UmN_FlagaNB, varchar(1),&gt;
+           isnull(@Opis,''),--UmN_Opis, varchar(1024),&gt;
+           0,--UmN_CenaSpr, smallint,&gt;
+           @PrjId,--UmN_PrjId, int,&gt;
+           isnull(@FrmNumer,0),--UmN_FrmNumer, int,&gt;
+           isnull(@DataZakonczenia,93890)-isnull(@DataRozpoczecia,@DataZawarcia),--UmN_CzasObow, int,&gt;
+           0,--UmN_CzasObowJedn, tinyint,&gt;
+           '',--UmN_NieUzywac, varchar(128),&gt;
+		   isnull(@PowodAneksuId,0))
+			
+	IF @@ROWCOUNT=0 BEGIN						
+		RAISERROR ('XLNowaUmowa: Nie powiodło się dodawanie wpisu do tabeli CDN.UmwNag.', 16, 1)
+		ROLLBACK TRAN
+		RETURN -1
+	END
+	
+	--OK:
+	SET @UmwId = scope_identity()
+	
+	IF @AneksowanaId&gt;0
+	BEGIN
+		update CDN.UmwNag set UmN_AneksId=@UmwId where UmN_Id=@AneksowanaId and UmN_UmowaId=0 
+		
+		IF @@ROWCOUNT=0 BEGIN						
+			RAISERROR ('XLNowaUmowa: Nie powiodła się aktualizacja informacji o aneksie na umowie pierwotnej.', 16, 1)
+			ROLLBACK TRAN
+			RETURN -12
+		END
+		
+		INSERT INTO [CDN].[UmwElem]
+			   ([UmE_GIDTyp]
+			   ,[UmE_GIDFirma]
+			   ,[UmE_GIDNumer]
+			   ,[UmE_GIDLp]
+			   ,[UmE_Kod]
+			   ,[UmE_Nazwa]
+			   ,[UmE_Pozycja]
+			   ,[UmE_DokTyp]
+			   ,[UmE_DokNumer]
+			   ,[UmE_DokLp]
+			   ,[UmE_Uwagi])
+		 select
+			   UmE_GIDTyp,--UmE_GIDTyp, smallint,&gt;
+			   UmE_GIDFirma,--UmE_GIDFirma, int,&gt;
+			   @UmwId,--UmE_GIDNumer, int,&gt;
+			   UmE_GIDLp,--UmE_GIDLp, smallint,&gt;
+			   UmE_Kod,--UmE_Kod, varchar(20),&gt;
+			   UmE_Nazwa,--UmE_Nazwa, varchar(50),&gt;
+			   UmE_Pozycja,--UmE_Pozycja, int,&gt;
+			   UmE_DokTyp,--UmE_DokTyp, smallint,&gt;
+			   UmE_DokNumer,--UmE_DokNumer, int,&gt;
+			   UmE_DokLp,--UmE_DokLp, smallint,&gt;
+			   UmE_Uwagi--UmE_Uwagi, varchar(2000),&gt;)
+			   from CDN.UmwElem where UmE_GIDNumer=@OstatniAneks and UmE_GIDTyp=@Typ_Um
+			   
+  		IF @@ROWCOUNT=0 BEGIN						
+			RAISERROR ('XLNowaUmowa: Nie powiodło się kopiowanie elementów aneksu.', 16, 1)
+			ROLLBACK TRAN
+			RETURN -13
+		END			   
+	END			   
+	ELSE
+	BEGIN				
+		INSERT INTO [CDN].[UmwElem]
+			   ([UmE_GIDTyp]
+			   ,[UmE_GIDFirma]
+			   ,[UmE_GIDNumer]
+			   ,[UmE_GIDLp]
+			   ,[UmE_Kod]
+			   ,[UmE_Nazwa]
+			   ,[UmE_Pozycja]
+			   ,[UmE_DokTyp]
+			   ,[UmE_DokNumer]
+			   ,[UmE_DokLp]
+			   ,[UmE_Uwagi])
+		 VALUES
+			   (@Typ_Um,--UmE_GIDTyp, smallint,&gt;
+			   @FirmaId,--UmE_GIDFirma, int,&gt;
+			   @UmwId,--UmE_GIDNumer, int,&gt;
+			   1,--UmE_GIDLp, smallint,&gt;
+			   'Wartość umowy',--UmE_Kod, varchar(20),&gt;
+			   '',--UmE_Nazwa, varchar(50),&gt;
+			   1,--UmE_Pozycja, int,&gt;
+			   0,--UmE_DokTyp, smallint,&gt;
+			   0,--UmE_DokNumer, int,&gt;
+			   0,--UmE_DokLp, smallint,&gt;
+			   isnull(@Uwagi,''))--UmE_Uwagi, varchar(2000),&gt;)
+	           
+  		IF @@ROWCOUNT=0 BEGIN						
+			RAISERROR ('XLNowaUmowa: Nie powiodło się dodawanie predefiniowanego wpisu do tabeli CDN.UmwElem.', 16, 1)
+			ROLLBACK TRAN
+			RETURN -7
+		END
+	END
+	
+	set @WartoscNetto = case when isnull(@AneksowanaNettoTyp,0)=0 and ISNULL(@AneksowanaId,0)&gt;0  --rożnicowy aneks 
+						then ISNULL((select UmV_Netto from CDN.UmwVat where UmV_GIDNumer= @OstatniAneks and UmV_GIDLp=1),0) + isnull(@WartoscNetto,0) 
+						else @WartoscNetto end --na stałą kwotę
+	         
+	IF @WartoscNetto is not null  and @WartoscNetto &gt; 0 AND @StawkaVat is not null and isnull(@StawkaGrupa,'')&lt;&gt;'' and @StawkaWartosc is not null and @FlagaVat is not null
+	BEGIN								
+		INSERT INTO [CDN].[UmwVat]
+			   ([UmV_GIDTyp]
+			   ,[UmV_GIDFirma]
+			   ,[UmV_GIDNumer]
+			   ,[UmV_GIDLp]
+			   ,[UmV_GrupaPod]
+			   ,[UmV_StawkaPod]
+			   ,[UmV_FlagaVat]
+			   ,[UmV_Netto]
+			   ,[UmV_Brutto])
+		 VALUES
+			   (@Typ_Um,--UmV_GIDTyp, smallint,&gt;
+			   @FirmaId,--UmV_GIDFirma, int,&gt;
+			   @UmwId,--UmV_GIDNumer, int,&gt;
+			   1,--UmV_GIDLp, smallint,&gt;
+			   @StawkaGrupa,--UmV_GrupaPod, varchar(1),&gt;
+			   @StawkaWartosc,--UmV_StawkaPod, decimal(5,2),&gt;
+			   @FlagaVat,--UmV_FlagaVat, smallint,&gt;
+			   Round(@WartoscNetto,2),--UmV_Netto, decimal(15,2),&gt;
+			   Round(Round(@WartoscNetto,2)*(100+@StawkaWartosc)/100,2))--UmV_Brutto, decimal(15,2),&gt;)
+			   
+			IF @@ROWCOUNT=0 BEGIN						
+				RAISERROR ('XLNowaUmowa: Nie powiodło się dodawanie wpisu do tabeli CDN.UmwVat.', 16, 1)
+				ROLLBACK TRAN
+				RETURN -8
+			END			   
+      END
+      
+	IF @AneksowanaId=0
+	BEGIN 
+      	INSERT INTO [CDN].[UmwElem]
+           ([UmE_GIDTyp]
+           ,[UmE_GIDFirma]
+           ,[UmE_GIDNumer]
+           ,[UmE_GIDLp]
+           ,[UmE_Kod]
+           ,[UmE_Nazwa]
+           ,[UmE_Pozycja]
+           ,[UmE_DokTyp]
+           ,[UmE_DokNumer]
+           ,[UmE_DokLp]
+           ,[UmE_Uwagi])      
+       SELECT
+           @Typ_Um
+           ,[UmE_GIDFirma]
+           ,@UmwId
+           ,[UmE_GIDLp]+1
+           ,[UmE_Kod]
+           ,[UmE_Nazwa]
+           ,[UmE_Pozycja]+1
+           ,[UmE_DokTyp]
+           ,[UmE_DokNumer]
+           ,[UmE_DokLp]
+           ,[UmE_Uwagi] 
+		FROM [CDN].[UmwElem] where UmE_GIDNumer=@TypId and UmE_GIDTyp=@Typ_UmT
+		
+		IF @@error &lt;&gt; 0 BEGIN						
+			RAISERROR ('XLNowaUmowa: Nie powiodło się dodawanie wpisów z typów umowy do tabeli CDN.UmwElem.', 16, 1)
+			ROLLBACK TRAN
+			RETURN -9
+		END			
+    END
+       
+       declare @UmEGIDLp smallint
+       declare @UmEGIDLp1 smallint
+    
+    if @AneksowanaId=0 
+    begin       
+		declare cursorAtrZElemTypu cursor fast_forward for
+			select UmE_GIDLp from cdn.UmwElem where UmE_GIDNumer=@TypId and UmE_GIDTyp=@Typ_UmT
+		open cursorAtrZElemTypu
+			while 1=1
+			begin
+				fetch NEXT from cursorAtrZElemTypu into @UmEGIDLp
+				if @@fetch_status &lt;&gt; 0 break
+				SET @UmEGIDLp1 = @UmEGIDLp+1
+				exec CDN.AtrKopiujAtrybuty @ZrdTyp=@Typ_UmT,@ZrdFirma=@FirmaId,@ZrdNumer=@TypId,@ZrdLp=@UmEGIDLp,@ZrdSubLp=4807,
+	@DocTyp=@Typ_Um,@DocFirma=@FirmaId,@DocNumer=@UmwId,@DocLp=@UmEGIDLp1,@DocSubLp=4807,@OpeTyp=128,@OpeFirma=@FirmaId,@OpeNumer=@OpeWystNumer,@OpeLp=0,@Blad=0
+
+			end
+		close cursorAtrZElemTypu
+		deallocate cursorAtrZElemTypu
+	end
+	else
+	begin
+		declare cursorAtrZElemAneks cursor fast_forward for
+			select UmE_GIDLp from cdn.UmwElem where UmE_GIDNumer=@OstatniAneks and UmE_GIDTyp=@Typ_Um and UmE_GIDLp&gt;1
+		open cursorAtrZElemAneks
+			while 1=1
+			begin
+				fetch NEXT from cursorAtrZElemAneks into @UmEGIDLp
+				if @@fetch_status &lt;&gt; 0 break
+				exec CDN.AtrKopiujAtrybuty @ZrdTyp=@Typ_Um,@ZrdFirma=@FirmaId,@ZrdNumer=@OstatniAneks,@ZrdLp=@UmEGIDLp,@ZrdSubLp=4807,
+	@DocTyp=@Typ_Um,@DocFirma=@FirmaId,@DocNumer=@UmwId,@DocLp=@UmEGIDLp,@DocSubLp=4807,@OpeTyp=128,@OpeFirma=@FirmaId,@OpeNumer=@OpeWystNumer,@OpeLp=0,@Blad=0
+
+			end
+		close cursorAtrZElemAneks
+		deallocate cursorAtrZElemAneks	
+	end
+	
+	commit tran
+	--OK:
+	RETURN @UmwId
+	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

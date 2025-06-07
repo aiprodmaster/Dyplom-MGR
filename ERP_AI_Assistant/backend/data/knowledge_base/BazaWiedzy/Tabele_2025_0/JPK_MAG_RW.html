@@ -1,0 +1,150 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="JPKMAG_RWWartosc"></A><PRE>
+          <FONT SIZE="2"><I>/* JPKMAG_RWWartosc */</I><BR>
+create  FUNCTION CDN.JPKMAG_RWWartosc
+(
+	@arg_okres_od		int,			--okres za jaki dane mają być zaczytane. 
+	@arg_okres_do		int,			--okres za jaki dane mają być zaczytane.
+	@arg_magazyn		nvarchar(256),	--MAG_Kod dla MaS_MagNumer
+	@RodzajDaty			tinyint			--1-data operacji (Trn_DataMag), 2-data dokumentu (Trn_Data2)
+)
+RETURNS 
+@Dane TABLE 
+(
+	jpk_NumerRW				nvarchar(256),
+	jpk_DataRW				int,
+	jpk_WartoscRW			decimal(18,2),
+	jpk_DataOtrzymaniaRW	int,
+	jpk_gidnumer			int,
+	jpk_gidtyp				int
+
+)
+AS
+BEGIN
+
+declare @magTyp int = 0,
+	    @magNumer int = 0
+
+select @magTyp=mag_gidtyp,@magNumer =MAG_GIDNumer from cdn.magazyny where mag_kod = @arg_magazyn
+if @magTyp &lt;&gt; 208
+	return
+
+if @RodzajDaty = 1 
+begin
+	insert into @Dane
+	select distinct
+		TrN_DokumentObcy,
+		TrN_Data2,
+		SUM(TrS_KosztKsiegowy),
+		TrN_DataMag,
+		TrN_GIDNumer,
+		TrN_GIDTyp
+	from cdn.tranag t1
+		join CDN.TraElem on TrN_GIDTyp=TrE_GIDTyp AND TrN_GIDNumer=TrE_GIDNumer
+		join CDN.TraSElem on TrE_GIDNumer=TrS_GIDNumer and TrE_GIDLp=TrS_GIDLp AND  TrS_MagNumer = @magNumer
+	where TrN_Stan in (3,4,5)
+	and trn_gidtyp in (1624,1616)
+	and TrN_DataMag &gt;= @arg_okres_od and TrN_DataMag &lt;= @arg_okres_do
+	and TrN_KosztUstalono =1
+	group by trn_gidnumer,trn_gidtyp,TrN_DokumentObcy,TrN_Data2,TrN_DataMag,Tre_GIDNumer
+end
+else if @RodzajDaty = 2
+begin
+	insert into @Dane
+	select distinct
+		TrN_DokumentObcy,
+		TrN_Data2,
+		SUM(TrS_KosztKsiegowy),
+		TrN_DataMag,
+		TrN_GIDNumer,
+		TrN_GIDTyp
+	from cdn.tranag t1
+		join CDN.TraElem on TrN_GIDTyp=TrE_GIDTyp AND TrN_GIDNumer=TrE_GIDNumer
+		join CDN.TraSElem on TrE_GIDNumer=TrS_GIDNumer and TrE_GIDLp=TrS_GIDLp AND  TrS_MagNumer = @magNumer
+	where TrN_Stan in (3,4,5)
+	and trn_gidtyp in (1624,1616)
+	and Trn_Data2 &gt;= @arg_okres_od and Trn_Data2 &lt;= @arg_okres_do
+	and TrN_KosztUstalono =1
+	group by trn_gidnumer,trn_gidtyp,TrN_DokumentObcy,TrN_Data2,TrN_DataMag,Tre_GIDNumer
+end
+
+RETURN
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="JPKMAG_RWWiersz"></A><PRE>
+          <FONT SIZE="2"><I>/* JPKMAG_RWWiersz */</I><BR>
+create  FUNCTION CDN.JPKMAG_RWWiersz
+(
+	@arg_gidtyp			int,
+	@arg_gidnumer		int,
+	@arg_magazyn		nvarchar(256)	--MAG_Kod dla MaS_MagNumer
+)
+RETURNS 
+@Dane TABLE 
+(
+	jpk_Numer2RW			NVARCHAR(256),
+	jpk_KodTowaruRW			NVARCHAR(256),
+	jpk_NazwaTowaruRW		NVARCHAR(256),
+	jpk_IloscPrzyjetaRW		DECIMAL(18,6),
+	jpk_JednostkaMiaryRW	NVARCHAR(256),
+	jpk_CenaJednRW			DECIMAL(18,2),
+	jpk_WartoscPozycjiRW	DECIMAL(18,2),
+	jpk_gidnumer			int,
+	jpk_gidtyp				int,
+	jpk_gidlp				int
+)
+AS
+BEGIN
+
+	declare @magTyp int = 0,
+			@magNumer int = 0
+
+	select @magTyp=mag_gidtyp,@magNumer=MAG_GIDNumer from cdn.magazyny where mag_kod = @arg_magazyn
+	if @magTyp &lt;&gt; 208
+		return
+
+	insert into @Dane
+	select
+		TrN_DokumentObcy,
+		tre_twrkod,
+		tre_twrNazwa,
+		SUM(TrS_Ilosc),
+		Twr_Jm,
+		SUM(TrS_KosztKsiegowy)/sum(trs_ilosc),
+		SUM(TrS_KosztKsiegowy),
+		TrN_GIDNumer,
+		TrN_GIDTyp,
+		TrE_GIDLp
+	from CDN.TraNag
+	join CDN.TraElem on TrN_GIDTyp=TrE_GIDTyp AND TrN_GIDNumer=TrE_GIDNumer
+	join CDN.TraSElem on TrE_GIDNumer=TrS_GIDNumer and TrE_GIDLp=TrS_GIDLp AND  TrS_MagNumer = @magNumer
+	join CDN.TwrKarty on tre_twrnumer = twr_gidnumer
+	where TrN_Stan in (3,4,5)
+	and trn_gidtyp = @arg_gidtyp 
+	and TrN_GIDNumer = @arg_gidnumer
+	and TrN_KosztUstalono =1
+	group by trn_gidnumer,trn_gidtyp,tre_gidlp,TrN_DokumentObcy,tre_twrkod,tre_twrNazwa,TrE_Ilosc,	Twr_Jm,tre_gidtyp,TrE_Cena,TrE_CenaPoRabacie,TrE_KsiegowaNetto
+	update @Dane set jpk_IloscPrzyjetaRW=0,jpk_WartoscPozycjiRW=0 where jpk_IloscPrzyjetaRW is null and jpk_WartoscPozycjiRW is null
+	RETURN 
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

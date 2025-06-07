@@ -1,0 +1,125 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="ESKLEP_ImportKns"></A><PRE>
+          <FONT SIZE="2"><I>/* ESKLEP_ImportKns */</I><BR>
+CREATE PROCEDURE CDN.ESKLEP_ImportKns
+	@EsklepID INT,      -- ID e-sklepu
+	@LoginGIDNumer INT,
+	@LoginID INT,
+	@LoginImie VARCHAR(50),
+	@LoginNaz VARCHAR(50),
+	@LoginTel VARCHAR(50),
+	@LoginEmail VARCHAR(192),
+	@LoginAdmin TINYINT,
+	@FirmaID INT,
+	@KntNumer INT,
+	@AdresID INT=0,
+	@KnsSyncID INT OUTPUT
+
+AS
+SET NOCOUNT ON
+	DECLARE @LoginLP INT;
+	DECLARE @FrsID INT;
+	DECLARE @LoginPozycja INT;
+	DECLARE @SyncID INT;
+	DECLARE @ObiektNazwa VARCHAR(200);
+	DECLARE @CzyMapowacPoEMail TINYINT;
+	DECLARE @CzyAktualizowacDane TINYINT;
+
+	--@LoginGIDNumer = -2 osoba dodana w esklepie
+
+	SELECT @CzyMapowacPoEMail = PcK_MapKntEmail,@CzyAktualizowacDane = PcK_MapAktualizujDane,@FrsID = PcK_CentrumID FROM CDN.PicoKonfig WHERE PcK_PicoID = @EsklepID
+	
+	IF @LoginGIDNumer = -2 AND @CzyAktualizowacDane = 0
+	BEGIN
+		IF EXISTS(SELECT * FROM CDN.PicoLog WHERE PcL_ObiTyp = 8211 AND PcL_ObiektID = @LoginID AND PcL_PckID = @EsklepID) RETURN
+	END
+	ELSE IF @CzyAktualizowacDane = 0 AND EXISTS(SELECT * FROM CDN.KntOsoby WHERE KnS_SyncID = @LoginGIDNumer) RETURN
+	
+	IF EXISTS(SELECT * FROM CDN.KntKarty WHERE Knt_GIDNumer = @KntNumer AND Knt_Anonim = 1) RETURN
+	
+	SET @SyncID = NULL
+	IF @LoginGIDNumer = -2 
+	BEGIN
+		SET @LoginGIDNumer = @KntNumer
+		SELECT @LoginLP = MAX(ISNULL(KnS_KntLp,0))+1, @LoginPozycja = MAX(ISNULL(KnS_Pozycja,0))+1 FROM CDN.KntOsoby WHERE KnS_KntNumer = @LoginGIDNumer;
+	END
+	ELSE
+		SELECT @SyncID = KnS_SyncID FROM CDN.KntOsoby WHERE KnS_SyncID = @LoginGIDNumer;	
+	
+	IF @CzyMapowacPoEMail = 1 
+		SELECT TOP 1 @SyncID = KnS_SyncID FROM CDN.KntOsoby WHERE KnS_EMail = @LoginEmail ORDER BY KnS_KntLp ASC
+
+	SET @ObiektNazwa = ISNULL(@LoginImie,'')+' '+ISNULL(@LoginNaz,'')
+
+	IF @SyncID IS NOT NULL
+	BEGIN	
+		IF @CzyAktualizowacDane	= 1
+                        UPDATE CDN.KntOsoby SET KnS_Nazwa = SUBSTRING(@ObiektNazwa,1,40),KnS_Telefon = SUBSTRING(@LoginTel,1,30) WHERE KnS_SyncID = @SyncID
+
+		IF NOT EXISTS(SELECT * FROM CDN.FrsAplikacje WHERE FrA_FrsId=0 AND FrA_NieWysylaj=0 AND FrA_ObiTyp = 8211 AND FrA_ObiNumer = @SyncID)
+		BEGIN
+			IF NOT EXISTS(SELECT * FROM CDN.FrsAplikacje WHERE FrA_FrsId=@FrsID AND FrA_ObiTyp = 8211 AND FrA_ObiNumer = @SyncID)
+				INSERT INTO CDN.FrsAplikacje (FrA_FrsId,FrA_ObiTyp,FrA_ObiNumer,FrA_NieWysylaj,FrA_Admin,FrA_TypAplikacji,FrA_CenaDomyslna) VALUES (@FrsID,8211,@SyncID,0,@LoginAdmin,2,0)
+			ELSE
+				UPDATE CDN.FrsAplikacje SET FrA_NieWysylaj = 0, FrA_Admin = @LoginAdmin WHERE FrA_FrsId=@FrsID AND FrA_ObiTyp = 8211 AND FrA_ObiNumer = @SyncID
+		END
+	END
+	ELSE
+	BEGIN
+		SET @LoginLP = ISNULL(@LoginLP,1)
+		SET @LoginPozycja  = ISNULL(@LoginPozycja,1)		
+
+		INSERT INTO [CDN].[KntOsoby]
+				([KnS_KntTyp]
+				,[KnS_KntFirma]
+				,[KnS_KntNumer]
+				,[KnS_KntLp]
+				,[KnS_Upowazniona]
+				,[KnS_UpowaznionaZam]
+				,[KnS_Dzial]
+				,[KnS_Stanowisko]
+				,[KnS_Tytul]
+				,[KnS_Nazwa]
+				,[KnS_Telefon]
+				,[KnS_EMail]
+				,[KnS_HasloChk]
+				,[KnS_HasloOsoby]
+				,[KnS_Notatki]
+				,[KnS_RolaDecyzyjna]
+				,[KnS_Fax]
+				,[KnS_TelefonK]
+				,[KnS_UpoDoK]
+				,[KnS_Archiwalny]
+				,[KnS_Pozycja]
+				,[KnS_CzasModyfikacji]
+				,[KnS_AdresId]
+				,[KnS_Anonim],KnS_Esklep,KnS_AdminESklep)
+                        VALUES (32,@FirmaID,@KntNumer,@LoginLP,0,0,'','','',SUBSTRING(@ObiektNazwa,1,40),SUBSTRING(@LoginTel,1,30),@LoginEmail,'','','',0,'','',0,0,@LoginPozycja,DATEDIFF(s,CONVERT(DATETIME,'19900101',121),GETDATE()),@AdresID,0,1,@LoginAdmin)
+			SELECT @SyncID = SCOPE_IDENTITY()
+
+			INSERT INTO CDN.FrsAplikacje (FrA_FrsId,FrA_ObiTyp,FrA_ObiNumer,FrA_NieWysylaj,FrA_Admin,FrA_TypAplikacji,FrA_CenaDomyslna) VALUES (0,8211,@SyncID,1,0,2,0)
+			INSERT INTO CDN.FrsAplikacje (FrA_FrsId,FrA_ObiTyp,FrA_ObiNumer,FrA_NieWysylaj,FrA_Admin,FrA_TypAplikacji,FrA_CenaDomyslna) VALUES (@FrsID,8211,@SyncID,0,@LoginAdmin,2,0)
+			INSERT INTO CDN.PicoLog ( PcL_PckID, PcL_ObiTyp, PcL_ObiNumer, PcL_ObiektID, PcL_Komentarz, PcL_Info, PcL_TStamp) 
+                                                                 VALUES ( @ESklepID, 8211, @SyncID, @LoginID, 'Osoba - '+SUBSTRING(@ObiektNazwa,1,54) , '',  DATEDIFF(s,CONVERT(DATETIME,'19900101',121),GETDATE()))
+		END
+				DECLARE @PclInfo VARCHAR(40) = SUBSTRING(@ObiektNazwa,1,40)
+                EXEC CDN.ESKLEP_AktualizujPtw @ESklepID,@SyncID,8211,@LoginID,@PclInfo,''
+		SELECT @KnsSyncID = @SyncID
+		SET NOCOUNT OFF
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

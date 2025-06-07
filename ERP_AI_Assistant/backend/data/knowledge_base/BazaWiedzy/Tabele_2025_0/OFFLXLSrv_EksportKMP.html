@@ -1,0 +1,1219 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[OFFLXLSrv_EksportKMP]"></A><PRE>
+          <FONT SIZE="2"><I>/* [OFFLXLSrv_EksportKMP] */</I><BR>
+CREATE PROCEDURE [CDN].[OFFLXLSrv_EksportKMP]
+    @ID    INT          -- ID Oddziału Offline
+	,@LogID INT = -1	-- ID loga synchronizacji
+AS
+	SET ARITHABORT ON
+	SET NOCOUNT OFF
+
+	CREATE TABLE #KMP
+	(	
+		RID			INT,
+		GIDTyp		SMALLINT,
+		GIDNumer	INT,
+		GIDLp		SMALLINT,
+		ParID		INT,
+		GIDTyp2		SMALLINT
+	)	
+
+	CREATE TABLE #KMPParID -- dla ID znalezionych kompensat
+	(
+		PARID INT
+	)
+	
+	-- dokumenty z poza XL-a (coalesce(TrN_OddDokId, KAZ_ZewnetrznyId, 0) &gt; 0)
+	-- znalezione na dokumencie kompensaty (count(r2_parid) &gt; 1)
+	-- jesli na kompensacie sa dwa dok spoza XL-a wybrac pierwszy	
+	INSERT INTO #KMPParID
+	select MIN(r2_id) from (	
+		select R2_ID, R2_ParID from cdn.Rozliczenia 
+		left outer join cdn.TraNag on (R2_Dok1Typ = TrN_GIDTyp and R2_Dok1Numer = TrN_GIDNumer) 
+		left outer join cdn.Zapisy on (R2_Dok1Typ = KAZ_GIDTyp and R2_Dok1Numer = KAZ_GIDNumer)	
+		where R2_ParID in (select R2_ParID from cdn.Rozliczenia group by R2_ParID having COUNT(*) &gt; 1)
+			and coalesce(TrN_OddDokId, KAZ_ZewnetrznyId, 0) &gt; 0
+		union all
+		select R2_ID, R2_ParID from cdn.Rozliczenia 
+		left outer join cdn.TraNag on (R2_Dok2Typ = TrN_GIDTyp and R2_Dok2Numer = TrN_GIDNumer)
+		left outer join cdn.Zapisy on (R2_Dok2Typ = KAZ_GIDTyp and R2_Dok2Numer = KAZ_GIDNumer)
+		where R2_ParID in (select R2_ParID from cdn.Rozliczenia group by R2_ParID having COUNT(*) &gt; 1)
+			and coalesce(TrN_OddDokId, KAZ_ZewnetrznyId, 0) &gt; 0
+	) Wyliczenia
+	group by R2_ParID
+		
+	CREATE TABLE #KMP2 -- na dokumenty znalezione na dokumencie kompensaty
+	(	
+		RID			INT,
+		GIDTyp		SMALLINT,
+		GIDNumer	INT,
+		GIDLp		SMALLINT,
+		ParID		INT,
+		GIDTyp2		SMALLINT
+	)	
+	
+	DECLARE @Opis			VARCHAR(512)
+			,@IloscWierszy	INT		
+			,@Pck_Typ			INT
+
+	SELECT @Pck_Typ = PcK_Typ FROM CDN.PicoKonfig WHERE PcK_PicoID = @ID			
+
+
+	INSERT INTO #KMP(RID,GIDTyp,GIDNumer,GIDLp,ParID,GIDTyp2)
+	-- Kompensaty płatności
+	SELECT DISTINCT
+		 ROZ.R2_ID			AS [@ID]
+		,ROZ.R2_DokTyp		AS [@GIDTyp]
+		,ROZ.R2_DokNumer	AS [@GIDNumer]
+		,ROZ.R2_DokLp		AS [@GIDLp]
+		,ROZ.R2_ParID		AS [@ParID]
+		,ROZ.R2_DokTyp2		AS [@GIDTyp2]
+	FROM
+	(
+		SELECT 
+			R2_ID				AS R2_ID
+			,R2_Dok1Typ			AS R2_DokTyp
+			,R2_Dok1Numer		AS R2_DokNumer
+			,R2_Dok1Lp			AS R2_DokLp
+			,R2_ParID			AS R2_ParID
+			,R2_Dok2Typ			AS R2_DokTyp2
+		FROM CDN.Rozliczenia
+		WHERE R2_Wycena = 0 AND ISNULL(R2_ZewnetrznyId,0) = 0 AND R2_Dok1Typ NOT IN (784,434) AND R2_Dok2Typ NOT IN (784,434)
+		UNION ALL
+		SELECT 
+			R2_ID				AS R2_ID	
+			,R2_Dok2Typ			AS R2_DokTyp
+			,R2_Dok2Numer		AS R2_DokNumer
+			,R2_Dok2Lp			AS R2_DokLp
+			,R2_ParID			AS R2_ParID
+			,R2_Dok1Typ			AS R2_DokTyp2
+		FROM CDN.Rozliczenia 
+		WHERE R2_Wycena = 0 AND ISNULL(R2_ZewnetrznyId,0) = 0 AND R2_Dok1Typ NOT IN (784,434) AND R2_Dok2Typ NOT IN (784,434)
+	) ROZ
+	INNER JOIN CDN.TraNag ON ROZ.R2_DokTyp = TrN_GIDTyp AND ROZ.R2_DokNumer = TrN_GIDNumer
+	WHERE ISNULL(TrN_OddDokId,0) &lt;&gt; 0 AND CDN.OFFLXL_FrmOddzial(@ID,TrN_FrsID)=1
+	UNION ALL
+	-- Kompensaty zapisów
+	SELECT DISTINCT
+		 ROZ.R2_ID			AS [@ID]
+		,ROZ.R2_DokTyp		AS [@GIDTyp]
+		,ROZ.R2_DokNumer	AS [@GIDNumer]
+		,ROZ.R2_DokLp		AS [@GIDLp]
+		,ROZ.R2_ParID		AS [@ParID]
+		,ROZ.R2_DokTyp2		AS [@GIDTyp2]
+	FROM
+	(
+		SELECT 
+			R2_ID				AS R2_ID
+			,R2_Dok1Typ			AS R2_DokTyp
+			,R2_Dok1Numer		AS R2_DokNumer
+			,R2_Dok1Lp			AS R2_DokLp
+			,R2_ParID			AS R2_ParID
+			,R2_Dok2Typ			AS R2_DokTyp2
+		FROM CDN.Rozliczenia
+		WHERE R2_Wycena = 0 AND ISNULL(R2_ZewnetrznyId,0) = 0 AND R2_Dok1Typ = 784 AND R2_Dok2Typ = 784
+		UNION ALL
+		SELECT 
+			R2_ID				AS R2_ID	
+			,R2_Dok2Typ			AS R2_DokTyp
+			,R2_Dok2Numer		AS R2_DokNumer
+			,R2_Dok2Lp			AS R2_DokLp
+			,R2_ParID			AS R2_ParID
+			,R2_Dok1Typ			AS R2_DokTyp2
+		FROM CDN.Rozliczenia 
+		WHERE R2_Wycena = 0 AND ISNULL(R2_ZewnetrznyId,0) = 0 AND R2_Dok1Typ = 784 AND R2_Dok2Typ = 784
+		UNION ALL
+		SELECT 
+			R2_ID				AS R2_ID	
+			,R2_Dok2Typ			AS R2_DokTyp
+			,R2_Dok2Numer		AS R2_DokNumer
+			,R2_Dok2Lp			AS R2_DokLp
+			,R2_ParID			AS R2_ParID
+			,R2_Dok1Typ			AS R2_DokTyp2
+		FROM CDN.Rozliczenia
+		WHERE R2_Wycena = 0 AND ISNULL(R2_ZewnetrznyId,0) = 0 AND R2_Dok1Typ = 784 AND R2_Dok2Typ = 434
+		UNION ALL
+		SELECT 
+			R2_ID				AS R2_ID	
+			,R2_Dok2Typ			AS R2_DokTyp
+			,R2_Dok2Numer		AS R2_DokNumer
+			,R2_Dok2Lp			AS R2_DokLp
+			,R2_ParID			AS R2_ParID
+			,R2_Dok1Typ			AS R2_DokTyp2
+		FROM CDN.Rozliczenia
+		WHERE R2_Wycena = 0 AND ISNULL(R2_ZewnetrznyId,0) = 0 AND R2_Dok1Typ = 434 AND R2_Dok2Typ = 784		
+		UNION ALL -- Dla Retail wysylac kompensaty zapisow z dokumentami z XL-a
+		SELECT 
+			R2_ID				AS R2_ID	
+			,R2_Dok2Typ			AS R2_DokTyp
+			,R2_Dok2Numer		AS R2_DokNumer
+			,R2_Dok2Lp			AS R2_DokLp
+			,R2_ParID			AS R2_ParID
+			,R2_Dok1Typ			AS R2_DokTyp2
+		FROM CDN.Rozliczenia
+		WHERE @Pck_Typ=5 AND R2_Wycena = 0 AND ISNULL(R2_ZewnetrznyId,0) = 0 AND (R2_Dok1Typ = 784 OR R2_Dok2Typ = 784)		
+	) ROZ
+	INNER JOIN CDN.Zapisy ON ROZ.R2_DokTyp = KAZ_GIDTyp AND ROZ.R2_DokNumer = KAZ_GIDNumer AND ROZ.R2_DokLp = KAZ_GIDLp
+	WHERE ISNULL(KAZ_ZewnetrznyId,0) &lt;&gt; 0 AND ISNULL(KAZ_ZewnetrznySys,0) = @ID
+	UNION ALL
+	-- Kompensaty zapisów z Retail i dokumentow z XL-a. Przypadek specjalny, powinno powstac rozliczebnie ale mamy wysylac jako kompensata
+	SELECT DISTINCT
+		 ROZ.R2_ID			AS [@ID]
+		,ROZ.R2_DokTyp		AS [@GIDTyp]
+		,ROZ.R2_DokNumer	AS [@GIDNumer]
+		,ROZ.R2_DokLp		AS [@GIDLp]
+		,ROZ.R2_ParID		AS [@ParID]
+		,ROZ.R2_DokTyp2		AS [@GIDTyp2]
+	FROM (
+		SELECT 
+			R2_ID				AS R2_ID	
+			,R2_Dok1Typ			AS R2_DokTyp
+			,R2_Dok1Numer		AS R2_DokNumer
+			,R2_Dok1Lp			AS R2_DokLp
+			,R2_ParID			AS R2_ParID
+			,R2_Dok2Typ			AS R2_DokTyp2
+			,R2_Dok2Numer		AS R2_DokNumer2			
+		FROM CDN.Rozliczenia
+		join cdn.Zapisy on R2_Dok1Typ = KAZ_GIDTyp AND R2_Dok1Numer	 = KAZ_GIDNumer
+		WHERE R2_Wycena = 0 AND ISNULL(R2_ZewnetrznyId,0) = 0 AND R2_Dok1Typ = 784 AND R2_Dok2Typ not in (434, 784)
+		and KAZ_ZewnetrznyId &gt; 0 -- zapis nie pochodzacy z XL-a
+	) ROZ
+	INNER JOIN CDN.TraNag ON ROZ.R2_DokTyp2 = TrN_GIDTyp AND ROZ.R2_DokNumer2 = TrN_GIDNumer
+	WHERE @Pck_Typ=5  AND ISNULL(TrN_OddDokId,0) = 0 AND ISNULL(trn_ZewnetrznySys,0) = 0 -- dokument pochodzacy z XL-a
+	UNION ALL
+	-- Kompensaty zapisów z Retail i dokumentow z XL-a. Przypadek specjalny, powinno powstac rozliczebnie ale mamy wysylac jako kompensata
+	SELECT DISTINCT
+		 ROZ.R2_ID			AS [@ID]
+		,ROZ.R2_DokTyp		AS [@GIDTyp]
+		,ROZ.R2_DokNumer	AS [@GIDNumer]
+		,ROZ.R2_DokLp		AS [@GIDLp]
+		,ROZ.R2_ParID		AS [@ParID]
+		,ROZ.R2_DokTyp2		AS [@GIDTyp2]
+	FROM (
+		SELECT 
+			R2_ID				AS R2_ID	
+			,R2_Dok2Typ			AS R2_DokTyp
+			,R2_Dok2Numer		AS R2_DokNumer
+			,R2_Dok2Lp			AS R2_DokLp
+			,R2_ParID			AS R2_ParID
+			,R2_Dok1Typ			AS R2_DokTyp2
+			,R2_Dok1Numer		AS R2_DokNumer2			
+		FROM CDN.Rozliczenia
+		join cdn.Zapisy on (R2_Dok2Typ = KAZ_GIDTyp AND R2_Dok2Numer = KAZ_GIDNumer)
+		WHERE R2_Wycena = 0 AND ISNULL(R2_ZewnetrznyId,0) = 0 AND R2_Dok2Typ = 784 AND R2_Dok1Typ not in (434, 784)
+		and KAZ_ZewnetrznyId &gt; 0 -- zapis nie pochodzacy z XL-a
+	) ROZ
+	INNER JOIN CDN.TraNag ON (ROZ.R2_DokTyp2 = TrN_GIDTyp AND ROZ.R2_DokNumer2 = TrN_GIDNumer)
+	WHERE @Pck_Typ=5  AND ISNULL(TrN_OddDokId,0) = 0 AND ISNULL(trn_ZewnetrznySys,0) = 0 -- dokument pochodzacy z XL-a		
+	UNION ALL	
+	-- Kompensaty płatności w obrębie dokumentu kompensaty
+	SELECT DISTINCT
+		 ROZ.R2_ID			AS [@ID]
+		,ROZ.R2_DokTyp		AS [@GIDTyp]
+		,ROZ.R2_DokNumer	AS [@GIDNumer]
+		,ROZ.R2_DokLp		AS [@GIDLp]
+		,ROZ.R2_ParID		AS [@ParID]
+		,ROZ.R2_DokTyp2		AS [@GIDTyp2]
+	FROM
+	(
+		SELECT 
+			R2_ID				AS R2_ID
+			,R2_Dok1Typ			AS R2_DokTyp
+			,R2_Dok1Numer		AS R2_DokNumer
+			,R2_Dok1Lp			AS R2_DokLp
+			,R2_ParID			AS R2_ParID
+			,R2_Dok2Typ			AS R2_DokTyp2
+			,R2_Dok2Numer		AS R2_DokNumer2			
+		FROM CDN.Rozliczenia
+		WHERE R2_Wycena = 0 AND ISNULL(R2_ZewnetrznyId,0) = 0 AND (R2_Dok1Typ = 434 OR R2_Dok2Typ = 434)
+		UNION ALL
+		SELECT 
+			R2_ID				AS R2_ID	
+			,R2_Dok2Typ			AS R2_DokTyp
+			,R2_Dok2Numer		AS R2_DokNumer
+			,R2_Dok2Lp			AS R2_DokLp
+			,R2_ParID			AS R2_ParID
+			,R2_Dok1Typ			AS R2_DokTyp2
+			,R2_Dok1Numer		AS R2_DokNumer2			
+		FROM CDN.Rozliczenia
+		WHERE R2_Wycena = 0 AND ISNULL(R2_ZewnetrznyId,0) = 0 AND (R2_Dok1Typ = 434 OR R2_Dok2Typ = 434)
+	) ROZ
+	INNER JOIN CDN.TraNag ON ROZ.R2_DokTyp = TrN_GIDTyp AND ROZ.R2_DokNumer = TrN_GIDNumer
+	INNER JOIN CDN.KompNag ON KMN_ID = CASE WHEN ROZ.R2_DokTyp = 434 THEN ROZ.R2_DokNumer ELSE ROZ.R2_DokNumer2 END	
+	WHERE ISNULL(TrN_OddDokId,0) &lt;&gt; 0 AND CDN.OFFLXL_FrmOddzial(@ID,TrN_FrsID)=1 
+	AND ((@Pck_Typ=5 AND KMN_Status=2) OR (@Pck_Typ&lt;&gt;5 AND KMN_Status IN (0,1,2))) -- Do retail wysylac tylko informacje o zatwierdzonych kompensatach
+	ORDER BY ROZ.R2_DokTyp, ROZ.R2_DokNumer
+	
+
+	INSERT INTO #KMP2(RID,GIDTyp,GIDNumer,GIDLp,ParID,GIDTyp2)
+	-- Kompensaty płatności
+	SELECT DISTINCT
+		 ROZ.R2_ID			AS [@ID]
+		,ROZ.R2_DokTyp		AS [@GIDTyp]
+		,ROZ.R2_DokNumer	AS [@GIDNumer]
+		,ROZ.R2_DokLp		AS [@GIDLp]
+		,ROZ.R2_ParID		AS [@ParID]
+		,ROZ.R2_DokTyp2		AS [@GIDTyp2]
+	FROM
+	(
+		SELECT 
+			R2_ID				AS R2_ID
+			,R2_Dok1Typ			AS R2_DokTyp
+			,R2_Dok1Numer		AS R2_DokNumer
+			,R2_Dok1Lp			AS R2_DokLp
+			,R2_ParID			AS R2_ParID
+			,R2_Dok2Typ			AS R2_DokTyp2
+		FROM CDN.Rozliczenia
+		JOIN #KMPParID ON R2_ID=PARID		
+		WHERE R2_Wycena = 0 AND ISNULL(R2_ZewnetrznyId,0) = 0 AND R2_Dok1Typ NOT IN (784,434) AND R2_Dok2Typ = 434
+		UNION ALL
+		SELECT 
+			R2_ID				AS R2_ID	
+			,R2_Dok2Typ			AS R2_DokTyp
+			,R2_Dok2Numer		AS R2_DokNumer
+			,R2_Dok2Lp			AS R2_DokLp
+			,R2_ParID			AS R2_ParID
+			,R2_Dok1Typ			AS R2_DokTyp2
+		FROM CDN.Rozliczenia
+		JOIN #KMPParID ON R2_ID=PARID		 
+		WHERE R2_Wycena = 0 AND ISNULL(R2_ZewnetrznyId,0) = 0 AND R2_Dok2Typ NOT IN (784,434) AND R2_Dok1Typ = 434		
+	) ROZ
+	INNER JOIN CDN.TraNag ON ROZ.R2_DokTyp = TrN_GIDTyp AND ROZ.R2_DokNumer = TrN_GIDNumer
+	WHERE ISNULL(TrN_OddDokId,0) &lt;&gt; 0 AND CDN.OFFLXL_FrmOddzial(@ID,TrN_FrsID)=1
+	UNION ALL
+	-- Kompensaty zapisów
+	SELECT DISTINCT
+		 ROZ.R2_ID			AS [@ID]
+		,ROZ.R2_DokTyp		AS [@GIDTyp]
+		,ROZ.R2_DokNumer	AS [@GIDNumer]
+		,ROZ.R2_DokLp		AS [@GIDLp]
+		,ROZ.R2_ParID		AS [@ParID]
+		,ROZ.R2_DokTyp2		AS [@GIDTyp2]
+	FROM
+	(
+		SELECT 
+			R2_ID				AS R2_ID
+			,R2_Dok1Typ			AS R2_DokTyp
+			,R2_Dok1Numer		AS R2_DokNumer
+			,R2_Dok1Lp			AS R2_DokLp
+			,R2_ParID			AS R2_ParID
+			,R2_Dok2Typ			AS R2_DokTyp2
+		FROM CDN.Rozliczenia
+		JOIN #KMPParID ON R2_ID=PARID		
+		WHERE R2_Wycena = 0 AND ISNULL(R2_ZewnetrznyId,0) = 0 AND R2_Dok1Typ = 784 AND R2_Dok2Typ = 784
+		UNION ALL
+		SELECT 
+			R2_ID				AS R2_ID	
+			,R2_Dok2Typ			AS R2_DokTyp
+			,R2_Dok2Numer		AS R2_DokNumer
+			,R2_Dok2Lp			AS R2_DokLp
+			,R2_ParID			AS R2_ParID
+			,R2_Dok1Typ			AS R2_DokTyp2
+		FROM CDN.Rozliczenia
+		JOIN #KMPParID ON R2_ID=PARID		 
+		WHERE R2_Wycena = 0 AND ISNULL(R2_ZewnetrznyId,0) = 0 AND R2_Dok1Typ = 784 AND R2_Dok2Typ = 784
+		UNION ALL
+		SELECT 
+			R2_ID				AS R2_ID	
+			,R2_Dok2Typ			AS R2_DokTyp
+			,R2_Dok2Numer		AS R2_DokNumer
+			,R2_Dok2Lp			AS R2_DokLp
+			,R2_ParID			AS R2_ParID
+			,R2_Dok1Typ			AS R2_DokTyp2
+		FROM CDN.Rozliczenia
+		JOIN #KMPParID ON R2_ID=PARID		 
+		WHERE R2_Wycena = 0 AND ISNULL(R2_ZewnetrznyId,0) = 0 AND R2_Dok1Typ = 784 AND R2_Dok2Typ = 434
+		UNION ALL
+		SELECT 
+			R2_ID				AS R2_ID	
+			,R2_Dok2Typ			AS R2_DokTyp
+			,R2_Dok2Numer		AS R2_DokNumer
+			,R2_Dok2Lp			AS R2_DokLp
+			,R2_ParID			AS R2_ParID
+			,R2_Dok1Typ			AS R2_DokTyp2
+		FROM CDN.Rozliczenia
+		JOIN #KMPParID ON R2_ID=PARID		 
+		WHERE R2_Wycena = 0 AND ISNULL(R2_ZewnetrznyId,0) = 0 AND R2_Dok1Typ = 434 AND R2_Dok2Typ = 784		
+		UNION ALL -- Dla Retail wysylac kompensaty zapisow z dokumentami z XL-a
+		SELECT 
+			R2_ID				AS R2_ID	
+			,R2_Dok2Typ			AS R2_DokTyp
+			,R2_Dok2Numer		AS R2_DokNumer
+			,R2_Dok2Lp			AS R2_DokLp
+			,R2_ParID			AS R2_ParID
+			,R2_Dok1Typ			AS R2_DokTyp2
+		FROM CDN.Rozliczenia
+		JOIN #KMPParID ON R2_ID=PARID		 
+		WHERE @Pck_Typ=5 AND R2_Wycena = 0 AND ISNULL(R2_ZewnetrznyId,0) = 0 AND (R2_Dok1Typ = 784 OR R2_Dok2Typ = 784)		
+		UNION ALL -- Dla Retail wysylac kompensaty zapisow z dokumentami z XL-a
+		SELECT 
+			R2_ID				AS R2_ID	
+			,R2_Dok1Typ			AS R2_DokTyp
+			,R2_Dok1Numer		AS R2_DokNumer
+			,R2_Dok1Lp			AS R2_DokLp
+			,R2_ParID			AS R2_ParID
+			,R2_Dok2Typ			AS R2_DokTyp2
+		FROM CDN.Rozliczenia
+		JOIN #KMPParID ON R2_ID=PARID		 
+		WHERE @Pck_Typ=5 AND R2_Wycena = 0 AND ISNULL(R2_ZewnetrznyId,0) = 0 AND (R2_Dok1Typ = 784 OR R2_Dok2Typ = 784)		
+	) ROZ
+	INNER JOIN CDN.Zapisy ON ROZ.R2_DokTyp = KAZ_GIDTyp AND ROZ.R2_DokNumer = KAZ_GIDNumer AND ROZ.R2_DokLp = KAZ_GIDLp
+	WHERE ISNULL(KAZ_ZewnetrznyId,0) &lt;&gt; 0 AND ISNULL(KAZ_ZewnetrznySys,0) = @ID
+	UNION ALL
+	-- Kompensaty zapisów z Retail i dokumentow z XL-a. Przypadek specjalny, powinno powstac rozliczebnie ale mamy wysylac jako kompensata
+	SELECT DISTINCT
+		 ROZ.R2_ID			AS [@ID]
+		,ROZ.R2_DokTyp		AS [@GIDTyp]
+		,ROZ.R2_DokNumer	AS [@GIDNumer]
+		,ROZ.R2_DokLp		AS [@GIDLp]
+		,ROZ.R2_ParID		AS [@ParID]
+		,ROZ.R2_DokTyp2		AS [@GIDTyp2]
+	FROM (
+		SELECT 
+			R2_ID				AS R2_ID	
+			,R2_Dok1Typ			AS R2_DokTyp
+			,R2_Dok1Numer		AS R2_DokNumer
+			,R2_Dok1Lp			AS R2_DokLp
+			,R2_ParID			AS R2_ParID
+			,R2_Dok2Typ			AS R2_DokTyp2
+			,R2_Dok2Numer		AS R2_DokNumer2			
+		FROM CDN.Rozliczenia
+		JOIN #KMPParID ON R2_ID=PARID		 
+		join cdn.Zapisy on R2_Dok1Typ = KAZ_GIDTyp AND R2_Dok1Numer	 = KAZ_GIDNumer
+		WHERE R2_Wycena = 0 AND ISNULL(R2_ZewnetrznyId,0) = 0 AND R2_Dok1Typ = 784 AND R2_Dok2Typ not in (434, 784)
+		and KAZ_ZewnetrznyId &gt; 0 -- zapis nie pochodzacy z XL-a
+	) ROZ
+	INNER JOIN CDN.TraNag ON ROZ.R2_DokTyp2 = TrN_GIDTyp AND ROZ.R2_DokNumer2 = TrN_GIDNumer
+	WHERE @Pck_Typ=5  AND ISNULL(TrN_OddDokId,0) = 0 AND ISNULL(trn_ZewnetrznySys,0) = 0 -- dokument pochodzacy z XL-a
+/*	UNION ALL	
+	-- Kompensaty płatności w obrębie dokumentu kompensaty
+	SELECT DISTINCT
+		 ROZ.R2_ID			AS [@ID]
+		,ROZ.R2_DokTyp		AS [@GIDTyp]
+		,ROZ.R2_DokNumer	AS [@GIDNumer]
+		,ROZ.R2_DokLp		AS [@GIDLp]
+		,ROZ.R2_ParID		AS [@ParID]
+		,ROZ.R2_DokTyp2		AS [@GIDTyp2]
+	FROM
+	(
+		SELECT 
+			R2_ID				AS R2_ID
+			,R2_Dok1Typ			AS R2_DokTyp
+			,R2_Dok1Numer		AS R2_DokNumer
+			,R2_Dok1Lp			AS R2_DokLp
+			,R2_ParID			AS R2_ParID
+			,R2_Dok2Typ			AS R2_DokTyp2
+			,R2_Dok2Numer		AS R2_DokNumer2			
+		FROM CDN.Rozliczenia
+		JOIN #KMPParID ON R2_ID=PARID		
+		WHERE R2_Wycena = 0 AND ISNULL(R2_ZewnetrznyId,0) = 0 AND (R2_Dok1Typ = 434 OR R2_Dok2Typ = 434)
+		UNION ALL
+		SELECT 
+			R2_ID				AS R2_ID	
+			,R2_Dok2Typ			AS R2_DokTyp
+			,R2_Dok2Numer		AS R2_DokNumer
+			,R2_Dok2Lp			AS R2_DokLp
+			,R2_ParID			AS R2_ParID
+			,R2_Dok1Typ			AS R2_DokTyp2
+			,R2_Dok1Numer		AS R2_DokNumer2			
+		FROM CDN.Rozliczenia
+		JOIN #KMPParID ON R2_ID=PARID		 
+		WHERE R2_Wycena = 0 AND ISNULL(R2_ZewnetrznyId,0) = 0 AND (R2_Dok1Typ = 434 OR R2_Dok2Typ = 434)
+	) ROZ
+	INNER JOIN CDN.TraNag ON ROZ.R2_DokTyp = TrN_GIDTyp AND ROZ.R2_DokNumer = TrN_GIDNumer
+	INNER JOIN CDN.KompNag ON KMN_ID = CASE WHEN ROZ.R2_DokTyp = 434 THEN ROZ.R2_DokNumer ELSE ROZ.R2_DokNumer2 END	
+	WHERE ISNULL(TrN_OddDokId,0) &lt;&gt; 0 AND CDN.OFFLXL_FrmOddzial(@ID,TrN_FrsID)=1 
+	AND ((@Pck_Typ=5 AND KMN_Status=2) OR (@Pck_Typ&lt;&gt;5 AND KMN_Status IN (0,1,2))) -- Do retail wysylac tylko informacje o zatwierdzonych kompensatach
+	ORDER BY ROZ.R2_DokTyp, ROZ.R2_DokNumer	*/
+	
+	
+	;WITH CTE(RID, GIDTyp, GIDNumer, GIDLp, DuplicateCount)
+	AS
+	(
+		SELECT 
+			A.RID
+			,A.GIDTyp
+			,A.GIDNumer
+			,A.GIDLp
+			,ROW_NUMBER() OVER(PARTITION BY A.ParID ORDER BY A.RID) AS DuplicateCount
+		FROM #KMP A
+	)
+	DELETE
+	FROM CTE
+	WHERE DuplicateCount &gt; 1
+	
+	/************************************************/
+	/**************** Kompensaty ********************/
+	/************************************************/
+	SELECT @Opis = 'Kompensaty'
+	--EXEC CDN.Log_OtworzPoziom @LogID, @Opis
+	-- Kompensaty płatności
+	SELECT
+		7684												AS [@GidTyp]
+		,B.GIDNumer											AS [@GidNumer]
+		,B.GIDLp											AS [@GidLp]
+		,TrP_ZewnetrznyId									AS [@GidNumerO]
+		,CDN.NumerDokumentu(TrN_GIDTyp,
+							TrN_SpiTyp,
+							TrN_TrNTyp,
+							TrN_TrNNumer,
+							TrN_TrNRok,
+							TrN_TrNSeria,
+							TrN_TrNMiesiac)					AS [@NumerDokumentu]
+		,(
+			SELECT
+				ROZ.ID										AS [@ID]
+				,ROZ.DokTyp									AS [@GidTyp]
+				,ROZ.DokNumer								AS [@GidNumer]
+				,ROZ.DokLp									AS [@GidLp]
+				,TrP_ZewnetrznyId							AS [@GidNumerO]
+				,CDN.NumerDokumentu(TrN_GIDTyp,
+							TrN_SpiTyp,
+							TrN_TrNTyp,
+							TrN_TrNNumer,
+							TrN_TrNRok,
+							TrN_TrNSeria,
+							TrN_TrNMiesiac)					AS [@NumerDokumentu]
+				,ROZ.KwotaWal								AS [@Kwota]
+				,TrP_Termin									AS [@Termin]
+				,TrP_KntTyp									AS [@KntTyp]
+				,TrP_KntNumer								AS [@KntNumer]
+				,TrP_FormaNr								AS [@FormaNr]
+				,TrP_FormaNazwa								AS [@FormaNazwa]
+				,TrP_Typ									AS [@Typ]
+				,TrP_Typ									AS [@RP]
+				,TrP_Waluta									AS [@Waluta]
+				,TrP_KursM									AS [@KursM]
+				,TrP_KursL									AS [@KursL]
+			FROM 
+			(
+				SELECT 
+					ROZ.R2_ID																			AS [ID]
+					,CASE B.GIDTyp WHEN ROZ.R2_Dok1Typ THEN ROZ.R2_Dok2Typ ELSE ROZ.R2_Dok1Typ END		AS [DokTyp]
+					,CASE B.GIDTyp WHEN ROZ.R2_Dok1Typ THEN ROZ.R2_Dok2Numer ELSE ROZ.R2_Dok1Numer END	AS [DokNumer]
+					,CASE B.GIDTyp WHEN ROZ.R2_Dok1Typ THEN ROZ.R2_Dok2Lp ELSE ROZ.R2_Dok1Lp END		AS [DokLp]
+					,CASE B.GIDTyp WHEN ROZ.R2_Dok1Typ THEN R2_KwotaWal2 ELSE ROZ.R2_KwotaWal2 END		AS [KwotaWal]
+				FROM CDN.Rozliczenia ROZ
+				WHERE B.RID = ROZ.R2_ID
+			) ROZ
+			INNER JOIN CDN.TraPlat ON ROZ.DokTyp = TrP_GIDTyp AND ROZ.DokNumer = TrP_GIDNumer AND ROZ.DokLp = TrP_GIDLp
+			-- dla dokumentów kompensat nie będzie zapisu w TraNag
+			LEFT OUTER JOIN CDN.TraNag ON ROZ.DokTyp = TrN_GIDTyp AND ROZ.DokNumer = TrN_GIDNumer
+			FOR XML PATH('KMO'), ROOT('KMOI'), TYPE
+		)
+	FROM #KMP B
+		INNER JOIN CDN.TraPlat ON TrP_GIDTyp = B.GIDTyp AND TrP_GIDNumer = B.GIDNumer AND TrP_GIDLp = B.GIDLp
+		INNER JOIN CDN.TraNag ON TrP_GIDTyp = TrN_GIDTyp AND TrP_GIDNumer = TrN_GIDNumer
+	WHERE B.GIDTyp NOT IN (784,434) AND B.GIDTyp2 NOT IN (784,434)
+	AND EXISTS (SELECT ROZ.DokTyp FROM 
+				(SELECT CASE B.GIDTyp WHEN ROZ.R2_Dok1Typ THEN ROZ.R2_Dok2Typ ELSE ROZ.R2_Dok1Typ END		AS [DokTyp]
+					,CASE B.GIDTyp WHEN ROZ.R2_Dok1Typ THEN ROZ.R2_Dok2Numer ELSE ROZ.R2_Dok1Numer END	AS [DokNumer]
+					,CASE B.GIDTyp WHEN ROZ.R2_Dok1Typ THEN ROZ.R2_Dok2Lp ELSE ROZ.R2_Dok1Lp END		AS [DokLp]
+				FROM CDN.Rozliczenia ROZ
+				WHERE B.RID = ROZ.R2_ID
+				) ROZ
+				INNER JOIN CDN.TraPlat ON ROZ.DokTyp = TrP_GIDTyp AND ROZ.DokNumer = TrP_GIDNumer AND ROZ.DokLp = TrP_GIDLp
+				LEFT OUTER JOIN CDN.TraNag ON ROZ.DokTyp = TrN_GIDTyp AND ROZ.DokNumer = TrN_GIDNumer
+	)
+
+	UNION ALL
+	-- Kompensaty zapisów
+
+	SELECT
+		B.GIDTyp											AS [@GIDTyp]
+		,B.GIDNumer											AS [@GIDNumer]
+		,B.GIDLp											AS [@GIDLp]
+		,KAZ_ZewnetrznyId									AS [@GidNumerO]
+		,CDN.NumerDokumentu(KAZ_GIDTyp
+							,0
+							,KAZ_RaportBO
+							,0
+							,KAZ_Rok
+							,KAZ_Seria
+							,KAZ_KRPLp)						AS [@NumerDokumentu]
+		,(
+			SELECT
+				ROZ.ID										AS [@ID]
+				,ROZ.DokTyp									AS [@GidTyp]
+				,ROZ.DokNumer								AS [@GidNumer]
+				,ROZ.DokLp									AS [@GidLp]
+				,KAZ_ZewnetrznyId							AS [@GidNumerO]
+				,CDN.NumerDokumentu(KAZ_GIDTyp
+									,0
+									,KAZ_RaportBO
+									,0
+									,KAZ_Rok
+									,KAZ_Seria
+									,KAZ_KRPLp)				AS [@NumerDokumentu]
+				,ROZ.KwotaWal								AS [@Kwota]				
+				,''											AS [@Termin]
+				,KAZ_KNTTyp									AS [@KntTyp]
+				,KAZ_KNTNumer								AS [@KntNumer]
+				,0											AS [@FormaNr]
+				,''											AS [@FormaNazwa]
+				,KAZ_RP										AS [@Typ]
+				,KAZ_RP										AS [@RP]
+				,KAZ_Waluta									AS [@Waluta]
+				,KAZ_KursM									AS [@KursM]
+				,KAZ_KursL									AS [@KursL]
+			FROM 
+			(
+				SELECT 
+					ROZ.R2_ID																			AS [ID]
+					,CASE B.GIDNumer WHEN ROZ.R2_Dok1Numer THEN ROZ.R2_Dok2Typ ELSE ROZ.R2_Dok1Typ END		AS [DokTyp]
+					,CASE B.GIDNumer WHEN ROZ.R2_Dok1Numer THEN ROZ.R2_Dok2Numer ELSE ROZ.R2_Dok1Numer END	AS [DokNumer]
+					,CASE B.GIDNumer WHEN ROZ.R2_Dok1Numer THEN ROZ.R2_Dok2Lp ELSE ROZ.R2_Dok1Lp END		AS [DokLp]
+					,CASE B.GIDNumer WHEN ROZ.R2_Dok1Numer THEN R2_KwotaWal2 ELSE ROZ.R2_KwotaWal2 END		AS [KwotaWal]
+				FROM CDN.Rozliczenia ROZ
+				WHERE B.RID = ROZ.R2_ID
+			) ROZ
+			INNER JOIN CDN.Zapisy ON ROZ.DokTyp = KAZ_GIDTyp AND ROZ.DokNumer = KAZ_GIDNumer AND ROZ.DokLp = KAZ_GIDLp
+		 FOR XML PATH('KMO'), ROOT('KMOI'), TYPE
+		)
+	FROM #KMP B
+		INNER JOIN CDN.Zapisy ON B.GIDTyp = KAZ_GIDTyp AND B.GIDNumer = KAZ_GIDNumer AND B.GIDLp = KAZ_GIDLp
+	WHERE ((B.GIDTyp = 784 AND B.GIDTyp2 = 784) OR (B.GIDTyp = 784 AND B.GIDTyp2 = 434) OR (B.GIDTyp = 434 AND B.GIDTyp2 = 784))
+	AND @Pck_Typ&lt;&gt;5
+	AND EXISTS (SELECT ROZ.DokTyp FROM 
+				(SELECT CASE B.GIDNumer WHEN ROZ.R2_Dok1Numer THEN ROZ.R2_Dok2Typ ELSE ROZ.R2_Dok1Typ END		AS [DokTyp]
+					,CASE B.GIDNumer WHEN ROZ.R2_Dok1Numer THEN ROZ.R2_Dok2Numer ELSE ROZ.R2_Dok1Numer END	AS [DokNumer]
+					,CASE B.GIDNumer WHEN ROZ.R2_Dok1Numer THEN ROZ.R2_Dok2Lp ELSE ROZ.R2_Dok1Lp END		AS [DokLp]
+				FROM CDN.Rozliczenia ROZ
+				WHERE B.RID = ROZ.R2_ID
+				) ROZ
+				INNER JOIN CDN.Zapisy ON ROZ.DokTyp = KAZ_GIDTyp AND ROZ.DokNumer = KAZ_GIDNumer AND ROZ.DokLp = KAZ_GIDLp	
+	)
+
+	UNION ALL
+	-- Kompensaty zapisów z Retail i dokumentow z XL-a. Przypadek specjalny, powinno powstac rozliczebnie ale mamy wysylac jako kompensata
+	SELECT
+		784												AS [@GidTyp]
+		,B.GIDNumer											AS [@GidNumer]
+		,B.GIDLp											AS [@GidLp]
+		,KAZ_ZewnetrznyId									AS [@GidNumerO]
+		,CDN.NumerDokumentu(KAZ_GIDTyp
+							,0
+							,KAZ_RaportBO
+							,0
+							,KAZ_Rok
+							,KAZ_Seria
+							,KAZ_KRPLp)						AS [@NumerDokumentu]
+		,(
+			SELECT
+				ROZ.ID										AS [@ID]
+				,ROZ.DokTyp									AS [@GidTyp]
+				,ROZ.DokNumer								AS [@GidNumer]
+				,ROZ.DokLp									AS [@GidLp]
+				,TrP_ZewnetrznyId							AS [@GidNumerO]
+				,CDN.NumerDokumentu(TrN_GIDTyp,
+							TrN_SpiTyp,
+							TrN_TrNTyp,
+							TrN_TrNNumer,
+							TrN_TrNRok,
+							TrN_TrNSeria,
+							TrN_TrNMiesiac)					AS [@NumerDokumentu]
+				,ROZ.KwotaWal								AS [@Kwota]
+				,TrP_Termin									AS [@Termin]
+				,TrP_KntTyp									AS [@KntTyp]
+				,TrP_KntNumer								AS [@KntNumer]
+				,TrP_FormaNr								AS [@FormaNr]
+				,TrP_FormaNazwa								AS [@FormaNazwa]
+				,TrP_Typ									AS [@Typ]
+				,TrP_Typ									AS [@RP]
+				,TrP_Waluta									AS [@Waluta]
+				,TrP_KursM									AS [@KursM]
+				,TrP_KursL									AS [@KursL]
+			FROM 
+			(
+				SELECT 
+					ROZ.R2_ID																			AS [ID]
+					,CASE B.GIDNumer WHEN ROZ.R2_Dok1Numer THEN ROZ.R2_Dok2Typ ELSE ROZ.R2_Dok1Typ END		AS [DokTyp]
+					,CASE B.GIDNumer WHEN ROZ.R2_Dok1Numer THEN ROZ.R2_Dok2Numer ELSE ROZ.R2_Dok1Numer END	AS [DokNumer]
+					,CASE B.GIDNumer WHEN ROZ.R2_Dok1Numer THEN ROZ.R2_Dok2Lp ELSE ROZ.R2_Dok1Lp END		AS [DokLp]
+					,CASE B.GIDNumer WHEN ROZ.R2_Dok1Numer THEN R2_KwotaWal2 ELSE ROZ.R2_KwotaWal2 END		AS [KwotaWal]
+				FROM CDN.Rozliczenia ROZ
+				WHERE B.RID = ROZ.R2_ID
+			) ROZ
+			INNER JOIN CDN.TraPlat ON TrP_GIDTyp = ROZ.DokTyp AND TrP_GIDNumer = ROZ.DokNumer AND TrP_GIDLp = ROZ.DokLp
+			INNER JOIN CDN.TraNag ON TrP_GIDTyp = TrN_GIDTyp AND TrP_GIDNumer = TrN_GIDNumer
+			WHERE ISNULL(TrN_OddDokId,0) = 0 AND ISNULL(trn_ZewnetrznySys,0) = 0 -- dokument pochodzacy z XL-a
+		 FOR XML PATH('KMO'), ROOT('KMOI'), TYPE
+		)
+	FROM #KMP B
+	INNER JOIN CDN.Zapisy ON B.GIDTyp = KAZ_GIDTyp AND B.GIDNumer = KAZ_GIDNumer AND B.GIDLp = KAZ_GIDLp
+	JOIN CDN.Rozliczenia ON (KAZ_GIDTyp = R2_Dok1Typ and KAZ_GIDNumer = R2_Dok1Numer) OR (KAZ_GIDTyp = R2_Dok2Typ and KAZ_GIDNumer = R2_Dok2Numer)-- Eliminacja przypadkow zapisow powiazanch z innymi obiektami
+	JOIN CDN.TraNag ON (TrN_GIDTyp = R2_Dok2Typ and TrN_GIDNumer = R2_Dok2Numer) OR (TrN_GIDTyp = R2_Dok1Typ and TrN_GIDNumer = R2_Dok1Numer)
+	WHERE KAZ_ZewnetrznyId &gt; 0 -- zapis nie pochodzacy z XL-a   
+	--and B.GIDTyp IN (784) AND B.GIDTyp2 NOT IN (784,434)
+	AND ISNULL(TrN_OddDokId,0) = 0-- AND (R2_Dok1Typ = 784 AND R2_Dok2Typ NOT IN (784,434)) OR
+	AND EXISTS (SELECT ROZ.DokTyp FROM 
+				(SELECT CASE B.GIDNumer WHEN ROZ.R2_Dok1Numer THEN ROZ.R2_Dok2Typ ELSE ROZ.R2_Dok1Typ END		AS [DokTyp]
+					,CASE B.GIDNumer WHEN ROZ.R2_Dok1Numer THEN ROZ.R2_Dok2Numer ELSE ROZ.R2_Dok1Numer END	AS [DokNumer]
+					,CASE B.GIDNumer WHEN ROZ.R2_Dok1Numer THEN ROZ.R2_Dok2Lp ELSE ROZ.R2_Dok1Lp END		AS [DokLp]
+				FROM CDN.Rozliczenia ROZ
+				WHERE B.RID = ROZ.R2_ID
+			) ROZ
+			INNER JOIN CDN.TraPlat ON TrP_GIDTyp = ROZ.DokTyp AND TrP_GIDNumer = ROZ.DokNumer AND TrP_GIDLp = ROZ.DokLp
+			INNER JOIN CDN.TraNag ON TrP_GIDTyp = TrN_GIDTyp AND TrP_GIDNumer = TrN_GIDNumer
+			WHERE ISNULL(TrN_OddDokId,0) = 0 AND ISNULL(trn_ZewnetrznySys,0) = 0 -- dokument pochodzacy z XL-a
+	)
+
+
+	UNION ALL
+	-- Kompensaty zapisów Retail rozliczonych z poziomu zapisu (nie poprzez kompensate)
+	SELECT
+		B.GIDTyp											AS [@GIDTyp]
+		,B.GIDNumer											AS [@GIDNumer]
+		,B.GIDLp											AS [@GIDLp]
+		,KAZ_ZewnetrznyId									AS [@GidNumerO]
+		,CDN.NumerDokumentu(KAZ_GIDTyp
+							,0
+							,KAZ_RaportBO
+							,0
+							,KAZ_Rok
+							,KAZ_Seria
+							,KAZ_KRPLp)						AS [@NumerDokumentu]
+		,(
+			SELECT
+				ROZ.ID										AS [@ID]
+				,ROZ.DokTyp									AS [@GidTyp]
+				,ROZ.DokNumer								AS [@GidNumer]
+				,ROZ.DokLp									AS [@GidLp]
+				,KAZ_ZewnetrznyId							AS [@GidNumerO]
+				,CDN.NumerDokumentu(KAZ_GIDTyp
+									,0
+									,KAZ_RaportBO
+									,0
+									,KAZ_Rok
+									,KAZ_Seria
+									,KAZ_KRPLp)				AS [@NumerDokumentu]
+				,ROZ.KwotaWal								AS [@Kwota]				
+				,''											AS [@Termin]
+				,KAZ_KNTTyp									AS [@KntTyp]
+				,KAZ_KNTNumer								AS [@KntNumer]
+				,0											AS [@FormaNr]
+				,''											AS [@FormaNazwa]
+				,KAZ_RP										AS [@Typ]
+				,KAZ_RP										AS [@RP]
+				,KAZ_Waluta									AS [@Waluta]
+				,KAZ_KursM									AS [@KursM]
+				,KAZ_KursL									AS [@KursL]
+			FROM 
+			(
+				SELECT 
+					ROZ.R2_ID						AS [ID]
+					--,ROZ.R2_Dok2Typ 		AS [DokTyp]
+					--,ROZ.R2_Dok2Numer 	AS [DokNumer]
+					--,ROZ.R2_Dok2Lp 		AS [DokLp]
+					--,ROZ.R2_KwotaWal2 		AS [KwotaWal]
+					,CASE B.GIDNumer WHEN ROZ.R2_Dok1Numer THEN ROZ.R2_Dok2Typ ELSE ROZ.R2_Dok1Typ END		AS [DokTyp]
+					,CASE B.GIDNumer WHEN ROZ.R2_Dok1Numer THEN ROZ.R2_Dok2Numer ELSE ROZ.R2_Dok1Numer END	AS [DokNumer]
+					,CASE B.GIDNumer WHEN ROZ.R2_Dok1Numer THEN ROZ.R2_Dok2Lp ELSE ROZ.R2_Dok1Lp END		AS [DokLp]
+					,CASE B.GIDNumer WHEN ROZ.R2_Dok1Numer THEN R2_KwotaWal2 ELSE ROZ.R2_KwotaWal2 END		AS [KwotaWal]					
+				FROM CDN.Rozliczenia ROZ
+				WHERE B.RID = ROZ.R2_ID
+			) ROZ
+			INNER JOIN CDN.Zapisy ON ROZ.DokTyp = KAZ_GIDTyp AND ROZ.DokNumer = KAZ_GIDNumer AND ROZ.DokLp = KAZ_GIDLp
+		 FOR XML PATH('KMO'), ROOT('KMOI'), TYPE
+		)
+	FROM #KMP B
+		INNER JOIN CDN.Zapisy ON B.GIDTyp = KAZ_GIDTyp AND B.GIDNumer = KAZ_GIDNumer AND B.GIDLp = KAZ_GIDLp
+	WHERE (B.GIDTyp = 784 AND B.GIDTyp2 = 784) AND @Pck_Typ=5
+	AND EXISTS (SELECT ROZ.DokTyp FROM 
+			(SELECT CASE B.GIDNumer WHEN ROZ.R2_Dok1Numer THEN ROZ.R2_Dok2Typ ELSE ROZ.R2_Dok1Typ END		AS [DokTyp]
+					,CASE B.GIDNumer WHEN ROZ.R2_Dok1Numer THEN ROZ.R2_Dok2Numer ELSE ROZ.R2_Dok1Numer END	AS [DokNumer]
+					,CASE B.GIDNumer WHEN ROZ.R2_Dok1Numer THEN ROZ.R2_Dok2Lp ELSE ROZ.R2_Dok1Lp END		AS [DokLp]
+				FROM CDN.Rozliczenia ROZ
+				WHERE B.RID = ROZ.R2_ID
+			) ROZ
+			INNER JOIN CDN.Zapisy ON ROZ.DokTyp = KAZ_GIDTyp AND ROZ.DokNumer = KAZ_GIDNumer AND ROZ.DokLp = KAZ_GIDLp
+	)
+/*
+
+	UNION ALL
+	-- Kompensaty dwóch zapisów pochadzacych z Retail
+	SELECT
+		B.GIDTyp											AS [@GIDTyp]
+		,B.GIDNumer											AS [@GIDNumer]
+		,B.GIDLp											AS [@GIDLp]
+		,KAZ_ZewnetrznyId									AS [@GidNumerO]
+		,CDN.NumerDokumentu(KAZ_GIDTyp
+							,0
+							,KAZ_RaportBO
+							,0
+							,KAZ_Rok
+							,KAZ_Seria
+							,KAZ_KRPLp)						AS [@NumerDokumentu]
+		,(
+			SELECT
+				ROZ.ID										AS [@ID]
+				,ROZ.DokTyp									AS [@GidTyp]
+				,ROZ.DokNumer								AS [@GidNumer]
+				,ROZ.DokLp									AS [@GidLp]
+				,KAZ_ZewnetrznyId							AS [@GidNumerO]
+				,CDN.NumerDokumentu(KAZ_GIDTyp
+									,0
+									,KAZ_RaportBO
+									,0
+									,KAZ_Rok
+									,KAZ_Seria
+									,KAZ_KRPLp)				AS [@NumerDokumentu]
+				,ROZ.KwotaWal								AS [@Kwota]				
+				,''											AS [@Termin]
+				,KAZ_KNTTyp									AS [@KntTyp]
+				,KAZ_KNTNumer								AS [@KntNumer]
+				,0											AS [@FormaNr]
+				,''											AS [@FormaNazwa]
+				,KAZ_RP										AS [@Typ]
+				,KAZ_RP										AS [@RP]
+				,KAZ_Waluta									AS [@Waluta]
+				,KAZ_KursM									AS [@KursM]
+				,KAZ_KursL									AS [@KursL]
+			FROM 
+			(
+				SELECT 
+					ROZ.R2_ID																			AS [ID]
+					,ROZ.R2_ParID																			AS [ParID]
+					,CASE B.GIDNumer WHEN ROZ.R2_Dok1Numer THEN ROZ.R2_Dok2Typ ELSE ROZ.R2_Dok1Typ END		AS [DokTyp]
+					,CASE B.GIDNumer WHEN ROZ.R2_Dok1Numer THEN ROZ.R2_Dok2Numer ELSE ROZ.R2_Dok1Numer END	AS [DokNumer]
+					,CASE B.GIDNumer WHEN ROZ.R2_Dok1Numer THEN ROZ.R2_Dok2Lp ELSE ROZ.R2_Dok1Lp END		AS [DokLp]
+					,CASE B.GIDNumer WHEN ROZ.R2_Dok1Numer THEN R2_KwotaWal2 ELSE ROZ.R2_KwotaWal2 END		AS [KwotaWal]
+				FROM CDN.Rozliczenia ROZ
+				WHERE B.RID = ROZ.R2_ID
+			) ROZ
+			INNER JOIN CDN.Rozliczenia ROZ2 on ROZ2.R2_ParID = ROZ.ParID and ROZ2.R2_Dok1Numer &lt;&gt; ROZ.DokNumer
+			INNER JOIN CDN.Zapisy ON ROZ2.R2_Dok1Typ = KAZ_GIDTyp AND ROZ2.R2_Dok1Numer = KAZ_GIDNumer AND ROZ2.R2_Dok1Lp = KAZ_GIDLp
+		 FOR XML PATH('KMO'), ROOT('KMOI'), TYPE
+		)
+	FROM #KMP B
+		INNER JOIN CDN.Zapisy ON B.GIDTyp = KAZ_GIDTyp AND B.GIDNumer = KAZ_GIDNumer AND B.GIDLp = KAZ_GIDLp
+	WHERE @Pck_Typ=5 AND ((B.GIDTyp = 784 AND B.GIDTyp2 = 434) OR (B.GIDTyp = 434 AND B.GIDTyp2 = 784))
+
+
+	UNION ALL
+	-- Kompensaty zapisów pochadzacych z Retail z dokumentami
+	SELECT
+		B.GIDTyp											AS [@GIDTyp]
+		,B.GIDNumer											AS [@GIDNumer]
+		,B.GIDLp											AS [@GIDLp]
+		,KAZ_ZewnetrznyId									AS [@GidNumerO]
+		,CDN.NumerDokumentu(KAZ_GIDTyp
+							,0
+							,KAZ_RaportBO
+							,0
+							,KAZ_Rok
+							,KAZ_Seria
+							,KAZ_KRPLp)						AS [@NumerDokumentu]
+		,(
+			SELECT
+				ROZ.ID										AS [@ID]
+				,ROZ.DokTyp									AS [@GidTyp]
+				,ROZ.DokNumer								AS [@GidNumer]
+				,ROZ.DokLp									AS [@GidLp]
+				,TrP_ZewnetrznyId							AS [@GidNumerO]
+				,CDN.NumerDokumentu(TrN_GIDTyp,
+							TrN_SpiTyp,
+							TrN_TrNTyp,
+							TrN_TrNNumer,
+							TrN_TrNRok,
+							TrN_TrNSeria,
+							TrN_TrNMiesiac)					AS [@NumerDokumentu]
+				,ROZ.KwotaWal								AS [@Kwota]
+				,TrP_Termin									AS [@Termin]
+				,TrP_KntTyp									AS [@KntTyp]
+				,TrP_KntNumer								AS [@KntNumer]
+				,TrP_FormaNr								AS [@FormaNr]
+				,TrP_FormaNazwa								AS [@FormaNazwa]
+				,TrP_Typ									AS [@Typ]
+				,TrP_Typ									AS [@RP]
+				,TrP_Waluta									AS [@Waluta]
+				,TrP_KursM									AS [@KursM]
+				,TrP_KursL									AS [@KursL]
+			FROM 
+			(
+				SELECT 
+					ROZ.R2_ID																			AS [ID]
+					,ROZ.R2_Dok1Typ		AS [DokTyp]
+					,ROZ.R2_Dok1Numer 	AS [DokNumer]
+					,ROZ.R2_Dok1Lp 		AS [DokLp]	
+					,ROZ.R2_Dok2Typ		AS [Dok2Typ]
+					,ROZ.R2_Dok2Numer 	AS [Dok2Numer]
+					,ROZ.R2_Dok2Lp 		AS [Dok2Lp]									
+					,R2_KwotaWal2 		AS [KwotaWal]
+				FROM CDN.Rozliczenia ROZ
+				WHERE B.RID = ROZ.R2_ID
+			) ROZ
+			--INNER JOIN CDN.Zapisy ON ROZ.DokTyp = KAZ_GIDTyp AND ROZ.DokNumer = KAZ_GIDNumer AND ROZ.DokLp = KAZ_GIDLp
+			INNER JOIN CDN.TraPlat ON ROZ.DokTyp = TrP_GIDTyp AND ROZ.DokNumer = TrP_GIDNumer AND ROZ.DokLp = TrP_GIDLp
+			-- dla dokumentów kompensat nie będzie zapisu w TraNag
+			LEFT OUTER JOIN CDN.TraNag ON ROZ.DokTyp = TrN_GIDTyp AND ROZ.DokNumer = TrN_GIDNumer					
+		 FOR XML PATH('KMO'), ROOT('KMOI'), TYPE
+		)
+	FROM #KMP B
+	INNER JOIN CDN.Zapisy ON B.GIDTyp = KAZ_GIDTyp AND B.GIDNumer = KAZ_GIDNumer AND B.GIDLp = KAZ_GIDLp
+	WHERE @Pck_Typ=5 AND ((B.GIDTyp = 784 AND B.GIDTyp2 NOT IN (434,784)) OR (B.GIDTyp NOT IN (434,784) AND B.GIDTyp2 = 784)
+		OR (B.GIDTyp = 434 AND B.GIDTyp2 NOT IN (434,784)) OR (B.GIDTyp = 434 AND B.GIDTyp2 NOT IN (434,784)))
+
+	-- Kompensaty płatności i zapisu pochadzaych z Retail poprzez dokument kompensaty
+	UNION ALL
+	SELECT
+		7684												AS [@GidTyp]
+		,B.GIDNumer											AS [@GidNumer]
+		,B.GIDLp											AS [@GidLp]
+		,TrP_ZewnetrznyId									AS [@GidNumerO]
+		,CDN.NumerDokumentu(TrN_GIDTyp,
+							TrN_SpiTyp,
+							TrN_TrNTyp,
+							TrN_TrNNumer,
+							TrN_TrNRok,
+							TrN_TrNSeria,
+							TrN_TrNMiesiac)					AS [@NumerDokumentu]
+		,(
+			SELECT
+				ROZ.ID										AS [@ID]
+				,ROZ.DokTyp									AS [@GidTyp]
+				,ROZ.DokNumer								AS [@GidNumer]
+				,ROZ.DokLp									AS [@GidLp]
+				,KAZ_ZewnetrznyId							AS [@GidNumerO]
+				,CDN.NumerDokumentu(KAZ_GIDTyp
+									,0
+									,KAZ_RaportBO
+									,0
+									,KAZ_Rok
+									,KAZ_Seria
+									,KAZ_KRPLp)				AS [@NumerDokumentu]
+				,ROZ.KwotaWal								AS [@Kwota]				
+				,''											AS [@Termin]
+				,KAZ_KNTTyp									AS [@KntTyp]
+				,KAZ_KNTNumer								AS [@KntNumer]
+				,0											AS [@FormaNr]
+				,''											AS [@FormaNazwa]
+				,KAZ_RP										AS [@Typ]
+				,KAZ_RP										AS [@RP]
+				,KAZ_Waluta									AS [@Waluta]
+				,KAZ_KursM									AS [@KursM]
+				,KAZ_KursL									AS [@KursL]
+			FROM 
+			(
+				SELECT 
+					ROZ.R2_ID																			AS [ID]
+					,CASE B.GIDTyp2 WHEN ROZ.R2_Dok2Typ THEN ROZ.R2_Dok1Typ ELSE ROZ.R2_Dok2Typ END		AS [DokTyp]
+					,CASE B.GIDTyp2 WHEN ROZ.R2_Dok2Typ THEN ROZ.R2_Dok1Numer ELSE ROZ.R2_Dok2Numer END	AS [DokNumer]
+					,CASE B.GIDTyp2 WHEN ROZ.R2_Dok2Typ THEN ROZ.R2_Dok1Lp ELSE ROZ.R2_Dok2Lp END		AS [DokLp]
+					,CASE B.GIDTyp2 WHEN ROZ.R2_Dok2Typ THEN R2_KwotaWal1 ELSE ROZ.R2_KwotaWal2 END		AS [KwotaWal]
+				FROM CDN.Rozliczenia ROZ
+				WHERE ROZ.R2_ParID = B.ParID AND ROZ.R2_ID &lt;&gt; B.RID
+			) ROZ
+			INNER JOIN CDN.Zapisy ON ROZ.DokTyp = KAZ_GIDTyp AND ROZ.DokNumer = KAZ_GIDNumer AND ROZ.DokLp = KAZ_GIDLp
+			FOR XML PATH('KMO'), ROOT('KMOI'), TYPE
+		)
+	FROM #KMP B
+		INNER JOIN CDN.TraPlat ON TrP_GIDTyp = B.GIDTyp AND TrP_GIDNumer = B.GIDNumer AND TrP_GIDLp = B.GIDLp
+		INNER JOIN CDN.TraNag ON TrP_GIDTyp = TrN_GIDTyp AND TrP_GIDNumer = TrN_GIDNumer
+	WHERE @Pck_Typ=5
+
+	-- Kompensaty płatności w obrębie dokumentu kompensaty
+	UNION ALL
+	SELECT
+		7684												AS [@GidTyp]
+		,B.GIDNumer											AS [@GidNumer]
+		,B.GIDLp											AS [@GidLp]
+		,TrP_ZewnetrznyId									AS [@GidNumerO]
+		,CDN.NumerDokumentu(TrN_GIDTyp,
+							TrN_SpiTyp,
+							TrN_TrNTyp,
+							TrN_TrNNumer,
+							TrN_TrNRok,
+							TrN_TrNSeria,
+							TrN_TrNMiesiac)					AS [@NumerDokumentu]
+		,(
+			SELECT
+				ROZ.ID										AS [@ID]
+				,ROZ.DokTyp									AS [@GidTyp]
+				,ROZ.DokNumer								AS [@GidNumer]
+				,ROZ.DokLp									AS [@GidLp]
+				,TrP_ZewnetrznyId							AS [@GidNumerO]
+				,CDN.NumerDokumentu(TrN_GIDTyp,
+							TrN_SpiTyp,
+							TrN_TrNTyp,
+							TrN_TrNNumer,
+							TrN_TrNRok,
+							TrN_TrNSeria,
+							TrN_TrNMiesiac)					AS [@NumerDokumentu]
+				,ROZ.KwotaWal								AS [@Kwota]
+				,TrP_Termin									AS [@Termin]
+				,TrP_KntTyp									AS [@KntTyp]
+				,TrP_KntNumer								AS [@KntNumer]
+				,TrP_FormaNr								AS [@FormaNr]
+				,TrP_FormaNazwa								AS [@FormaNazwa]
+				,TrP_Typ									AS [@Typ]
+				,TrP_Typ									AS [@RP]
+				,TrP_Waluta									AS [@Waluta]
+				,TrP_KursM									AS [@KursM]
+				,TrP_KursL									AS [@KursL]
+			FROM 
+			(
+				SELECT 
+					ROZ.R2_ID																			AS [ID]
+					,CASE B.GIDTyp2 WHEN ROZ.R2_Dok2Typ THEN ROZ.R2_Dok1Typ ELSE ROZ.R2_Dok2Typ END		AS [DokTyp]
+					,CASE B.GIDTyp2 WHEN ROZ.R2_Dok2Typ THEN ROZ.R2_Dok1Numer ELSE ROZ.R2_Dok2Numer END	AS [DokNumer]
+					,CASE B.GIDTyp2 WHEN ROZ.R2_Dok2Typ THEN ROZ.R2_Dok1Lp ELSE ROZ.R2_Dok2Lp END		AS [DokLp]
+					,CASE B.GIDTyp2 WHEN ROZ.R2_Dok2Typ THEN R2_KwotaWal1 ELSE ROZ.R2_KwotaWal2 END		AS [KwotaWal]
+				FROM CDN.Rozliczenia ROZ
+				WHERE ROZ.R2_ParID = B.ParID AND ROZ.R2_ID &lt;&gt; B.RID
+			) ROZ
+			INNER JOIN CDN.TraPlat ON ROZ.DokTyp = TrP_GIDTyp AND ROZ.DokNumer = TrP_GIDNumer AND ROZ.DokLp = TrP_GIDLp
+			INNER JOIN CDN.TraNag ON ROZ.DokTyp = TrN_GIDTyp AND ROZ.DokNumer = TrN_GIDNumer
+			FOR XML PATH('KMO'), ROOT('KMOI'), TYPE
+		)
+	FROM #KMP B
+		INNER JOIN CDN.TraPlat ON TrP_GIDTyp = B.GIDTyp AND TrP_GIDNumer = B.GIDNumer AND TrP_GIDLp = B.GIDLp
+		INNER JOIN CDN.TraNag ON TrP_GIDTyp = TrN_GIDTyp AND TrP_GIDNumer = TrN_GIDNumer
+	WHERE B.GIDTyp = 434 OR B.GIDTyp2 = 434 AND @Pck_Typ&lt;&gt;5
+*/
+
+
+	-- Dwa dokumenty kompensowane poprzez dokument kompensaty
+	UNION ALL
+	SELECT
+		7684												AS [@GidTyp]
+		,B.GIDNumer											AS [@GidNumer]
+		,B.GIDLp											AS [@GidLp]
+		,TrP_ZewnetrznyId									AS [@GidNumerO]
+		,CDN.NumerDokumentu(TrN_GIDTyp,
+							TrN_SpiTyp,
+							TrN_TrNTyp,
+							TrN_TrNNumer,
+							TrN_TrNRok,
+							TrN_TrNSeria,
+							TrN_TrNMiesiac)					AS [@NumerDokumentu]
+		,(
+			SELECT
+				ROZ.ID										AS [@ID]
+				,ROZ.DokTyp									AS [@GidTyp]
+				,ROZ.DokNumer								AS [@GidNumer]
+				,ROZ.DokLp									AS [@GidLp]
+				,TrP_ZewnetrznyId							AS [@GidNumerO]
+				,CDN.NumerDokumentu(TrN_GIDTyp,
+							TrN_SpiTyp,
+							TrN_TrNTyp,
+							TrN_TrNNumer,
+							TrN_TrNRok,
+							TrN_TrNSeria,
+							TrN_TrNMiesiac)					AS [@NumerDokumentu]
+				,ROZ.KwotaWal								AS [@Kwota]
+				,TrP_Termin									AS [@Termin]
+				,TrP_KntTyp									AS [@KntTyp]
+				,TrP_KntNumer								AS [@KntNumer]
+				,TrP_FormaNr								AS [@FormaNr]
+				,TrP_FormaNazwa								AS [@FormaNazwa]
+				,TrP_Typ									AS [@Typ]
+				,TrP_Typ									AS [@RP]
+				,TrP_Waluta									AS [@Waluta]
+				,TrP_KursM									AS [@KursM]
+				,TrP_KursL									AS [@KursL]
+
+			FROM 
+			(
+				SELECT 
+					B.RID																			AS [ID]
+					,CASE B.GIDTyp2 WHEN ROZ.R2_Dok2Typ THEN ROZ.R2_Dok1Typ ELSE ROZ.R2_Dok2Typ END		AS [DokTyp]
+					,CASE B.GIDTyp2 WHEN ROZ.R2_Dok2Typ THEN ROZ.R2_Dok1Numer ELSE ROZ.R2_Dok2Numer END	AS [DokNumer]
+					,CASE B.GIDTyp2 WHEN ROZ.R2_Dok2Typ THEN ROZ.R2_Dok1Lp ELSE ROZ.R2_Dok2Lp END		AS [DokLp]
+					,CASE B.GIDTyp2 WHEN ROZ.R2_Dok2Typ THEN R2_KwotaWal1 ELSE ROZ.R2_KwotaWal2 END		AS [KwotaWal]
+				FROM CDN.Rozliczenia ROZ
+				WHERE ROZ.R2_ParID = B.ParID AND ROZ.R2_ID &lt;&gt; B.RID
+			) ROZ
+			JOIN CDN.TraPlat ON ROZ.DokTyp = TrP_GIDTyp AND ROZ.DokNumer = TrP_GIDNumer AND ROZ.DokLp = TrP_GIDLp
+			JOIN CDN.TraNag ON ROZ.DokTyp = TrN_GIDTyp AND ROZ.DokNumer = TrN_GIDNumer
+			FOR XML PATH('KMO'), ROOT('KMOI'), TYPE
+		)
+	FROM #KMP2 B
+		INNER JOIN CDN.TraPlat ON TrP_GIDTyp = B.GIDTyp AND TrP_GIDNumer = B.GIDNumer AND TrP_GIDLp = B.GIDLp
+		INNER JOIN CDN.TraNag ON TrP_GIDTyp = TrN_GIDTyp AND TrP_GIDNumer = TrN_GIDNumer
+	WHERE @Pck_Typ=5
+	AND EXISTS (SELECT ROZ.DokTyp FROM 
+			(SELECT CASE B.GIDTyp2 WHEN ROZ.R2_Dok2Typ THEN ROZ.R2_Dok1Typ ELSE ROZ.R2_Dok2Typ END		AS [DokTyp]
+					,CASE B.GIDTyp2 WHEN ROZ.R2_Dok2Typ THEN ROZ.R2_Dok1Numer ELSE ROZ.R2_Dok2Numer END	AS [DokNumer]
+					,CASE B.GIDTyp2 WHEN ROZ.R2_Dok2Typ THEN ROZ.R2_Dok1Lp ELSE ROZ.R2_Dok2Lp END		AS [DokLp]
+				FROM CDN.Rozliczenia ROZ
+				WHERE ROZ.R2_ParID = B.ParID AND ROZ.R2_ID &lt;&gt; B.RID
+			) ROZ
+			JOIN CDN.TraPlat ON ROZ.DokTyp = TrP_GIDTyp AND ROZ.DokNumer = TrP_GIDNumer AND ROZ.DokLp = TrP_GIDLp
+			JOIN CDN.TraNag ON ROZ.DokTyp = TrN_GIDTyp AND ROZ.DokNumer = TrN_GIDNumer
+	)
+	
+	-- Dokument i zapis kompensowane poprzez dokument kompensaty
+	-- To jest wyjatek, powinno byc rozliczenie
+	UNION ALL
+	SELECT
+		784												AS [@GidTyp]
+		,B.GIDNumer											AS [@GidNumer]
+		,B.GIDLp											AS [@GidLp]
+		,KAZ_ZewnetrznyId							AS [@GidNumerO]
+		,CDN.NumerDokumentu(KAZ_GIDTyp
+								,0
+								,KAZ_RaportBO
+								,0
+								,KAZ_Rok
+								,KAZ_Seria
+								,KAZ_KRPLp)				AS [@NumerDokumentu]
+		,(
+			SELECT
+				ROZ.ID										AS [@ID]
+				,ROZ.DokTyp									AS [@GidTyp]
+				,ROZ.DokNumer								AS [@GidNumer]
+				,ROZ.DokLp									AS [@GidLp]
+				,TrP_ZewnetrznyId									AS [@GidNumerO]
+				,CDN.NumerDokumentu(TrN_GIDTyp,
+							TrN_SpiTyp,
+							TrN_TrNTyp,
+							TrN_TrNNumer,
+							TrN_TrNRok,
+							TrN_TrNSeria,
+							TrN_TrNMiesiac)					AS [@NumerDokumentu]
+				,ROZ.KwotaWal								AS [@Kwota]				
+				,''											AS [@Termin]
+				,KAZ_KNTTyp									AS [@KntTyp]
+				,KAZ_KNTNumer								AS [@KntNumer]
+				,0											AS [@FormaNr]
+				,''											AS [@FormaNazwa]
+				,KAZ_RP										AS [@Typ]
+				,KAZ_RP										AS [@RP]
+				,KAZ_Waluta									AS [@Waluta]
+				,KAZ_KursM									AS [@KursM]
+				,KAZ_KursL									AS [@KursL]
+			FROM 
+			(
+				SELECT 
+					B.RID																			AS [ID]
+					,CASE B.GIDTyp2 WHEN ROZ.R2_Dok2Typ THEN ROZ.R2_Dok1Typ ELSE ROZ.R2_Dok2Typ END		AS [DokTyp]
+					,CASE B.GIDTyp2 WHEN ROZ.R2_Dok2Typ THEN ROZ.R2_Dok1Numer ELSE ROZ.R2_Dok2Numer END	AS [DokNumer]
+					,CASE B.GIDTyp2 WHEN ROZ.R2_Dok2Typ THEN ROZ.R2_Dok1Lp ELSE ROZ.R2_Dok2Lp END		AS [DokLp]
+					,CASE B.GIDTyp2 WHEN ROZ.R2_Dok2Typ THEN R2_KwotaWal1 ELSE ROZ.R2_KwotaWal2 END		AS [KwotaWal]
+				FROM CDN.Rozliczenia ROZ
+				WHERE ROZ.R2_ParID = B.ParID AND ROZ.R2_ID &lt;&gt; B.RID
+			) ROZ
+		INNER JOIN CDN.TraPlat ON TrP_GIDTyp = ROZ.DokTyp AND TrP_GIDNumer = ROZ.DokNumer AND TrP_GIDLp = ROZ.DokLp
+		INNER JOIN CDN.TraNag ON TrP_GIDTyp = TrN_GIDTyp AND TrP_GIDNumer = TrN_GIDNumer			
+		WHERE TrN_OddDokId = 0 -- z XL-a
+			FOR XML PATH('KMO'), ROOT('KMOI'), TYPE
+		)
+	FROM #KMP2 B
+	INNER JOIN CDN.Zapisy ON B.GIDTyp = KAZ_GIDTyp AND B.GIDNumer = KAZ_GIDNumer AND B.GIDLp = KAZ_GIDLp
+	WHERE @Pck_Typ=5 AND KAZ_ZewnetrznyId &lt;&gt; 0 -- z retail
+	AND EXISTS (SELECT ROZ.DokTyp FROM 
+			(SELECT CASE B.GIDTyp2 WHEN ROZ.R2_Dok2Typ THEN ROZ.R2_Dok1Typ ELSE ROZ.R2_Dok2Typ END		AS [DokTyp]
+					,CASE B.GIDTyp2 WHEN ROZ.R2_Dok2Typ THEN ROZ.R2_Dok1Numer ELSE ROZ.R2_Dok2Numer END	AS [DokNumer]
+					,CASE B.GIDTyp2 WHEN ROZ.R2_Dok2Typ THEN ROZ.R2_Dok1Lp ELSE ROZ.R2_Dok2Lp END		AS [DokLp]
+				FROM CDN.Rozliczenia ROZ
+				WHERE ROZ.R2_ParID = B.ParID AND ROZ.R2_ID &lt;&gt; B.RID
+			) ROZ
+			INNER JOIN CDN.TraPlat ON TrP_GIDTyp = ROZ.DokTyp AND TrP_GIDNumer = ROZ.DokNumer AND TrP_GIDLp = ROZ.DokLp
+			INNER JOIN CDN.TraNag ON TrP_GIDTyp = TrN_GIDTyp AND TrP_GIDNumer = TrN_GIDNumer			
+			WHERE TrN_OddDokId = 0 -- z XL-a
+	)
+	
+	
+	-- Zapis i zapis poprzez dokument kompensaty
+	UNION ALL
+	SELECT
+		784												AS [@GidTyp]
+		,B.GIDNumer											AS [@GidNumer]
+		,B.GIDLp											AS [@GidLp]
+				,KAZ_ZewnetrznyId							AS [@GidNumerO]
+				,CDN.NumerDokumentu(KAZ_GIDTyp
+										,0
+										,KAZ_RaportBO
+										,0
+										,KAZ_Rok
+										,KAZ_Seria
+										,KAZ_KRPLp)				AS [@NumerDokumentu]
+		,(
+			SELECT
+				ROZ.ID										AS [@ID]
+				,ROZ.DokTyp									AS [@GidTyp]
+				,ROZ.DokNumer								AS [@GidNumer]
+				,ROZ.DokLp									AS [@GidLp]
+				,KAZ_ZewnetrznyId							AS [@GidNumerO]
+				,CDN.NumerDokumentu(KAZ_GIDTyp
+										,0
+										,KAZ_RaportBO
+										,0
+										,KAZ_Rok
+										,KAZ_Seria
+										,KAZ_KRPLp)				AS [@NumerDokumentu]
+				,ROZ.KwotaWal								AS [@Kwota]				
+				,''											AS [@Termin]
+				,KAZ_KNTTyp									AS [@KntTyp]
+				,KAZ_KNTNumer								AS [@KntNumer]
+				,0											AS [@FormaNr]
+				,''											AS [@FormaNazwa]
+				,KAZ_RP										AS [@Typ]
+				,KAZ_RP										AS [@RP]
+				,KAZ_Waluta									AS [@Waluta]
+				,KAZ_KursM									AS [@KursM]
+				,KAZ_KursL									AS [@KursL]
+			FROM 
+			(
+				SELECT 
+					B.RID																			AS [ID]
+					,CASE B.GIDTyp2 WHEN ROZ.R2_Dok2Typ THEN ROZ.R2_Dok1Typ ELSE ROZ.R2_Dok2Typ END		AS [DokTyp]
+					,CASE B.GIDTyp2 WHEN ROZ.R2_Dok2Typ THEN ROZ.R2_Dok1Numer ELSE ROZ.R2_Dok2Numer END	AS [DokNumer]
+					,CASE B.GIDTyp2 WHEN ROZ.R2_Dok2Typ THEN ROZ.R2_Dok1Lp ELSE ROZ.R2_Dok2Lp END		AS [DokLp]
+					,CASE B.GIDTyp2 WHEN ROZ.R2_Dok2Typ THEN R2_KwotaWal1 ELSE ROZ.R2_KwotaWal2 END		AS [KwotaWal]
+				FROM CDN.Rozliczenia ROZ
+				WHERE ROZ.R2_ParID = B.ParID AND ROZ.R2_ID &lt;&gt; B.RID
+			) ROZ
+			INNER JOIN CDN.Zapisy ON ROZ.DokTyp = KAZ_GIDTyp AND ROZ.DokNumer = KAZ_GIDNumer AND ROZ.DokLp = KAZ_GIDLp
+			FOR XML PATH('KMO'), ROOT('KMOI'), TYPE
+		)
+	FROM #KMP2 B
+	INNER JOIN CDN.Zapisy ON B.GIDTyp = KAZ_GIDTyp AND B.GIDNumer = KAZ_GIDNumer AND B.GIDLp = KAZ_GIDLp
+	WHERE @Pck_Typ=5
+	ANd EXISTS (SELECT ROZ.DokTyp FROM 
+			(SELECT CASE B.GIDTyp2 WHEN ROZ.R2_Dok2Typ THEN ROZ.R2_Dok1Typ ELSE ROZ.R2_Dok2Typ END		AS [DokTyp]
+					,CASE B.GIDTyp2 WHEN ROZ.R2_Dok2Typ THEN ROZ.R2_Dok1Numer ELSE ROZ.R2_Dok2Numer END	AS [DokNumer]
+					,CASE B.GIDTyp2 WHEN ROZ.R2_Dok2Typ THEN ROZ.R2_Dok1Lp ELSE ROZ.R2_Dok2Lp END		AS [DokLp]
+				FROM CDN.Rozliczenia ROZ
+				WHERE ROZ.R2_ParID = B.ParID AND ROZ.R2_ID &lt;&gt; B.RID
+			) ROZ
+			INNER JOIN CDN.Zapisy ON ROZ.DokTyp = KAZ_GIDTyp AND ROZ.DokNumer = KAZ_GIDNumer AND ROZ.DokLp = KAZ_GIDLp
+	)
+	
+
+	FOR XML PATH('KMP'),ROOT('KMPI')
+
+	
+	SET @IloscWierszy = @@ROWCOUNT 
+	
+	-- Aktualizacja flagi R2_ZewnetrznySys na PicoID
+	UPDATE CDN.Rozliczenia
+	SET R2_ZewnetrznySys = @ID,
+		R2_ZewnetrznyTyp = CASE R2_Dok1Typ WHEN 784 THEN 3 ELSE 2 END
+	FROM CDN.Rozliczenia
+		INNER JOIN #KMP ON R2_ParID = #KMP.ParID
+	
+	SELECT @Opis = 'Ilość wyeksportowanych kompensat: '+ CAST(@IloscWierszy AS VARCHAR(10))
+	EXEC CDN.Log_Dopisz @LogID, @Opis,0
+	EXEC CDN.Log_ZamknijPoziom @LogID
+	
+	DROP TABLE #KMP
+	DROP TABLE #KMP2
+	DROP TABLE #KMPParID
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

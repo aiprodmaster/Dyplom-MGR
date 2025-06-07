@@ -1,0 +1,122 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[POS_EksportReklamacje]"></A><PRE>
+          <FONT SIZE="2"><I>/* [POS_EksportReklamacje] */</I><BR>
+CREATE PROCEDURE [CDN].[POS_EksportReklamacje]
+	@RowVersion BIGINT,
+	@PointOfSaleId INT
+AS
+BEGIN
+SET NOCOUNT ON;
+declare @FrsId int, @Seria varchar(5), @NumeratorSchemeId int
+select @FrsId=pck_centrumid, @Seria=PSa_Seria from CDN.PicoKonfig join CDN.PicoStanowiska on PSa_PcKID=PcK_PicoID where PSa_ID = @pointOfSaleId
+select @NumeratorSchemeId=Dok_Id from cdn.DokDefinicje 
+where dok_FrsId = @FrsId and Dok_GIDTyp = 3584
+
+declare @Rekl table(
+CzasModyfikacji int,
+GUID uniqueidentifier,
+NumerDokumentu varchar(50),
+DataWyst int,
+Stan smallint,
+Status int,
+Zadanie int,
+PrzyczynaId varchar(1999),
+PrzyczynaData dateTime,
+Opis varchar(1999),
+KntGUID uniqueidentifier,
+OpeNumerW int,
+TwrTyp smallint,
+Ilosc decimal(11,4),
+AdrGUID uniqueidentifier,
+SchematNumeracjiId int,
+DataRozp datetime,
+Knt2GUID uniqueidentifier,
+Adr2Guid uniqueidentifier
+)
+
+declare @DataUst varchar(200)
+declare @DataRozp varchar(200)
+set @DataUst = CHAR(13)+CHAR(10)+'Data usterki:'
+set @DataRozp = CHAR(13)+CHAR(10)+'Data rozpatrzenia:'
+
+insert into @Rekl select  distinct
+    RLN_CzasModyfikacji,
+	RLN_GUID,
+	CDN.NumerDokumentu(RLN_Typ,0,0,RLN_Numer,RLN_Rok,RLN_Seria,RLN_Miesiac),
+	RLN_DataWyst,
+	RLN_Stan,
+	RLN_Status,
+	RLE_Zadanie,
+	RLE_Przyczyna,
+	case when CHARINDEX(@DataUst,RLN_Opis) = 0 or CHARINDEX(@DataRozp,RLN_Opis) = 0 or ISDATE(SUBSTRING(RLN_Opis,CHARINDEX(@DataUst,RLN_Opis)+LEN(@DataUst),(CHARINDEX(@DataRozp,RLN_Opis)-CHARINDEX(@DataUst,RLN_Opis))-LEN(@DataUst))) = 0 then convert(date,GETDATE())
+		else convert(date,SUBSTRING(RLN_Opis,CHARINDEX(@DataUst,RLN_Opis)+LEN(@DataUst),(CHARINDEX(@DataRozp,RLN_Opis)-CHARINDEX(@DataUst,RLN_Opis))-LEN(@DataUst))) end,
+	REPLACE(LEFT(RLN_Opis, ISNULL(NULLIF(CHARINDEX(@DataUst,RLN_Opis),0),1)-1),CHAR(13)+CHAR(10),' '),
+	zrodKnt.Knt_GUIDdane,
+	RLN_OpeNumerW,
+	RLE_TwrTyp,
+	RLE_ilosc,
+	zrodAdr.KnA_GUIDdane,
+	@NumeratorSchemeId,
+	case when CHARINDEX(@DataRozp,RLN_Opis) = 0 OR ISDATE(SUBSTRING(RLN_Opis, CHARINDEX(@DataRozp, RLN_Opis)+LEN(@DataRozp), LEN(RLN_Opis) - CHARINDEX(@DataRozp, RLN_Opis) + 1)) = 0 then convert(date,GETDATE())
+		else convert(date,SUBSTRING(RLN_Opis, CHARINDEX(@DataRozp, RLN_Opis)+LEN(@DataRozp), LEN(RLN_Opis) - CHARINDEX(@DataRozp, RLN_Opis) + 1)) end,
+	docKnt.Knt_GUIDdane,
+	docAdr.KnA_GUIDdane
+from cdn.ReklNag
+		join cdn.ReklElem on RLN_Id=RLE_RLNId
+		join cdn.KntKarty zrodKnt on zrodKnt.Knt_GIDNumer=RLN_KntNumer and zrodKnt.Knt_GiDTyp=RLN_KntTyp
+		join cdn.KntAdresy zrodAdr on zrodAdr.KnA_GIDNumer=RLN_KnANumer
+		join cdn.KntKarty docKnt on docKnt.Knt_GIDNumer=RLN_KnDNumer and docKnt.Knt_GiDTyp=RLN_KnDTyp
+		join cdn.KntAdresy docAdr on docAdr.KnA_GIDNumer=RLN_AdWNumer
+		where RLN_CzasModyfikacji &gt; @RowVersion and 
+		(
+			EXISTS (select 1 from cdn.ReklRealizacja where RLE_Id=RLR_RLEId and RLR_RODId IN (-8,-5) and RLR_CzasModyfikacji &gt; @RowVersion)
+			OR (RLN_Stan = 40 and convert(date,cdn.TSToDate(RLN_DataZamkniecia,0)) &gt;= convert(date,cdn.TSToDate(@RowVersion,1)))
+			OR RLN_Stan=20
+		) 
+		and RLN_FrsID = @FrsId and RLN_Seria = @Seria
+
+declare @LastMod bigint = isnull((select max(CzasModyfikacji) from @Rekl
+		),@RowVersion)
+
+	select 
+		@LastMod as [@RowVersion], (select 
+		GUID as [@GUID],
+		NumerDokumentu as [@NumberString],
+		cdn.TSToDate(DataWyst,0) as [@DocumentDate],
+		case when Stan in (40,41) then 4 when Stan in (20,21) then 3 when Stan = 30 then 2 when Stan = 6 then 1 when Stan = 10 then 0 end as [@State],
+		case when Status = 2 then 5 when Status = 1 then 1 when Status = 0 then 0 else 4 end as [@Status],
+		Zadanie as [@RequestId],
+		PrzyczynaId as [@FaultId],
+		PrzyczynaData as [@FaultDate],
+		Opis as [@Description],
+		KntGUID as [@CustomerDataGUID],
+		Knt2GUID as [@CustomerData2GUID],
+		OpeNumerW as [@UserId],
+		TwrTyp as [@ProductId],
+		Ilosc as [@ItemQuantity],
+		AdrGUID as [@CustomerAddressGUID],
+		Adr2GUID as [@CustomerAddress2GUID],
+		SchematNumeracjiId as [@NumeratorSchemeId],
+		DataRozp as [@ConsiderationDate]
+		from @Rekl
+		
+	for xml path('Complaint'), type)
+	for xml path('Complaints')
+	SET NOCOUNT OFF;	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,303 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie procedury DodajKompensate"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie procedury DodajKompensate */</I><BR>
+if exists (select name from sysobjects where name = 'DodajKompensate' and type = 'P')
+  drop procedure CDN.DodajKompensate;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury DodajKompensate"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury DodajKompensate */</I><BR>
+CREATE PROCEDURE CDN.DodajKompensate
+@GIDFirma INT,
+@Data INT,
+@OpeNumer INT,
+@Kwota DECIMAL(15,2),
+@WalutaSys VARCHAR(3),
+@KontoDT VARchar(50),
+@KontoDTNumer INT,
+@KontoCT VARCHAR(50),
+@KontoCTNumer INT,
+@KwotaDTWal DECIMAL(15,2),
+@KontoDTWal VARCHAR(50),
+@KontoDTWalNumer INT,
+@WalutaDT VARCHAR(3),
+@KwotaCTWal DECIMAL(15,2),
+@KontoCTWal VARCHAR(50),
+@KontoCTWalNumer INT,
+@WalutaCT VARCHAR(3),
+@KursL DECIMAL(29,10),
+@KursM DECIMAL(29,10),
+@Opis VARCHAR(80),
+@GIDNumer INT OUTPUT,
+@DataDzisiejsza int
+AS
+
+DECLARE @Dziennik VARCHAR(5);
+DECLARE @Bufor VARCHAR(5)
+DECLARE @CzyBufor INT;
+DECLARE @DataSQL DATETIME;
+DECLARE @RMNumer INT;
+DECLARE @TS INT;
+DECLARE @DataChar CHAR(10);
+DECLARE @OKRID INT;
+DECLARE @OKRPoczatek INT;
+DECLARE @OKRSymbol VARCHAR(10);
+DECLARE @Zamkniety INT;
+DECLARE @ZamChar CHAR(10);
+
+declare @CzyIdentyfikator smallint
+declare @Identyfikator Varchar(40)
+
+
+--select 'Kompensata', @Kwota, @WalutaSys,@KontoDT,@KontoDTID,@KontoCT,@KontoCTID,@KwotaDTWal,@KontoDTWal,@KontoDTWalID,@WalutaDT,@KwotaCTWal,@KontoCTWal,@KontoCTWalID,@WalutaCT
+
+-- początek transakcji
+BEGIN TRAN
+
+SET @DataSQL = DATEADD( dd, @data, '18001228' );
+SET @DataChar = CONVERT( CHAR(10), @DataSQL, 104 )
+
+
+SELECT 
+	@OKRID = OKR_ID, 
+	@OKRPoczatek = Okr_Poczatek,
+	@OkrSymbol = CASE WHEN Okr_SymbolWNr&lt;&gt;0 THEN Okr_Symbol ELSE '' END,
+	@Zamkniety = ISNULL(OKR_ZamknietyDo,0) 
+FROM CDN.Okresy WITH(NOLOCK) 
+WHERE @Data BETWEEN OKR_Poczatek AND OKR_Koniec
+
+
+IF @OKRID IS NULL
+BEGIN
+	ROLLBACK TRAN
+	RAISERROR('602:Kompensata z datą %s niemożliwa. Nie istnieje odpowiedni okres obrachunkowy.', 16, 1, @DataChar)
+	RETURN 602
+END
+
+
+
+SET @ZamChar = CONVERT( CHAR(10), DATEADD( dd, @Zamkniety, '18001228'), 104 )
+
+
+IF @Data &lt;= @Zamkniety
+BEGIN
+	ROLLBACK TRAN
+	RAISERROR('603:Kompensata z datą %s niemożliwa. Okres obrachunkowy jest zamknięty do daty %s.', 16, 1, @DataChar, @ZamChar )
+	RETURN 603
+END
+
+
+
+SET @TS = DATEDIFF( ss, '19900101', DATEADD( dd, @DataDzisiejsza, '18001228'))
+SELECT @Dziennik = KON_Wartosc FROM CDN.Konfig WITH(NOLOCK) WHERE KON_Numer=2050;
+SELECT @CzyBufor = KON_Wartosc FROM CDN.Konfig WITH(NOLOCK) WHERE KON_Numer=2051;
+SELECT @Bufor    = KON_Wartosc FROM CDN.Konfig WITH(NOLOCK) WHERE KON_Numer=2052
+select @CzyIdentyfikator = KON_Wartosc FROM CDN.Konfig WITH(NOLOCK) WHERE KON_Numer=20103
+
+
+IF ISNULL(@Czybufor,0) = 0
+	SET @Bufor = ''
+else
+begin
+	if exists(select 1 from cdn.Nazwy where Naz_GIDTyp = 480 and Naz_Nazwa = @Bufor and Naz_Archiwalny = 1)
+	BEGIN
+		ROLLBACK TRAN
+		RAISERROR('601:Bufor księgowań dekretu kompensacyjnego %s jest archiwalny', 16, 1, @Bufor)
+		RETURN 601
+	END
+end
+
+
+
+SELECT 
+	@RMNumer = ISNULL(MAX(DZK_RMNumer),0) + 1 
+FROM CDN.Dziennik WITH(NOLOCK) 
+WHERE DZK_Dziennik = @Dziennik AND DZK_Rok = Year(@DataSQL) AND DZK_Miesiac = Month(@DataSQL) AND DZK_OkrPoczatek=@OKRPoczatek;
+
+
+if isnull(@CzyIdentyfikator,0) &lt;&gt; 0
+	set @Identyfikator = cdn.NumerDekretu(@Bufor, @Dziennik, Year(@DataSQL), Month(@DataSQL), @RMNumer, 0, 0, @OkrSymbol)
+else
+	set @Identyfikator = ''
+
+-- naglowek dekretu zbiorczego
+
+
+
+INSERT INTO CDN.Dziennik(DZK_GIDTyp, DZK_GIDFirma, DZK_GIDLp, DZK_Dziennik, DZK_Rok, DZK_Miesiac, DZK_Dzien,
+	DZK_OkrPoczatek, DZK_OkrSymbol,
+	DZK_DataWyst, DZK_DataOper, DZK_RMNumer, DZK_Bufor, DZK_Opis, DZK_DokumentZrodlowy, DZK_NumerDokumentu,
+	DZK_Komentarz, DZK_TS, DZK_Aktywny,
+	DZK_OPEWTyp, DZK_OPEWFirma, DZK_OPEWNumer, DZK_OPEWLp,
+	DZK_OPEZTyp, DZK_OPEZFirma, DZK_OPEZNumer, DZK_OPEZLp,
+	DZK_TSModyf, DZK_OpeMNumer, DZK_TSZatw,
+	DZK_Storno, DZK_OrgNumer, DZK_SumaDT, DZK_SumaCT, DZK_Prosty, DZK_Identyfikator )
+VALUES(432, @GIDFirma, 0, @Dziennik, Year(@DataSQL), Month(@DataSQL), Day(@DataSQL),
+	@OKRPoczatek, @OKRSymbol,
+	@Data, @Data, @RMNumer, @Bufor, @Opis, '', 0,
+	'', @TS, 0,
+	128, @GIDFirma, @OPENumer, 0,
+	CASE @Bufor WHEN '' THEN 128 ELSE 0 END, CASE @Bufor WHEN '' THEN @GIDFirma ELSE 0 END, CASE @Bufor WHEN '' THEN @OPENumer ELSE 0 END, 0,
+	@TS, @OPENumer, CASE @Bufor WHEN '' THEN @TS ELSE 0 END,
+	0, 0, @Kwota, @Kwota, 0, @Identyfikator  )
+
+
+
+SELECT @GIDNumer = SCOPE_IDENTITY()
+
+-- pozycja dekretu zbiorczego
+
+
+
+
+INSERT INTO CDN.DziennikElem(DEL_GIDTyp, DEL_GIDFirma, DEL_GIDNumer, DEL_GIDLp, DEL_Pozycja,
+	DEL_DataWyst, DEL_DataOper, DEL_Opis, DEL_DokumentZrodlowy, 
+	DEL_TS, DEL_TypKwoty, DEL_OPEWNumer, DEL_OPEZNumer, DEL_WycenaParID )
+VALUES(432, @GIDFirma, @GIDNumer, 1, 1, 
+	@Data, @Data, @Opis, '',
+	@TS, 0, @OPENumer, CASE @Bufor WHEN '' THEN @OPENumer ELSE 0 END, 0 )
+
+
+
+IF NOT EXISTS(SELECT KKS_Konto FROM CDN.Konta WITH(NOLOCK) WHERE KKS_OkresID = @OKRID AND KKS_Konto = @KontoDT)
+BEGIN
+	ROLLBACK TRAN
+	RAISERROR('601:Kompensata z datą %s niemożliwa. W odpowiednim okresie nie istnieje konto %s', 16, 1, @DataChar, @KontoDT)
+	RETURN 601
+END
+
+
+IF not (ISNULL( @KontoDTWal, '' ) &lt;&gt; '' AND ISNULL( @KontoDTWalNumer, 0 ) &lt;&gt; 0 AND ISNULL( @WalutaDT, @WalutaSys ) &lt;&gt; @WalutaSys)
+	and not (ISNULL( @KontoCTWal, '' ) &lt;&gt; '' AND ISNULL( @KontoCTWalNumer, 0 ) &lt;&gt; 0 AND ISNULL( @WalutaCT, @WalutaSys ) &lt;&gt; @WalutaSys)
+begin
+	set @KursL = 1
+	set @KursM = 1
+end
+
+
+
+INSERT INTO CDN.Dekrety(DT_GIDTyp, DT_GIDFirma, DT_GIDNumer, DT_GIDLp,
+	DT_DC, DT_Bufor, DT_Dziennik, DT_Rok, DT_Miesiac, DT_Dzien,
+	DT_Konto, DT_FirmaKonta, DT_Kwota, DT_Pozostaje, DT_Waluta,
+	DT_NrKursu, DT_Termin, DT_DataRozliczenia, DT_Rozliczony, DT_Nierozliczony,
+	DT_KorektaBO, DT_DataOddzialu, DT_DataCentrali,
+	DT_BezKontroli, DT_Znak, DT_KKSNumer, DT_WalutaObca , DT_KursKwota)
+VALUES( 432, @GIDFirma, @GIDNumer, 1,
+	1, @Bufor, @Dziennik, Year(@DataSQL), Month(@DataSQL), Day(@DataSQL),
+	@KontoDT, @GIDFirma, @Kwota, @Kwota, @WalutaSys,
+	0, @Data, @Data, 0, 1,
+	0, @TS, @TS,
+	0, 1, @KontoDTNumer, 0, @KursL )
+
+
+
+
+IF NOT EXISTS(SELECT KKS_Konto FROM CDN.Konta WITH(NOLOCK) WHERE KKS_OkresID = @OKRID AND KKS_Konto = @KontoCT)
+BEGIN
+	ROLLBACK TRAN
+	RAISERROR('601:Kompensata z datą %s niemożliwa. W odpowiednim okresie nie istnieje konto %s', 16, 1, @DataChar, @KontoCT)
+	RETURN 601
+END
+
+
+
+
+INSERT INTO CDN.Dekrety(DT_GIDTyp, DT_GIDFirma, DT_GIDNumer, DT_GIDLp,
+	DT_DC, DT_Bufor, DT_Dziennik, DT_Rok, DT_Miesiac, DT_Dzien,
+	DT_Konto, DT_FirmaKonta, DT_Kwota, DT_Pozostaje, DT_Waluta,
+	DT_NrKursu, DT_Termin, DT_DataRozliczenia, DT_Rozliczony, DT_Nierozliczony,
+	DT_KorektaBO, DT_DataOddzialu, DT_DataCentrali,
+	DT_BezKontroli, DT_Znak, DT_KKSNumer, DT_WalutaObca, DT_KursKwota )
+VALUES( 432, @GIDFirma, @GIDNumer, 1,
+	2, @Bufor, @Dziennik, Year(@DataSQL), Month(@DataSQL), Day(@DataSQL),
+	@KontoCT, @GIDFirma, @Kwota, @Kwota, @WalutaSys,
+	0, @Data, @Data, 0, 1,
+	0, @TS, @TS,
+	0, 2, @KontoCTNumer, 0, @KursL )
+
+
+
+
+
+IF ISNULL( @KontoDTWal, '' ) &lt;&gt; '' AND ISNULL( @KontoDTWalNumer, 0 ) &lt;&gt; 0 AND ISNULL( @WalutaDT, @WalutaSys ) &lt;&gt; @WalutaSys
+BEGIN
+	IF NOT EXISTS(SELECT KKS_Konto FROM CDN.Konta WITH(NOLOCK) WHERE KKS_OkresID = @OKRID AND KKS_Konto = @KontoDTWal)
+	BEGIN
+		ROLLBACK TRAN
+		RAISERROR('601:Kompensata z datą %s niemożliwa. W odpowiednim okresie nie istnieje konto %s', 16, 1, @DataChar, @KontoDTWal)
+		RETURN 601
+	END
+
+
+	INSERT INTO CDN.Dekrety(DT_GIDTyp, DT_GIDFirma, DT_GIDNumer, DT_GIDLp,
+		DT_DC, DT_Bufor, DT_Dziennik, DT_Rok, DT_Miesiac, DT_Dzien,
+		DT_Konto, DT_FirmaKonta, DT_Kwota, DT_Pozostaje, DT_Waluta,
+		DT_NrKursu, DT_Termin, DT_DataRozliczenia, DT_Rozliczony, DT_Nierozliczony,
+		DT_KorektaBO, DT_DataOddzialu, DT_DataCentrali,
+		DT_BezKontroli, DT_Znak, DT_KKSNumer, DT_WalutaObca, DT_KursKwota )
+	VALUES( 432, @GIDFirma, @GIDNumer, 1,
+		1, @Bufor, @Dziennik, Year(@DataSQL), Month(@DataSQL), Day(@DataSQL),
+		@KontoDTWal, @GIDFirma, @KwotaDTWal, @KwotaDTWal, @WalutaDT,
+		0, @Data, @Data, 0, 1,
+		0, @TS, @TS,
+		0, 1, @KontoDTWalNumer, 1, @KursM )
+END
+
+
+
+IF ISNULL( @KontoCTWal, '' ) &lt;&gt; '' AND ISNULL( @KontoCTWalNumer, 0 ) &lt;&gt; 0 AND ISNULL( @WalutaCT, @WalutaSys ) &lt;&gt; @WalutaSys
+BEGIN
+	IF NOT EXISTS(SELECT KKS_Konto FROM CDN.Konta WITH(NOLOCK) WHERE KKS_OkresID = @OKRID AND KKS_Konto = @KontoCTWal)
+	BEGIN
+		ROLLBACK TRAN
+		RAISERROR('601:Kompensata z datą %s niemożliwa. W odpowiednim okresie nie istnieje konto %s', 16, 1, @DataChar, @KontoCTWal)
+		RETURN 601
+	END
+
+
+	INSERT INTO CDN.Dekrety(DT_GIDTyp, DT_GIDFirma, DT_GIDNumer, DT_GIDLp,
+		DT_DC, DT_Bufor, DT_Dziennik, DT_Rok, DT_Miesiac, DT_Dzien,
+		DT_Konto, DT_FirmaKonta, DT_Kwota, DT_Pozostaje, DT_Waluta,
+		DT_NrKursu, DT_Termin, DT_DataRozliczenia, DT_Rozliczony, DT_Nierozliczony,
+		DT_KorektaBO, DT_DataOddzialu, DT_DataCentrali,
+		DT_BezKontroli, DT_Znak, DT_KKSNumer, DT_WalutaObca, DT_KursKwota )
+	VALUES( 432, @GIDFirma, @GIDNumer, 1,
+		2, @Bufor, @Dziennik, Year(@DataSQL), Month(@DataSQL), Day(@DataSQL),
+		@KontoCTWal, @GIDFirma, @KwotaCTWal, @KwotaCTWal, @WalutaCT,
+		0, @Data, @Data, 0, 1,
+		0, @TS, @TS,
+		0, 2, @KontoCTWalNumer, 1, @KursM )
+END
+
+
+-- koniec transakcji i powrót
+COMMIT TRAN
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury DodajKompensate"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury DodajKompensate */</I><BR>
+GRANT EXECUTE ON CDN.DodajKompensate TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,227 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="IMALL_EksportWizytowki"></A><PRE>
+          <FONT SIZE="2"><I>/* IMALL_EksportWizytowki */</I><BR>
+CREATE  PROCEDURE CDN.IMALL_EksportWizytowki
+ @ID INT -- ID iMall
+ AS
+SET NOCOUNT ON
+
+DECLARE @Opis VARCHAR(511)
+SET @Opis=''
+DECLARE @OpisBledow VARCHAR(511)
+SET @OpisBledow='Nie wypełniono wymaganych pól: '
+DECLARE @PieczatkaID int
+DECLARE @CustomerID int
+DECLARE @Name nvarchar(50)
+DECLARE @Description nvarchar(300)
+DECLARE @Street nvarchar(50)
+DECLARE @HouseNo nvarchar(20)
+DECLARE @PostalCode nvarchar(20)
+DECLARE @City nvarchar(50)
+DECLARE @Province nvarchar(50)
+DECLARE @Logo int -- informacja o rozmiarze danych binarnych
+DECLARE @Phone nvarchar(50)
+DECLARE @StartYear nvarchar(4)
+DECLARE @Email nvarchar(192)
+DECLARE @Payments int
+DECLARE @Delivery int
+
+DECLARE @IdSlownikSkype int
+DECLARE @IdSlownikGG int
+
+select @IdSlownikSkype=slw_id
+from cdn.Slowniki 
+join cdn.SlownikiStruktura on SLW_SLSId = SLS_Id
+where SLS_Predefiniowany = 78 and slw_predefiniowany = 1 and SLW_Nazwa = 'Skype'
+
+select @IdSlownikGG=slw_id
+from cdn.Slowniki 
+join cdn.SlownikiStruktura on SLW_SLSId = SLS_Id
+where SLS_Predefiniowany = 78 and slw_predefiniowany = 1 and SLW_Nazwa = 'GG'
+
+select @ID = PcK_PicoID, @PieczatkaID = FRS_FrmNumer FROM CDN.PicoKonfig
+join CDN.FrmStruktura on PcK_CentrumID = FRS_ID where PcK_iMallID = @ID
+
+SELECT @CustomerID = PcK_iMallID
+        ,@Name = Frm_Nazwa1
+        ,@Description = Frm_Opis
+        ,@Street = Frm_Ulica + ' ' + Frm_Adres1
+        ,@HouseNo = ''
+        ,@PostalCode = Frm_KodP
+        ,@City = Frm_Miasto
+        ,@Province = Frm_Wojewodztwo
+        ,@Logo = (SELECT TOP 1 ISNULL(DATALENGTH(DAB_Dane),0)  FROM CDN.PicoKonfig
+			join CDN.FrmStruktura on PcK_CentrumID = FRS_ID
+			join CDN.Firma on FRS_FrmNumer = Frm_GidNumer
+			join CDN.DaneObiekty on Frm_GidTyp = DAO_ObiTyp and Frm_GidNumer = DAO_ObiNumer
+			join CDN.DaneBinarne on dao_dabid = DAB_ID and DAB_Rozszerzenie = 'PNG'
+			where PcK_PicoID = @ID)
+        ,@Phone = Frm_Telefon1
+        ,@StartYear = PcK_Rok
+        ,@Email = Frm_Email
+        ,@Payments = (select coalesce(sum(slw_wartoscn2),0)
+						from CDN.PicoRelacje
+						join cdn.Slowniki on PcR_OBINumer = SLW_ID
+						where slw_nazwa = 'Forma płatności'  and PcR_Dostepny = 1)
+        ,@Delivery = (select coalesce(sum(slw_wartoscn2),0)
+						from CDN.PicoRelacje
+						join cdn.Slowniki on PcR_OBINumer = SLW_ID
+						where slw_nazwa = 'Sposób dostawy'  and PcR_Dostepny = 1)
+FROM CDN.PicoKonfig
+join CDN.FrmStruktura on PcK_CentrumID = FRS_ID
+join CDN.Firma on FRS_FrmNumer = Frm_GidNumer
+where PcK_PicoID = @ID
+
+IF isnull(@PieczatkaID,0) = 0 
+BEGIN
+	SET @Opis = @Opis + 'pieczątka '
+	SET @PieczatkaID = 0
+END
+IF isnull(@CustomerID,0) = 0 
+BEGIN
+	SET @Opis = @Opis + 'iMallID '
+	SET @CustomerID = 0	
+END
+IF isnull(@Name,'') = '' 
+BEGIN
+	SET @Opis = @Opis + 'imie '
+	SET @Name = ''	
+END
+IF isnull(@Description,'') = '' 
+BEGIN
+	SET @Opis = @Opis + 'opis '
+	SET @Description = ''	
+END
+IF isnull(@Street,'') = '' 
+BEGIN
+	SET @Opis = @Opis + 'ulica '
+	SET @Street = ''	
+END
+/*
+IF isnull(@HouseNo,'') = '' 
+BEGIN
+	SET @Opis = @Opis + 'numer domu '
+	SET @HouseNo = NULL	
+END
+*/
+IF isnull(@PostalCode,'') = '' 
+BEGIN
+	SET @Opis = @Opis + 'kod pocztowy '
+	SET @PostalCode = ''	
+END
+IF isnull(@City,'') = '' 
+BEGIN
+	SET @Opis = @Opis + 'miasto '
+	SET @City = ''	
+END
+IF isnull(@Province,'') = '' 
+BEGIN
+	SET @Opis = @Opis + 'województwo '
+	SET @Province = ''	
+END
+IF isnull(@Logo,0) = 0
+BEGIN
+	SET @Opis = @Opis + 'logo '
+	SET @Logo = 0
+END
+IF isnull(@Phone,'') = '' 
+BEGIN
+	SET @Opis = @Opis + 'telefon '
+	SET @Phone = ' '	
+END
+IF isnull(@StartYear,'') = '' 
+BEGIN
+	SET @Opis = @Opis + 'rok rozpoczęcia '
+	SET @StartYear = ''	
+END
+IF isnull(@Email,'') = '' 
+BEGIN
+	SET @Opis = @Opis + 'email '
+	SET @Email = ''	
+END
+IF isnull(@Payments,0) = 0
+BEGIN
+	SET @Opis = @Opis + 'płatności '
+	SET @Payments = 0
+END
+IF isnull(@Delivery,0) = 0
+BEGIN
+	SET @Opis = @Opis + 'sposoby dostawy '
+	SET @Delivery = 0	
+END
+
+IF @Opis &lt;&gt; ''
+BEGIN
+	SET @OpisBledow = @OpisBledow + @Opis
+	EXEC CDN.OFFL_DodajPicoLogElem 0, @ID, 0, 0, 1, @OpisBledow, 0, ''
+END
+ELSE 
+BEGIN
+	EXEC CDN.OFFL_DodajPicoLogElem 0, @ID, 0, 0, 0, 'Wysyłanie wizytówki', 0, ''
+END	
+
+SELECT 1 AS Tag, NULL AS Parent,
+	NULL AS [Shops!1!Shops]
+	, NULL as [Shop!2!CustomerID], NULL as [Shop!2!Active], NULL as [Shop!2!Name]
+	, NULL as  [Shop!2!Description], NULL as  [Shop!2!Street], NULL as [Shop!2!HouseNo]
+	, NULL as  [Shop!2!FlatNo], NULL as  [Shop!2!PostalCode], NULL as  [Shop!2!City]
+	, NULL as  [Shop!2!Country], NULL as  [Shop!2!Province], NULL as  [Shop!2!Logo]
+	, NULL as  [Shop!2!Phone], NULL as  [Shop!2!StartYear], NULL as  [Shop!2!Email]
+	, NULL as  [Shop!2!URL], NULL as  [Shop!2!GG], NULL as  [Shop!2!Skype], NULL as  [Shop!2!Payments]
+	, NULL as  [Shop!2!Delivery], NULL as [Shop!2!Source], NULL as [Shop!2!ShopID]
+UNION ALL
+SELECT 2 AS Tag, 1 AS Parent,
+NULL,
+		@CustomerID	    AS CustomerID
+		,NULL            AS Active
+		,@Name     AS Name
+		,@Description       AS Description
+		,@Street     AS Street
+		,@HouseNo    AS HouseNo
+		,''  AS FlatNo
+		,@PostalCode		AS PostalCode
+		,@City	AS City
+		,'PL'			AS Country
+		,@Province AS Province
+		,(SELECT TOP 1 Dab_dane AS Dab_dane FROM CDN.PicoKonfig
+			join CDN.FrmStruktura on PcK_CentrumID = FRS_ID
+			join CDN.Firma on FRS_FrmNumer = Frm_GidNumer
+			join CDN.DaneObiekty on Frm_GidTyp = DAO_ObiTyp and Frm_GidNumer = DAO_ObiNumer
+			join CDN.DaneBinarne on dao_dabid = DAB_ID and DAB_Rozszerzenie = 'PNG'
+			where PcK_PicoID = @ID) AS Logo
+		,@Phone	AS Phone
+		,@StartYear		AS StartYear
+		,@Email		AS Email
+		,''			AS URL
+		, isnull((select top 1 kok_numer from cdn.KntOsobyKomunikatory where KoK_KnSTyp = 848 and 
+			KoK_RodzajId = @IdSlownikGG and KoK_KnSNumer = @PieczatkaID),'') AS GG
+		, isnull((select top 1 kok_numer from cdn.KntOsobyKomunikatory where KoK_KnSTyp = 848 and 
+			KoK_RodzajId = @IdSlownikSkype and KoK_KnSNumer = @PieczatkaID),'') AS Skype
+		,@Payments AS Payments
+		,@Delivery AS Delivery
+		,2 as Source
+		,1 as [Shop!2!ShopID]
+FROM CDN.PicoKonfig
+join CDN.FrmStruktura on PcK_CentrumID = FRS_ID
+join CDN.Firma on FRS_FrmNumer = Frm_GidNumer
+where PcK_PicoID = @ID
+FOR XML EXPLICIT, BINARY BASE64	
+
+SET NOCOUNT OFF
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

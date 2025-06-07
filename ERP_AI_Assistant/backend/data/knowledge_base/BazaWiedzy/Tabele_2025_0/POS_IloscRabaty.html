@@ -1,0 +1,134 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[POS_IloscRabaty]"></A><PRE>
+          <FONT SIZE="2"><I>/* [POS_IloscRabaty] */</I><BR>
+CREATE PROCEDURE [CDN].[POS_IloscRabaty]
+	@rowVersion bigint,
+	@pointOfSaleId int,
+	@packageSize int,
+	@packagesCount int output,
+	@currentRowVersion bigint output 
+AS
+BEGIN
+	SET NOCOUNT ON;	
+	DECLARE @TwrTyp SMALLINT
+	DECLARE @TwgTyp SMALLINT
+	DECLARE @KntTyp SMALLINT
+	DECLARE @KngTyp SMALLINT
+	DECLARE @FrmTyp SMALLINT
+	DECLARE @Typ_Wal SMALLINT
+	DECLARE @RabatyOdCenyKonNumer INT
+	DECLARE @LastID INT
+	DECLARE @Today INT
+
+	SET @TwrTyp = 16
+	SET @TwgTyp = -16
+	SET @KntTyp = 32
+	SET @KngTyp = -32
+	SET @FrmTyp = -4272
+	SET @RabatyOdCenyKonNumer = 9974
+	SET @LastID = 2147483647
+	SET @Today = DATEDIFF(s,convert(datetime,'1990-01-01',120),GETDATE())
+	SET @Typ_Wal = 96
+
+	DECLARE @oddzialy TABLE(ID int, PsaId int, IDGrupyTwr int, IDGrupyKnt int, TWGSyncID int, PckCentrumID int, IdWalutyOddzialu int, WalutaOddzialu VARCHAR(3))
+	INSERT INTO @oddzialy
+	select distinct
+		PcK_PicoID,
+		PSaID,
+		TwG_GIDNumer,
+		PcK_KnGENumer,
+		TwG_SyncID,
+		PcK_CentrumID,
+		ISNULL(WalutaLog.PCL_ObiNumer,0),
+		PCK_Waluta
+	from cdn.POS_OddzialyDoEksportu(@pointOfSaleId, @rowVersion)
+	join cdn.PicoKonfig on PckCentrumID = PcK_CentrumID
+	join CDN.TwrGrupy on TwG_GIDNUMER = PcK_TwGENumer
+	LEFT OUTER JOIN CDN.PicoWaluty ON PWL_PckID = PcK_PicoID AND PWL_SymbolM = PCK_Waluta
+	LEFT OUTER JOIN CDN.PicoLog WalutaLog ON WalutaLog.PcL_ObiTyp = @Typ_Wal AND WalutaLog.PcL_ObiNumer = Pwl_id
+	where TwG_GIDTyp = @TwgTyp
+
+	
+	
+	select distinct twg_gidnumer as NumerGrupy into #tmpProductGroups from cdn.PicoKonfig 
+	outer apply cdn.PobierzDrzewoGrupTowarowych(PcK_TwGENumer,DEFAULT,DEFAULT,1,DEFAULT,DEFAULT)
+	join cdn.TwrGrupy on GIDNumer=TwG_GIDNumer and GIDTyp=TwG_GIDTyp
+	join @oddzialy on PcK_PicoID = ID
+	
+
+	select distinct Kng_Gidnumer as GroNumer, Kng_Gidtyp as GroTyp, CAST(KnG_SyncId AS nvarchar) as Knt_GUID into #tmpCustomuerGroups
+	FROM cdn.PicoKonfig 
+	outer apply  cdn.PobierzDrzewoGrupKontrahentow(PcK_KnGENumer,default)
+	join cdn.KntGrupy on KnG_GIDNumer = AktuGidNumer and KnG_GIDTyp = -32
+	join @oddzialy on PcK_PicoID = ID
+
+	select distinct PcL_ObiNumer as KntGidNumer,PcL_ObiektGUID as Knt_GUID into #tmpCustomuers from cdn.PicoLog join @oddzialy on PcL_PcKID = ID where PcL_ObiektTyp=@KntTyp
+
+	select distinct MAG_GIDNumer as GidNumer into #tmpWarehouses from cdn.FrmStruktura join cdn.FrmObiekty on FRS_ID=FRO_FRMID join cdn.Magazyny on MAG_GIDNumer=FRO_GIDNumer AND FRO_GIDTyp = MAG_GIDTyp join @oddzialy on FrS_ID = PckCentrumID  union select -1
+
+	select @packagesCount=CEILING(cast(count(*) as float)/@packageSize) from (	
+		SELECT DISTINCT PRM_Id  
+		FROM CDN.PrmKarty 
+		cross join @oddzialy
+		LEFT OUTER JOIN CDN.ZstPromocje ON PRM_Id = ZPR_PrmID -- Potrzebne do wyeliminowania przypadkow z zestawami TFS: 113525
+		JOIN(
+			SELECT KPR_KntTyp,KPR_KntNumer,KPR_PrmID,KntGidNumer,KPR_GUID,Knt_GUID FROM CDN.KntPromocje (NOLOCK)  
+				JOIN #tmpCustomuers on KntGidNumer = KPR_KntNumer and KPR_KntTyp = @KntTyp
+			UNION ALL
+			SELECT KPR_KntTyp,KPR_KntNumer,KPR_PrmID,0,KPR_GUID,Knt_GUID as Knt_GUID FROM CDN.KntPromocje (NOLOCK)
+				JOIN #tmpCustomuerGroups ON GroTyp = KPR_KntTyp AND GroNumer = KPR_KntNumer AND KPR_KntTyp = -@KntTyp
+		) KPR ON KPR.KPR_PrmID = Prm_ID
+		JOIN cdn.TwrPromocje tpr1 ON PRM_Id = tpr1.tpr_PrmId AND tpr1.TPR_Aktywny = 1
+		JOIN CDN.FrSPromocje ON FPR_PrmID = Prm_ID
+		cross apply (
+			SELECT FrL_GroNumer,FrL_GroTyp FROM CDN.FrmLinki WHERE FrL_GIDNumer = PckCentrumID AND FrL_GIDTyp = @FrmTyp
+			UNION ALL
+			SELECT PckCentrumID,@FrmTyp
+		) FRL
+			
+		LEFT JOIN CDN.TwrLinki ON TwL_GIDNumer = tpr1.tpr_TwrNumer AND TwL_GIDTyp = tpr1.tpr_TwrTyp AND TwL_GrOTyp = -16 AND (case when TwL_GidTyp = -16 then TwL_GIDNumer  else TwL_GrONumer end in (select * from #tmpProductGroups)) --TFSID:421722 TwL_GIDNumer = @IDGrupyTwr
+		LEFT JOIN CDN.TwrGrupy ON TwG_GIDNumer = tpr1.tpr_TwrNumer AND TwG_GIDTyp = tpr1.tpr_TwrTyp --TFSID:422158 AND TwG_GrONumer = TwL_GrONumer AND TwG_GrOTyp = TwL_GrOTyp
+		LEFT OUTER JOIN CDN.PicoWaluty ON PWL_PckID = ID AND PWL_SymbolM = tpr1.tpr_Waluta
+		LEFT OUTER JOIN CDN.PicoLog WalutaLog ON WalutaLog.PcL_ObiTyp = @Typ_Wal AND WalutaLog.PcL_ObiNumer = Pwl_id
+		JOIN cdn.PltPromocje ON PPr_PrmID = PRM_Id
+		JOIN cdn.SpDPromocje ON PRM_Id=SpD_PrmId
+		JOIN cdn.MagPromocje ON MPR_PrmID = PRM_Id 
+		JOIN #tmpWarehouses ON GidNumer = MPR_MagNumer
+		LEFT OUTER JOIN cdn.PicoRelacje ON PPr_PltID = PcR_OBI2Numer
+		LEFT OUTER JOIN CDN.ProgiTwrPromocje ON PTP_TPRId = tpr1.TPR_Id
+		LEFT OUTER JOIN CDN.ProgiPromocje ON PRP_ID = PTP_PRPId
+		LEFT OUTER JOIN cdn.Nazwy ON Naz_Nazwa = PRM_JmZ AND naz_gidtyp=144
+		WHERE PRM_Typ = 5 AND PRM_Stan IN (1,3) AND PRM_Dokument &lt;&gt; 2 AND tpr1.tpr_Typ IN (1,2,3)
+		AND PPr_PltID = -1 --TFS: 117292
+		AND ZPR_ID IS NULL -- Potrzebne do wyeliminowania przypadkow z zestawami TFS: 113525
+		AND Prm_Cykliczna = 0 AND PRM_CyklRodzaj = 0
+		AND @Today BETWEEN PRM_DataOd AND PRM_DataDo
+		AND NOT (tpr1.tpr_Typ = 3 AND (tpr1.tpr_Prog &gt; 0 OR WalutaOddzialu &lt;&gt; tpr1.tpr_Waluta)) /*TFSID:422474 stała cena progowa*/
+		AND (TwL_GIDNumer IS NOT NULL OR (tpr1.tpr_TwrTyp = @TwgTyp AND TPR_TwrNumer in (select * from #tmpProductGroups))) --TFSID:422823
+		AND isnull((select count(*) from (select TR.tpr_typ from cdn.TwrPromocje TR WHERE TR.TPR_PrmId=PRM_Id AND TPR1.TPR_TwrNumer = TR.TPR_TwrNumer GROUP by TR.tpr_typ) a),0) &lt; 2
+		AND SpD_SpDLp = -1
+		and FRL.FrL_GroNumer = FPR_FrsID AND FRL.FrL_GroTyp = @FrmTyp
+		GROUP BY PRM_Id,PRM_GUID,PRM_Akronim,PRM_Uwagi,PRM_Dokument,PRM_SposobStosowania,PRM_Priorytet,PRM_PriorytetLp,PRM_Stan,PRM_PominPozostale,TPR_TwrTyp,TPR_TwrNumer,
+		TPR_Typ,TPR_Prog,WalutaLog.PcL_ObiNumer,TPR_LimitTyp,TPR_LimitWartosc,TPR_Wartosc,TPR_FlagaNB,TPR_GUID,KPR_KntTyp,KPR_KntNumer,KPR_GUID,TPR_Lp,Knt_GUID,
+		PRM_Cykliczna,PRM_DataOd,PRM_DataDo,PRM_Pakietowa,PRM_RodzajPakietu,PTP_Rodzaj,PTP_Wartosc,PTP_GUID,PTP_TPRId,PTP_MinIloscPoz,PRP_GUID,Naz_GIDLp
+		) A
+
+	SELECT @currentRowVersion=@rowVersion,@packagesCount=isnull(@packagesCount,0)
+	SET NOCOUNT OFF;	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

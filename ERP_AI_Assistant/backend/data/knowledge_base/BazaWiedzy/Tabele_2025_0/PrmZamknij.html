@@ -1,0 +1,133 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="PrmZamknij"></A><PRE>
+          <FONT SIZE="2"><I>/* PrmZamknij */</I><BR>
+CREATE PROCEDURE CDN.PrmZamknij
+        @ID             int, --ID promocji, gdy podano to otwarcie, gdy nie to dodanie nowej promocji
+        @SesjaID        int, --ID bieżącej sesji
+        @Tryb           int, --Tryb pracy wewnętrzny(0), zewnętrzny(IDObiektu) - kasowany wpis w ObiektyObce
+        @TStamp         int, --Timestamp Zamkniecia
+        @PRMStan        int = 0, --Jeżeli &lt;0 to kasowanie promocji
+		@OpeGIDNumer	int = null --numer operatora tworzacego
+AS
+DECLARE @Error          int
+DECLARE @CheckStan      int
+DECLARE @CheckTyp       int
+DECLARE @Potw			bit
+DECLARE	@Zamk			bit
+
+SET NOCOUNT ON
+
+SET @Error = 0
+IF @ID &lt;=0
+BEGIN
+        ROLLBACK TRAN
+        SELECT 1 AS ERROR
+        RETURN 1
+END
+BEGIN TRAN
+IF @Tryb &gt; 0
+BEGIN
+        DELETE FROM CDN.ObiektyObce WHERE OBO_IdSesji = @SesjaID AND OBO_IdObiektu = @Tryb
+        IF @@ERROR &lt;&gt; 0
+        BEGIN
+                ROLLBACK TRAN
+                RAISERROR('Błąd usuwania z CDN.ObiektyObce',16,1)
+                RETURN 4
+        END
+END
+IF @PRMStan &gt;= 0 --Zamkniecie promocji
+BEGIN
+		IF @PRMStan not in(0,1,3)--dozwolone stany 0 - niepotwierdzona, 1 - potwierdzona, 3 - zamknieta
+		BEGIN
+			ROLLBACK TRAN
+			RAISERROR ('Został podany niepoprawny stan promocji.', 16, 1)
+			RETURN 50
+		END
+        SELECT @CheckStan = PRM_Stan,@CheckTyp = PRM_Typ FROM CDN.PrmKarty WHERE PRM_ID = @ID
+        IF @CheckTyp = 4
+        BEGIN
+                SET @PRMStan = 1
+                IF NOT EXISTS(SELECT KPR_ID FROM CDN.KntPromocje WHERE KPR_PrmID = @ID)
+                BEGIN
+                        SELECT 12 AS ERROR
+                        ROLLBACK TRAN
+                        RETURN 12
+                END
+        END
+        SET @Potw = 0
+		SET @Zamk = 0
+        IF @CheckStan &lt;&gt; 0 AND @PRMStan &lt; @CheckStan --zmiana stanu potwierdzonej promocji
+			SET @PRMStan = @CheckStan
+		ELSE BEGIN
+			IF @PRMStan &lt;&gt; @CheckStan AND (@PRMStan = 1 OR (@PRMStan = 3 AND @CheckStan = 0))
+				SET @Potw = 1
+			IF @PRMStan &lt;&gt; @CheckStan AND @PRMStan = 3
+				SET @Zamk = 1
+        END
+        UPDATE PrmKarty SET PRM_Stan = @PRMStan,PRM_Aktywna = 0,PRM_LastMod = @TStamp,
+        PRM_OpeTypM = Ope_GIDTyp, PRM_OpeFirmaM= Ope_GIDFirma, PRM_OpeNumerM = Ope_GIDNumer, PRM_OpeLpM = Ope_GIDLp,
+        PRM_OpeTypP = case when @Potw = 1 then Ope_GIDTyp else PRM_OpeTypP end, 
+        PRM_OpeNumerP = case when @Potw = 1 then Ope_GIDNumer else PRM_OpeNumerP end,
+        PRM_DataPotwierdzenia = case when @Potw = 1 then @TStamp else PRM_DataPotwierdzenia end,
+        PRM_OpeTypZ = case when @Zamk = 1 then Ope_GIDTyp else PRM_OpeTypZ end, 
+        PRM_OpeNumerZ = case when @Zamk = 1 then Ope_GIDNumer else PRM_OpeNumerZ end,
+        PRM_DataZamkniecia = case when @Zamk = 1 then @TStamp else PRM_DataZamkniecia end   
+        from CDN.PrmKarty PrmKarty
+        join OpeKarty on Ope_GIDNumer = @OpeGIDNumer
+        WHERE PRM_Id = @ID AND PRM_Aktywna = @SesjaID
+
+        IF @@ERROR &lt;&gt; 0
+        BEGIN
+			IF NOT EXISTS(SELECT * FROM CDN.OpeKarty WHERE Ope_GIDNumer=@OpeGIDNumer) BEGIN
+				ROLLBACK TRAN
+				RAISERROR ('Podany operator nie występuje w bazie.', 16, 1)
+				RETURN 59
+			END
+			ROLLBACK TRAN
+			RAISERROR('Błąd zamykania promocji',16,1)
+			RETURN 1
+        END
+        SELECT PRM_ID,PRM_Stan,PRM_Akronim,PRM_Typ,PRM_DataOd,PRM_DataDo,PRM_Priorytet,PRM_SposobStosowania,PRM_PominPozostale,PRM_Uwagi,PRM_Dokument,PRM_PriorytetLp,PRM_Cykliczna,PRM_Aktywna,
+                (SELECT CASE
+                        WHEN NOT EXISTS(SELECT KPR_ID FROM CDN.KntPromocje WHERE KPR_PrmID = PRM_ID) THEN 32
+                        WHEN NOT EXISTS(SELECT TPR_ID FROM CDN.TwrPromocje WHERE TPR_PrmID = PRM_ID) AND NOT EXISTS(SELECT ZPR_ID FROM CDN.ZstPromocje WHERE ZPR_PrmID = PRM_ID) THEN 34
+                        WHEN NOT EXISTS(SELECT FPR_ID FROM CDN.FrsPromocje WHERE FPR_PrmID = PRM_ID) THEN 33
+                        ELSE 0
+                END
+                ) AS Ostrzezenie FROM CDN.PrmKarty WHERE PRM_ID = @ID
+END
+ELSE --Skasowanie promocji
+BEGIN
+	IF NOT EXISTS(SELECT PRM_Stan FROM CDN.PrmKarty WHERE PRM_ID = @ID AND PRM_Stan = 0) --Kasowanie potwierdzonej promocji
+	BEGIN
+		ROLLBACK TRAN
+		SELECT 11 AS ERROR
+		RETURN 11
+	END
+	DELETE FROM CDN.PrmKarty WHERE PRM_ID = @ID
+	IF @@ERROR &lt;&gt; 0
+	BEGIN
+		ROLLBACK TRAN
+		RAISERROR('Błąd usuwania promocji',16,1)
+		RETURN 1
+	END
+	SELECT 0 AS ERROR
+END
+COMMIT TRAN
+SET NOCOUNT OFF
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

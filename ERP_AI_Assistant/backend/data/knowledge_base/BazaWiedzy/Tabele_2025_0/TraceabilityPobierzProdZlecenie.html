@@ -1,0 +1,474 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="TraceabilityPobierzProdZlecenie"></A><PRE>
+          <FONT SIZE="2"><I>/* TraceabilityPobierzProdZlecenie */</I><BR>
+CREATE FUNCTION CDN.TraceabilityPobierzProdZlecenie(@DokTyp INT, @DokNumer INT, @DokLp INT, @DokSubLp INT, @CzyMagazynowe TINYINT,@Wykorzystanie TINYINT = 0, @TylkoNaglowek TINYINT = 0)
+RETURNS @Drzewo TABLE
+(
+	Poziom INT, 
+	DokTyp SMALLINT, 
+	DokNumer INT, 
+	DokLp SMALLINT, 
+	DokSubLp SMALLINT, 
+	Kod varchar(100),
+	Ilosc decimal(11,4),
+	Jednostka varchar(8),
+	Typ smallint,
+	Proces int,
+	Czynnosc int,
+	Realizuje int,
+	Obiekt int,
+	Zasob int,
+	Ojciec int,
+	Identyfikator varchar(max),
+	Uruchomiona smallint,
+	IkonaZasobu INT, 
+	DstTyp SMALLINT, 
+	DstNumer INT, 
+	DstLp SMALLINT, 
+	DstSubLp SMALLINT,
+	DstGidNr INT,
+	MaterialDla VARCHAR(40),
+	TwrNumer INT,
+	Zrodlowy VARCHAR(50),
+	Nadzlecenie VARCHAR(200),
+	MagTyp SMALLINT,
+	MagNumer INT,
+	DataW INT,
+	DokObcy VARCHAR(40),
+	KntTyp SMALLINT,
+	KntNumer INT,
+	DokStan INT,
+	DokNieKsiegowac TINYINT,
+	DokZaksiegowano TINYINT,
+	DokSpiTyp INT,
+	DokAktywny INT,
+	DokTrNLp INT,
+	DokFiskalny INT,
+	DokKonTyp INT,
+	CzyDostawa TINYINT,
+	PTZId INT
+)
+AS
+BEGIN
+	DECLARE @PCZId INT, @PCZIdPlan INT,@PPCId INT, @PZLId INT, @Realizacje TINYINT = 0, @MaterialDla VARCHAR(40), @Zrodlowy VARCHAR(50), @TypZlc INT, @DataW INT, @DokObcy VARCHAR(40),
+	@KntTyp SMALLINT, @KntNumer INT, @PZAKod VARCHAR(40), @PZAIlosc DECIMAL(11,4), @MagNumer INT, @JM VARCHAR(9), @Stan INT, @NieKsiegowac TINYINT, @TwrNumer INT, @TypZas TINYINT,
+	@Uruchomiona TINYINT, @ProcesId INT,@PTZId INT
+
+	DECLARE @Nadzlecenia TABLE (Id INT, NrDok VARCHAR(50), DataW INT, DataZ INT, DokObcy VARCHAR(50))
+	DECLARE @NadzleceniaLst VARCHAR(200) = ''
+
+	DECLARE @Dokumenty TABLE (Numer INT, Lp SMALLINT, SubLp SMALLINT, Poziom INT, Identyfikator VARCHAR(MAX), Jednostka VARCHAR(9), TwrNumer INT, Ilosc DECIMAL(11,4), MagTyp SMALLINT, MagNumer INT,
+	DstNumer INT, DstLp SMALLINT)
+
+	IF @DokTyp = 14346
+		SELECT @PCZIdPlan = COALESCE(P.PCZ_Id,C.PCZ_Id), @PCZId = PZA_Czynnosc, @PPCId = C.PCZ_Proces, @PZLId = PZL_Id, @MaterialDla = ISNULL(Twr_Kod, PTZ_Kod),
+		@TypZlc = CASE WHEN PZL_PrjId = 0 THEN 14343 ELSE 14350 END, 
+		@Zrodlowy = CDN.NumerDokumentu(CASE WHEN PZL_PrjId = 0 THEN 14343 ELSE 14350 END,0,CASE WHEN PZL_PrjId = 0 THEN 14343 ELSE 14350 END,PZL_Numer,PZL_Rok,PZL_Seria,PZL_Miesiac),
+		@DataW = PZL_DataWystawienia, @DokObcy = PZL_DokumentObcy, @KntNumer = PZL_KntNumer, @KntTyp = PZL_KntTyp, @PZAIlosc = PZA_Ilosc, 
+		@MagNumer = PZA_MagNumer, @JM = Twr_Jm, @PZAKod = ISNULL(Twr_Kod,PTZ_Kod), @Stan = PZL_Stan, @NieKsiegowac = PZL_NieKsiegowac, @TwrNumer = PZA_TwrNumer,
+		@TypZas = CASE WHEN @Wykorzystanie = 0 THEN 4 
+		ELSE 
+			case when PZA_TypZasobu=0 AND PZA_Planowany = 0 then 4 
+			when PZA_Planowany = 1 AND PTZ_TypZasobu = 0 then 10
+			when PZA_Planowany = 1 AND PTZ_TypZasobu &lt;&gt; 0 then 11
+			when PZA_Planowany = 0 AND (isnull(PZA_Zasob,0)&lt;&gt;0 OR exists(SELECT 1 FROM CDN.ProdZwiazanePolprodukty WHERE PZP_PZAIDPlanowany = PZA_Id)) then 3 
+			when PZA_TypZasobu = 4 AND PZA_Planowany = 0 THEN 13
+			else 2 END
+		END, @Uruchomiona = CASE WHEN @Wykorzystanie = 0 THEN 0 ELSE C.PCZ_Uruchomiona END, @ProcesId = CASE WHEN @Wykorzystanie = 0 THEN 0 ELSE C.PCZ_Proces END, @PTZId = PZA_TechnologiaZasob
+		FROM CDN.ProdZasoby
+		JOIN CDN.ProdZlecenia ON PZL_Id = PZA_PZLId
+		LEFT JOIN CDN.TwrKarty ON Twr_GIDNumer = PZA_TwrNumer AND PZA_TwrTyp = Twr_GIDTyp
+		LEFT JOIN CDN.ProdTechnologiaZasoby ON PTZ_Id = PZA_TechnologiaZasob
+		JOIN CDN.ProdCzynnosci C ON C.PCZ_Id = PZA_Czynnosc
+		LEFT JOIN CDN.ProdCzynnosci P ON C.PCZ_Realizuje = P.PCZ_Id
+		WHERE PZA_Id = @DokNumer
+	ELSE	
+		SELECT @PCZIdPlan = PCZ_Id, @PCZId = PCZ_Id, @PPCId = PCZ_Proces, @PZLId = PZL_Id, @MaterialDla = '',
+		@TypZlc = CASE WHEN PZL_PrjId = 0 THEN 14343 ELSE 14350 END, 
+		@Zrodlowy = CDN.NumerDokumentu(CASE WHEN PZL_PrjId = 0 THEN 14343 ELSE 14350 END,0,CASE WHEN PZL_PrjId = 0 THEN 14343 ELSE 14350 END,PZL_Numer,PZL_Rok,PZL_Seria,PZL_Miesiac),
+		@DataW = PZL_DataWystawienia, @DokObcy = PZL_DokumentObcy, @KntNumer = PZL_KntNumer, @KntTyp = PZL_KntTyp, @PZAIlosc = TrS_Ilosc, 
+		@MagNumer = TrN_MagZNumer, @JM = Twr_Jm, @PZAKod = Twr_Kod, @Stan = PZL_Stan, @NieKsiegowac = PZL_NieKsiegowac, @TwrNumer = TrE_TwrNumer, @TypZas = 11,
+		@Uruchomiona = 0, @ProcesId = CASE WHEN @Wykorzystanie = 0 THEN 0 ELSE PCZ_Proces END, @PTZId = 0
+		FROM CDN.TraSElem
+		JOIN CDN.TraElem ON TrE_GIDNumer = TrS_GIDNumer AND TrE_GIDLp = TrS_GIDLp
+		JOIN CDN.TraNag ON TrN_GIDNumer = TrS_GIDNumer 
+		JOIN CDN.ProdCzynnosci ON PCZ_Id = TrS_ZlcNumer
+		JOIN CDN.ProdZlecenia ON PZL_Id = PCZ_PZLId
+		JOIN CDN.TwrKarty ON Twr_GIDNumer = TrE_TwrNumer
+		WHERE TrS_GIDNumer = @DokNumer AND TrS_GIDLp = @DokLp AND TrS_SubGIDLp = @DokSubLp
+
+	INSERT INTO @Drzewo (Poziom, DokTyp, DokNumer, DokLp, DokSubLp, Kod, Ilosc, Jednostka, Typ, Proces, Czynnosc, Realizuje, Obiekt, Zasob, Ojciec, Identyfikator, Uruchomiona, IkonaZasobu, 
+	DstTyp, DstNumer, DstLp, DstSubLp, DstGidNr, MaterialDla, TwrNumer, Zrodlowy, Nadzlecenie, MagTyp, MagNumer, DataW, DokObcy, KntTyp, KntNumer, DokStan, DokNieKsiegowac, DokZaksiegowano, DokSpiTyp,
+	DokAktywny, DokTrNLp, DokFiskalny, DokKonTyp, CzyDostawa, PTZId)
+	SELECT  0, 14346, @DokNumer, 0,0, @PZAKod, @PZAIlosc,@JM,@TypZas,@ProcesId, 0, 0, 0, 0, @DokNumer,  right(space(10)+convert(varchar,@DokNumer),10) ,@Uruchomiona,0,0, 0, 0, 0, 0, null, @TwrNumer, '', '', 
+	208,@MagNumer,0,'', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, @PTZId
+
+	INSERT INTO @Nadzlecenia (Id, NrDok, DataW, DataZ, DokObcy)
+	SELECT PNZ_Id, CDN.NumerDokumentu(14368,0,14368,PNZ_Numer,PNZ_Rok,PNZ_Seria,PNZ_Miesiac), PNZ_DataWystawienia,PNZ_DataZamkniecia, PNZ_DokumentObcy
+	FROM CDN.ProdNadzleceniaLinki
+	JOIN CDN.ProdNadzlecenia ON PNZ_Id = PNL_PNZId
+	WHERE PNL_PZLId = @PZLId
+
+	SELECT @NadzleceniaLst =  COALESCE(@NadzleceniaLst + ', ', '')+ convert(varchar(50),NrDok)
+	FROM @Nadzlecenia  
+	order by Id desc
+
+	IF LEN(ISNULL(@NadzleceniaLst,'')) &gt; 2
+		SET @NadzleceniaLst = SUBSTRING(@NadzleceniaLst,3,LEN(@NadzleceniaLst) - 2)
+
+	INSERT INTO @Drzewo
+	(Poziom, DokTyp, DokNumer, DokLp, DokSubLp, Kod, Ilosc, Jednostka, Typ, Proces, Czynnosc, Realizuje, Obiekt, Zasob, Ojciec, Identyfikator, Uruchomiona, IkonaZasobu, 
+	DstTyp, DstNumer, DstLp, DstSubLp, DstGidNr, MaterialDla, TwrNumer,  Zrodlowy, Nadzlecenie, MagTyp, MagNumer, DataW, DokObcy, KntTyp, KntNumer, DokStan, DokNieKsiegowac, DokZaksiegowano, DokSpiTyp,
+	DokAktywny, DokTrNLp, DokFiskalny, DokKonTyp, CzyDostawa, PTZId)
+	SELECT  1, @TypZlc, @PZLId, 0,0, @Zrodlowy, 0,'',14343,0, 0, 0, 0, 0, @DokNumer, right(space(10)+convert(varchar,@DokNumer),10) ,0 Uruchomiona,0,0, 0, 0, 0, 0, null, @TwrNumer, '',
+	ISNULL(@NadzleceniaLst,''), 0,0,@DataW,@DokObcy, @KntTyp, @KntNumer, @Stan, @NieKsiegowac, 0, 0, 0, 0, 0, 0, 0, @PTZId
+
+	IF @TylkoNaglowek = 1  RETURN
+	/*INSERT INTO @Drzewo
+	(Poziom, DokTyp, DokNumer, DokLp, DokSubLp, Kod, Ilosc, Jednostka, Typ, Proces, Czynnosc, Realizuje, Obiekt, Zasob, Ojciec, Identyfikator, Uruchomiona, IkonaZasobu, 
+	DstTyp, DstNumer, DstLp, DstSubLp, DstGidNr, MaterialDla, Zrodlowy,  Nadzlecenie, MagTyp, MagNumer, DataW, DokObcy, KntTyp, KntNumer, DokStan, DokNieKsiegowac, DokZaksiegowano, DokSpiTyp,
+	DokAktywny, DokTrNLp, DokFiskalny, DokKonTyp)
+	SELECT 2, 14368, Id, 0, 0, NrDok,0, '', 14368, 0,0,0,0,0,@PZLId,right(space(10)+convert(varchar,@DokNumer),10) + '1' + right(space(10)+convert(varchar,Id),10),0,0,0,0,0,0,0,'','','',0,0,DataW,
+	DokObcy,0,0, DataZ, 0, 0, 0, 0, 0, 0, 0
+	FROM @Nadzlecenia*/
+
+	INSERT INTO @Drzewo	
+	(Poziom, DokTyp, DokNumer, DokLp, DokSubLp, Kod, Ilosc, Jednostka, Typ, Proces, Czynnosc, Realizuje, Obiekt, Zasob, Ojciec, Identyfikator, Uruchomiona, IkonaZasobu, 
+	DstTyp, DstNumer, DstLp, DstSubLp, DstGidNr, MaterialDla, TwrNumer, Zrodlowy, Nadzlecenie, MagTyp, MagNumer, DataW, DokObcy, KntTyp, KntNumer, DokStan, DokNieKsiegowac, DokZaksiegowano, DokSpiTyp,
+	DokAktywny, DokTrNLp, DokFiskalny, DokKonTyp, CzyDostawa, PTZId)
+	SELECT T.Poziom,14344, T.Proces, 0, 0,  T.Kod,  T.Ilosc, T.Jednostka, T.Typ, T.Proces, 0, 0, 0, 0, @PZLId,right(space(10)+convert(varchar,@DokNumer),10) + '2' + T.Identyfikator,
+	0 Uruchomiona,0, 0, 0, 0, 0, 0,'', -1, '', '', 0, 0, 0, '', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    FROM
+		(
+			SELECT convert(varchar, count(p.ppc_id)) +':'+PTE_Kod Kod, p.PPC_Ilosc Ilosc,
+				PTE_Jednostka Jednostka, 2 Poziom, 0 Typ, 0 Lp, P.PPC_Id Proces, 0 Czynnosc, 0 Realizacje, 0 Obiekt,
+				0 Zasob, 0 Ojciec, 0 Zrealizowano, 0 TerminRozpoczecia,
+				0 TerminZakonczenia, left(PTE_Kod+space(40),40) + right(space(10)+convert(varchar,P.PPC_Id),10) Identyfikator
+			FROM CDN.ProdProcesy P
+			inner join Cdn.ProdProcesy P1 on p.PPC_id &gt;= p1.PPC_ID
+			inner join CDN.ProdTechnologia on PTE_Id=p.PPC_Technologia and  P1.PPC_Technologia = PTE_Id					
+			WHERE p.PPC_Zlecenie=@PZLId AND P1.PPC_Zlecenie = @PZLId
+			GROUP BY PTE_Kod, PTE_Nazwa, p.PPC_ID,p.PPC_Ilosc, PTE_Jednostka
+        ) T
+	WHERE T.Proces = @PPCId
+    GROUP BY T.Kod, T.Ilosc, T.Jednostka, T.Poziom, T.Typ, T.Lp, T.Proces, T.Identyfikator
+
+	declare @ppcIdentyfikator varchar(max) = ''
+	select top 1 @ppcIdentyfikator =   Identyfikator from @Drzewo where DokTyp = 14344
+
+	IF @PCZId &lt;&gt; @PCZIdPlan
+		SET @Realizacje = 1
+
+	DECLARE @Procesy TABLE (
+	  Kod varchar(100),
+	  Nazwa varchar(300),
+	  Ilosc decimal(11,4),
+	  Jednostka varchar(8),
+	  Poziom int,
+	  Typ smallint,
+	  Lp int,
+	  Proces int,
+	  Czynnosc int,
+	  Realizuje int,
+	  Obiekt int,
+	  Zasob int,
+	  Ojciec int,
+	  Identyfikator varchar(7468),
+	  Uruchomiona smallint,
+	  IkonaZasobu INT, 
+	  TwrNumer INT,
+		PTZId INT
+	)
+
+	DECLARE @PoziomDrzewo TINYINT = 1
+
+	INSERT INTO @Procesy
+	SELECT  convert (varchar, count(Nowa.PCZ_ID))+':'+ PTC_Kod, PTC_Nazwa, Nowa.PCZ_Ilosc, PTC_Jednostka,
+		@PoziomDrzewo, 6, PTC_Lp,@PPCId, Nowa.PCZ_Id, 0, 0, 0, min(@PCZId), '7'+right(space(10)+convert(varchar,PTC_Lp),10)
+        +right(space(10)+convert(varchar,Nowa.PCZ_Id),10),0 Uruchomiona,0, -1, 0
+    FROM CDN.ProdProcesy 
+    inner join CDN.ProdCzynnosci as Nowa on Nowa.PCZ_Proces=@PPCId and isnull(Nowa.PCZ_Realizuje,0)=0
+	inner join CDN.ProdTechnologiaCzynnosci on PTC_Technologia=PPC_Technologia and Nowa.PCZ_TechnologiaCzynnosc=PTC_Id
+    inner join Cdn.ProdCzynnosci as N on Nowa.PCZ_ID &gt;= N.PCZ_ID and N.PCZ_Proces=@PPCId and N.PCZ_TechnologiaCzynnosc=PTC_Id and isnull(N.PCZ_Realizuje,0)=0
+	WHERE Nowa.PCZ_Id = @PCZIdPlan AND PPC_Id = @PPCId
+    GROUP BY PTC_Id, PTC_Kod, PTC_Nazwa, PTC_Jednostka, PTC_Lp, Nowa.PCZ_Id, Nowa.PCZ_Ilosc
+
+
+	/*WHILE 1=1
+	BEGIN
+		INSERT INTO @Procesy
+				SELECT convert (varchar, count(N.PCZ_ID))+':'+ PTC_Kod, PTC_Nazwa, Nowa.PCZ_Ilosc, PTC_Jednostka,
+					Poziom+1, 6, PTC_Lp, Proces, Nowa.PCZ_Id, 0, 0, 0, min(Czynnosc),
+                    left(left(Identyfikator,50+21*Poziom)+'7'+right(space(10)+convert(varchar,PTC_Lp),10)
+                    +right(space(10)+convert(varchar,Nowa.PCZ_Id),10),7808),0 Uruchomiona,0
+                FROM @Procesy
+				inner join CDN.ProdProcesy on PPC_Id=Proces
+                left outer join CDN.ProdCzynnosci as Stara  on Stara.PCZ_Id=Czynnosc
+                inner join CDN.ProdTechnologiaCzynnosci on PTC_Ojciec=isnull(Stara.PCZ_TechnologiaCzynnosc,0) and PTC_Technologia=PPC_Technologia
+					and not exists(SELECT Inna.PCZ_ID from CDN.ProdCzynnosci Inna where Inna.PCZ_Proces=Stara.PCZ_Proces and       
+					Inna.PCZ_TechnologiaCzynnosc=Stara.PCZ_TechnologiaCzynnosc and Inna.PCZ_Id&lt;Stara.PCZ_Id)
+                inner join CDN.ProdCzynnosci as Nowa on Nowa.PCZ_Proces=Proces and Nowa.PCZ_TechnologiaCzynnosc=PTC_Id and isnull(Nowa.PCZ_Realizuje,0)=0
+                inner join Cdn.ProdCzynnosci as N on Nowa.PCZ_ID &gt;= N.PCZ_ID and N.PCZ_Proces=Proces and N.PCZ_TechnologiaCzynnosc=PTC_Id and isnull(N.PCZ_Realizuje,0)=0
+                WHERE Poziom=@PoziomDrzewo and Typ in (0,6) 
+                GROUP BY PTC_Id, PTC_Kod, PTC_Nazwa, PTC_Jednostka, PTC_Lp, Nowa.PCZ_Id, Nowa.PCZ_Ilosc, Proces, Poziom, Identyfikator, Lp
+				OPTION(MAXDOP 1)
+										            
+			IF @@ROWCOUNT=0 BREAK
+            SET @PoziomDrzewo = @PoziomDrzewo+1
+		END	*/
+
+		IF isnull(@Realizacje,0)&lt;&gt;0
+			INSERT into @Procesy
+				select convert (varchar , count (c1.Pcz_Id))+':'+ PTC_Kod, PTC_Nazwa, A.PCZ_Ilosc, PTC_Jednostka, Poziom,
+					   5, PTC_Lp, Proces, A.PCZ_Id, A.PCZ_Realizuje, 0, 0, A.PCZ_Realizuje,					   
+					   left(left(Identyfikator,50+21*Poziom)+'6'+right(space(10)+convert(varchar,PTC_Lp),10)+right(space(10)+convert(varchar,a.PCZ_Id),10),7808),
+					   A.PCZ_Uruchomiona,0, -1, 0 from
+				(
+						SELECT c.PCZ_Ilosc,  Poziom+1 Poziom,Proces, c.PCZ_Id, c.PCZ_Realizuje, Czynnosc,c.PCZ_TechnologiaCzynnosc TechnologiaCzynnosc,Identyfikator,c.PCZ_Uruchomiona
+						FROM @Procesy
+						inner join CDN.ProdCzynnosci C on c.PCZ_Realizuje=Czynnosc AND C.PCZ_Id = @PCZId
+						WHERE Typ = 6
+						GROUP BY  c.PCZ_Ilosc,  Proces, c.PCZ_Id, c.PCZ_Realizuje, Poziom, Identyfikator, Czynnosc,PCZ_TechnologiaCzynnosc,c.PCZ_Uruchomiona
+				) A
+				inner join CDN.ProdTechnologiaCzynnosci on PTC_Id= A.TechnologiaCzynnosc
+				inner join Cdn.ProdCzynnosci C1 on  A.Pcz_Id &gt;= c1.Pcz_ID and c1.PCZ_Realizuje=Czynnosc	
+				group by PTC_Kod, PTC_Nazwa, A.PCZ_Ilosc, PTC_Jednostka, PTC_Lp, Proces, A.PCZ_Id, A.PCZ_Realizuje, Poziom, Identyfikator,A.PCZ_Uruchomiona
+
+		
+			INSERT into @Procesy
+				SELECT POB_Kod, POB_Nazwa, 0, '', Poziom+1, 1 , 0, Proces, Czynnosc, PCO_Termin, PCO_Obiekt, PCO_Funkcja, Czynnosc, 
+					left(left(Identyfikator,50+21*Poziom)+'1'+CONVERT(VARCHAR(10),ISNULL(COALESCE(T1.PCT_TerminOd,T2.PCT_TerminOd),0))+POB_Kod,7808),
+					0 Uruchomiona,ISNULL(RodzajeZas.SLW_ID,0)/*CASE WHEN RTRIM(LTRIM(ISNULL(RodzajeZas.SLW_WartoscS2,''))) = '' THEN 0 ELSE 1 END*/, -1, 0
+                FROM 
+                (
+					select Kod, Nazwa, Ilosc, Jednostka, Poziom, Typ, Lp, Proces, Czynnosc, Realizuje, Obiekt, Zasob, Ojciec, Identyfikator
+					from @Procesy
+					group by Kod, Nazwa, Ilosc, Jednostka, Poziom, Typ, Lp, Proces, Czynnosc, Realizuje, Obiekt, Zasob, Ojciec, Identyfikator
+                ) Procesy				
+				inner join CDN.ProdCzynnosciObiekty on PCO_Czynnosc=Czynnosc
+				left join CDN.ProdCzynnosciTerminy T1 ON T1.PCT_Id = PCO_Termin 
+				LEFT JOIN CDN.ProdCzynnosciTerminy T2 ON PCO_Termin = 0 and T2.PCT_Czynnosc = Czynnosc
+				inner join CDN.ProdObiekty on POB_Id=PCO_Obiekt
+				LEFT JOIN CDN.Slowniki RodzajeZas on RodzajeZas.SLW_ID = POB_RodzajZasobu
+				WHERE Czynnosc = @PCZId AND (Typ=6 or Typ=5)
+				GROUP BY POB_Kod, POB_Nazwa,  PCO_Termin, PCO_Obiekt, PCO_Funkcja, Poziom, proces, czynnosc, identyfikator,Realizuje,
+				T1.PCT_TerminOd,T2.PCT_TerminOd,T1.PCT_TerminDo,T2.PCT_TerminDo,RodzajeZas.SLW_WartoscS2,RodzajeZas.SLW_ID
+
+			
+				INSERT INTO @Procesy
+					SELECT isnull(Twr.Twr_Kod,PTZO.PTZ_Kod), isnull(Twr.Twr_Nazwa,PTZO.PTZ_Nazwa), A.PZA_Ilosc, isnull(Twr.Twr_JM,PTZO.PTZ_Jednostka), Poziom+1,
+						 case when A.PZA_TypZasobu=0 AND A.PZA_Planowany = 0 then 4 
+							  when A.PZA_Planowany = 1 AND PTZO.PTZ_TypZasobu = 0 then 10
+							  when A.PZA_Planowany = 1 AND PTZO.PTZ_TypZasobu &lt;&gt; 0 then 11
+							  when  A.PZA_Planowany = 0 AND (isnull(A.PZA_Zasob,0)&lt;&gt;0 OR
+								exists(SELECT * FROM CDN.ProdZwiazanePolprodukty WHERE PZP_PZAIDPlanowany = A.PZA_Id)) then 3 
+							  when A.PZA_TypZasobu = 4 AND PZA_Planowany = 0 THEN 13
+							  else 2
+						 end,
+						PTZO.PTZ_Lp, Proces, Czynnosc, Realizuje, 0, A.PZA_Id, Czynnosc, 
+						left(left(Identyfikator,50+21*Poziom)+ case when PZA_TypZasobu=0 AND PZA_Planowany = 0 then '40'
+																	when A.PZA_Planowany = 1 and PTZO.PTZ_TypZasobu = 0 then '401'
+																	when A.PZA_Planowany = 1 and PTZO.PTZ_TypZasobu &lt;&gt; 0 then '31'
+																	when  A.PZA_Planowany = 0 AND (PZA_Zasob &lt;&gt; 0 OR
+																		exists(SELECT * FROM CDN.ProdZwiazanePolprodukty 
+																		WHERE PZP_PZAIDPlanowany = A.PZA_Id)) then '3'
+																	when PZA_TypZasobu = 4 THEN '41' 
+																	else  '2' 
+															   end+
+						isnull(Twr.Twr_Kod,PTZO.PTZ_Kod),7808),
+						case when isnull(PTZO.PTZ_Zamiennik,0)&gt; 0 then 1 else  0 end Uruchomiona,0, Twr.Twr_GIDNumer, A.PZA_TechnologiaZasob
+					FROM
+					(   
+							select Kod, Nazwa, Ilosc, Jednostka, Poziom, Typ, Lp, Proces, Czynnosc, Realizuje, Obiekt, Zasob, Ojciec, Identyfikator
+							from @Procesy
+							group by Kod, Nazwa, Ilosc, Jednostka, Poziom, Typ, Lp, Proces, Czynnosc, Realizuje, Obiekt, Zasob, Ojciec, Identyfikator
+					) Procesy
+					inner join cdn.ProdZasoby A ON A.PZA_Czynnosc=Czynnosc
+					left outer join CDN.ProdTechnologiaZasoby PTZO on PTZ_Id=A.PZA_TechnologiaZasob
+					left outer join CDN.TwrKarty Twr on Twr_GIDNumer=A.PZA_TwrNumer AND A.PZA_TwrTyp = 16
+					left join CDN.ProdTechnologiaZasoby PTZZ ON PTZO.PTZ_Zamiennik = PTZZ.PTZ_Id
+					left join CDN.TwrKarty TwrZ ON TwrZ.Twr_GIDNumer = PTZZ.PTZ_TwrNumer AND PTZZ.PTZ_TwrTyp &gt; 0
+					WHERE Czynnosc = @PCZId AND (Typ=6 or  Typ=5) 
+						and (((ISNULL(PTZO.PTZ_TypZasobu,a.PZA_TypZasobu) not in (0,4) or a.Pza_Zasob &lt;&gt; 0 or isnull(PTZO.PTZ_Zamiennik,0)&gt; 0 )	AND @Wykorzystanie = 0) 
+							OR ((ISNULL(PTZO.PTZ_TypZasobu,a.PZA_TypZasobu) in (0,4) AND @Wykorzystanie = 1)))
+					GROUP BY PTZO.PTZ_Kod,Twr.Twr_Kod, PTZO.PTZ_Nazwa,Twr.Twr_Nazwa , PZA_Ilosc, PTZO.PTZ_Jednostka,Twr.Twr_JM , Poziom, PZA_TypZasobu,
+						PTZO.PTZ_Lp, Proces, Czynnosc, Realizuje, Identyfikator, A.PZA_Id, Czynnosc, A.Pza_TwrNumer, PZA_Zasob,Kod,Nazwa,PTZO.PTZ_Zamiennik,
+						PTZO.PTZ_Id, A.PZA_Planowany,PTZO.PTZ_TypZasobu,PTZZ.PTZ_Kod,PTZZ.PTZ_Nazwa,TwrZ.Twr_Kod,TwrZ.Twr_Nazwa, TWR.Twr_GIDNumer, A.PZA_TechnologiaZasob	
+							
+			IF @Wykorzystanie = 0
+			BEGIN		
+				INSERT INTO @Procesy
+					SELECT Twr_Kod + ' ['+ CDN.NumerDokumentu(TRN_GIDTyp, TRN_SPITyp, TRN_TRNTyp, TRN_TrnNumer, Trn_TRNRok, 
+										TRN_TrnSeria, TrN_TrnMiesiac)+'] '
+						 , Twr_Nazwa, Trs_Ilosc,
+						Twr_JM , Poziom+1, 7  , 1, Proces, Czynnosc, Realizuje, 0, Trs_GidNumer, Czynnosc, 
+						left(left(Identyfikator,50+21*Poziom)+ '2' + Twr_Kod,7808),0 Uruchomiona,0, Twr_GIDNumer, 0
+					FROM @Procesy
+					inner join CDN.ProdCzynnosci C on C.Pcz_Id = Czynnosc and C.Pcz_Realizuje = 0
+					inner join Cdn.TrasElem on Trs_ZlcNumer = C.Pcz_ID and Trs_ZlcTyp = 14345
+					inner join Cdn.TraNag ON TrN_GIDTyp=TrS_GIDTyp AND TrN_GIDNumer=TrS_GIDNumer and Trn_Stan in (3,5)
+					inner join Cdn.TraElem ON TrE_GIDTyp=TrS_GIDTyp AND TrE_GIDNumer=TrS_GIDNumer AND TrE_GIDLp=TrS_GIDLp
+					inner join CDN.TwrKarty on Twr_GIDNumer=   Tre_TwrNumer
+					WHERE Czynnosc = @PCZId AND Typ=6
+			END
+			    
+            INSERT INTO @Procesy
+				SELECT isnull(Twr.Twr_Kod,PTZO.PTZ_Kod) , isnull(Twr.Twr_Nazwa,PTZO.PTZ_Nazwa ), R.Ilosc ,
+                    Twr.Twr_JM , Poziom+1, case when REz_GidTyp = 2576 then  8 else case when isnull(PTZO.ptz_TypZasobu,0) = 0 THEN 9 ELSE 12 END end  , 1, Proces, Czynnosc, Realizuje,
+					0, Rez_GidNumer, Czynnosc, 
+                    left(left(Identyfikator,50+21*Poziom)+ case when REz_GidTyp = 2576 then '3' else CASE WHEN isnull(PTZO.ptz_TypZasobu,0) = 0 THEN '40' ELSE '41' END end+
+					isnull(Twr.Twr_Kod,PTZO.PTZ_Kod),7808),
+                    0 Uruchomiona,0, Twr.Twr_GIDNumer, 0
+                FROM @Procesy
+                    inner join CDN.ProdCzynnosci C on C.Pcz_Id = Czynnosc and C.Pcz_Realizuje = 0
+                    inner join 
+                    (
+						select max(Rez_GidNumer) as Rez_GidNumer, Rez_Zrdnumer , Rez_ZrdTyp, Rez_TwrNumer,Rez_GidTyp,Rez_PtzId,Rez_DstNumer, sum(Rez_Ilosc) Ilosc 
+						from CDN.Rezerwacje 
+						group by Rez_Zrdnumer , Rez_ZrdTyp,Rez_TwrNumer,Rez_GidTyp,Rez_PtzId,Rez_DstNumer
+                    ) R on R.Rez_ZrdNumer = C.Pcz_ID and R.Rez_ZrdTyp = 14345
+                    inner join CDN.TwrKarty Twr on Twr_GIDNumer=   Rez_TwrNumer
+                    left outer join Cdn.ProdTechnologiaZasoby PTZO on  PTZO.PTZ_Id = Rez_PtzId and PTZO.Ptz_TechnologiaCzynnosc = Pcz_TechnologiaCzynnosc
+					left outer join cdn.ProdTechnologiaZasoby PTZZ ON PTZZ.PTZ_Id = PTZO.PTZ_Zamiennik
+					left join CDN.TwrKarty TwrZ ON TwrZ.Twr_GIDNumer = PTZZ.PTZ_TwrNumer AND PTZZ.PTZ_TwrTyp &gt; 0
+                WHERE Czynnosc = @PCZId AND Typ=6 and ((Rez_GidTyp = 2576 AND @Wykorzystanie = 0) OR (Rez_GIDTyp = 2592 AND @Wykorzystanie = 1))
+
+	INSERT INTO @Drzewo	
+	(Poziom, DokTyp, DokNumer, DokLp, DokSubLp, Kod, Ilosc, Jednostka, Typ, Proces, Czynnosc, Realizuje, Obiekt, Zasob, Ojciec, Identyfikator, Uruchomiona, IkonaZasobu, 
+	DstTyp, DstNumer, DstLp, DstSubLp, DstGidNr, MaterialDla, TwrNumer, Zrodlowy, Nadzlecenie, MagTyp, MagNumer, DataW, DokObcy, KntTyp, KntNumer, DokStan, DokNieKsiegowac, DokZaksiegowano, DokSpiTyp,
+	DokAktywny, DokTrNLp, DokFiskalny, DokKonTyp, CzyDostawa,PTZId)
+	SELECT operDrzewo.Poziom+2, CASE
+	WHEN operDrzewo.Obiekt &gt; 0 THEN 14337
+	WHEN operDrzewo.Zasob &gt; 0 THEN
+		CASE 
+		WHEN operDrzewo.Typ IN (4,10,11,3,13,2) THEN 14346
+		WHEN operDrzewo.Typ = 8 THEN 2576
+		WHEN operDrzewo.Typ in(9,12) THEN 2592
+		WHEN operDrzewo.Typ = 14 THEN 14357
+		WHEN operDrzewo.Typ = 7 THEN 1616
+		ELSE 14345 END
+	ELSE 14345 END,
+	CASE
+	WHEN operDrzewo.Obiekt &gt; 0 THEN operDrzewo.Obiekt
+	WHEN operDrzewo.Zasob &gt; 0 THEN operDrzewo.Zasob
+	ELSE operDrzewo.Czynnosc END,0,0, operDrzewo.Kod,operDrzewo.Ilosc,operDrzewo.Jednostka,operDrzewo.Typ,operDrzewo.Proces,operDrzewo.Czynnosc,operDrzewo.Realizuje,
+	operDrzewo.Obiekt, operDrzewo.Zasob,operDrzewo.Ojciec,@ppcIdentyfikator + operDrzewo.Identyfikator+right(space(10)+convert(varchar,operDrzewo.Zasob),10),operDrzewo.Uruchomiona,operDrzewo.IkonaZasobu,0, 0, 0, 0, 0, @MaterialDla, TwrNumer, '', '',  
+	CASE WHEN ISNULL(PZA_Id,0) &gt;0 THEN 208 ELSE ISNULL(Rez_MagTyp,0) END, COALESCE(PZA_MagNumer,Rez_MagNumer, 0), 0, '', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,PTZId
+	FROM @Procesy operDrzewo
+	left join cdn.ProdZasoby ON PZA_Id = operDrzewo.Zasob AND operDrzewo.Typ IN (4,10,11,3,13,2)
+	left join cdn.Rezerwacje ON Rez_GIDNumer = operDrzewo.Zasob AND operDrzewo.Typ in(8,9,12)
+	WHERE operDrzewo.Zasob &lt;&gt; @DokNumer
+
+	--realizacja
+	INSERT INTO @Dokumenty
+	SELECT TrS_ZwrNumer, TrS_ZwrLp, TrS_SubZwrLp, d.Poziom, d.Identyfikator, d.Jednostka, d.TwrNumer, SUM(TrS_Ilosc), TrS_MagTyp, TrS_MagNumer, TrS_DstNumer, TrS_DstLp
+	FROM @Drzewo d
+	JOIN CDN.TraSElem ON TrS_ZlcNumer = D.Zasob AND TrS_ZlcTyp = 14346
+	WHERE d.Zasob &gt; 0 AND ((d.Typ = 2 AND @Wykorzystanie = 0) OR (@Wykorzystanie = 1 AND d.Typ IN(4,13))) AND TrS_ZwrTyp IN (1616,1617)
+	GROUP BY TrS_ZwrNumer, TrS_ZwrLp, TrS_SubZwrLp, d.Poziom, d.Identyfikator, d.Jednostka, d.TwrNumer, TrS_MagTyp, TrS_MagNumer, TrS_DstNumer, TrS_DstLp
+
+	INSERT INTO @Dokumenty
+	SELECT  TrS_ZwrNumer, TrS_ZwrLp, TrS_SubZwrLp, d.Poziom, d.Identyfikator, d.Jednostka, d.TwrNumer, SUM(TrS_Ilosc),TrS_MagTyp, TrS_MagNumer, TrS_DstNumer, TrS_DstLp
+	FROM @Drzewo d
+	JOIN CDN.TraSElem ON TrS_ZlcNumer = D.Czynnosc AND TrS_GIDNumer = D.Zasob AND TrS_GIDTyp = 14345
+	WHERE d.Zasob &gt; 0 AND d.Typ = 7  AND TrS_ZwrTyp IN (1616,1617)--TRANAG
+	GROUP BY TrS_ZwrNumer, TrS_ZwrLp, TrS_SubZwrLp, d.Poziom, d.Identyfikator, d.Jednostka, d.TwrNumer, TrS_MagTyp, TrS_MagNumer, TrS_DstNumer, TrS_DstLp
+
+	INSERT INTO @Dokumenty
+	SELECT  TrS_ZwrNumer, TrS_ZwrLp, TrS_SubZwrLp, d.Poziom, d.Identyfikator, d.Jednostka, d.TwrNumer, SUM(TrS_Ilosc),TrS_MagTyp, TrS_MagNumer, TrS_DstNumer, TrS_DstLp
+	FROM @Drzewo d
+	JOIN CDN.Rezerwacje ON Rez_GIDNumer = D.Zasob 
+	JOIN CDN.TraSElem ON TrS_RezNumer = Rez_GIDNumer AND TrS_RezTyp = Rez_GIDTyp AND TrS_GIDNumer = D.Zasob AND TrS_ZlcTyp = 14345
+	WHERE d.Zasob &gt; 0 AND d.Typ = 8 AND TrS_ZwrTyp IN (1616,1617)
+	GROUP BY TrS_ZwrNumer, TrS_ZwrLp, TrS_SubZwrLp, d.Poziom, d.Identyfikator, d.Jednostka, d.TwrNumer, TrS_MagTyp, TrS_MagNumer, TrS_DstNumer, TrS_DstLp
+
+	INSERT INTO @Drzewo	
+	(Poziom, DokTyp, DokNumer, DokLp, DokSubLp, Kod, Ilosc, Jednostka, Typ, Proces, Czynnosc, Realizuje, Obiekt, Zasob, Ojciec, Identyfikator, Uruchomiona, IkonaZasobu, 
+	DstTyp, DstNumer, DstLp, DstSubLp, DstGidNr, MaterialDla, TwrNumer, Zrodlowy, Nadzlecenie, MagTyp, MagNumer, DataW, DokObcy, KntTyp, KntNumer, DokStan, DokNieKsiegowac, DokZaksiegowano, DokSpiTyp,
+	DokAktywny, DokTrNLp, DokFiskalny, DokKonTyp, CzyDostawa,PTZId)
+	SELECT d.Poziom+1, TrN_GIDTyp,d.Numer,d.Lp,d.SubLp,
+	CDN.NumerDokumentu(Dok.TRN_GIDTyp, Dok.TRN_SPITyp, Dok.TRN_TRNTyp, Dok.TRN_TrnNumer, Dok.Trn_TRNRok, Dok.TRN_TrnSeria, Dok.TrN_TrnMiesiac),d.Ilosc,d.Jednostka,2,
+	0,0,0,0, 0, 0, 
+	d.Identyfikator+right(space(10)+CAST(Dok.TrN_Data2 AS VARCHAR) + convert(varchar,Dok.TrN_GIDNumer),10)+right(space(10)+convert(varchar,d.Lp),10)+right(space(10)+convert(varchar,d.SubLp),10),
+	0, 0, Dst_TrnTyp,Dst_TrnNumer,Dst_TrnLp,Dst_SubTrnLp, Dst_GIDNumer, @MaterialDla, d.TwrNumer, @Zrodlowy ,  '', 
+	d.MagTyp, d.MagNumer, Dok.TrN_Data2, CASE WHEN TrN_GIDTyp = 1617 THEN TrN_DokumentObcy ELSE '' END, Dok.TrN_KntTyp, dok.TrN_KntNumer, 
+	Dok.TrN_Stan, Dok.TrN_NieKsiegowac, Dok.TrN_Zaksiegowano, Dok.TrN_SpiTyp, Dok.TrN_Aktywny, Dok.TrN_TrNLp, Dok.TrN_Fiskalny, Dok.TrN_KonTyp,
+	CASE WHEN TrN_GIDNumer = Dst_TrnNumer AND TrN_GIDTyp = Dst_TrnTyp THEN 1 ELSE 0 END,0
+	FROM @Dokumenty d
+	JOIN CDN.TraNag Dok ON Dok.TrN_GIDNumer = d.Numer
+	JOIN CDN.Dostawy ON Dst_GIDNumer = d.DstNumer AND Dst_GIDLp = d.DstLp
+
+	IF @CzyMagazynowe = 1
+	BEGIN
+		DELETE FROM @Dokumenty
+
+		INSERT INTO @Dokumenty
+		SELECT MaS_GIDNumer, MaS_GIDLp, MaS_SubGIDLp, D.Poziom, d.Identyfikator, d.Jednostka, d.TwrNumer, MaS_Ilosc, MaS_MagTyp, MaS_MagNumer, MaS_DstNumer, MaS_DstLp
+		FROM @Drzewo d
+		JOIN CDN.MagSElem ON MaS_ZlcNumer = D.Zasob AND MaS_ZlcTyp = 14346 AND MaS_ZrdTyp NOT IN(1616,1617)
+		WHERE d.Zasob &gt; 0 AND ((d.Typ = 2 AND @Wykorzystanie = 0) OR (@Wykorzystanie = 1 AND d.Typ IN(4,13))) 
+
+		INSERT INTO @Dokumenty
+		SELECT MaS_GIDNumer, MaS_GIDLp, MaS_SubGIDLp, D.Poziom, d.Identyfikator, d.Jednostka, d.TwrNumer, MaS_Ilosc, MaS_MagTyp, MaS_MagNumer, MaS_DstNumer, MaS_DstLp
+		FROM @Drzewo d
+		JOIN CDN.MagSElem ON  MaS_ZlcNumer = D.Czynnosc AND MaS_GIDNumer = d.Zasob AND MaS_ZlcTyp = 14345 AND MaS_ZrdTyp NOT IN(1616,1617)
+		WHERE d.Zasob &gt; 0 AND d.Typ = 7 
+
+		INSERT INTO @Dokumenty
+		SELECT MaS_GIDNumer, MaS_GIDLp, MaS_SubGIDLp, D.Poziom, d.Identyfikator, d.Jednostka, d.TwrNumer, MaS_Ilosc, MaS_MagTyp, MaS_MagNumer, MaS_DstNumer, MaS_DstLp
+		FROM @Drzewo d
+		JOIN CDN.Rezerwacje ON Rez_GIDNumer = D.Zasob 
+		JOIN CDN.MagSElem ON MaS_ZrdNumer = Rez_GIDNumer AND MaS_ZrdTyp = Rez_GIDTyp AND MaS_GIDNumer = D.Zasob AND MaS_ZlcTyp = 14345 AND MaS_ZrdTyp NOT IN(1616,1617)
+		WHERE d.Zasob &gt; 0 AND d.Typ = 8
+
+		INSERT INTO @Drzewo
+		(Poziom, DokTyp, DokNumer, DokLp, DokSubLp, Kod, Ilosc, Jednostka, Typ, Proces, Czynnosc, Realizuje, Obiekt, Zasob, Ojciec, Identyfikator, Uruchomiona, IkonaZasobu, 
+		DstTyp, DstNumer, DstLp, DstSubLp, DstGidNr, MaterialDla, TwrNumer, Zrodlowy, Nadzlecenie, MagTyp, MagNumer, DataW, DokObcy, KntTyp, KntNumer, DokStan, DokNieKsiegowac, DokZaksiegowano, DokSpiTyp,
+		DokAktywny, DokTrNLp, DokFiskalny, DokKonTyp, CzyDostawa,PTZId)
+		SELECT d.Poziom+1, MaN_GIDTyp,d.Numer,d.Lp,d.SubLp,
+		CDN.NumerDokumentuZ(MaN_GIDTyp,0,MaN_GIDNumer,MaN_TrNNumer,MaN_TrNRok,MaN_TrNSeria, MaN_TrNMiesiac,0,0,MaN_WMS),d.Ilosc,d.Jednostka,2,
+		0,0,0,0, 0, 0, d.Identyfikator+CAST(MaN_Data3 AS VARCHAR) + right(space(10)+convert(varchar,MaN_GIDNumer),10)+right(space(10)+convert(varchar,d.Lp),10)+right(space(10)+convert(varchar,d.SubLp),10), 
+		0, 0, Dst_TrnTyp,Dst_TrnNumer,Dst_TrnLp,Dst_SubTrnLp, Dst_GIDNumer, @MaterialDla, d.TwrNumer, @Zrodlowy , '', d.MagTyp, d.MagNumer, MaN_Data3, '',
+		MaN_KntTyp, MaN_KntNumer, MaN_Stan, 0, 0, 0, MaN_Aktywny, MaN_TrNLp, 0, 0,
+		CASE WHEN MaN_GIDNumer = Dst_TrnNumer AND MaN_GIDTyp = Dst_TrnTyp THEN 1 ELSE 0 END, 0
+		FROM @Dokumenty d		
+		JOIN CDN.MagNag ON d.Numer = MaN_GIDNumer
+		JOIN CDN.Dostawy ON Dst_GIDNumer = D.DstNumer AND Dst_GIDLp = d.DstLp
+	END
+
+	IF @Wykorzystanie = 0
+		INSERT INTO @Drzewo
+		(Poziom, DokTyp, DokNumer, DokLp, DokSubLp, Kod, Ilosc, Jednostka, Typ, Proces, Czynnosc, Realizuje, Obiekt, Zasob, Ojciec, Identyfikator, Uruchomiona, IkonaZasobu, 
+		DstTyp, DstNumer, DstLp, DstSubLp, DstGidNr, MaterialDla, TwrNumer, Zrodlowy, Nadzlecenie, MagTyp, MagNumer, DataW, DokObcy, KntTyp, KntNumer, DokStan, DokNieKsiegowac, DokZaksiegowano, DokSpiTyp,
+		DokAktywny, DokTrNLp, DokFiskalny, DokKonTyp, CzyDostawa,PTZId)
+		SELECT d.Poziom+1,14346,d.Zasob,0,0,d.Kod,
+		Z.PZA_Ilosc,d.Jednostka,CASE WHEN PCZ_Realizuje &gt; 0 THEN CASE WHEN Z.PZA_TypZasobu = 0 THEN 4 ELSE 13 END ELSE CASE WHEN ISNULL(PTZ_TypZasobu,-1) = 0 THEN 10 ELSE 11 END END,
+		d.Proces,d.Czynnosc,d.Realizuje,d.Obiekt, Z.PZA_Id, d.Zasob, d.Identyfikator+right(space(10)+convert(varchar,Z.PZA_Id),10), d.Uruchomiona, d.IkonaZasobu, 14346,Z.PZA_Id, 0, 0, 0, @MaterialDla, S.PZA_TwrNumer, @Zrodlowy , '',  
+		208,z.PZA_MagNumer, 0, '',0,0, 0, 0, 0, 0, 0, 0, 0, 0, 0,S.PZA_TechnologiaZasob
+		FROM @Drzewo d
+		JOIN CDN.ProdZasoby S ON S.PZA_Id = D.Zasob
+		LEFT JOIN CDN.ProdZwiazanePolprodukty ON d.Zasob = PZP_PZAIDPlanowany
+		JOIN CDN.ProdZasoby Z ON Z.PZA_Id IN (S.PZA_Zasob,PZP_PZAIDWykonany)
+		LEFT JOIN CDN.ProdTechnologiaZasoby ON PTZ_Id = Z.PZA_TechnologiaZasob
+		JOIN CDN.ProdCzynnosci ON PCZ_Id = Z.PZA_Czynnosc
+		JOIN CDN.ProdZlecenia ON PZL_Id = Z.PZA_PZLId
+		WHERE d.Zasob &gt; 0 AND d.Typ in(3,11)	
+
+	RETURN
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,58 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="ProdPlanowane"></A><PRE>
+          <FONT SIZE="2"><I>/* ProdPlanowane */</I><BR>
+CREATE FUNCTION CDN.ProdPlanowane (@Proces int,@Zlecenie int,@Oddzial int,@PCZPartia INT = 0,@PPCPartia INT = 0)
+RETURNS TABLE
+as
+return
+  select 
+  case PTZ_TypZasobu when 0 then PTZ_Id else PTZ_TechnologiaZasob end Zasob,
+    (isnull(P.PZA_Ilosc,0)-
+	case 
+	when PCZ_Realizuje = 0 and PTZ_TypZasobu = 0
+			   then isnull((select sum(PZP_Ilosc) from cdn.ProdZwiazanePolprodukty where PZP_PZAIDWykonany = P.PZA_ID),0)
+	when PCZ_Realizuje = 0 and PTZ_TypZasobu = 1
+			   then isnull((select sum(PZP_Ilosc) from cdn.ProdZwiazanePolprodukty where PZP_PZAIDPlanowany = P.PZA_ID),0)
+	WHEN PCZ_Realizuje &gt; 0 then
+		case 
+		when PZA_TypZasobu = 0 THEN isnull((select sum(S.PZA_Ilosc) from CDN.ProdZasoby S where S.PZA_Zasob=P.PZA_Id),0)
+			+isnull((select sum(PZP_Ilosc) from cdn.ProdZwiazanePolprodukty where PZP_PZAIDWykonany = P.PZA_Id),0) --MF - zrealizowany ProdZasób może być związany poprzez PZA_Zasob lub poprzez tabelę ProdZwiazanePolprodukty
+		ELSE 0 
+		END 
+		+isnull((select sum(TrS_Ilosc) from CDN.TraSElem inner join Cdn.TraElem on TrE_GIDNumer=TrS_GIDNumer AND TrE_GIDLp=TrS_GIDLp
+                                where TrS_ZlcTyp=14346 and TrS_ZlcNumer=P.PZA_Id and P.PZA_TwrNumer = TrE_TwrNumer),0)
+    end -- -  TID: 175833  isnull(sum(PZE_Ilosc),0)
+    ) * (case PTZ_TypZasobu when 0 then 1 else -1 end) Ilosc,
+    case PTZ_TypZasobu when 0 then /*PCZ_TerminRozpoczecia%1073741824 + PCZ_CzasRealizacji%1073741824*/ PCZ_TerminZakonczenia else PCZ_TerminRozpoczecia end Termin,
+    C.PCZ_Proces Proces, PZL_Id Zlecenie, PCZ_Oddzial Oddzial,
+    PCZ_Id Czynnosc, PCZ_TechnologiaCzynnosc TechnologiaCzynnosc,
+    PCZ_TerminRozpoczecia TerminRozpoczecia, PCZ_CzasRealizacji CzasRealizacji
+  from CDN.ProdCzynnosci C
+  INNER JOIN CDN.ProdProcesy ON PPC_Id = C.PCZ_Proces
+  inner join CDN.ProdZlecenia L on PZL_Id=C.PCZ_PZLId and PZL_DataZamkniecia=0
+  inner join CDN.ProdTechnologiaCzynnosci on PTC_Id=PCZ_TechnologiaCzynnosc
+  INNER join CDN.ProdTechnologiaZasoby on PTZ_TechnologiaCzynnosc=PTC_Id --and (PCZ_Realizuje=0 /*or PTZ_Id=PZA_TechnologiaZasob*/)
+  left outer join CDN.ProdZasoby P on PZA_Czynnosc=PCZ_Id and PTZ_Id=PZA_TechnologiaZasob
+  where ((PTZ_TypZasobu=0 AND (ISNULL(PZA_TypZasobu,0) = 0 or ISNULL(PZA_Planowany,0) = 1)) or (PTZ_TechnologiaZasob&lt;&gt;0 and isnull(PZA_Zasob,0)=0 and PCZ_Realizuje &lt;&gt; 0) or (PCZ_Realizuje = 0 and PTZ_TechnologiaZasob&lt;&gt;0 and PZA_Planowany = 1)) -- (PTZ_TypZasobu=0 or (PTZ_TechnologiaZasob&lt;&gt;0 and isnull(PZA_Zasob,0)=0))
+    and (isnull(@Proces,0)=0 or PTZ_ZrodloZasobu&lt;&gt;0 or PCZ_Proces=@Proces)
+    and (isnull(@Zlecenie,0)=0 or PTZ_ZrodloZasobu&gt;1 or C.PCZ_PZLId=@Zlecenie)
+    and (isnull(@Oddzial,0)=0 or PTZ_ZrodloZasobu&lt;&gt;2 or PCZ_Oddzial=@Oddzial) AND @PCZPartia IN (null,C.PCZ_PZEPartia) AND @PPCPartia IN (null,PPC_PZEPartia)
+  group by C.PCZ_Id, C.PCZ_Realizuje, C.PCZ_Ilosc, C.PCZ_TerminRozpoczecia, C.PCZ_TerminZakonczenia, C.PCZ_CzasRealizacji, 
+    C.PCZ_Oddzial, C.PCZ_TechnologiaCzynnosc, PZL_Id, PTZ_Id, PTZ_Ilosc, PTZ_IloscAtr,PTZ_IloscFormat,PTZ_TypZasobu,
+    PTC_Ilosc, PTC_IloscAtr, PTC_Technologia,C.PCZ_Proces, PTZ_TypZasobu, PTZ_TechnologiaZasob, PZA_Id, PZA_Ilosc,PZA_TwrNumer,PZA_Planowany,PZA_TypZasobu
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

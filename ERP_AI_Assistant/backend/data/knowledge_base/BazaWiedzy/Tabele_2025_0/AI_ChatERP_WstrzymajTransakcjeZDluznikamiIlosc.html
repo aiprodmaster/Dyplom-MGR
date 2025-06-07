@@ -1,0 +1,55 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="AI_ChatERP_WstrzymajTransakcjeZDluznikamiIlosc"></A><PRE>
+          <FONT SIZE="2"><I>/* AI_ChatERP_WstrzymajTransakcjeZDluznikamiIlosc */</I><BR>
+CREATE PROCEDURE CDN.AI_ChatERP_WstrzymajTransakcjeZDluznikamiIlosc @IloscNajwiekszych INT
+AS
+BEGIN
+	DECLARE @KntZTrNumer INT
+	SELECT @KntZTrNumer = CASE WHEN CDN.PolaczenieInfo(5) = 0 THEN NULL ELSE CDN.PolaczenieInfo(5) END
+
+	DECLARE @DluznicySuma TABLE (SumaPlatnosci DECIMAL(15, 2), KntNumer INT);
+
+	INSERT INTO @DluznicySuma
+	SELECT SUM(ISNULL(platnosci, 0)) SumaPlatnosci, TrP_KntNumer
+	FROM (
+		SELECT TrP_Pozostaje * CASE WHEN TrP_KursM = 0 THEN 1 ELSE TrP_KursL / TrP_KursM END Platnosci, TrP_Waluta, TrP_NrKursu, TrP_KntNumer
+		FROM CDN.TraPlat
+		WHERE TrP_KntTyp = 32 AND TrP_KntNumer &lt;&gt; 0 AND TrP_Rozliczona = 0 AND TrP_Termin &lt; DATEDIFF(d, '18001228', GETDATE()) AND TrP_JestLimitCelowy = 0 AND TrP_Typ = 2
+		) aaa
+	GROUP BY TrP_KntNumer
+	HAVING SUM(ISNULL(platnosci, 0)) &gt; 0
+
+	UPDATE cdn.Kntkarty
+	SET Knt_BlokadaTransakcji = 1, Knt_LastTransLockDate = DATEDIFF(S,'19900101',GETDATE()),
+	Knt_ZTrNumer = ISNULL(@KntZTrNumer,Knt_ZTrNumer), Knt_ZTrTyp = (CASE WHEN @KntZTrNumer IS NULL THEN Knt_ZTrTyp ELSE 128 END), 
+	Knt_ZTrFirma = (CASE WHEN @KntZTrNumer IS NULL THEN Knt_ZTrFirma ELSE Knt_GIDFirma  END) 
+	WHERE Knt_GIDNumer IN (
+			SELECT TOP (@IloscNajwiekszych) KntNumer
+			FROM @DluznicySuma
+			ORDER BY SumaPlatnosci DESC
+			)
+	IF EXISTS(SELECT * FROM @DluznicySuma, CDN.KntKarty	WHERE KntNumer = Knt_GIDNumer)
+		--SELECT TOP (@IloscNajwiekszych) CONCAT (Knt_NipE, '|', SumaPlatnosci, '|', Knt_Akronim, '|', Knt_Nazwa1) Nazwa
+		SELECT TOP (@IloscNajwiekszych) CONCAT ('', '|', SumaPlatnosci, '|', Knt_Akronim, '|', '') Nazwa
+		FROM @DluznicySuma, CDN.KntKarty
+		WHERE KntNumer = Knt_GIDNumer
+		ORDER BY SumaPlatnosci DESC
+	ELSE
+		SELECT 'Brak kontrahenta' AS Uwaga
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

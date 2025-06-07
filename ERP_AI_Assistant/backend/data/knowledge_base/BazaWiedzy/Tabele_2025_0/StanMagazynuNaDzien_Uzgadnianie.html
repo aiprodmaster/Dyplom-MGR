@@ -1,0 +1,158 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[StanMagazynuNaDzien_Uzgadnianie]"></A><PRE>
+          <FONT SIZE="2"><I>/* [StanMagazynuNaDzien_Uzgadnianie] */</I><BR>
+CREATE PROCEDURE [CDN].[StanMagazynuNaDzien_Uzgadnianie] (@Data int, @Data2 int, @CDN_MagSesja int
+, @CDN_MagWatek int, @CDN_Filtr varchar(2048)='1=1', @Konto varchar(30)
+, @PZ smallint, @PZI smallint, @PKA smallint, @FZ smallint, @PW smallint, @WZ smallint, @WZE smallint
+, @FS smallint, @FSE smallint, @FW smallint, @PA smallint, @WKA smallint, @RW smallint, @RS smallint, @RA smallint
+, @FRR smallint, @BO smallint, @BOA smallint, @MM smallint, @DP smallint, @KK smallint, @dekrety smallint
+, @spinacze smallint, @MMP smallint, @MMW smallint)
+AS
+DECLARE @MAGTyp SMALLINT
+SET NOCOUNT ON
+
+SET @MAGTyp = 208
+
+CREATE TABLE #TmpTwrKarty
+(
+        GIDNumer int
+        PRIMARY KEY(GIDNumer)
+)
+
+IF IsNull(@CDN_Filtr,'')=''
+  EXEC (N'Insert Into #TmpTwrKarty Select TwrKarty.Twr_GIDNumer FROM CDN.TwrKarty TwrKarty WHERE TwrKarty.Twr_Typ in (1,2)');
+Else
+  EXEC (N'Insert Into #TmpTwrKarty Select TwrKarty.Twr_GIDNumer FROM CDN.TwrKarty TwrKarty WHERE TwrKarty.Twr_Typ in (1,2) AND ' + @CDN_Filtr);
+
+SET NOCOUNT OFF
+
+
+SELECT
+IsNull(DokSprzedaz.Wartosc,0) as Wartosc,
+left(convert(varchar(10),CDN.TsTodate(TrN_DataMag,0),121),10) As DataDokumentu,
+IsNull(TrnDokument,'') As TrnDokument,
+TrN_Zaksiegowano As TrnZaksiegowano,
+TrS_gidtyp as trngidtyp,
+TrS_gidnumer as trngidnumer,
+DekDokument as DekDok,
+IsNull(Dekrety.DekretKwota,0) as DekKwota,
+DT_Konto as Konto,
+NumerDekretu as NrDek,
+dateadd(d, DataZapisu,'18001228') as DataZapisu
+FROM
+(
+  SELECT
+  sum(ISNULL(CDN.TrSKsiegowa(TrS_KosztKsiegowy,TrS_Ilosc,TrN_GIDTyp,TrN_GIDNumer,TrS_GIDLp,TrS_SubGIDLp,TrS_ZwrTyp,TrN_Stan,TrN_ZmodyfikowanoZasob),0)) AS Wartosc,
+  max(Trn_DataMag) as Trn_DataMag,
+  max(case when TrN_Stan in (1,2) then '(b) ' else '' end+CDN.NumerDokumentu(TrN_GIDTyp,TrN_SpiTyp,TrN_TrNTyp,TrN_TrNNumer,TrN_TrNRok,TrN_TrNSeria,TrN_TrnMiesiac)) as TrnDokument,
+  TrS_GIDTyp, TrS_GIDNumer,
+  max(TrN_Zaksiegowano) as TrN_Zaksiegowano
+  FROM
+  #TmpTwrKarty
+  JOIN CDN.TwrKarty ON Twr_GIDNumer=GIDNumer
+  JOIN CDN.TraElem  ON Twr_GIDNumer=TrE_TwrNumer
+  JOIN CDN.TraSElem ON TrS_GIDNumer=TrE_GIDNumer AND TrS_GIDLp=TrE_GIDLp AND TrS_MagTyp=@MAGTyp
+  JOIN CDN.MagWybor ON TrS_MagNumer=MgW_MagNumer AND MgW_SesjaID=@CDN_MagSesja AND MgW_Watek=@CDN_MagWatek
+  JOIN CDN.TraNag   ON TrN_GIDNumer=TrE_GIDNumer
+  WHERE TrN_DataMag&gt;=@Data2 and TrN_DataMag&lt;=@Data
+  group by TrS_GIDTyp, TrS_GIDNumer
+  UNION
+  SELECT
+  sum(ISNULL(CDN.TrSKsiegowa(TrS_KosztKsiegowy,TrS_Ilosc,A.TrN_GIDTyp,A.TrN_GIDNumer,TrS_GIDLp,TrS_SubGIDLp,TrS_ZwrTyp,A.TrN_Stan,A.TrN_ZmodyfikowanoZasob),0)) AS Wartosc,
+  max(B.Trn_DataMag) as Trn_DataMag,
+  max(case when B.TrN_Stan in (1,2) then '(b) ' else '' end+CDN.NumerDokumentu(B.TrN_GIDTyp,B.TrN_SpiTyp,B.TrN_TrNTyp,B.TrN_TrNNumer,B.TrN_TrNRok,B.TrN_TrNSeria,B.TrN_TrnMiesiac)) as TrnDokument,
+  max(B.TrN_GIDTyp) as TrS_GIDTyp,
+  max(B.TrN_GIDNumer) as TrS_GIDNumer,
+  max(B.TrN_Zaksiegowano) as TrN_Zaksiegowano
+  FROM
+  #TmpTwrKarty
+  JOIN CDN.TwrKarty ON Twr_GIDNumer=GIDNumer
+  JOIN CDN.TraElem  ON Twr_GIDNumer=TrE_TwrNumer
+  JOIN CDN.TraSElem ON TrS_GIDNumer=TrE_GIDNumer AND TrS_GIDLp=TrE_GIDLp AND TrS_MagTyp=@MAGTyp
+  JOIN CDN.MagWybor ON TrS_MagNumer=MgW_MagNumer AND MgW_SesjaID=@CDN_MagSesja AND MgW_Watek=@CDN_MagWatek
+  JOIN CDN.TraNag A ON A.TrN_GidNumer=TrE_GIDNumer
+  JOIN CDN.TraNag B ON A.TrN_KonNumer=B.TrN_GIDNumer OR A.TrN_SpiNumer=B.TrN_GIDNumer
+  WHERE A.TrN_DataMag&gt;=@Data2 and A.TrN_DataMag&lt;=@Data and (A.TrN_SPINumer&gt;0 or A.TrN_KONNumer&gt;0) and TrS_GIDTyp in (1489,1497,2001,2009,2034,2042)
+  and ((@spinacze = 1) or (B.TrN_GIDTyp not in (2033, 2041, 1521, 1529, 2037, 2045, 1520, 1528, 1603, 1604) and @spinacze=0))
+  group by B.TrN_GIDNumer
+)As DokSprzedaz
+full outer join
+(
+  select
+  [DataZapisu] = MAX(DT_DataDekr),
+  [DekDokument] = max(CDN.NumerDokumentu(TrN_GIDTyp,TrN_SpiTyp,TrN_TrNTyp,TrN_TrNNumer,TrN_TrNRok,TrN_TrNSeria,TrN_TrnMiesiac)),
+  [DekretKwota] = sum(case when dt_dc = 2 then dt_kwota*-1 else dt_kwota end),
+  [DT_Konto] = max(DT_Konto),
+  [NumerDekretu] =
+  case when max(bos_gidtyp) in (7680,7681,7682,7683)
+       then CDN.NumerDokumentuK(max(bon_gidtyp), max(bos_gidlp), 0, max(bon_numer), cast(left(max(bon_rokmiesiac),4) as int), '', cast(right(max(bon_rokmiesiac),2) as int),max(BON_OkrSymbol),0,0,0,0)
+       else CDN.NumerDekretu(dzk_bufor,dzk_dziennik,dzk_rok,dzk_miesiac,dzk_rmnumer,0,dzk_prosty,dzk_OkrSymbol)
+  end,
+  [Zro_TrnTyp]=isnull(Zro_TrnTyp,0), [Zro_TrnNumer]=isnull(Zro_TrnNumer,0), [bos_gidtyp] = max(bos_gidtyp)
+  from CDN.okresy			
+	join CDN.Konta on KKS_OkresID = okr_id
+  join cdn.Dekrety 
+	on dt_dataDekr  between OKR_Poczatek and OKR_Koniec	and DT_KKSNumer = kks_gidnumer
+  join cdn.Dziennik
+	on Dzk_gidNumer = Dt_Gidnumer
+left outer join cdn.BilansOtwarciaSElem on dzk_gidtyp=bos_dzktyp and dzk_GidNumer=BOS_dzknumer AND bos_gidtyp in (7680, 7681, 7682, 7683)
+left outer join cdn.BilansOtwarciaNag on BON_GIDTyp=BOS_GIDTyp AND BON_GIDNumer=BOS_GIDNumer
+left outer join cdn.Zrodla on zro_dttyp = 432 and Dt_GidNumer = Zro_DtNumer and zro_dtlp = 0
+left outer join cdn.TraNag on Zro_TrnTyp = Trn_GidTyp and Zro_TrnNumer = Trn_GidNumer
+left outer join cdn.Obiekty on Zro_TrnTyp = Ob_GidTyp
+
+where
+((@Data2 between OKR_Poczatek and OKR_Koniec) or (@Data between OKR_Poczatek and OKR_Koniec) or 
+(OKR_Koniec &lt; @Data and Okr_Poczatek &gt; @Data2))
+and 
+dt_DataDekr between @DAta2 and @Data
+and KKS_Konto = @konto
+
+group by Zro_TrnTyp, Zro_TrnNumer, dzk_dziennik, dzk_rmnumer, dzk_bufor, dzk_rok, dzk_miesiac,dzk_prosty, DZK_OkrSymbol
+)AS Dekrety
+
+on Dekrety.Zro_TrnTyp = DokSprzedaz.TrS_GidTyp and Dekrety.Zro_TrnNumer = DokSprzedaz.TrS_GidNumer
+where
+((@dekrety = 1 and TrS_gidtyp is null and bos_gidtyp is null)
+or (TrS_gidtyp in (1489,1497) and @PZ=1)
+or (TrS_gidtyp in (1490,1498) and @PZI=1)
+or (TrS_gidtyp in (2002,2010) and @PKA=1)
+or (TrS_gidtyp in (1521,1529) and @FZ=1)
+or (TrS_gidtyp in (1617,1625) and @PW=1)
+or (TrS_gidtyp in (2001,2009) and @WZ=1)
+or (TrS_gidtyp in (2005,2013) and @WZE=1)
+or (TrS_gidtyp in (2033,2041) and @FS=1)
+or (TrS_gidtyp in (2037,2045) and @FSE=1)
+or (TrS_gidtyp in (2036,2044) and @FW=1)
+or (TrS_gidtyp in (2034,2042) and @PA=1)
+or (TrS_gidtyp in (2000,2008) and @WKA=1)
+or (TrS_gidtyp in (1616,1624) and @RW=1)
+or (TrS_gidtyp in (2039,2047) and @RS=1)
+or (TrS_gidtyp in (2035,2043) and @RA=1)
+or (@dekrety = 1 and bos_gidtyp in (7680,7681) and @BO=1)
+or (@dekrety = 1 and bos_gidtyp in (7682,7683) and @BOA=1)
+or (TrS_gidtyp in (1520,1528) and @FRR=1)
+or (TrS_gidtyp = 1600 and @MM=1)
+or (TrS_gidtyp = 2004 and @DP=1)
+or (TrS_gidtyp = 2003 and @KK=1)
+or (TrS_gidtyp = 1604 and @MMP=1)
+or (TrS_gidtyp = 1603 and @MMW=1))
+order by trngidtyp, trngidnumer
+
+DROP TABLE #TmpTwrKarty
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

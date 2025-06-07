@@ -1,0 +1,108 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[FakturySprzedazyVatJPK]"></A><PRE>
+          <FONT SIZE="2"><I>/* [FakturySprzedazyVatJPK] */</I><BR>
+create procedure [CDN].[FakturySprzedazyVatJPK] (@miesiac tinyint, @rok smallint, @ponnumer int, @strona tinyint = 0) as
+begin
+
+	declare @Typ_FW		int = 2036
+	declare @Typ_FWK    int = 2044	
+	declare @Typ_FWS	int = 3379
+	declare @Typ_FKS	int = 3387
+
+	declare @e_SPR_nNieEksportowy                    tinyint = 1       -- nie eksportowy
+	declare @e_SPR_nEksportowyVat0                   tinyint = 2       -- eksportowy VAT0%
+	declare @e_SPR_nEksportowyVatDowolny             tinyint = 3       -- eksportowy VAT dowolny
+	declare @e_SPR_nEksportowyVatDowolnyKorekta      tinyint = 4       -- korekta vat dowolny  -&gt; vat eksportowy
+	declare @e_SPR_nEksportowyVat0Korekta            tinyint = 5       -- korekta vat eksportowy -&gt; vat dowolny
+	declare @e_SPR_nWewnatrzwspolnotowyVat0D         tinyint = 6       -- Wewnątrzwspólnotowy dostawa Vat 0
+	declare @e_SPR_nWewnatrzwspolnotowyVatDowolnyD   tinyint = 7       -- Wewnątrzwspólnotowy dostawa Vat dowolny
+	declare @e_SPR_nWewnatrzwspolnotowyVat0DT        tinyint = 8       -- Wewnątrzwspólnotowa dostawa, trójstronna Vat 0,
+	declare @e_SPR_nWewnatrzwspolnotowyVatDowolnyDT  tinyint = 9       -- Wewnątrzwspólnotowa dostawa, trójstronna Vat dowolny,
+	declare @e_SPR_nWewnatrzwspolnotowyVat0N         tinyint = 10      -- Wewnątrzwspólnotowe nabycie Vat 0
+	declare @e_SPR_nWewnatrzwspolnotowyVatDowolnyN   tinyint = 11      -- Wewnątrzwspólnotowe nabycie Vat dowolny
+	declare @e_SPR_nWewnatrzwspolnotowyVat0NT        tinyint = 12      -- Wewnątrzwspólnotowe nabycie, trójstronne Vat 0
+	declare @e_SPR_nWewnatrzwspolnotowyVatDowolnyNT  tinyint = 13      -- Wewnątrzwspólnotowe nabycie, trójstronne Vat dowolny
+	declare @e_SPR_nImportowyVat0FW                  tinyint = 14      -- eksportowy VAT0% dla FWS
+	declare @e_SPR_nImportowyVatDowolnyFW            tinyint = 15      -- eksportowy VAT dowolny dla FWS
+	declare @e_SPR_nWewnatrzwspolnotowyVatDowolnyDKorekta   tinyint = 16      -- korekta wewnątrzwspólnotowy dostawa Vat dowolny
+	declare @e_SPR_nWewnatrzwspolnotowyVat0DKorekta         tinyint = 17      -- korekta wewnątrzwspólnotowy dostawa Vat 0
+	declare @e_SPR_nWewnatrzwspolnotowyVatDowolnyDTKorekta  tinyint = 18      -- korekta wewnątrzwspólnotowa dostawa trójstronna Vat dowolny
+	declare @e_SPR_nWewnatrzwspolnotowyVat0DTKorekta        tinyint = 19      -- korekta wewnątrzwspólnotowa dostawa trójstronna Vat 0
+	declare @e_SPR_nEksportowyNabywca                       tinyint = 20      -- podatnikiem jest nabywca
+	declare @e_SPR_nDostawaOpodatkowanaWWsp                 tinyint = 21      -- dostawa opodatkowana poza terytorium kraju
+	declare @e_SPR_nTaxFree                                 tinyint = 22      -- tax free
+	declare @e_SPR_nDostawaOpodatkowanaInne                 tinyint = 23      -- dostawa opodatkowana poza terytorium kraju
+	declare @e_SPR_nEksportowyNabywcaWsp					tinyint = 24      --podatnikiem jest Nabywca (transakcja Wewnątrzwspólnotowa)
+	declare @e_SPR_nEksportowyNabywcaInne					tinyint = 25      --podatnikime jest Nabywca (transakcja Inna zagranicznia)
+	
+	declare @g_ksi_lUwzgledniajNieopodatkowane tinyint =  0
+	declare @g_ksi_lUwzgledniajZakup0zw tinyint =  0
+	select @g_ksi_lUwzgledniajNieopodatkowane = CAST(KON_Wartosc as int) from cdn.Konfig where Kon_Numer = 2056
+	select @g_ksi_lUwzgledniajZakup0zw = CAST(KON_Wartosc as int) from cdn.Konfig where Kon_Numer = 2071
+
+
+	--declare @miesiac tinyint = 5, @rok smallint = 2021, @ponnumer int = 53
+	-------------------------------------------------------------------------------------------------------------------------------------
+		
+	select KnA_GIDNumer, KnA_Nip, KnA_Akronim, min(VatTyp) VatTyp, DataNaDzien from
+	(
+		SELECT KnA_GIDNumer, KnA_Nip, KnA_Akronim, TrN_VatTyp VatTyp, KnA_NipPrefiks, KnA_Kraj, TrN_Data2 DataNaDzien
+		FROM CDN.PodElemNagListy
+			LEFT JOIN CDN.TraNag ON TrN_GIDTyp = PEN_ObiTyp AND TrN_GIDNumer = PEN_ObiNumer
+			LEFT JOIN CDN.TraVat ON TRV_GIDTyp = TRN_GIDTyp AND TRV_GIDNumer = TRN_GIDNumer 				
+			LEFT JOIN CDN.TraSVat ON TRV_GIDTyp = TSV_GIDTyp AND TRV_GIDNumer = TSV_GIDNumer AND TrV_GIDLp = TSV_GIDLp
+			LEFT JOIN CDN.KntAdresy ON TRN_KNANumer = KnA_GIDNumer
+		WHERE PEN_PONNumer = @ponnumer
+			and not (KnA_PlatnikVat=0 and KnA_RolnikRyczaltowy=1)
+			and (@strona = 0 OR (@strona &gt; 0 and TrN_VatTyp = @strona))
+						
+		UNION ALL
+				
+		SELECT case when SAN_GIDTyp = 3376 then isnull(k2.KnA_GIDNumer, 0) else isnull(k1.KnA_GIDNumer, 0) end
+			, case when SAN_GIDTyp = 3376 then isnull(k2.KnA_Nip,'') else isnull(k1.KnA_Nip,'') end
+			, case when SAN_GIDTyp = 3376 then isnull(k2.KnA_Akronim,'') else isnull(k1.KnA_Akronim,'') end
+			, SaN_VatTyp
+			, case when SAN_GIDTyp = 3376 then isnull(k2.KnA_NipPrefiks,'') else isnull(k1.KnA_NipPrefiks,'') end
+			, case when SAN_GIDTyp = 3376 then isnull(k2.KnA_Kraj,'') else isnull(k1.KnA_Kraj,'') end
+			, SaN_DataZgloszenia
+		FROM CDN.PodElemNagListy
+			LEFT JOIN CDN.SadNag ON SAN_GIDTyp = PEN_ObiTyp AND SAN_GIDNumer = PEN_ObiNumer			
+			LEFT JOIN CDN.TraVAT ON TRV_GIDTyp = SAN_GIDTyp AND TRV_GIDNumer = SAN_GIDNumer
+			LEFT JOIN CDN.TraSVat ON TRV_GIDTyp = TSV_GIDTyp AND TRV_GIDNumer = TSV_GIDNumer AND TrV_GIDLp = TSV_GIDLp
+			LEFT JOIN CDN.KntAdresy k1 ON SAN_KNANumer = k1.KnA_GIDNumer
+			LEFT JOIN CDN.KntAdresy k2 ON SaN_DstAdres = k2.KnA_GIDNumer
+		WHERE PEN_PONNumer = @ponnumer
+			and 
+			(
+				(SAN_GIDTyp = 3376 and not (k2.KnA_PlatnikVat=0 and k2.KnA_RolnikRyczaltowy=1))
+				or
+				(SAN_GIDTyp &lt;&gt; 3376 and not (k1.KnA_PlatnikVat=0 and k1.KnA_RolnikRyczaltowy=1))
+			)
+			and (@strona = 0 OR (@strona &gt; 0 and SaN_VatTyp = @strona))
+
+	)    as aa 
+	where (KnA_NipPrefiks = 'PL' OR (KnA_NipPrefiks = '' and KNA_Kraj = 'PL')) 
+		and KnA_NIP like '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]'
+	group by KnA_Nip, KnA_GIDNumer, KnA_Akronim, DataNaDzien
+	order by VatTyp
+	-------------------------------------------------------------------------------------------------------------------------------------     
+	
+set nocount off	
+END	
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

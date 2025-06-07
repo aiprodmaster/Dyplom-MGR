@@ -1,0 +1,204 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[ZamElem_InsertUpdatePunkty]"></A><PRE>
+          <FONT SIZE="2"><I>/* [ZamElem_InsertUpdatePunkty] */</I><BR>
+CREATE TRIGGER [CDN].[ZamElem_InsertUpdatePunkty] ON [CDN].[ZamElem]
+FOR INSERT
+	, UPDATE
+AS
+
+SET NOCOUNT ON
+
+IF UPDATE (ZaE_Punkty) 
+	IF EXISTS ( SELECT * FROM CDN.PunktyKonfig WHERE DATEDIFF(d, '18001228', GETDATE()) BETWEEN PuK_OkresOd AND PuK_OkresDo )
+	BEGIN
+		UPDATE CDN.KntKarty
+		SET Knt_PunktyOdebr = Knt_PunktyOdebr + iPunkty - dPunkty
+		FROM CDN.KntKarty
+		INNER JOIN (
+			SELECT ZaN_KntNumer
+				, ZaN_KntTyp
+				, SUM(i.ZaE_Punkty) iPunkty
+				, SUM(isnull(d.ZaE_Punkty, 0)) dPunkty
+			FROM inserted i
+			LEFT JOIN deleted d
+				ON d.ZaE_GIDNumer = i.ZaE_GIDNumer
+					AND d.ZaE_GIDLp = i.ZaE_GIDLp
+			INNER JOIN CDN.ZamNag
+				ON i.ZaE_GIDNumer = ZaN_GIDNumer
+			GROUP BY ZaN_KntNumer
+				, ZaN_KntTyp
+			) Suma
+			ON Knt_GIDNumer = ZaN_KntNumer
+				AND ZaN_KntTyp = 32
+	END
+
+SET NOCOUNT OFF
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[ZamElem_DeletePunkty]"></A><PRE>
+          <FONT SIZE="2"><I>/* [ZamElem_DeletePunkty] */</I><BR>
+CREATE TRIGGER [CDN].[ZamElem_DeletePunkty] ON [CDN].[ZamElem]
+FOR DELETE
+AS
+
+SET NOCOUNT ON
+
+IF EXISTS ( SELECT * FROM CDN.PunktyKonfig WHERE DATEDIFF(d, '18001228', GETDATE()) BETWEEN PuK_OkresOd AND PuK_OkresDo )
+BEGIN
+
+UPDATE ZaEO SET ZAEO.ZaE_Punkty = ZAEO.ZaE_Punkty + ROUND(ZaEK.ZaE_Ilosc * (select TOP 1 PuK_NagrodaPunkty from cdn.PunktyKonfig where PuK_Nagroda = 1 and PuK_ObiTyp = ZaEO.ZaE_TwrTyp
+                and PuK_ObiNumer = ZaEO.ZaE_TwrNumer  and PuK_OkresOd &lt;= ZaN_DataWystawienia and PuK_OkresDo &gt;= ZaN_DataWystawienia
+                 order by PuK_DataModyfikacji desc ),2)
+FROM deleted ZaEK
+INNER JOIN CDN.ZamZamLinki ON ZZL_ZSGidNumer = ZaEK.ZaE_GIDNumer AND ZZL_ZSGidLp = ZaEK.ZaE_GIDLp AND ZZL_ZSGidTyp = ZAEK.ZaE_GIDTyp AND ZZL_Kierunek = 32
+INNER JOIN CDN.ZamElem ZaEO ON ZZL_ZZGidNumer = ZaEO.ZaE_GIDNumer AND ZZL_ZZGidLp = ZaEO.ZaE_GIDLp AND ZZL_ZZGidTyp = ZAEO.ZaE_GIDTyp 
+INNER JOIN CDN.ZamNag ON ZAEO.ZaE_GIDNumer = ZaN_GIDNumer
+where  ZaEK.ZaE_Nagroda &gt; 0
+
+UPDATE CDN.KntKarty
+SET Knt_PunktyOdebr = Knt_PunktyOdebr - dPunkty
+FROM CDN.KntKarty
+INNER JOIN (
+	SELECT ZaN_KntNumer
+		, ZaN_KntTyp
+		, SUM(d.ZaE_Punkty) dPunkty
+	FROM deleted d
+	INNER JOIN CDN.ZamNag
+		ON d.ZaE_GIDNumer = ZaN_GIDNumer
+	WHERE d.ZaE_Punkty &lt;&gt; 0
+		AND ZaN_Stan &amp; 32 &lt;&gt; 32 --anulowane
+	GROUP BY ZaN_KntNumer
+		, ZaN_KntTyp
+	) Suma
+	ON Knt_GIDNumer = ZaN_KntNumer
+		AND ZaN_KntTyp = 32
+
+END
+
+SET NOCOUNT OFF
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[ZamNag_UpdatePunkty]"></A><PRE>
+          <FONT SIZE="2"><I>/* [ZamNag_UpdatePunkty] */</I><BR>
+CREATE TRIGGER [CDN].[ZamNag_UpdatePunkty] ON [CDN].[ZamNag]
+FOR UPDATE
+AS
+
+SET NOCOUNT ON
+
+IF UPDATE (ZaN_KntNumer) OR UPDATE (ZaN_KntTyp) -- zmiana kontrahenta, nowemu trzeba odjąć, staremu dodać
+	IF EXISTS ( SELECT * FROM CDN.PunktyKonfig WHERE DATEDIFF(d, '18001228', GETDATE()) BETWEEN PuK_OkresOd AND PuK_OkresDo )
+	BEGIN
+		UPDATE CDN.KntKarty
+		SET Knt_PunktyOdebr = Knt_PunktyOdebr + Suma
+		FROM CDN.KntKarty
+		INNER JOIN (
+			SELECT KntNumer
+				, KntTyp
+				, SUM(Ptk) Suma
+			FROM (
+				SELECT isnull(SUM(ie.ZaE_Punkty), 0) Ptk
+					, ZaN_KntNumer KntNumer
+					, ZaN_KntTyp KntTyp
+				FROM inserted i
+				INNER JOIN cdn.ZamElem ie
+					ON ie.ZaE_GIDNumer = i.ZaN_GIDNumer
+				GROUP BY i.ZaN_KntNumer
+					, i.ZaN_KntTyp
+			
+				UNION ALL
+			
+				SELECT - isnull(SUM(de.ZaE_Punkty), 0) Ptk
+					, ZaN_KntNumer
+					, ZaN_KntTyp
+				FROM deleted d
+				INNER JOIN cdn.ZamElem de
+					ON de.ZaE_GIDNumer = d.ZaN_GIDNumer
+				GROUP BY d.ZaN_KntNumer
+					, d.ZaN_KntTyp
+				) a
+			GROUP BY KntNumer
+				, KntTyp
+			) b
+			ON Knt_GIDNumer = b.KntNumer
+				AND b.KntTyp = 32
+	END
+
+IF UPDATE (ZaN_Stan)
+	IF EXISTS ( SELECT * FROM CDN.PunktyKonfig WHERE DATEDIFF(d, '18001228', GETDATE()) BETWEEN PuK_OkresOd AND PuK_OkresDo )
+	BEGIN
+		UPDATE CDN.KntKarty
+		SET Knt_PunktyOdebr = Knt_PunktyOdebr - Ptk
+		FROM CDN.KntKarty
+		INNER JOIN (
+			SELECT isnull(SUM(ie.ZaE_Punkty), 0) Ptk
+				, ZaN_KntNumer KntNumer
+				, ZaN_KntTyp KntTyp
+			FROM inserted i
+			INNER JOIN cdn.ZamElem ie
+				ON ie.ZaE_GIDNumer = i.ZaN_GIDNumer
+			WHERE ZaN_Stan &amp; 32 = 32 --anulowanie
+			GROUP BY i.ZaN_KntNumer
+				, i.ZaN_KntTyp
+			) b
+			ON Knt_GIDNumer = b.KntNumer
+				AND b.KntTyp = 32
+	END
+
+SET NOCOUNT OFF
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[KntKarty_InsertUpdatePunkty]"></A><PRE>
+          <FONT SIZE="2"><I>/* [KntKarty_InsertUpdatePunkty] */</I><BR>
+CREATE TRIGGER [CDN].[KntKarty_InsertUpdatePunkty] ON [CDN].[KntKarty]
+FOR INSERT
+	, UPDATE
+AS
+
+SET NOCOUNT ON
+
+IF UPDATE (Knt_Punkty) OR UPDATE (Knt_PunktyNalicz) OR UPDATE (Knt_PunktyOdebr) OR UPDATE (Knt_PunktyKorekta) 
+	IF EXISTS ( SELECT * FROM CDN.PunktyKonfig WHERE DATEDIFF(d, '18001228', GETDATE()) BETWEEN PuK_OkresOd AND PuK_OkresDo )
+	BEGIN
+		UPDATE a
+		SET a.Knt_Punkty = CASE WHEN i.Knt_PunktyNalicz + i.Knt_PunktyOdebr + i.Knt_PunktyKorekta &lt; 0 THEN 0 ELSE i.Knt_PunktyNalicz + i.Knt_PunktyOdebr + i.Knt_PunktyKorekta END
+		FROM CDN.KntKarty a
+		INNER JOIN inserted i
+			ON a.Knt_GIDNumer = i.Knt_GIDNumer
+		LEFT JOIN deleted d
+			ON d.Knt_GIDNumer = i.Knt_GIDNumer
+		WHERE isnull(d.Knt_Punkty,0) &lt;&gt; i.Knt_Punkty
+			OR isnull(d.Knt_PunktyNalicz,0) &lt;&gt; i.Knt_PunktyNalicz
+			OR isnull(d.Knt_PunktyOdebr,0) &lt;&gt; i.Knt_PunktyOdebr
+			OR isnull(d.Knt_PunktyKorekta,0) &lt;&gt; i.Knt_PunktyKorekta
+	END
+
+SET NOCOUNT OFF
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

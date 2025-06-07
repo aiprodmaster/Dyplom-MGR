@@ -1,0 +1,84 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[POS_EksportZgody]"></A><PRE>
+          <FONT SIZE="2"><I>/* [POS_EksportZgody] */</I><BR>
+CREATE PROCEDURE [CDN].[POS_EksportZgody]
+	@rowVersion bigint,
+	@PointOfSaleId int
+AS
+BEGIN
+SET NOCOUNT ON;	
+	
+	declare @Typ_Zgoda int = 6560,
+			@Typ_Knt int = 32,
+			@Typ_Osoba int = 8211
+    declare @GIDY TABLE(Typ int,Numer int, lp int,WaNCzasModyfikacji int, KntBylWyslany int, PsaDataDodania int)
+	declare @Zgody TABLE(GUID nvarchar(41),ConsentHeaderId int,CustomerId nvarchar(41),ContactId nvarchar(41),ConsentDate datetime,WithdrawalDate datetime,WithdrawalReasonId int,IsActive nvarchar(5), Zgo_CzasModyfikacji bigint)
+	declare @PckID INT = (select pck_picoid from cdn.PicoKonfig join cdn.picostanowiska on psa_pckid=pck_picoid where psa_id=@PointOfSaleId)
+
+	INSERT INTO @GIDY
+	select distinct 32,KntGidNumer,0, KntWaNCzasModyfikacji, max(oddzialBylWyslany), max(PSaDataDodania) from cdn.POS_OddzialyDoEksportu(@PointOfSaleId, @rowVersion) cross apply cdn.POS_KntDoEksportu(PSaID,0) where juzNieWysylany = 0 group by KntGidNumer, KntWaNCzasModyfikacji
+
+	INSERT INTO @GIDY
+	select distinct 8211,kns_kntnumer,kns_kntlp ,0,KntBylWyslany,PsaDataDodania
+	from cdn.KntOsoby 
+	join @GIDY on kns_kntnumer=Numer
+
+
+	INSERT INTO @Zgody
+	select distinct
+		zgo_GUID as [@GUID],
+		Zgo_RodzajZgody as [@ConsentHeaderId],
+		knt_GUID as [@CustomerGUID],
+		kns_GUID as [@ContactPersonGUID],
+		-- as [@AddressHeaderId] NULL
+		-- as [@ContactId] NULL 
+		DateAdd(d,Zgo_DataUdzielenia,convert(datetime,'28-12-1800',105))  as [@ConsentDate],
+		case when Zgo_DataWycofania=0 then null else  DateAdd(d,Zgo_DataWycofania,convert(datetime,'28-12-1800',105)) end as [@WithdrawalDate],
+		case when Zgo_PowodWycofania = 0 then null else Zgo_PowodWycofania end as [@WithdrawalReasonId],
+		case when Zgo_DataUdzielenia &lt;= DateDiff(d, convert(datetime,'28-12-1800',105),getdate()) and (Zgo_DataWycofania &gt; DateDiff(d, convert(datetime,'28-12-1800',105),getdate()) OR Zgo_DataWycofania = 0) then 'true' else 'false' end as [@IsActive],
+		case when @PointOfSaleId is null and KntBylWyslany = 0 and PsaDataDodania &gt; Zgo_CzasModyfikacji and PsaDataDodania &gt; isnull(WaNCzasModyfikacji,0) then PsaDataDodania else
+		(CASE WHEN Zgo_CzasModyfikacji &gt;= isnull(WaNCzasModyfikacji,0) THEN Zgo_CzasModyfikacji else WaNCzasModyfikacji end)end 
+	from @GIDY
+	join cdn.Zgody on Zgo_ObiNumer = Numer and Zgo_ObiTyp = Typ and Zgo_Obilp = lp
+	join cdn.Slowniki on Zgo_RodzajZgody = Slw_Id
+	left join cdn.KntKarty on Knt_GIDNumer = Numer AND Knt_GIDTyp = Typ and lp = 0
+	left join cdn.KntOsoby on KnS_KntNumer = Numer and 8211 = Typ and KnS_KntLp = lp
+	where (knt_GUID is not null and typ=32 or kns_GUID is not null and typ=8211) AND
+	((CASE WHEN Zgo_CzasModyfikacji &gt;= isnull(WaNCzasModyfikacji,0) THEN Zgo_CzasModyfikacji else WaNCzasModyfikacji end) &gt; @rowVersion OR (@PointOfSaleId is null and KntBylWyslany = 0))
+
+			
+
+
+	SELECT isnull((select max(Zgo_CzasModyfikacji) from @Zgody),@rowVersion) AS [@RowVersion]
+		,(		
+			select 
+				GUID as [@GUID],
+				ConsentHeaderId as [@ConsentHeaderId],
+				CustomerId as [@CustomerGUID],
+				ContactId as [@ContactPersonGUID],
+				ConsentDate as [@ConsentDate],
+				WithdrawalDate as [@WithdrawalDate],
+				WithdrawalReasonId as [@WithdrawalReasonId],
+				IsActive as [@IsActive]
+			from @Zgody
+			for xml path('Consent'), type)
+	for xml path('Consents')
+	SET NOCOUNT OFF;	
+
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

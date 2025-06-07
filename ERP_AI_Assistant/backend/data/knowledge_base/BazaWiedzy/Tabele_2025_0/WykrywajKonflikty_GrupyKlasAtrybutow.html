@@ -1,0 +1,72 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="WykrywajKonflikty_GrupyKlasAtrybutow"></A><PRE>
+          <FONT SIZE="2"><I>/* WykrywajKonflikty_GrupyKlasAtrybutow */</I><BR>
+CREATE PROCEDURE CDN.WykrywajKonflikty_GrupyKlasAtrybutow
+@SourceName  VARCHAR(255),
+@SourceDatabase  VARCHAR(255),
+@SameServer	TINYINT
+AS
+BEGIN
+
+DECLARE @sql varchar(4000)
+DECLARE @sqlJoinOptima varchar(max)
+
+IF EXISTS (SELECT * FROM TEMPDB..SYSOBJECTS WHERE ID = OBJECT_ID('TEMPDB..##KONFLIKTY') AND TYPE = 'U')
+    DROP TABLE ##KONFLIKTY
+
+CREATE TABLE ##KONFLIKTY(
+	ID INT IDENTITY(1,1) NOT NULL,
+	OPTIMAID INT, 
+	OPTIMANAZWA VARCHAR(41), 	
+	XLOPTIMAID INT,
+	XLID INT, 	
+	XLNAZWA VARCHAR(40), 
+	XLPowiazanaWXL INT
+	) 
+
+	IF @SameServer = 0 
+		SET @sqlJoinOptima = ' FULL JOIN ##KONFLIKTYGrKlAtrOpt oAKpl '
+	ELSE
+		SET @sqlJoinOptima = ' FULL JOIN ['+@SourceName+'].['+@SourceDatabase+'].CDN.OAtrybutygrupy oAKpl '
+
+SELECT @sql = 
+	N'
+	insert into ##KONFLIKTY
+	SELECT    
+    ISNULL(oAKpl.ATG_AtgId,0) as OptimaID,
+    ISNULL(oAKpl.ATG_Nazwa,'''') as OptimaNazwa,    
+    ISNULL(xlAKpl.AKp_OptimaId,0) as XLOptimaID,
+    ISNULL(xlAKpl.AKp_Id,0) as XLID,
+    ISNULL(xlAKpl.AKp_Nazwa,'''') as XLNazwa,
+    case
+       when not exists(select 1 from cdn.AtrybutyObiekty where AtO_AtKId = -xlAKpl.AKp_Id and AtO_GIDTyp = 944) then -1    
+       when exists(select 1 from cdn.AtrybutyObiekty where AtO_AtKId = -xlAKpl.AKp_Id and AtO_GIDTyp = 944) and 
+            exists(select 1 from cdn.AtrybutyObiekty where AtO_AtKId = -xlAKpl.AKp_Id and AtO_GIDTyp &lt;&gt; 944) then 1
+       when exists(select 1 from cdn.AtrybutyObiekty where AtO_AtKId = -xlAKpl.AKp_Id and AtO_GIDTyp = 944) and
+            not exists(select 1 from cdn.AtrybutyObiekty where AtO_AtKId = -xlAKpl.AKp_Id and AtO_GIDTyp &lt;&gt; 944) then 0
+     else -1       
+     end as XLPowiazanaWXL 
+FROM CDN.AtrybutyKomplety xlAKpl
+    ' + @sqlJoinOptima + ' 
+    ON isnull(xlAKpl.Akp_OptimaId,0) = isnull(oAKpl.ATG_AtgId,0) '
+
+EXEC (@sql)
+
+
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,135 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="KontrolaIlosciWZWM"></A><PRE>
+          <FONT SIZE="2"><I>/* KontrolaIlosciWZWM */</I><BR>
+CREATE function CDN.KontrolaIlosciWZWM(
+	@p_TWRGidNumer INT,
+	@p_FrsId INT,
+	@p_FrsIdW INT,
+	@p_magNumer INT,
+	@p_typDok SMALLINT,
+	@p_biezacadata INT,
+	@RezNumer INT
+)
+RETURNS decimal(18,4)
+ AS
+BEGIN
+	declare @retval decimal(18,4),
+			@Ilosc decimal(18,4),
+			@Ilosc2 decimal(18,4),
+			@kontrolujRezerwacje tinyint,
+			@chronologiaRezerwacji tinyint,
+			@dataRez INT,
+			@priorytetRez INT,
+			@dataWaznosciRez int,
+			@dataUtwRez int,
+			@zasobowa int,
+			@iloscRez decimal(18,4)
+
+	set @Ilosc = 0
+	set @Ilosc2 = 0
+	
+	--sprawdzanie parametru 'Uwzględniaj rezerwacje' oraz 'Chronologia rezerwacji'
+	select @kontrolujRezerwacje = Dok_UwzgledniajRezerwacje,@chronologiaRezerwacji = Dok_ChronologiaRezerwacji from cdn.dokdefinicje where dok_gidtyp = @p_typDok and dok_frsid = @p_FrsId
+
+	--Obliczanie ilości wynikających z aktywnych, ważnych rezerwacji ilościowych, bez rozpoczętej realizacji 
+	--Pobranie priorytetu i daty realizacji aktualnej rezerwacji
+	select 
+		@iloscRez = rez_ilosc - rez_zrealizowano - rez_iloscmag ,
+		@zasobowa = case when rez_dstnumer &lt;&gt; 0 then 1 else 0 end, 
+		@dataUtwRez=Rez_DataRezerwacji, 
+		@dataWaznosciRez  = Rez_dataWaznosci,
+		@dataRez = Rez_DataRealizacji, 
+		@priorytetRez = rez_priorytet 
+		from cdn.rezerwacje 
+		where rez_gidnumer = @RezNumer
+
+	--obliczanie dostępnych zasobów
+	SET  @Ilosc = (select IsNull(SUM((case when twz_ilspr &lt;TWZ_Ilosc then Twz_IlSpr else Twz_Ilosc end )),0)
+					FROM cdn.DokDostepneMagazyny(@p_FrSID,@p_FrSIDW,@p_typDok,0,0,0,0)
+					JOIN   cdn.twrzasoby on TwZ_MagNumer = Mag_GIDNumer
+					WHERE TwZ_TwrNumer = @p_TWRGidNumer and TwZ_MagNumer = @p_magNumer)                
+				-									
+				(SELECT IsNull(SUM(rez_ilosc - rez_zrealizowano - rez_iloscmag),0)
+				FROM CDN.Rezerwacje
+				left join CDN.Magazyny on MAG_GIDNumer = Rez_MagNumer
+				WHERE Rez_GIDNumer IN
+					(SELECT Rez_GIDNumer
+					FROM 
+					     cdn.rezerwacje
+						 join cdn.rezmagazyny on rez_gidtyp = rem_reztyp and rez_gidnumer = rem_reznumer
+						 join cdn.DokDostepneMagazyny(@p_FrSID,@p_FrSIDW,@p_typDok,0,0,0,0) on rem_magnumer = Mag_GIDNumer 
+					WHERE   
+					    (Rez_GIDNumer &lt;&gt; @RezNumer or @RezNumer = 0)
+						AND rez_gidtyp = 2576
+						AND Rez_twrnumer = @p_TWRGidNumer
+						AND Rez_DataWaznosci &gt;= @p_biezacadata
+						AND (case when Rez_DstNumer&lt;&gt;0 then 1
+							when Rez_DstNumer=0 and Rez_DataAktywacji &lt;= @p_biezacadata then 1 else 0
+							end) =1
+						AND Rez_aktywna = 1
+						AND Rez_Typ = 1
+						AND Rez_Ilosc &lt;&gt; 0
+						and Rez_MagNumer = @p_magNumer
+						AND (
+							   --Rezerwacje ilosciowe
+							   (@kontrolujRezerwacje = 1 and
+							    Rez_DstNumer = 0 and
+							       (								     
+								     (Rez_Priorytet &lt; @priorytetRez) or 
+								     (Rez_Priorytet = @priorytetRez and @chronologiaRezerwacji = 1 and 
+										(Rez_DataWaznosci &lt; @dataWaznosciRez or (Rez_DataWaznosci = @dataWaznosciRez and Rez_DataRealizacji &lt; @dataRez or (Rez_DataWaznosci = @dataWaznosciRez and Rez_DataRealizacji = @dataRez and Rez_DataRezerwacji &lt; @dataUtwRez)))
+									 ) or
+									 @RezNumer = 0
+								   )
+							   )
+							   or 
+							   --Rezerwacje zasobowe
+							   Rez_DstNumer &lt;&gt; 0
+							 )             
+				))
+						
+	--obliczanie ilości z subelementów (W)ZWM niepowiązanych z handlowymi
+	set @Ilosc2 = 
+		(select isnull(SUM(MaS_Ilosc),0) 
+		from cdn.MagSElem 
+		join CDN.MagNag on MaN_GIDNumer = MaS_GIDNumer
+		where 
+		MaS_TwrNumer = @p_TWRGidNumer 
+		and MaS_MagNumer = @p_magNumer
+		and MaS_GIDTyp = @p_typDok
+		and MaN_WMS &lt;&gt; 0
+		and MaS_ZrdTyp not in (1616,2000,2001,2005,2033,2034,2036,2037,2432,2009,2042,2043,2010,2045,1625,1603,1498,1528,1529,1624,2013,2041,1497)		
+		)
+
+
+	set @retval = @Ilosc - @Ilosc2
+	
+	if @zasobowa = 1 and @dataWaznosciRez &gt;= @p_biezacadata
+	begin
+		if @retval &lt; @iloscRez
+			return @iloscRez
+		else
+			return @retval
+	end
+	
+    --if @retval &lt; 0 
+		--return 0
+
+	return @retval;	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

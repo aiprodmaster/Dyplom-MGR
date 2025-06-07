@@ -1,0 +1,159 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="TstKsiRozlZapisyKB"></A><PRE>
+          <FONT SIZE="2"><I>/* TstKsiRozlZapisyKB */</I><BR>
+CREATE  PROCEDURE CDN.TstKsiRozlZapisyKB (@DataOd int, @DataDo int)
+AS
+/*
+0 - bez bledu
+1 - kwota pozostająca do rozliczenia w walucie rozliczenia jest większa niż kwota na zapisie KB
+2 - kwota pozostająca do rozliczenia w walucie zapisu jest większa niż kwota na zapisie KB
+3 - błedna kwota pozostaje w walucie rozliczenia
+4 - błedna flaga rozliczony
+5 - błedna kwota pozostaje w walucie zapisu KB
+*/
+set nocount on
+
+declare @WalutaSys varchar(3)
+SELECT @WalutaSys = KON_Wartosc FROM CDN.Konfig with(nolock) WHERE KON_Numer = 211
+
+
+select *
+from (
+
+	select 
+		Kaz_GIDNumer,
+	--	Kaz_Kwota,
+	--	Kaz_Pozostaje,
+	--	Kaz_Waluta,
+	
+	--	Kaz_KwotaRoz,
+	--	Kaz_PozostajeRoz,
+	--	Kaz_WalutaRoz,
+		
+	--	Kaz_Rozliczony,
+	--	RozlKwotaWal,
+	--	RozlKwotaSys,
+	
+		case when abs(KAZ_PozostajeRoz) &gt; abs(KAZ_KwotaRoz) then
+			1
+		else
+			case when abs(KAZ_Pozostaje) &gt; abs(KAZ_Kwota) then
+				2
+			else
+				case when abs(KAZ_PozostajeRoz) &lt;&gt; (abs(KAZ_KwotaRoz) - case when KAZ_WalutaRoz = @WalutaSys then RozlKwotaSys else RozlKwotaWal end) then
+					--niewlasciwa kwota pozostaje ROz
+					3
+				else
+					case when KAZ_Rozliczony = 1 and KAZ_PozostajeRoz &lt;&gt; 0 or KAZ_Rozliczony = 0 and KAZ_PozostajeRoz = 0 then 
+						--bledna flaga rozliczony
+						4
+					else
+						case when abs(KAZ_Pozostaje) &lt;&gt; (abs(KAZ_Kwota) - case when KAZ_Waluta = @WalutaSys then RozlKwotaSys else RozlKwotaWal end) then
+							--niewlasciwa kwota pozostaje
+							5
+						else 
+							0
+						end			
+					end
+				end
+			end
+		end blad,
+
+		cdn.NumerDokumentu(784,0,KAZ_RaportBO,KRP_Numer,KAZ_Rok,KAZ_Seria,KAZ_KRPLp) as NumerZapisu,
+	
+		case when abs(KAZ_PozostajeRoz) &gt; abs(KAZ_KwotaRoz) then
+			--kwota pozostaje jest wieksza niz kwota na zapisie
+			'KAZ_PozostajeRoz(' + convert(varchar,KAZ_PozostajeRoz) + ') &gt; ' + 'KAZ_KwotaRoz(' + convert(varchar,KAZ_KwotaRoz) + ')'
+		else
+			case when abs(KAZ_Pozostaje) &gt; abs(KAZ_Kwota) then
+				--kwota pozostaje jest wieksza niz kwota na zapisie 
+				'KAZ_Pozostaje(' + convert(varchar,KAZ_Pozostaje) + ') &gt; ' + 'KAZ_Kwota(' + convert(varchar,KAZ_Kwota) + ')'
+			else
+				case when abs(KAZ_PozostajeRoz) &lt;&gt; (abs(KAZ_KwotaRoz) - case when KAZ_WalutaRoz = @WalutaSys then RozlKwotaSys else RozlKwotaWal end) then
+					--niewlasciwa kwota pozostaje ROz
+					'KAZ_PozostajeRoz(' + convert(varchar, KAZ_PozostajeRoz) + ' &lt;&gt; ' + convert(varchar,(KAZ_KwotaRoz - case when KAZ_WalutaRoz = @WalutaSys then RozlKwotaSys else RozlKwotaWal end)) + ')'
+				else
+					case when KAZ_Rozliczony = 1 and KAZ_PozostajeRoz &lt;&gt; 0 or KAZ_Rozliczony = 0 and KAZ_PozostajeRoz = 0 then 
+						--bledna flaga rozliczony
+						'KAZ_Rozliczony = ' + convert(varchar, KAZ_Rozliczony)
+					else
+						case when abs(KAZ_Pozostaje) &lt;&gt; (abs(KAZ_Kwota) - case when KAZ_Waluta = @WalutaSys then RozlKwotaSys else RozlKwotaWal end) then
+							--niewlasciwa kwota pozostaje
+							'KAZ_Pozostaje(' + convert(varchar, KAZ_Pozostaje) + ' &lt;&gt; ' + convert(varchar,(KAZ_Kwota - case when KAZ_Waluta = @WalutaSys then RozlKwotaSys else RozlKwotaWal end)) + ')'
+						else 
+							''
+						end			
+					end
+				end
+			end		
+		end komunikat
+	from 
+		(
+			select
+				Kaz_GIDNumer,
+				Kaz_Kwota,
+				Kaz_Pozostaje,
+				Kaz_Waluta,
+			
+				Kaz_KwotaRoz,
+				Kaz_PozostajeRoz,
+				Kaz_WalutaRoz,
+				
+				Kaz_Rozliczony,
+				Kaz_Rok,
+				Kaz_Seria,
+				Kaz_KrpLp,
+				Krp_Numer,
+
+				sum(isnull(R2_KwotaWal1,0)) as RozlKwotaWal,
+				sum(isnull(R2_KwotaSys,0)+case when StronaRozl=R2_RKStrona then isnull(R2_RK,0) else 0 end) as RozlKwotaSys,
+				KAZ_RaportBO
+			from cdn.Zapisy 
+				join cdn.Raporty 
+					on Kaz_KrpTyp = Krp_GIDTyp and Kaz_KrpNumer = Krp_GIDNumer
+				left join (select 1 stronaRozl, R2_Dok1Typ R2_DokTyp, R2_Dok1Numer R2_DokNumer, R2_Dok1Lp R2_DokLp, R2_KwotaWal1, R2_KwotaSys, R2_RKStrona, R2_RK
+					from cdn.Rozliczenia
+					where R2_Wycena = 0 and R2_Dok2Typ &lt;&gt; 435
+					union all
+					select 2 StronaRozl, R2_Dok2Typ R2_DokTyp, R2_Dok2Numer R2_DokNumer, R2_Dok2Lp R2_DokLp, R2_KwotaWal1, R2_KwotaSys, R2_RKStrona, R2_RK
+					from cdn.Rozliczenia
+					where R2_Wycena = 0 and R2_Dok1Typ &lt;&gt; 435
+					) a
+						on kaz_gidtyp = r2_DokTyp and kaz_gidnumer = r2_doknumer and kaz_gidlp = r2_doklp
+			where (Kaz_DataZapisu &gt;= @DataOd or isnull(@DataOd,0) = 0) and (Kaz_DataZapisu &lt;= @DataDo or isnull(@DataDo,0) = 0)
+			group by Kaz_GIDNumer,
+				Kaz_Kwota,
+				Kaz_Pozostaje,
+				Kaz_Waluta,
+			
+				Kaz_KwotaRoz,
+				Kaz_PozostajeRoz,
+				Kaz_WalutaRoz,
+				
+				Kaz_Rozliczony,
+				Kaz_Rok,
+				Kaz_Seria,
+				Kaz_KrpLp,
+				Krp_Numer,
+				KAZ_RaportBO
+		) a0
+) a1 
+where blad &lt;&gt; 0
+
+set nocount off
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

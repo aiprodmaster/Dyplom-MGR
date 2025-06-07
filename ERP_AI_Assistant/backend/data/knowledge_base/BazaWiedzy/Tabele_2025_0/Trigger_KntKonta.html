@@ -1,0 +1,160 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="KntKonta_AktTozsamych"></A><PRE>
+          <FONT SIZE="2"><I>/* KntKonta_AktTozsamych */</I><BR>
+create trigger cdn.KntKonta_AktTozsamych
+on cdn.KntKonta
+for insert, update
+as
+begin
+
+
+	if not Update(KKT_KKSNumer)
+		return
+
+
+
+
+	if exists(
+		select i.KKT_KKSNumer
+		from inserted i 
+			left join deleted d
+				on i.KKT_KntTyp = d.KKT_KntTyp and i.KKT_KntNumer = d.KKT_KntNumer 
+				and i.KKT_OkresID = d.KKT_OkresID and i.KKT_SmkID = d.KKT_SmkID
+				and ((not d.KKT_KntNumer is null and i.KKT_KKSNumer &lt;&gt; d.KKT_KKSNumer and d.KKT_KKSNumer &lt;&gt; 0)		
+				or (d.KKT_KntNumer is null and i.KKT_KKSNumer = 0))
+	)
+		return --podmiana konta na karcie knt albo dodawanie wpisu kntkonta bez podania konta
+
+
+
+
+
+	-- zaktualizuj w okresie poprzednim
+	update k set 
+		k.KKS_NastNumer = i.KKT_KKSNumer
+	from inserted i
+		join cdn.KntKonta kkt
+			on i.KKT_SmkID = kkt.KKT_SmkID and i.KKT_KntTyp = kkt.KKT_KntTyp and i.KKT_KntNumer = kkt.KKT_KntNumer
+		join cdn.Konta k
+			on kkt.KKT_KKSNumer = k.KKS_GIDNumer
+	
+	where k.KKS_NastNumer = 0 and	
+		exists (select o1.Okr_ID 
+			from cdn.Okresy o1
+				join cdn.Okresy o2
+					on o1.Okr_Poczatek - o2.Okr_Koniec = 1
+			where o1.Okr_Id = i.KKT_OkresID and o2.Okr_ID = kkt.KKT_OkresID)
+
+
+	if @@Error &lt;&gt; 0 
+	begin
+		Rollback tran
+		raiserror('Błąd aktualizacji kont tożsamych',16,1)
+		return
+	end
+
+
+	-- zaktualizuj z okresem nastepnym
+	update k set 
+		k.KKS_NastNumer = kkt.KKT_KKSNumer
+	from inserted i
+		join cdn.KntKonta kkt
+			on i.KKT_SmkID = kkt.KKT_SmkID and i.KKT_KntTyp = kkt.KKT_KntTyp and i.KKT_KntNumer = kkt.KKT_KntNumer
+		join cdn.Konta k
+			on i.KKT_KKSNumer = k.KKS_GIDNumer
+	
+	where k.KKS_NastNumer = 0 and
+		exists (select o1.Okr_ID 
+			from cdn.Okresy o1
+				join cdn.Okresy o2
+					on o2.Okr_Poczatek - o1.Okr_Koniec = 1
+			where o1.Okr_Id = i.KKT_OkresID and o2.Okr_ID = kkt.KKT_OkresID)
+
+
+	if @@Error &lt;&gt; 0 
+	begin
+		Rollback tran
+		raiserror('Błąd aktualizacji kont tożsamych',16,1)
+		return
+	end
+
+
+	-- zwiazane w okresie poprzednim
+	update zw2 set 
+		zw2.KKS_NastNumer = zw1.KKS_GIDNumer
+	from inserted i
+		join cdn.Konta k1
+			on i.KKT_KKSNumer = k1.KKS_GIDNumer
+		join cdn.Konta zw1
+			on k1.KKS_Konto = zw1.KKS_KZKonto and k1.KKS_OkresID = zw1.KKS_OkresID
+		join cdn.KntKonta kkt
+			on i.KKT_SmkID = kkt.KKT_SmkID and i.KKT_KntTyp = kkt.KKT_KntTyp and i.KKT_KntNumer = kkt.KKT_KntNumer
+		join cdn.Konta k2
+			on kkt.KKT_KKSNumer = k2.KKS_GIDNumer
+		join cdn.Konta zw2
+			on k2.KKS_Konto = zw2.KKS_KZKonto and k2.KKS_OkresID = zw2.KKS_OkresID and zw1.KKS_Waluta = zw2.KKS_Waluta
+	
+	where zw2.KKS_NastNumer = 0 and
+		exists (select o1.Okr_ID 
+			from cdn.Okresy o1
+				join cdn.Okresy o2
+					on o1.Okr_Poczatek - o2.Okr_Koniec = 1
+			where o1.Okr_Id = i.KKT_OkresID and o2.Okr_ID = kkt.KKT_OkresID)
+
+
+	if @@Error &lt;&gt; 0 
+	begin
+		Rollback tran
+		raiserror('Błąd aktualizacji kont tożsamych',16,1)
+		return
+	end
+
+
+
+	-- zwiazane w okresie nastepnym
+	update zw1 set 
+		zw1.KKS_NastNumer = zw2.KKS_GIDNumer
+	from inserted i
+		join cdn.Konta k1
+			on i.KKT_KKSNumer = k1.KKS_GIDNumer
+		join cdn.Konta zw1
+			on k1.KKS_Konto = zw1.KKS_KZKonto and k1.KKS_OkresID = zw1.KKS_OkresID
+		join cdn.KntKonta kkt
+			on i.KKT_SmkID = kkt.KKT_SmkID and i.KKT_KntTyp = kkt.KKT_KntTyp and i.KKT_KntNumer = kkt.KKT_KntNumer
+		join cdn.Konta k2
+			on kkt.KKT_KKSNumer = k2.KKS_GIDNumer
+		join cdn.Konta zw2
+			on k2.KKS_Konto = zw2.KKS_KZKonto and k2.KKS_OkresID = zw2.KKS_OkresID and zw1.KKS_Waluta = zw2.KKS_Waluta
+	
+	where zw1.KKS_NastNumer = 0 and
+		exists (select o1.Okr_ID 
+			from cdn.Okresy o1
+				join cdn.Okresy o2
+					on o2.Okr_Poczatek - o1.Okr_Koniec = 1
+			where o1.Okr_Id = i.KKT_OkresID and o2.Okr_ID = kkt.KKT_OkresID)
+
+
+	if @@Error &lt;&gt; 0 
+	begin
+		Rollback tran
+		raiserror('Błąd aktualizacji kont tożsamych',16,1)
+		return
+	end
+
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

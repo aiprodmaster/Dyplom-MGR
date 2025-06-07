@@ -1,0 +1,104 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="ProdKosztZmianyFunkcji"></A><PRE>
+          <FONT SIZE="2"><I>/* ProdKosztZmianyFunkcji */</I><BR>
+CREATE FUNCTION CDN.ProdKosztZmianyFunkcji(@Funkcja INT, @ObiektId INT, @TerminOd INT, @TerminId INT,@CzyPoprzedni TINYINT)
+RETURNS DECIMAL(11,4)
+as
+begin
+		DECLARE @Koszt DECIMAL(11,4) = null	
+		IF @CzyPoprzedni = 1
+			
+			SELECT @Koszt = KosztZakonczenia + (KosztZmiany - cast(0.5*KosztZmiany as DECIMAL(16,4))) - PCO_KosztZakonczenia
+			FROM
+			(
+				SELECT 
+				CASE WHEN PCO_Funkcja = @Funkcja THEN NULL WHEN PZL_DataZamkniecia = 0 THEN 0
+				ELSE
+					CASE
+					when POF1.POF_ID is not null or POF2.POF_Id IS not null then 
+						CDN.Prod_WartoscAtr(coalesce(POF1.POF_StawkaZakonczenia,POF2.POF_StawkaZakonczenia), coalesce(POF1.POF_StawkaZakonczeniaAtr,POF2.POF_StawkaZakonczeniaAtr),
+						 14337, @ObiektId, PCZ_TerminRozpoczecia, PCZ_Proces) 
+					Else 0 
+					End
+				END as KosztZakonczenia, 
+				CASE WHEN PCO_Funkcja = @Funkcja THEN 0 WHEN PZL_DataZamkniecia = 0 THEN 0 
+					ELSE CDN.Prod_WartoscAtr(POB_ZmianaStawka, POB_ZmianaStawkaAtr, 14337, POB_ID, PCZ_TerminRozpoczecia, PCZ_Proces) END as KosztZmiany, 
+				CASE WHEN PCO_Funkcja = @Funkcja THEN 0 WHEN PZL_DataZamkniecia = 0 THEN 0 ELSE PCO_KosztZakonczenia END PCO_KosztZakonczenia
+				FROM
+				(
+					SELECT TOP 1 PCO_Id, PCZ_PZLId, PCZ_Oddzial, PCO1.PCO_Funkcja,PCZ_TerminRozpoczecia,PCZ_Proces, PCO_KosztZakonczenia
+					From CDN.ProdCzynnosciObiekty PCO1 
+					join CDN.ProdCzynnosci PCZ1 on PCZ1.PCZ_ID = PCO1.PCO_Czynnosc 
+					join    
+					(
+						select * from cdn.prodczynnosciterminy where PCT_TerminOD &lt; @TerminOd
+						union all 
+						select * from cdn.prodczynnosciterminy where PCT_TerminOD = @TerminOd and PCT_ID&lt; @TerminId
+					) as pct1 ON PCT1.pct_czynnosc = PCO1.pco_czynnosc and (PCT1.pct_id = PCO1.PCO_termin or PCO1.PCO_termin = 0)
+					Where  PCO1.PCO_Obiekt = @ObiektId and PCZ1.PCZ_Realizuje &lt;&gt;0  
+					order by PCT1.PCT_TerminOD desc, PCT1.PCT_ID desc  
+				)  Termin
+				JOIN CDN.ProdObiekty ON POB_Id = @ObiektId			
+				join CDN.ProdZlecenia on Termin.PCZ_PZLId = PZL_ID 
+				left outer join CDN.ProdObiektyFunkcje POF1 
+					on  POF1.POF_Funkcja = Termin.PCO_Funkcja and POF1.POF_Obiekt = @ObiektId and POF1.POF_ObiTyp=14337 AND POF1.POF_Widocznosc IN (2,3) and POF1.POF_Oddzial = Termin.PCZ_Oddzial 
+				left outer join CDN.ProdObiektyFunkcje POF2 
+					on  POF2.POF_Funkcja = Termin.PCO_Funkcja and POF2.POF_Obiekt = @ObiektId and POF2.POF_ObiTyp=14337 AND POF2.POF_Widocznosc IN (2,3) and POF2.POF_Oddzial = 0 
+			) Koszty
+		ELSE
+			SELECT @Koszt = KosztPrzygotowania + (KosztZmiany - cast(0.5*KosztZmiany as DECIMAL(16,4))) - PCO_KosztPrzygotowania
+			FROM
+			(
+				SELECT 
+				CASE WHEN PCO_Funkcja = @Funkcja THEN null WHEN PZL_DataZamkniecia = 0 THEN 0
+				ELSE
+					CASE
+					when POF1.POF_ID is not null or POF2.POF_Id IS not null then 
+						CDN.Prod_WartoscAtr(COALESCE(POF1.POF_StawkaPrzygotowania,POF2.POF_StawkaPrzygotowania), COALESCE(POF1.POF_StawkaPrzygotowaniaAtr, POF2.POF_StawkaPrzygotowaniaAtr)
+						, 14337, @ObiektId, PCZ_TerminRozpoczecia, PCZ_Proces) 
+					Else 0 
+					End
+				END as KosztPrzygotowania, 
+				CASE WHEN PCO_Funkcja = @Funkcja THEN 0 WHEN PZL_DataZamkniecia = 0 THEN 0 ELSE 
+					CDN.Prod_WartoscAtr(POB_ZmianaStawka, POB_ZmianaStawkaAtr, 14337, POB_ID, PCZ_TerminRozpoczecia, PCZ_Proces) END as KosztZmiany, 
+				CASE WHEN PCO_Funkcja = @Funkcja THEN 0 WHEN PZL_DataZamkniecia = 0 THEN 0 ELSE PCO_KosztPrzygotowania END PCO_KosztPrzygotowania
+				FROM
+				(
+					SELECT TOP 1 PCO_Id, PCZ_PZLId, PCZ_Oddzial, PCO1.PCO_Funkcja,PCZ_TerminRozpoczecia,PCZ_Proces, PCO_KosztPrzygotowania
+					From CDN.ProdCzynnosciObiekty PCO1 
+					join CDN.ProdCzynnosci PCZ1 on PCZ1.PCZ_ID = PCO1.PCO_Czynnosc 
+					join    
+					(
+						select * from cdn.prodczynnosciterminy where PCT_TerminOD &gt; @TerminOd
+						union all 
+						select * from cdn.prodczynnosciterminy where PCT_TerminOD = @TerminOd and PCT_ID&gt; @TerminId
+					) as pct1 ON PCT1.pct_czynnosc = PCO1.pco_czynnosc and (PCT1.pct_id = PCO1.PCO_termin or PCO1.PCO_termin = 0)
+					Where  PCO1.PCO_Obiekt = @ObiektId and PCZ1.PCZ_Realizuje &gt;0  
+					order by PCT1.PCT_TerminOD, PCT1.PCT_ID 
+				)  Termin
+				JOIN CDN.ProdObiekty ON POB_Id = @ObiektId			
+				join CDN.ProdZlecenia on Termin.PCZ_PZLId = PZL_ID 
+				left outer join CDN.ProdObiektyFunkcje POF1 
+					on  POF1.POF_Funkcja = Termin.PCO_Funkcja and POF1.POF_Obiekt = @ObiektId and POF1.POF_ObiTyp=14337 AND POF1.POF_Widocznosc IN (2,3) and POF1.POF_Oddzial = Termin.PCZ_Oddzial 
+				left outer join CDN.ProdObiektyFunkcje POF2 
+					on  POF2.POF_Funkcja = Termin.PCO_Funkcja and POF2.POF_Obiekt = @ObiektId and POF2.POF_ObiTyp=14337 AND POF2.POF_Widocznosc IN (2,3) and POF2.POF_Oddzial = 0 
+			) Koszty
+
+		RETURN @Koszt
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,136 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="ype READONLY"></A><PRE>
+          <FONT SIZE="2"><I>/* ype READONLY */</I><BR>
+CREATE PROCEDURE CDN.ProdUruchomPozostaleTerminy @OperacjaPlan INT,@Realizacja INT,@DopiszOpe TINYINT, @ZasobIGniazdo cdn.GIDTableType READONLY
+AS
+begin
+DECLARE @Terminy TABLE(TerminId INT)
+DECLARE @TerminyWyk TABLE(TerminId INT)
+
+DECLARE @Licznik INT
+DECLARE @IdTerm INT
+
+DECLARE @TerminId INT, @TerminR INT
+
+DECLARE @TerminMin INT
+
+DECLARE @IloscTerm INT
+DECLARE @TerminMinPocz INT
+
+DECLARE  @PochodzenieZas TINYINT, @GniazdoRobocze INT, @Zasob INT
+
+SELECT TOP 1 @PochodzenieZas = Typ,@GniazdoRobocze = Firma,@Zasob = Numer FROM @ZasobIGniazdo
+
+INSERT INTO @Terminy
+SELECT PCT_Id
+FROM CDN.ProdCzynnosciTerminy
+WHERE PCT_Czynnosc = @OperacjaPlan
+
+SELECT @IloscTerm = COUNT(*) FROM @Terminy
+
+IF @IloscTerm = 1
+	SELECT TOP 1 @TerminMinPocz = PCT_Id
+	FROM @Terminy
+	JOIN CDN.ProdCzynnosciTerminy ON PCT_Id = TerminId
+	ORDER BY PCT_TerminOd,PCT_TerminDo,PCT_Id
+ELSE
+	SET @TerminMinPocz = 0
+
+INSERT INTO @TerminyWyk
+SELECT PCT_Id
+FROM CDN.ProdCzynnosci
+JOIN CDN.ProdCzynnosciTerminy ON PCT_Czynnosc = PCZ_Id
+WHERE PCZ_Realizuje = @OperacjaPlan
+
+declare terminy_cursor cursor fast_forward for
+SELECT * FROM @Terminy
+
+	open terminy_cursor
+	fetch next from terminy_cursor into @TerminId
+	while @@FETCH_STATUS = 0 
+	begin
+		DECLARE terminyRealiz_cursor CURSOR fast_forward for
+		SELECT DISTINCT TerminId FROM @TerminyWyk
+
+		open terminyRealiz_cursor
+		fetch next from terminyRealiz_cursor into @TerminR
+		while @@FETCH_STATUS = 0 
+		begin
+			SELECT @Licznik =  COUNT(*) FROM
+			(
+				SELECT PCO_Obiekt,PCO_Funkcja
+				FROM cdn.ProdCzynnosciTerminy
+				JOIN CDN.ProdCzynnosciObiekty ON PCO_Termin = PCT_Id OR (PCO_Termin = 0 AND PCO_Czynnosc = PCT_Czynnosc)
+				WHERE PCT_Id = @TerminId
+				EXCEPT
+				SELECT PCO_Obiekt,PCO_Funkcja
+				FROM cdn.ProdCzynnosciTerminy
+				JOIN CDN.ProdCzynnosciObiekty ON PCO_Termin = PCT_Id OR (PCO_Termin = 0 AND PCO_Czynnosc = PCT_Czynnosc)
+				WHERE PCT_Id = @TerminR
+			) Obiekty
+			IF @Licznik = 0
+			BEGIN
+				DELETE FROM @Terminy WHERE TerminId = @TerminId
+				DELETE FROM @TerminyWyk WHERE TerminId = @TerminR 
+				BREAK
+			END
+			fetch next from terminyRealiz_cursor into @TerminR
+		end
+		close terminyRealiz_cursor 
+		deallocate terminyRealiz_cursor
+		fetch next from terminy_cursor into @TerminId
+	end
+	close terminy_cursor 
+	deallocate terminy_cursor
+
+	SELECT TOP 1 @TerminMin = PCT_Id
+	FROM @Terminy
+	JOIN CDN.ProdCzynnosciTerminy ON PCT_Id = TerminId
+	ORDER BY PCT_TerminOd,PCT_TerminDo,PCT_Id
+
+	insert into CDN.ProdCzynnosciTerminy (pct_czynnosc,pct_terminod, pct_termindo, pct_czasrozliczeniowy) 
+    select @Realizacja, DATEDIFF(S,'19900101',GETDATE()), 0, 0
+	SELECT @IdTerm = SCOPE_IDENTITY()
+
+	IF (SELECT COUNT(*) FROM @Terminy) = 0
+		SET @TerminMin = @TerminMinPocz
+
+	IF (@DopiszOpe&amp;4) = 0 OR @Zasob = 0
+	BEGIN
+		IF (@DopiszOpe&amp;2) = 2 AND @Zasob &gt; 0
+		BEGIN
+			insert into CDN.ProdCzynnosciObiekty (PCO_Czynnosc, PCO_Funkcja, PCO_Obiekt, PCO_Termin, PCO_Koszt,PCO_KosztPrzygotowania,PCO_KosztZakonczenia,PCO_Zablokowany,PCO_Pochodzenie )
+			SELECT @Realizacja,PCO_Funkcja,PCO_Obiekt,CASE WHEN PCO_Termin = 0 THEN PCO_Termin ELSE @IdTerm END,PCO_Koszt,PCO_KosztPrzygotowania,PCO_KosztZakonczenia,0, PCO_Pochodzenie
+			FROM CDN.ProdCzynnosciObiekty
+			WHERE PCO_Czynnosc = @OperacjaPlan AND (PCO_Termin = @TerminMin OR PCO_Termin = 0) AND (PCO_Funkcja &lt;&gt; @GniazdoRobocze OR PCO_Pochodzenie = 1)
+		END
+		ELSE
+		BEGIN
+			insert into CDN.ProdCzynnosciObiekty (PCO_Czynnosc, PCO_Funkcja, PCO_Obiekt, PCO_Termin, PCO_Koszt,PCO_KosztPrzygotowania,PCO_KosztZakonczenia,PCO_Zablokowany,PCO_Pochodzenie )
+			SELECT @Realizacja,PCO_Funkcja,PCO_Obiekt,CASE WHEN PCO_Termin = 0 THEN PCO_Termin ELSE @IdTerm END,PCO_Koszt,PCO_KosztPrzygotowania,PCO_KosztZakonczenia,0, PCO_Pochodzenie
+			FROM CDN.ProdCzynnosciObiekty
+			WHERE PCO_Czynnosc = @OperacjaPlan AND (PCO_Termin = @TerminMin OR PCO_Termin = 0)
+		END
+	END
+
+	IF @DopiszOpe &gt; 0 AND @Zasob &gt; 0
+		insert into CDN.ProdCzynnosciObiekty (PCO_Czynnosc, PCO_Funkcja, PCO_Obiekt, PCO_TERMIN, pco_koszt, pco_kosztprzygotowania, pco_kosztzakonczenia,PCO_Zablokowany,PCO_Pochodzenie ) 
+			SELECT @Realizacja, @GniazdoRobocze, @Zasob, 0 , 0, 0, 0, 0, @PochodzenieZas
+            WHERE NOT EXISTS(SELECT * FROM CDN.ProdCzynnosciObiekty WHERE PCO_Obiekt = @Zasob AND PCO_Czynnosc = @Realizacja)
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

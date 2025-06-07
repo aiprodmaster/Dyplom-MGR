@@ -1,0 +1,517 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="OFFLXLSrv_EksportXML"></A><PRE>
+          <FONT SIZE="2"><I>/* OFFLXLSrv_EksportXML */</I><BR>
+CREATE PROCEDURE CDN.OFFLXLSrv_EksportXML
+  @ID		INT               -- ID oddziału offline
+ ,@Opcje	INT               -- Maska opcji eksportu
+ ,@LogID    INT = -1  		  -- ID loga synchronizacji -- @LogID = 0 - nowy log, -1 - nie zapisuj loga (wyświetl) 
+ AS
+	RAISERROR('Procedura OFFLXLSrv_EksportXML nie jest obługiwana na MSSQL 2000',16,1)
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="OFFLXLSrv_EksportXML"></A><PRE>
+          <FONT SIZE="2"><I>/* OFFLXLSrv_EksportXML */</I><BR>
+CREATE PROCEDURE CDN.OFFLXLSrv_EksportXML
+  @ID		INT               -- ID oddziału offline
+ ,@Opcje	INT               -- Maska opcji eksportu
+ ,@LogID    INT = -1  		  -- ID loga synchronizacji -- @LogID = 0 - nowy log, -1 - nie zapisuj loga (wyświetl) 
+ AS
+
+SET ARITHABORT ON
+DECLARE @Opis			VARCHAR(512),
+		@DataStart		VARCHAR(19),
+		@ZapisLoga		BIT
+		
+SELECT @DataStart = CONVERT(VARCHAR(19),GETDATE(),121)
+
+DECLARE	 @ExpKonfig             BIT -- (1)    Eksport konfiguracji (0 - nie, 1 - tak) 
+		,@ExpKnt				BIT -- (2)    Eksport kontrahentów (0 - nie, 1 - tak) 
+		,@ExpKntTyp				BIT -- (4)    Typ eksportu kontrahentów (0 - różnicowy, 1 - pełny)				
+		,@ExpCennik             BIT -- (8)    Eksport cennika (0 - nie, 1 - tak)
+		,@ExpCennikTyp			BIT -- (16)   Typ eksportu cennika (0 - różnicowy, 1 - pełny)				
+		,@ExpPrm				BIT -- (32)   Eksport promocji (0 - nie, 1 - tak)
+		,@ExpPrmTyp				BIT -- (64)   Typ eksportu promocji (0 - różnicowy, 1 - pełny)
+		,@ExpGrup               BIT -- (128)  Eksport grup (0 - nie, 1 - tak)
+		,@ExpGrupTyp            BIT -- (256)  Typ eksportu grup (0 - różnicowy, 1 - pełny)
+		,@ExpClbk				BIT -- (512)  Eksport dodatków (0 - nie, 1 - tak)
+		,@ExpRptWkr				BIT -- (1024) Eksport wydruków/wykresów (0 - nie, 1 - tak)
+		,@ExpStanyZerowe		BIT -- (2048) Eksport stanów zerowych (0 - nie, 1 - tak)
+
+DECLARE  @PcK_Stan				SMALLINT   -- Stan oddziału : (0 - nowy; 1 - wykonano pierwszy eksport; 2 - wykonano pełną synchronizację (import,eksport) )
+		,@Pck_TSSynchr			INT
+		,@Pck_TSSynchrPtw		INT
+		,@Pck_TSSynchrKntPtw	INT
+		,@Pck_TSSynchrTwrPtw	INT
+		,@Pck_TSSynchrPrmPtw	INT
+		,@Pck_TSSynchrGrupPtw	INT
+		,@Pck_Typ				INT
+		,@PcK_TSSynchrDabPtw	INT					
+
+SELECT   @ExpKonfig 	=  @Opcje &amp; 1
+        ,@ExpKnt		= (@Opcje &amp; 2) / 2
+        ,@ExpKntTyp		= (@Opcje &amp; 4) / 4
+        ,@ExpCennik		= (@Opcje &amp; 8) / 8
+        ,@ExpCennikTyp	= (@Opcje &amp; 16) / 16        
+        ,@ExpPrm		= (@Opcje &amp; 32) / 32                
+        ,@ExpPrmTyp		= (@Opcje &amp; 64) / 64        
+        ,@ExpGrup		= (@Opcje &amp; 128) / 128                
+        ,@ExpGrupTyp	= (@Opcje &amp; 256) / 256       
+        ,@ExpClbk		= (@Opcje &amp; 512) / 512                
+        ,@ExpRptWkr		= (@Opcje &amp; 1024) / 1024   
+        ,@ExpStanyZerowe = (@Opcje &amp; 2048) / 2048   
+        
+SELECT   @PcK_Stan = PcK_Stan
+		,@Pck_TSSynchr = DATEDIFF(s,CONVERT(DATETIME,'19900101',121),GETDATE())
+		,@Pck_TSSynchrPtw = Pck_TSSynchrPtw
+		,@Pck_TSSynchrKntPtw  = CASE WHEN @ExpKntTyp = 0 THEN Pck_TSSynchrKntPtw ELSE 0 END
+		,@Pck_TSSynchrTwrPtw  = CASE WHEN @ExpCennikTyp = 0 THEN Pck_TSSynchrTwrPtw ELSE 0 END
+		,@Pck_TSSynchrPrmPtw  = CASE WHEN @ExpPrmTyp = 0 THEN Pck_TSSynchrGrupPtw ELSE 0 END
+		,@Pck_TSSynchrGrupPtw = CASE WHEN @ExpGrupTyp = 0 THEN Pck_TSSynchrGrupPtw ELSE 0 END
+		,@Pck_Typ = Pck_Typ
+FROM CDN.PicoKonfig WHERE PcK_PicoID = @ID
+
+	-- Dane binarne
+	select @PcK_TSSynchrDabPtw=isnull(PcS_TSSynchrPtw,0) from cdn.PicoTimestamp where PcS_PcKID = @ID and PcS_OBITyp = 14400
+
+ UPDATE CDN.PicoKonfig SET PcK_TSSynchr = @Pck_TSSynchr WHERE PcK_PicoId = @ID
+IF @ExpKnt = 1
+	BEGIN
+		UPDATE CDN.PicoKonfig SET PcK_TSSynchrKnt = @Pck_TSSynchr WHERE PcK_PicoId = @ID
+		IF @ExpKntTyp = 0 AND (SELECT PcK_TSSynchrKntPtw FROM CDN.PicoKonfig WHERE PcK_PicoID = @ID) = 0
+			SET @ExpKntTyp = 1
+	END		
+IF @ExpCennik = 1
+	BEGIN	
+		UPDATE CDN.PicoKonfig SET PcK_TSSynchrTwr = @Pck_TSSynchr WHERE PcK_PicoId = @ID
+		IF @ExpCennikTyp = 0 AND (SELECT PcK_TSSynchrTwrPtw FROM CDN.PicoKonfig WHERE PcK_PicoID = @ID) = 0
+			SET @ExpCennikTyp = 1
+	END			
+IF @ExpPrm = 1
+	BEGIN	
+		UPDATE CDN.PicoKonfig SET PcK_TSSynchrPrm = @Pck_TSSynchr WHERE PcK_PicoId = @ID
+		IF @ExpPrmTyp = 0 AND (SELECT PcK_TSSynchrPrmPtw FROM CDN.PicoKonfig WHERE PcK_PicoID = @ID) = 0
+			SET @ExpPrmTyp = 1
+	END			
+IF @ExpGrup = 1
+	BEGIN	
+		UPDATE CDN.PicoKonfig SET PcK_TSSynchrGrup = @Pck_TSSynchr WHERE PcK_PicoId = @ID
+		IF @ExpGrupTyp = 0 AND (SELECT PcK_TSSynchrGrupPtw FROM CDN.PicoKonfig WHERE PcK_PicoID = @ID) = 0
+			SET @ExpGrupTyp = 1
+	END			
+
+ SET @Opcje = @ExpKonfig + 2*@ExpKnt + 4*@ExpKntTyp + 8*@ExpCennik + 16*@ExpCennikTyp + 32*@ExpPrm + 64*@ExpPrmTyp 
+			  + 128*@ExpGrup + 256*@ExpGrupTyp + 512*@ExpClbk + 1024*@ExpRptWkr
+
+UPDATE CDN.PicoKonfig SET PcK_EtapSynchronizacji = 2  WHERE PcK_PicoID = @ID -- etap synchronizacji: eksport
+
+SET @ZapisLoga = CASE WHEN @LogID = -1 THEN 0 ELSE 1 END
+
+/****** Rozpoczęcie eksportu danych ********/
+IF @LogID &lt;=0  /*Log synchronizacji nie istnieje */ 
+	BEGIN
+		SELECT @Opis = 'Synchronizacja danych z oddziałem o ID='+ CAST(@ID AS NVARCHAR(10))
+		EXEC @LogID = CDN.Log_Start @ID,0,@Opis
+	END
+
+SELECT @Opis = 'Eksport danych do oddziału o ID='+ CAST(@ID AS NVARCHAR(10))
+EXEC CDN.Log_OtworzPoziom @LogID, @Opis
+
+IF @Pck_Typ = 5 AND NOT EXISTS(SELECT Kon_Wartosc FROM CDN.Konfig WHERE Kon_Numer = -126)
+BEGIN
+	INSERT INTO CDN.Konfig(Kon_Numer,Kon_Lp,Kon_System,Kon_Status,Kon_Wartosc,Kon_Komentarz,Kon_Archiwalny)
+		VALUES(-126,0,0,0,NEWID(),'Unikalny identyfikator dla bazy danych',0)
+END
+
+SELECT '&lt;ROOT&gt;'
+
+ SELECT  PcK_PicoID             AS [@OddzialID]
+		,PcK_CentrumID          AS [@CentrumID]
+		,1						AS [@Kierunek]
+		,PcK_ASSerwer			AS [@ASSerwer]
+        ,PcK_TSSynchr           AS [@TSSynchr]
+        ,PcK_TSSynchrKnt        AS [@TSSynchrKnt]
+        ,PcK_TSSynchrTwr        AS [@TSSynchrTwr]
+        ,PcK_TSSynchrPrm        AS [@TSSynchrPrm]        
+        ,PcK_TSSynchrGrup       AS [@TSSynchrGrup]
+		,PcK_TSSynchrKnt        AS [@TSSynchrKnt0]
+        ,PcK_TSSynchr           AS [@TSSynchrMag] -- TS dla roznicowo wysylanych obiektow
+        ,PcK_TSSynchr           AS [@TSSynchrSer] -- TS dla roznicowo wysylanych obiektow
+        ,PcK_TSSynchr           AS [@TSSynchrBnk] -- TS dla roznicowo wysylanych obiektow
+        ,PcK_TSSynchr           AS [@TSSynchrKar] -- TS dla roznicowo wysylanych obiektow
+        ,PcK_TSSynchr           AS [@TSSynchrCechy] -- TS dla roznicowo wysylanych obiektow
+        ,PcK_TSSynchr           AS [@TSSynchrFpl] -- TS dla roznicowo wysylanych obiektow
+        ,PcK_TSSynchr           AS [@TSSynchrNtc] -- TS dla roznicowo wysylanych obiektow
+        ,PcK_TSSynchr           AS [@TSSynchrVAT] -- TS dla roznicowo wysylanych obiektow
+        ,PcK_TSSynchr           AS [@TSSynchrJm] -- TS dla roznicowo wysylanych obiektow
+        ,PcK_TSSynchr           AS [@TSSynchrAtrybuty] -- TS dla roznicowo wysylanych obiektow
+        ,PcK_TSSynchr           AS [@TSSynchrOpe] -- TS dla roznicowo wysylanych obiektow
+        ,PcK_TSSynchr           AS [@TSSynchrPrc] -- TS dla roznicowo wysylanych obiektow
+        ,PcK_TSSynchr           AS [@TSSynchrDok] -- TS dla roznicowo wysylanych obiektow
+        ,PcK_TSSynchr           AS [@TSSynchrDab] -- TS dla roznicowo wysylanych obiektow
+        ,PcK_TSSynchr			AS [@TSSynchrDst] -- TS dla roznicowo wysylanych sposobow dostawy
+        ,PcK_TSSynchr			AS [@TSSynchrSLW] -- TS dla roznicowo wysylanych slownikow
+		,PcK_TwGNumer			AS [@TwGNumer]
+        ,@Opcje					AS [@EksportTyp]
+		,KON1.Kon_Wartosc		AS [@FormatNumeracji]
+		,KON2.Kon_Wartosc		AS [@OddzielneListyDO]
+		,KON3.Kon_Wartosc		AS [@BazaID]
+		,PcK_GUID				AS [@OddzialGUID]
+		,KON4.Kon_Wartosc		AS [@StrukturaRabatu]
+		,case when PcK_Stan&lt;2 then KON5.Kon_Wartosc else NULL end AS [@ZatwierdzanieDokInwent]
+		,KON6.Kon_Wartosc		AS [@ObslugaOdwrotnegoObciazenia]
+		,SUBSTRING(KON7.Kon_Wartosc,3,LEN(KON7.Kon_Wartosc))		AS [@StawkaVatOdwrotnegoObciazenia]
+		,SUBSTRING(KON7.Kon_Wartosc,1,1)		AS [@GrupaVatOdwrotnegoObciazenia]
+FROM CDN.PicoKonfig
+LEFT OUTER JOIN CDN.Konfig KON1 ON KON1.Kon_Numer = 992 AND @Pck_Typ = 5
+LEFT OUTER JOIN CDN.Konfig KON2 ON KON2.Kon_Numer = 9995 AND @Pck_Typ = 5 AND @PcK_Stan = 0 --TID[171021]
+LEFT OUTER JOIN CDN.Konfig KON3 ON KON3.Kon_Numer = -126 AND @Pck_Typ = 5
+LEFT OUTER JOIN CDN.Konfig KON4 ON KON4.Kon_Numer = 9980 AND @Pck_Typ = 5
+LEFT OUTER JOIN CDN.Konfig KON5 ON KON5.Kon_Numer = 9937 AND @Pck_Typ = 5
+LEFT OUTER JOIN CDN.Konfig KON6 ON KON6.Kon_Numer = 988 AND @Pck_Typ = 5
+LEFT OUTER JOIN CDN.Konfig KON7 ON KON7.Kon_Numer = 989 AND @Pck_Typ = 5
+WHERE PcK_PicoID = @ID
+FOR XML PATH('INFOBLOK')
+
+IF (@ExpKonfig = 1)
+BEGIN
+	/*** Eksport konfiguracji ***/
+	EXEC CDN.OFFLXLSrv_EksportKonfig @ID, @LogID
+	EXEC CDN.OFFLXLSrv_EksportFRS @ID, @LogID	
+	EXEC CDN.OFFLXLSrv_EksportAtr @ID, @LogID
+	EXEC CDN.OFFLXLSrv_EksportWDR @ID, @LogID
+	/****************************/		 
+END
+
+
+/*** Eksport walut ***/
+
+ EXEC CDN.OFFLXLSrv_EksportWaN @ID, @LogID
+ /************************************/
+
+/*** Eksport potwierdzeń ***/
+IF @Pck_Typ = 5
+	EXEC CDN.OFFLXLSrv_EksportPtwR @ID
+ELSE
+	EXEC CDN.OFFLXLSrv_EksportPtw @ID
+ /************************************/
+
+/*** Eksport rozliczonych płatności ***/
+ EXEC CDN.OFFLXLSrv_EksportPlt @ID, @LogID
+/*************************************/ 
+
+IF (@ExpGrup = 1)
+BEGIN
+	/******* Eksport grup *******/
+	IF @PcK_Typ = 5
+    BEGIN
+		EXEC CDN.OFFLXLSrv_EksportGrup @Pck_TSSynchrGrupPtw, @LogID, @ID
+    END
+    ELSE
+    BEGIN
+       EXEC CDN.OFFLXLSrv_EksportGrup @Pck_TSSynchrGrupPtw, @LogID
+    END 
+	/***************************/
+END
+IF (@ExpKnt = 1)
+BEGIN
+	/*** Eksport kontrahentów ***/
+	EXEC CDN.OFFLXLSrv_EksportKnt @ID, @Pck_TSSynchrKntPtw, 0, @LogID
+	/****************************/
+END
+IF (@ExpCennik = 1)
+BEGIN
+	/***** Eksport towarów  *****/
+	SET @Opcje = 2*@ExpStanyZerowe
+	EXEC CDN.OFFLXLSrv_EksportTwr @ID, @Pck_TSSynchrTwrPtw, @Opcje, @LogID
+	/****************************/
+	/***** Eksport danych binarnych  *****/
+	IF @PcK_Stan = 0 AND @PcK_Typ = 5
+	BEGIN
+		EXEC CDN.OFFLXLSrv_EksportDAB @ID, 0, @LogID	
+	END
+	ELSE
+	BEGIN
+		EXEC CDN.OFFLXLSrv_EksportDAB @ID, @PcK_TSSynchrDabPtw, @LogID
+	END
+	/****************************/
+END
+
+IF (@ExpPrm = 1 AND @Pck_Typ&lt;&gt;5)
+BEGIN
+	/**** Eksport promocji *****/
+	EXEC CDN.OFFLXLSrv_EksportPrm @ID, @Pck_TSSynchrPrmPtw, @LogID
+	/***************************/
+END
+
+/**** Eksport dokumentów*****/
+EXEC CDN.OFFLXLSrv_EksportTrN @ID, @LogID
+/***************************/
+
+/**** Eksport zamówień ****/
+IF @Pck_Typ = 5
+	EXEC CDN.OFFLXLSrv_EksportZaN @ID, @LogID
+/**************************/
+
+/**** Eksport rozliczeń i kompensat *****/
+IF @Pck_Typ=5
+BEGIN
+	EXEC CDN.OFFLXLSrv_EksportROZ @ID, @LogID
+	
+	EXEC CDN.OFFLXLSrv_EksportKMP @ID, @LogID
+	
+	EXEC CDN.OFFLXLSrv_EksportDEL @ID, @LogID
+END
+/****************************/
+
+SELECT '&lt;/ROOT&gt;'
+EXEC CDN.Log_ZamknijPoziom @LogID -- Eksport danych 
+EXEC CDN.Log_Stop @LogID
+
+UPDATE CDN.PicoKonfig SET PcK_EtapSynchronizacji = 0 WHERE PcK_PicoID = @ID -- Etap synchronizacji: bezczynny
+
+IF @ZapisLoga = 0
+	BEGIN
+		SELECT CDN.Log_PobierzXml(@LogID)
+		DELETE FROM CDN.PicoLogNag WHERE PcN_ID = @LogID
+	END
+
+IF @PcK_Stan = 0 -- nowo utworzony oddział
+	BEGIN
+		UPDATE CDN.PicoKonfig SET PcK_Stan = 1  WHERE PcK_PicoID = @ID -- Wykonano pierwszą synchronizację: eksport
+	END
+
+
+	/************ Uaktualnienie TS w tabeli PicoTimeStamp *********************/
+		DECLARE 		@PcsObiTyp				INT
+						,@PckPtwtmp				INT
+						
+		SET @PckPtwtmp = DATEDIFF(s,CONVERT(DATETIME,'19900101',121),GETDATE())
+
+		/* Magazyny */
+		SET @PcsObiTyp	= 208
+		IF	exists(select PcS_ID from cdn.PicoTimestamp where PcS_PcKID = @ID and PcS_OBITyp = @PcsObiTyp)
+		BEGIN
+			UPDATE cdn.PicoTimestamp SET PcS_TSSynchr=@PckPtwtmp where PcS_PcKID = @ID and PcS_OBITyp = @PcsObiTyp
+		END
+		ELSE
+		BEGIN
+			INSERT INTO cdn.PicoTimestamp (PcS_PcKID, PcS_OBITyp, PcS_Opis, PcS_TSSynchr, PcS_TSSynchrPtw, PcS_Skrot) 
+				VALUES (@ID, @PcsObiTyp, 'Magazyny', @PckPtwtmp, 0, '')
+		END
+
+		/* Serie */
+		SET @PcsObiTyp	= 272
+		IF	exists(select PcS_ID from cdn.PicoTimestamp where PcS_PcKID = @ID and PcS_OBITyp = @PcsObiTyp)
+		BEGIN
+			UPDATE cdn.PicoTimestamp SET PcS_TSSynchr=@PckPtwtmp where PcS_PcKID = @ID and PcS_OBITyp = @PcsObiTyp
+		END
+		ELSE
+		BEGIN
+			INSERT INTO cdn.PicoTimestamp (PcS_PcKID, PcS_OBITyp, PcS_Opis, PcS_TSSynchr, PcS_TSSynchrPtw, PcS_Skrot) 
+				VALUES (@ID, @PcsObiTyp, 'Serie', @PckPtwtmp, 0, '')
+		END
+
+
+		/* Banki */
+		SET @PcsObiTyp	= 48
+		IF	exists(select PcS_ID from cdn.PicoTimestamp where PcS_PcKID = @ID and PcS_OBITyp = @PcsObiTyp)
+		BEGIN
+			UPDATE cdn.PicoTimestamp SET PcS_TSSynchr=@PckPtwtmp where PcS_PcKID = @ID and PcS_OBITyp = @PcsObiTyp
+		END
+		ELSE
+		BEGIN
+			INSERT INTO cdn.PicoTimestamp (PcS_PcKID, PcS_OBITyp, PcS_Opis, PcS_TSSynchr, PcS_TSSynchrPtw, PcS_Skrot) 
+				VALUES (@ID, @PcsObiTyp, 'Banki', @PckPtwtmp, 0, '')
+		END
+
+
+		/* Rejestry */
+		SET @PcsObiTyp	= 752
+		IF	exists(select PcS_ID from cdn.PicoTimestamp where PcS_PcKID = @ID and PcS_OBITyp = @PcsObiTyp)
+		BEGIN
+			UPDATE cdn.PicoTimestamp SET PcS_TSSynchr=@PckPtwtmp where PcS_PcKID = @ID and PcS_OBITyp = @PcsObiTyp
+		END
+		ELSE
+		BEGIN
+			INSERT INTO cdn.PicoTimestamp (PcS_PcKID, PcS_OBITyp, PcS_Opis, PcS_TSSynchr, PcS_TSSynchrPtw, PcS_Skrot) 
+				VALUES (@ID, @PcsObiTyp, 'Rejestry', @PckPtwtmp, 0, '')
+		END
+
+		
+		/* Klasy cech i cechy */
+		SET @PcsObiTyp	= 192
+		IF	exists(select PcS_ID from cdn.PicoTimestamp where PcS_PcKID = @ID and PcS_OBITyp = @PcsObiTyp)
+		BEGIN
+			UPDATE cdn.PicoTimestamp SET PcS_TSSynchr=@PckPtwtmp where PcS_PcKID = @ID and PcS_OBITyp = @PcsObiTyp
+		END
+		ELSE
+		BEGIN
+			INSERT INTO cdn.PicoTimestamp (PcS_PcKID, PcS_OBITyp, PcS_Opis, PcS_TSSynchr, PcS_TSSynchrPtw, PcS_Skrot) 
+				VALUES (@ID, @PcsObiTyp, 'Cechy', @PckPtwtmp, 0, '')
+		END
+
+
+		/* Formy płatności */
+		SET @PcsObiTyp	= 736
+		IF	exists(select PcS_ID from cdn.PicoTimestamp where PcS_PcKID = @ID and PcS_OBITyp = @PcsObiTyp)
+		BEGIN
+			UPDATE cdn.PicoTimestamp SET PcS_TSSynchr=@PckPtwtmp where PcS_PcKID = @ID and PcS_OBITyp = @PcsObiTyp
+		END
+		ELSE
+		BEGIN
+			INSERT INTO cdn.PicoTimestamp (PcS_PcKID, PcS_OBITyp, PcS_Opis, PcS_TSSynchr, PcS_TSSynchrPtw, PcS_Skrot) 
+				VALUES (@ID, @PcsObiTyp, 'Formy płatności', @PckPtwtmp, 0, '')
+		END
+
+
+		/* Definicje cen */
+		SET @PcsObiTyp	= 64
+		IF	exists(select PcS_ID from cdn.PicoTimestamp where PcS_PcKID = @ID and PcS_OBITyp = @PcsObiTyp)
+		BEGIN
+			UPDATE cdn.PicoTimestamp SET PcS_TSSynchr=@PckPtwtmp where PcS_PcKID = @ID and PcS_OBITyp = @PcsObiTyp
+		END
+		ELSE
+		BEGIN
+			INSERT INTO cdn.PicoTimestamp (PcS_PcKID, PcS_OBITyp, PcS_Opis, PcS_TSSynchr, PcS_TSSynchrPtw, PcS_Skrot) 
+				VALUES (@ID, @PcsObiTyp, 'Definicje cen', @PckPtwtmp, 0, '')
+		END
+
+
+		/* Stawki VAT */
+		SET @PcsObiTyp	= 624
+		IF	exists(select PcS_ID from cdn.PicoTimestamp where PcS_PcKID = @ID and PcS_OBITyp = @PcsObiTyp)
+		BEGIN
+			UPDATE cdn.PicoTimestamp SET PcS_TSSynchr=@PckPtwtmp where PcS_PcKID = @ID and PcS_OBITyp = @PcsObiTyp
+		END
+		ELSE
+		BEGIN
+			INSERT INTO cdn.PicoTimestamp (PcS_PcKID, PcS_OBITyp, PcS_Opis, PcS_TSSynchr, PcS_TSSynchrPtw, PcS_Skrot) 
+				VALUES (@ID, @PcsObiTyp, 'Stawki VAT', @PckPtwtmp, 0, '')
+		END
+
+		
+		/* Jednostki miary */
+		SET @PcsObiTyp	= 144
+		IF	exists(select PcS_ID from cdn.PicoTimestamp where PcS_PcKID = @ID and PcS_OBITyp = @PcsObiTyp)
+		BEGIN
+			UPDATE cdn.PicoTimestamp SET PcS_TSSynchr=@PckPtwtmp where PcS_PcKID = @ID and PcS_OBITyp = @PcsObiTyp
+		END
+		ELSE
+		BEGIN
+			INSERT INTO cdn.PicoTimestamp (PcS_PcKID, PcS_OBITyp, PcS_Opis, PcS_TSSynchr, PcS_TSSynchrPtw, PcS_Skrot) 
+				VALUES (@ID, @PcsObiTyp, 'Jednostki miary', @PckPtwtmp, 0, '')
+		END
+
+
+		/* Klasy i obiekty atrybutów */
+		SET @PcsObiTyp	= 14416
+		IF	exists(select PcS_ID from cdn.PicoTimestamp where PcS_PcKID = @ID and PcS_OBITyp = @PcsObiTyp)
+		BEGIN
+			UPDATE cdn.PicoTimestamp SET PcS_TSSynchr=@PckPtwtmp where PcS_PcKID = @ID and PcS_OBITyp = @PcsObiTyp
+		END
+		ELSE
+		BEGIN
+			INSERT INTO cdn.PicoTimestamp (PcS_PcKID, PcS_OBITyp, PcS_Opis, PcS_TSSynchr, PcS_TSSynchrPtw, PcS_Skrot) 
+				VALUES (@ID, @PcsObiTyp, 'Atrybuty', @PckPtwtmp, 0, '')
+		END
+
+
+		/* Operatorzy */
+		SET @PcsObiTyp	= 128
+		IF	exists(select PcS_ID from cdn.PicoTimestamp where PcS_PcKID = @ID and PcS_OBITyp = @PcsObiTyp)
+		BEGIN
+			UPDATE cdn.PicoTimestamp SET PcS_TSSynchr=@PckPtwtmp where PcS_PcKID = @ID and PcS_OBITyp = @PcsObiTyp
+		END
+		ELSE
+		BEGIN
+			INSERT INTO cdn.PicoTimestamp (PcS_PcKID, PcS_OBITyp, PcS_Opis, PcS_TSSynchr, PcS_TSSynchrPtw, PcS_Skrot) 
+				VALUES (@ID, @PcsObiTyp, 'Operatorzy', @PckPtwtmp, 0, '')
+		END
+
+		
+		/* Pracownicy */
+		SET @PcsObiTyp	= 944
+		IF	exists(select PcS_ID from cdn.PicoTimestamp where PcS_PcKID = @ID and PcS_OBITyp = @PcsObiTyp)
+		BEGIN
+			UPDATE cdn.PicoTimestamp SET PcS_TSSynchr=@PckPtwtmp where PcS_PcKID = @ID and PcS_OBITyp = @PcsObiTyp
+		END
+		ELSE
+		BEGIN
+			INSERT INTO cdn.PicoTimestamp (PcS_PcKID, PcS_OBITyp, PcS_Opis, PcS_TSSynchr, PcS_TSSynchrPtw, PcS_Skrot) 
+				VALUES (@ID, @PcsObiTyp, 'Pracownicy', @PckPtwtmp, 0, '')
+		END
+
+
+		/* Definicje dokumentów */
+		SET @PcsObiTyp	= 4320
+		IF	exists(select PcS_ID from cdn.PicoTimestamp where PcS_PcKID = @ID and PcS_OBITyp = @PcsObiTyp)
+		BEGIN
+			UPDATE cdn.PicoTimestamp SET PcS_TSSynchr=@PckPtwtmp where PcS_PcKID = @ID and PcS_OBITyp = @PcsObiTyp
+		END
+		ELSE
+		BEGIN
+			INSERT INTO cdn.PicoTimestamp (PcS_PcKID, PcS_OBITyp, PcS_Opis, PcS_TSSynchr, PcS_TSSynchrPtw, PcS_Skrot) 
+				VALUES (@ID, @PcsObiTyp, 'Definicje dokumentów', @PckPtwtmp, 0, '')
+		END
+
+
+		/* Dane binarne */
+		SET @PcsObiTyp	= 14400
+		IF	exists(select PcS_ID from cdn.PicoTimestamp where PcS_PcKID = @ID and PcS_OBITyp = @PcsObiTyp)
+		BEGIN
+			UPDATE cdn.PicoTimestamp SET PcS_TSSynchr=@PckPtwtmp where PcS_PcKID = @ID and PcS_OBITyp = @PcsObiTyp
+		END
+		ELSE
+		BEGIN
+			INSERT INTO cdn.PicoTimestamp (PcS_PcKID, PcS_OBITyp, PcS_Opis, PcS_TSSynchr, PcS_TSSynchrPtw, PcS_Skrot) 
+				VALUES (@ID, @PcsObiTyp, 'Dane binarne', @PckPtwtmp, 0, '')
+		END
+		
+		/* Sposób dostawy */
+		SET @PcsObiTyp	= 976
+		IF	exists(select PcS_ID from cdn.PicoTimestamp where PcS_PcKID = @ID and PcS_OBITyp = @PcsObiTyp)
+		BEGIN
+			UPDATE cdn.PicoTimestamp SET PcS_TSSynchr=@PckPtwtmp where PcS_PcKID = @ID and PcS_OBITyp = @PcsObiTyp
+		END
+		ELSE
+		BEGIN
+			INSERT INTO cdn.PicoTimestamp (PcS_PcKID, PcS_OBITyp, PcS_Opis, PcS_TSSynchr, PcS_TSSynchrPtw, PcS_Skrot) 
+				VALUES (@ID, @PcsObiTyp, 'Sposób dostawy', @PckPtwtmp, 0, '')
+		END
+		
+		/* Słowniki */
+		SET @PcsObiTyp	= 8225
+		IF	exists(select PcS_ID from cdn.PicoTimestamp where PcS_PcKID = @ID and PcS_OBITyp = @PcsObiTyp)
+		BEGIN
+			UPDATE cdn.PicoTimestamp SET PcS_TSSynchr=@PckPtwtmp where PcS_PcKID = @ID and PcS_OBITyp = @PcsObiTyp
+		END
+		ELSE
+		BEGIN
+			INSERT INTO cdn.PicoTimestamp (PcS_PcKID, PcS_OBITyp, PcS_Opis, PcS_TSSynchr, PcS_TSSynchrPtw, PcS_Skrot) 
+				VALUES (@ID, @PcsObiTyp, 'Słowniki', @PckPtwtmp, 0, '')
+		END		
+		
+	/************* Koniec - Uaktualnienie TS w tabeli PicoTimeStamp ********************/
+
+
+SET NOCOUNT OFF
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

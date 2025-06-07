@@ -1,0 +1,227 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie procedury TstKsiStanyKont"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie procedury TstKsiStanyKont */</I><BR>
+if exists (select name from sysobjects where name = 'TstKsiStanyKont' and type = 'P')
+  drop procedure CDN.TstKsiStanyKont;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury TstKsiStanyKont"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury TstKsiStanyKont */</I><BR>
+CREATE  PROCEDURE CDN.TstKsiStanyKont
+@PoczatekC int,
+@KoniecC int
+AS
+
+set nocount on
+
+
+create table #StanyKont_Stany (KKS_GIDNumer int,
+					KKS_SynNumer int, KKS_Konto varchar(50), KKS_Poziom smallint, KKS_Rozrachunkowe smallint,
+					KKS_Analityka smallint, KKS_SaldoWgObr smallint, KKS_TypKonta smallint, KKS_Archiwalne smallint,
+					Rok smallint, Miesiac smallint,
+					BODT decimal(21,2), BOCT decimal(21,2), 
+					ODTP decimal(21,2), OCTP decimal(21,2),
+					SDTP decimal(21,2), SCTP decimal(21,2), 
+					ODT decimal(21,2), OCT decimal(21,2), 
+					ODTK decimal(21,2), OCTK decimal(21,2), 
+					SDT decimal(21,2), SCT decimal(21,2),
+					SDTK decimal(21,2), SCTK decimal(21,2)
+		PRIMARY KEY (KKS_GIDNumer, Rok, Miesiac)
+		)
+
+
+create table #StanyKont_Dekrety (KKS_GIDNumer int,
+					KKS_SynNumer int, KKS_Konto varchar(50), KKS_Poziom smallint, KKS_Rozrachunkowe smallint,
+					KKS_Analityka smallint, KKS_SaldoWgObr smallint, KKS_TypKonta smallint, KKS_Archiwalne smallint,
+					Rok smallint, Miesiac smallint,
+					BODT decimal(21,2), BOCT decimal(21,2), 
+					ODTP decimal(21,2), OCTP decimal(21,2),
+					SDTP decimal(21,2), SCTP decimal(21,2), 
+					ODT decimal(21,2), OCT decimal(21,2), 
+					ODTK decimal(21,2), OCTK decimal(21,2), 
+					SDT decimal(21,2), SCT decimal(21,2),
+					SDTK decimal(21,2), SCTK decimal(21,2)
+		PRIMARY KEY (KKS_GIDNumer, Rok, Miesiac)
+		)
+
+
+
+
+
+DECLARE cursMiesiace CURSOR
+READ_ONLY
+FOR Select OkM_OkrID, Okr_Poczatek, Okr_Koniec, OkM_Rok, OkM_Miesiac, OkM_MiesiacOd, OkM_MiesiacDo from cdn.OkresyMiesiace join cdn.Okresy on OkM_OkrID = Okr_ID where ((@KoniecC &lt;&gt; 0 and OkM_MiesiacOd between @PoczatekC and @KoniecC) or (@KoniecC = 0 and OkM_MiesiacOd &gt;= @PoczatekC))
+
+OPEN cursMiesiace
+
+declare @OkM_OkrID int
+declare @OkM_Rok smallint
+declare @OkM_Miesiac smallint
+declare @OkM_MiesiacOd int
+declare @OkM_MiesiacDo int
+declare @Okr_Poczatek int
+declare @Okr_Koniec int
+
+
+
+FETCH NEXT FROM cursMiesiace INTO @OkM_OkrID, @Okr_Poczatek, @Okr_Koniec, @OkM_Rok, @OkM_Miesiac, @OkM_MiesiacOd, @OkM_MiesiacDo
+WHILE (@@fetch_status &lt;&gt; -1)
+BEGIN
+	IF (@@fetch_status &lt;&gt; -2)
+	BEGIN
+	
+
+		insert into #StanyKont_Stany
+		exec cdn.OOSEx_StanyKonto 
+			@Konto = '%', 
+			@Bufor = 1, 
+			@OkresIDPoczatek = @OkM_OkrID, 
+			@PoczRok = @OkM_Rok,
+			@PoczMiesiac = @OkM_Miesiac, 
+			@KoniecRok = @OkM_Rok, 
+			@KoniecMiesiac = @OkM_Miesiac
+
+
+		insert into #StanyKont_Dekrety
+		exec cdn.OOSEx_BiezKonto 
+			@Konto = '%', 
+			@Bufor = 1, 
+			@PoczatekOOPoczC = @Okr_Poczatek, 
+			@KoniecOOPoczC = @Okr_Koniec, 
+			@OkresIDKoniec = @OkM_OkrID, 
+			@PoczatekC = @OkM_MiesiacOd, 
+			@KoniecC = @OkM_MiesiacDo
+
+
+
+		update #StanyKont_Stany set Rok = @OkM_Rok, Miesiac = @OkM_Miesiac where isnull(Rok, 0) = 0
+
+		update #StanyKont_Dekrety set Rok = @OkM_Rok, Miesiac = @OkM_Miesiac where isnull(Rok, 0) = 0
+
+
+	END
+	FETCH NEXT FROM cursMiesiace INTO @OkM_OkrID, @Okr_Poczatek, @Okr_Koniec, @OkM_Rok, @OkM_Miesiac, @OkM_MiesiacOd, @OkM_MiesiacDo
+END
+
+CLOSE cursMiesiace
+
+
+
+if exists(
+	select a.KKS_GIDNumer, a.Rok, a.Miesiac
+	from #StanyKont_Stany a 
+		join #StanyKont_Dekrety b
+			on a.KKS_GIDNumer = b.KKS_GIDNumer and a.Rok = b.Rok and a.Miesiac = b.Miesiac
+	where a.ODT &lt;&gt; b.ODT or a.OCT &lt;&gt; b.OCT or a.ODTK &lt;&gt; b.ODTK or a.OCTK &lt;&gt; b.OCTK
+)
+begin
+	select k.KKS_Konto, k.KKS_GIDNumer, a.Rok, a.Miesiac
+	from #StanyKont_Stany a 
+		join #StanyKont_Dekrety b
+			on a.KKS_GIDNumer = b.KKS_GIDNumer and a.Rok = b.Rok and a.Miesiac = b.Miesiac
+		join cdn.Konta k
+			on a.KKS_GIDNumer = k.KKS_GIDNumer
+	where a.ODT &lt;&gt; b.ODT or a.OCT &lt;&gt; b.OCT or a.ODTK &lt;&gt; b.ODTK or a.OCTK &lt;&gt; b.OCTK
+
+	
+end
+else
+begin
+	delete from  #StanyKont_Stany	
+	delete from  #StanyKont_Dekrety
+
+
+	
+	OPEN cursMiesiace
+	
+	
+	
+	FETCH NEXT FROM cursMiesiace INTO @OkM_OkrID, @Okr_Poczatek, @Okr_Koniec, @OkM_Rok, @OkM_Miesiac, @OkM_MiesiacOd, @OkM_MiesiacDo
+	WHILE (@@fetch_status &lt;&gt; -1)
+	BEGIN
+		IF (@@fetch_status &lt;&gt; -2)
+		BEGIN
+		
+	
+			insert into #StanyKont_Stany
+			exec cdn.OOSEx_StanyKonto 
+				@Konto = '%', 
+				@Bufor = 0, 
+				@OkresIDPoczatek = @OkM_OkrID, 
+				@PoczRok = @OkM_Rok,
+				@PoczMiesiac = @OkM_Miesiac, 
+				@KoniecRok = @OkM_Rok, 
+				@KoniecMiesiac = @OkM_Miesiac
+	
+	
+			insert into #StanyKont_Dekrety
+			exec cdn.OOSEx_BiezKonto 
+				@Konto = '%', 
+				@Bufor = 0, 
+				@PoczatekOOPoczC = @Okr_Poczatek, 
+				@KoniecOOPoczC = @Okr_Koniec, 
+				@OkresIDKoniec = @OkM_OkrID, 
+				@PoczatekC = @OkM_MiesiacOd, 
+				@KoniecC = @OkM_MiesiacDo
+	
+	
+	
+			update #StanyKont_Stany set Rok = @OkM_Rok, Miesiac = @OkM_Miesiac where isnull(Rok, 0) = 0
+	
+			update #StanyKont_Dekrety set Rok = @OkM_Rok, Miesiac = @OkM_Miesiac where isnull(Rok, 0) = 0
+	
+	
+		END
+		FETCH NEXT FROM cursMiesiace INTO @OkM_OkrID, @Okr_Poczatek, @Okr_Koniec, @OkM_Rok, @OkM_Miesiac, @OkM_MiesiacOd, @OkM_MiesiacDo
+	END
+	
+	CLOSE cursMiesiace
+
+	
+	select k.KKS_Konto, k.KKS_GIDNumer, a.Rok, a.Miesiac
+	from #StanyKont_Stany a 
+		join #StanyKont_Dekrety b
+			on a.KKS_GIDNumer = b.KKS_GIDNumer and a.Rok = b.Rok and a.Miesiac = b.Miesiac
+		join cdn.Konta k
+			on a.KKS_GIDNumer = k.KKS_GIDNumer
+	where a.ODT &lt;&gt; b.ODT or a.OCT &lt;&gt; b.OCT or a.ODTK &lt;&gt; b.ODTK or a.OCTK &lt;&gt; b.OCTK
+end
+
+DEALLOCATE cursMiesiace
+
+
+drop table #StanyKont_Stany
+drop table #StanyKont_Dekrety
+
+
+
+set nocount off
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury TstKsiStanyKont"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury TstKsiStanyKont */</I><BR>
+GRANT EXECUTE ON CDN.TstKsiStanyKont TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

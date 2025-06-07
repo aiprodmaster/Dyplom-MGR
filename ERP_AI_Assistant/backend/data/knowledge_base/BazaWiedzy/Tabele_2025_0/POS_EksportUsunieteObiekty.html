@@ -1,0 +1,107 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[POS_EksportUsunieteObiekty]"></A><PRE>
+          <FONT SIZE="2"><I>/* [POS_EksportUsunieteObiekty] */</I><BR>
+CREATE PROCEDURE [CDN].[POS_EksportUsunieteObiekty] 
+	@RowVersion BIGINT,
+	@PointOfSaleId INT
+AS
+BEGIN
+SET NOCOUNT ON;
+	declare @stanowiska table(PsaId int)
+	insert into @stanowiska
+	select Psa_ID from cdn.PicoStanowiska where ((@PointOfSaleId is not null and PSa_ID = @PointOfSaleId) or (@PointOfSaleId is null and PSa_TypAplikacji = 2))
+	select
+		(coalesce((select MAX(PcU_TSUsuniecia) from CDN.PicoUsuniete where pcu_psaid IN (select PsaId from @stanowiska)),@RowVersion))  as [@RowVersion], (
+		
+		select * from 
+		(
+			select
+			case 
+				when PcU_ObiTyp = -224 then 'GroupPermission' 
+				when PcU_ObiTyp = -14400 and PcU_ObiektTyp = -14400 then 'ProductPicture'
+				when PcU_ObiTyp = -14400 and PcU_ObiektTyp = 135 then 'ProductGroupPicture'	
+				when PcU_ObiTyp = 32 then 'CustomerGroup' 
+				when PcU_ObiTyp = 5122 then 'CustomerGroupRelation'
+				when PcU_ObiTyp = -32 then 'CustomerGroupMember'			  
+				when PcU_ObiTyp = -16 then 'ProductGroup'
+				when PcU_ObiTyp = 5136 then 'ProductGroupRelation'
+				when PcU_ObiTyp = 16 and PcU_ObiektTyp = 16 then 'ProductGroupMember'
+				when PcU_ObiTyp = 16 and PcU_ObiektTyp = 136 then 'FavouriteProduct'
+				when PcU_ObiTyp = -14417 and PcU_ObiektTyp IN (16,32) then 'Attribute'
+				when PcU_ObiTyp = 5104 then 'Discount'
+				when PcU_ObiTyp = 7216 then 'PrintoutAvailability'
+				when PcU_ObiTyp = 224 then 'LayoutSecurityGroup'
+				when PcU_ObiTyp = 256 then 'Barcode'
+				when PcU_ObiTyp = -14416 then 'AttributeClassObjectType'
+				when PcU_ObiTyp = 14600 then 'RelatedProduct'
+				when PcU_ObiTyp = 5120 then 'CreditLimit'
+
+				else '' end as [@Type],
+			case 
+				when PcU_ObiTyp = -224 then cast(PcU_ObiNumer as nvarchar)+'|'+n 
+				when PcU_ObiTyp = -14400 and PcU_ObiektTyp = 135 then cast(PcU_Ident as nvarchar)
+				else cast(pcu_ident as nvarchar(256)) end as [@Ident]
+			FROM CDN.picousuniete
+			left join (
+				SELECT cast(number+1 as nvarchar) as n
+				FROM master.dbo.spt_values
+				WHERE number &lt;=57 AND Type = 'p') A on PcU_ObiTyp = -224
+			where pcu_psaid IN (select PsaId from @stanowiska) AND (PcU_TSUsuniecia &gt; @RowVersion or @RowVersion = 0) AND PcU_ObiTyp in(-224,-32,-14400,16,-16,5136,32,5122,5104,7216,224,256,14600,-14416,-14417,5120)
+
+			union all
+
+			select
+			case
+				when PcU_ObiTyp = -208 then 'DocumentTypeWarehouse'
+				else '' end as [@Type],
+				case when duplikaty.lp=2 then '13' else cast(dok_id as nvarchar) end +'|'+ CAST(PcU_ObiNumer as nvarchar)  +'|'+ CAST(PcK_CentrumID as nvarchar) as [@Ident]
+			FROM CDN.picousuniete
+			join CDN.PicoKonfig on PcK_PicoID = PcU_PcKId
+			join CDN.DokDefinicje on Dok_FrsId = PcK_CentrumID and Dok_GIDTyp in (2033,2034,2041,2042,1603,1604,9473,9472,1616,1617,1489,3584)
+			left join (select 1 as lp union select 2) duplikaty on dok_gidtyp=1603
+			where pcu_psaid IN (select PsaId from @stanowiska) AND (PcU_TSUsuniecia &gt; @RowVersion or @RowVersion = 0) AND PcU_ObiTyp in (-208)
+
+			union all
+
+			select
+			case
+				when PcU_ObiTyp = -208 then 'DocumentTypeWarehouse'
+				else '' end as [@Type],
+				cast('14' as nvarchar) +'|'+ CAST(PcU_ObiNumer as nvarchar)  +'|'+ CAST(PcK_CentrumID as nvarchar) as [@Ident]
+			FROM CDN.picousuniete
+			join CDN.PicoKonfig on PcK_PicoID = PcU_PcKId
+			where pcu_psaid IN (select PsaId from @stanowiska) AND (PcU_TSUsuniecia &gt; @RowVersion or @RowVersion = 0) AND PcU_ObiTyp in (-208)
+
+			union all 
+			
+			select 
+			case when PcU_ObiTyp = 144 then 'DefaultUnit' else '' end as [@Type],
+			CAST(Dok_Id as nvarchar) +'|'+ CAST(PcU_ObiNumer as nvarchar) as [@Ident]
+			from CDN.PicoUsuniete
+			join CDN.PicoKonfig on PcK_PicoID = PcU_PcKId
+			join CDN.DokDefinicje on Dok_FrsId = PcK_CentrumID and Dok_GIDTyp in (2033,2041,2034,2042)
+			where PcU_ObiTyp = 144 and pcu_psaid IN (select PsaId from @stanowiska) AND (PcU_TSUsuniecia &gt; @RowVersion or @RowVersion = 0) 
+		) a
+
+
+		for xml path('DeletedObject'), type)
+	for xml path('DeletedObjects')
+	delete from CDN.PicoUsuniete where pcu_psaid IN (select PsaId from @stanowiska) and PcU_ObiTyp in(-224,-32,-14400,16,-16,5136,32,5122,5104,7216,224,-208,256,-14416,-14417,14600,5120,144)
+SET NOCOUNT OFF;
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

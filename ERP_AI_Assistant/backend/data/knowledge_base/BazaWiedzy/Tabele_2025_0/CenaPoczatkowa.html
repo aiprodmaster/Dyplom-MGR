@@ -1,0 +1,222 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="CenaPoczatkowa"></A><PRE>
+          <FONT SIZE="2"><I>/* CenaPoczatkowa */</I><BR>
+CREATE PROCEDURE CDN.CenaPoczatkowa
+	@GIDTyp   	int, 			-- identyfikator pozycji/dokumentu (GID)
+	@GIDNumer 	int, 			--
+	@GIDLp    	int,	  		--
+	@Data 		int = 0,	     	-- bieżąca data i czas jako timestamp
+	@KntTyp 	smallint = 0,		-- dane kontrahenta 
+	@KntNumer 	int = 0, 		--
+	@FrsId 		varchar(255) = '', 	-- oddzielone przecinkami miejsca w strukturze firmy
+	@TwrTyp 	smallint = 0,		-- dane towaru 
+	@TwrNumer 	int = 0,		--
+	@CennikNumer	int = -1,		-- numer cennika (gdy podany cena od razu pobierana z TwrCeny)
+	@DokCennikNumer	int = -1,		-- numer cennika wybrany na nagłówku dokumentu 
+	@FormaNr 	int = -1,		-- numer formy płatności 
+	@FormaTermin 	int = -1,		-- termin formy płatności (PLT)
+	@FormaData	int = 0, -- data płatności
+	@SposobDostawy 	int = -1,		-- sposób dostawy
+    @Magazyn        int = -1,               -- Numer magazynu
+	@RodzajDok 	smallint = -1,	 	-- rodzaj dokumentu (przychód/rozchód)
+	@ZstNumer 	int = -1 		-- numer zestawu (kompletu)
+AS
+SET NOCOUNT ON
+DECLARE @CENA_WARTOSC 	decimal(15,4)	-- wartość
+DECLARE @CENA_WALUTA 	varchar(3)	-- waluta
+DECLARE @CENA_KURSL 	decimal(7,2) 	-- kurs (opcjonalnie)
+DECLARE @CENA_KURSM 	decimal(5) 	--
+DECLARE @CENA_NUMER 	smallint	-- numer cennika
+DECLARE @CENA_PRM 	int		-- numer promocji, jeśli cena pochodzi z promocji typu cennik
+DECLARE @CENA_PRECYZJA 	decimal(7,4)	-- dokładność ceny początkowej 2 lub 4)
+DECLARE @CENA_FLAGANB 	varchar(1) 	-- czy cena brutto/netto (B lub N)
+DECLARE @POMIN_POZ	smallint	-- czy pominąć pozostałe promocje
+DECLARE @SKADCENA	smallint	-- skąd pobrano cenę (promocja =1,nagłówek=2,towar=3)
+DECLARE @DOKLADNOSC	smallint	-- dokładność z CDN.Nazwy
+DECLARE @BLOKADACENY	smallint	-- Zabroń zmiany ceny
+DECLARE @UPUST_SORT int
+DECLARE @TwrGIDTyp smallint
+
+SET @CENA_WARTOSC = NULL
+SET @CENA_WALUTA = NULL
+SET @CENA_KURSL = NULL
+SET @CENA_KURSM = NULL
+SET @CENA_NUMER = NULL
+SET @CENA_PRM = NULL
+SET @CENA_PRECYZJA = NULL
+SET @CENA_FLAGANB = NULL
+SET @POMIN_POZ = NULL
+SET @SKADCENA = NULL
+SET @DOKLADNOSC = NULL
+SET @BLOKADACENY = NULL
+SET @TwrGIDTyp = 16
+
+IF @GIDTyp = 9473 --Typ_ZW TID:133545
+BEGIN
+	SET @SKADCENA = 3
+	SELECT TOP 1 @CENA_NUMER = TwC_TwrLp,@CENA_WARTOSC = TwC_Wartosc,@CENA_WALUTA = TwC_Waluta,@CENA_PRECYZJA = TwC_Zaok FROM CDN.TwrCeny WITH (NOLOCK) 
+		WHERE TwC_TwrNumer = @TwrNumer AND TwC_TwrLp = @CennikNumer AND TwC_DataOd &lt;= @Data
+		ORDER BY TwC_DataOd DESC,TwC_CzasModyfikacji DESC
+	--Pobierz Netto/Brutto
+	SELECT @CENA_FLAGANB = SUBSTRING(Naz_Nazwa,LEN(Naz_Nazwa)-1,1),@DOKLADNOSC = SUBSTRING(Naz_Nazwa,LEN(Naz_Nazwa),1) FROM CDN.Nazwy WITH (NOLOCK) WHERE Naz_GIDLp = @CENA_NUMER AND Naz_GIDTyp = 64
+	--Zwróć wyniki
+	SELECT  ISNULL(@CENA_NUMER,0) AS CENA_LP,ISNULL(@CENA_WARTOSC,0) AS CENA_WARTOSC,
+		ISNULL(@CENA_PRM,0) AS CENA_PRMID,ISNULL(@CENA_WALUTA,'') AS CENA_WALUTA,
+		ISNULL(@CENA_KURSL,0) AS CENA_KursL,ISNULL(@CENA_KURSM,0) AS CENA_KursM,
+		ISNULL(@CENA_PRECYZJA,0) AS CENA_Precyzja,ISNULL(@DOKLADNOSC,0) AS CENA_Dokladnosc,
+		ISNULL(@CENA_FLAGANB,0) AS CENA_FlagaNB, ISNULL(@POMIN_POZ,0) AS CENA_PominPozostale,
+		@SKADCENA AS CENA_ZRODLO, 0 AS CENA_BlokadaZmianyCeny WHERE @CENA_NUMER IS NOT NULL
+	RETURN
+END
+IF @CennikNumer &gt;= 0
+BEGIN
+	SET @SKADCENA = 3
+	IF @CennikNumer = 0 AND @DokCennikNumer &gt;= 0
+		SELECT @CennikNumer = Twr_CenaSpr FROM CDN.TwrKarty WHERE Twr_GIDNumer = @TwrNumer
+
+	--Czy są prawa do ceny z karty towaru	
+	IF @FrsId &lt;&gt; '1' AND CDN.CzyCenaWCentrum(@FrsID,@CennikNumer) = 0
+		SELECT @CennikNumer = FRS_CenaDomyslna FROM CDN.FrmStruktura WHERE FRS_ID = SUBSTRING(@FrsId,0,CHARINDEX(',',@FrsId))
+
+	SELECT TOP 1 @CENA_NUMER = TwC_TwrLp,@CENA_WARTOSC = TwC_Wartosc,@CENA_WALUTA = TwC_Waluta,@CENA_PRECYZJA = TwC_Zaok FROM CDN.TwrCeny WITH (NOLOCK) 
+	WHERE TwC_TwrNumer = @TwrNumer AND TwC_TwrLp = @CennikNumer AND TwC_DataOd &lt;= @Data
+		ORDER BY TwC_DataOd DESC,TwC_CzasModyfikacji DESC
+	--Pobierz Netto/Brutto
+	SELECT @CENA_FLAGANB = SUBSTRING(Naz_Nazwa,LEN(Naz_Nazwa)-1,1),@DOKLADNOSC = SUBSTRING(Naz_Nazwa,LEN(Naz_Nazwa),1) FROM CDN.Nazwy WITH (NOLOCK) WHERE Naz_GIDLp = @CENA_NUMER AND Naz_GIDTyp = 64
+	--Zwróć wyniki
+	SELECT  ISNULL(@CENA_NUMER,0) AS CENA_LP,ISNULL(@CENA_WARTOSC,0) AS CENA_WARTOSC,
+		ISNULL(@CENA_PRM,0) AS CENA_PRMID,ISNULL(@CENA_WALUTA,'') AS CENA_WALUTA,
+		ISNULL(@CENA_KURSL,0) AS CENA_KursL,ISNULL(@CENA_KURSM,0) AS CENA_KursM,
+		ISNULL(@CENA_PRECYZJA,0) AS CENA_Precyzja,ISNULL(@DOKLADNOSC,0) AS CENA_Dokladnosc,
+		ISNULL(@CENA_FLAGANB,0) AS CENA_FlagaNB, ISNULL(@POMIN_POZ,0) AS CENA_PominPozostale,
+		@SKADCENA AS CENA_ZRODLO,0 AS CENA_BlokadaZmianyCeny WHERE @CENA_NUMER IS NOT NULL
+	RETURN
+END
+IF @KntTyp = -32000 AND @KntNumer = -32000 --nieokreślony kontrahent
+BEGIN
+	SET @KntTyp = 0
+	SET @KntNumer = 0
+END
+SELECT TOP 1 @CENA_NUMER = TPR_RodzajCeny,@CENA_PRM = TPR_PrmId,@POMIN_POZ = PRM_PominPozostale,@BLOKADACENY = PRM_BlokadaCeny,
+	@UPUST_SORT = 1000*(case when Tpr_Typ=3 then 2 when Tpr_Typ IN (5,6) then 1 else 3 end)+100*(case when tpr_twrtyp=@TwrGIDTyp then 1 else (case when PRM_GrupaTwrWazniejsza = 1 and TwL_Lisc = 1 then 2 else 3 end) end)
+	FROM (
+		select TPR_RodzajCeny, TPR_PrmId, TPr_Typ, tpr_twrtyp,Tpr_Lp,TwL_Lisc
+		from (
+			select TwL_GROTyp TwrTyp, TwL_GRONumer TwrNumer,TwL_Lisc
+			from CDN.TwrLinki (NOLOCK)
+			where TwL_GIDTyp=@twrtyp and TwL_GIDNumer=@twrnumer
+			union all
+			select @twrtyp, @twrnumer,1
+		) Twr
+		inner join CDN.TwrPromocje (NOLOCK) on TPr_TwrTyp=TwrTyp and TPr_TwrNumer=TwrNumer
+	) TPr
+	JOIN CDN.PrmKarty ON TPR_PrmID = PRM_Id
+	JOIN CDN.KntPromocje ON KPR_PrmID = PRM_Id
+	JOIN CDN.FrsPromocje ON FPR_PrmID = PRM_ID
+	JOIN CDN.PltPromocje ON PPr_PrmID = Prm_ID
+	JOIN CDN.SpDPromocje ON SpD_PrmID = Prm_ID
+    JOIN CDN.MagPromocje on MPR_PrmID = Prm_ID
+	WHERE TPR_Typ = 4 AND PRM_Stan = 1 AND PRM_Typ = 7
+		AND (ISNULL(PPr_PltID,@FormaNr) IN (@FormaNr,-1) AND 
+			((PPr_Typ IN (0,1) and (PPr_TerminMaks &gt; @FormaTermin or isnull(PPr_TerminMaks,@FormaTermin) in (@FormaTermin,-1))) or (PPr_Typ = 2 and @FormaData &gt; 0 and (@FormaData+@FormaTermin) BETWEEN PPr_DataOd AND PPr_DataDo)))			
+		AND (ISNULL(SpD_SpDLp,-1) = @SposobDostawy OR ISNULL(SpD_SpDLp,-1) = -1)
+		AND (ISNULL(MPR_MagNumer,-1) = @Magazyn OR ISNULL(MPR_MagNumer,-1) = -1)
+		AND CDN.CzyPromocjaObowiazuje(PRM_DataOd,PRM_DataDo,PRM_Cykliczna, @Data,PRM_CyklRodzaj, PRM_CyklCzestotliwosc,PRM_CyklWystepowanie, PRM_CyklDniOd, PRM_CyklDniDo) = 1		
+		AND 
+			(CASE --Sprawdz kontrahenta
+			WHEN KPR_KntTyp &gt;= 0 THEN 
+				(SELECT CASE WHEN KPR_KntNumer = @KntNumer AND KPR_KntTyp = @KntTyp THEN 1 ELSE 0 END)
+			ELSE --Sprawdz w grupie kontrahentów
+				(SELECT CASE WHEN EXISTS(
+					SELECT KnL_GIDNumer FROM CDN.KntLinki WITH (NOLOCK) 
+					WHERE KnL_GIDNumer = @KntNumer AND KnL_GIDTyp = @KntTyp 
+					AND KPR_KntNumer = KnL_GroNumer AND KPR_KntTyp = KnL_GroTyp
+				) THEN 1 ELSE 0 END)
+			END) = 1
+		AND
+			(CASE --Sprawdz w strukturze firmy
+			WHEN EXISTS(
+				SELECT FPR_PrmID FROM Cdn.FrsPromocje WITH (NOLOCK)
+				WHERE FPR_PrmId = Prm_Id
+                               		AND CharIndex(','+LTRIM(CAST(Fpr_FrsId AS VARCHAR(5)))+',', ','+LTRIM(@FrsId)+',',1)&gt;0
+			) THEN 1 ELSE 0	END) = 1
+	ORDER BY PRM_Priorytet DESC,PRM_PriorytetLP ASC,5 ASC,Tpr_Lp ASC
+
+IF @CENA_PRM IS NOT NULL AND @FrsId &lt;&gt; '1' --Sprawdz czy cena jest dostępna w danym centrum
+BEGIN
+	IF CDN.CzyCenaWCentrum(@FrsID,@CENA_NUMER) = 0
+		SET @CENA_PRM = NULL
+END
+IF @CENA_PRM IS NOT NULL
+BEGIN
+	SET @SKADCENA = 1
+	--Pobierz cene z TwrCeny o numerze cennika z promocji
+	IF @CENA_NUMER = 0
+		SELECT @CENA_NUMER = Twr_CenaSpr FROM CDN.TwrKarty WHERE Twr_GIDNumer = @TwrNumer
+
+	SELECT TOP 1 @CENA_WARTOSC = TwC_Wartosc,@CENA_WALUTA = TwC_Waluta,@CENA_PRECYZJA = TwC_Zaok FROM CDN.TwrCeny WITH (NOLOCK) 
+		WHERE TwC_TwrNumer = @TwrNumer AND TwC_TwrLp = @CENA_NUMER AND TwC_DataOd &lt;= @Data
+		ORDER BY TwC_DataOd DESC,TwC_CzasModyfikacji DESC
+END
+ELSE
+BEGIN
+	--Sprawdz czy naglowek dokumentu wskazuje na numer cennika
+	IF @DokCennikNumer&gt;=0
+		SET @CENA_NUMER = @DokCennikNumer
+	ELSE
+	BEGIN
+		IF @GIDTyp NOT IN ('9473','8960','9472','960') --TID:106245 i TID:112916
+			SELECT @CENA_NUMER = TrN_CenaSpr FROM CDN.TraNag WITH (NOLOCK) WHERE TrN_GIDNumer = @GIDNumer
+		ELSE
+			SELECT @CENA_NUMER = ZaN_CenaSpr FROM CDN.ZamNag WITH (NOLOCK) WHERE ZaN_GIDNumer = @GIDNumer
+	END
+	
+	--Czy są prawa do ceny z nagłówka
+	IF @CENA_NUMER IS NOT NULL AND @FrsId &lt;&gt; '1' --TID:131675
+	BEGIN
+		IF CDN.CzyCenaWCentrum(@FrsID,@CENA_NUMER) = 0
+			SET @CENA_NUMER = NULL
+	END
+
+	--Jeżeli nie na nagłówku to pobierz domyślną z TwrCeny
+	SET @SKADCENA = 3
+
+	IF ISNULL(@CENA_NUMER,0) = 0 OR NOT EXISTS(SELECT TwC_Wartosc FROM CDN.TwrCeny WITH (NOLOCK) WHERE TwC_TwrNumer = @TwrNumer AND TwC_TwrLp = @CENA_NUMER AND TwC_DataOd &lt;= @Data) --TID:113061 i --TID:112916
+		SELECT @CENA_NUMER = Twr_CenaSpr FROM CDN.TwrKarty WITH (NOLOCK) WHERE Twr_GIDNumer = @TwrNumer
+	ELSE
+		SELECT @SKADCENA = 2
+
+	--Czy są prawa do ceny z karty towaru
+	IF @FrsId &lt;&gt; '1' AND @SKADCENA = 3 AND CDN.CzyCenaWCentrum(@FrsID,@CENA_NUMER) = 0
+		SELECT @CENA_NUMER = FRS_CenaDomyslna FROM CDN.FrmStruktura WHERE FRS_ID = SUBSTRING(@FrsId,0,CHARINDEX(',',@FrsId))
+
+	--Pobierz wartosci dla ustalonego numeru cennika
+	SELECT TOP 1 @CENA_WARTOSC = TwC_Wartosc,@CENA_WALUTA = TwC_Waluta,@CENA_PRECYZJA = TwC_Zaok FROM CDN.TwrCeny WITH (NOLOCK) 
+		WHERE TwC_TwrNumer = @TwrNumer AND TwC_TwrLp = @CENA_NUMER AND TwC_DataOd &lt;= @Data
+		ORDER BY TwC_DataOd DESC,TwC_CzasModyfikacji DESC
+	
+END
+SELECT @CENA_FLAGANB = SUBSTRING(Naz_Nazwa,LEN(Naz_Nazwa)-1,1),@DOKLADNOSC = SUBSTRING(Naz_Nazwa,LEN(Naz_Nazwa),1) FROM CDN.Nazwy WITH (NOLOCK) WHERE Naz_GIDLp = @CENA_NUMER AND Naz_GIDTyp = 64
+	SELECT  ISNULL(@CENA_NUMER,0) AS CENA_LP,ISNULL(@CENA_WARTOSC,0) AS CENA_WARTOSC,
+		ISNULL(@CENA_PRM,0) AS CENA_PRMID,ISNULL(@CENA_WALUTA,'') AS CENA_WALUTA,
+		ISNULL(@CENA_KURSL,0) AS CENA_KursL,ISNULL(@CENA_KURSM,0) AS CENA_KursM,
+		ISNULL(@CENA_PRECYZJA,0) AS CENA_Precyzja,ISNULL(@DOKLADNOSC,0) AS CENA_Dokladnosc,
+		ISNULL(@CENA_FLAGANB,0) AS CENA_FlagaNB, ISNULL(@POMIN_POZ,0) AS CENA_PominPozostale,
+		@SKADCENA AS CENA_ZRODLO,ISNULL(@BLOKADACENY,0) AS CENA_BlokadaZmianyCeny WHERE @CENA_NUMER IS NOT NULL
+SET NOCOUNT OFF
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

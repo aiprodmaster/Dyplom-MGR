@@ -1,0 +1,333 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Usuwanie procedury RozrachunkiDlaKont"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Usuwanie procedury RozrachunkiDlaKont */</I><BR>
+IF EXISTS (SELECT name  FROM sysobjects WHERE name = 'RozrachunkiDlaKont' AND type = 'P')
+  drop procedure CDN.RozrachunkiDlaKont;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury RozrachunkiDlaKont"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury RozrachunkiDlaKont */</I><BR>
+CREATE  PROCEDURE CDN.RozrachunkiDlaKont @p_KontoOD varchar(50), @p_KontoDO varchar(50), @p_DataOd int, @p_DataDo int, @p_NaDzien int, @p_Waluta varchar(5), @p_KsiegaGlowna smallint, @p_Rozliczone smallint, @KontoMaska smallint = 0, @MaskaKonta varchar(30) = ''
+AS
+DECLARE @DataOd datetime;
+DECLARE @DataDo datetime;
+DECLARE @KontoOd varchar(70);
+DECLARE @KontoDo varchar(70);
+DECLARE @KsiegaGlowna int;
+DECLARE @Rozliczone int;
+DECLARE @Waluta varchar(5);
+DECLARE @WalutaSys varchar(5);
+DECLARE @BiezacyOO_OD DATETIME;
+DECLARE @BiezacyOO_DO DATETIME;
+declare @OkresID        INT
+declare @sSQL nvarchar(max)
+
+if isnull(@p_NaDzien,0) = 0
+        set @p_NaDzien = @p_DataDo
+
+
+if @p_NaDzien &lt; @p_DataDo
+begin
+        if @p_NaDzien &lt; @p_DataOd
+        begin
+                set @p_DataOd = 0
+                set @p_DataDo = 0
+        end
+        else
+                set @p_DataDo = @p_NaDzien
+end
+
+
+select
+        @OkresID = Okr_ID
+from cdn.Okresy
+where Okr_Poczatek &lt;= @p_DataDo and Okr_Koniec &gt;= @p_DataDo
+
+
+
+if isnull(@OkresID,0) = 0
+        return
+
+IF upper(ltrim(rtrim(@p_KontoOD))) = '-BRAK-'
+        SET @p_KontoOD = ''
+else
+begin
+        select
+                @p_KontoOD = KKS_KontoOrd
+        from cdn.Konta
+        where KKS_OkresID = @OkresID and KKS_Konto = @p_KontoOD
+end
+
+
+IF upper(ltrim(rtrim(@p_KontoDO))) = '-BRAK-'
+        SET @p_KontoDO = ''
+else
+begin
+        select
+                @p_KontoDO = KKS_KontoOrd
+        from cdn.Konta
+        where KKS_OkresID = @OkresID and KKS_Konto = @p_KontoDO
+end
+
+
+--IF @p_KontoDO &lt;&gt; ''
+SET @p_KontoDO = rtrim(@p_KontoDO) + ' ' + replicate('ż',30)
+
+
+Set @DataOd = dateadd(day,@p_DataOd,convert(datetime,'28-12-1800',105))
+Set @DataDo = dateadd(day,@p_DataDo,convert(datetime,'28-12-1800',105))
+Set @KsiegaGlowna = @p_KsiegaGlowna
+Set @Rozliczone = @p_Rozliczone
+Set @Waluta = @p_Waluta
+
+
+-- Pobranie waluty systemowej
+SELECT @WalutaSys = Kon_Wartosc FROM CDN.Konfig WHERE Kon_Numer=211;
+IF LTrim(@Waluta)=''
+   SET @Waluta = @WalutaSys
+
+-----------------------------------------------------------------------------
+declare @NumerKlasyKonta int
+declare @TypMaski tinyint
+set @NumerKlasyKonta = 0
+set @TypMaski = 0
+
+if @KontoMaska = 1
+begin
+	if left(@MaskaKonta,1) = '@'
+	begin
+		select @NumerKlasyKonta = Naz_GidLp from cdn.Nazwy where Naz_GIDTyp = 2896 and Naz_Nazwa = substring(@MaskaKonta, 2, len(@MaskaKonta))
+		set @TypMaski = 1
+	end
+	else if charindex('?', @MaskaKonta) &gt; 0 or charindex('*', @MaskaKonta) &gt; 0
+	begin
+		set @MaskaKonta = replace(@MaskaKonta, '?', '_')
+		set @MaskaKonta = replace(@MaskaKonta, '*', '%')
+		set @TypMaski = 2
+	end
+	else if right(RTRIM(@MaskaKonta), 1) &lt;&gt; '%'
+	begin
+		set @MaskaKonta = rtrim(@MaskaKonta) + '%'
+		set @TypMaski = 2
+	end
+	else
+	begin
+		--set @MaskaKonta = ''
+		set @TypMaski = 2
+	end
+end
+else
+    set @TypMaski = 0
+
+IF (@NumerKlasyKonta = 0 AND @TypMaski = 1)
+begin
+    set @MaskaKonta = '%'
+    set @TypMaski = 2
+end
+ELSE IF (@NumerKlasyKonta &lt;&gt; 0 and @TypMaski = 1) or @TypMaski in (0, 2)
+begin
+    if @p_KontoOd = '' and @p_KontoDo = '' and @MaskaKonta = ''
+    begin
+		set @MaskaKonta = '%'
+        set @TypMaski = 2
+    end
+end
+
+IF (@TypMaski = 2)
+	set @MaskaKonta = replace(@MaskaKonta, '-', ' ')
+-----------------------------------------------------------------------------
+
+set @sSQL = '' +
+' SELECT'+
+' KKS_Konto As Konto,'+
+' KKS_Nazwa As NazwaKonta,'+
+' Dekrety.NrDektetu,'+
+' Dekrety.Data,'+
+' Dekrety.DT_GIDNumer,'+
+' Dekrety.DT_GIDLp,'+
+' IsNull(Dekrety.KwotaDT,0) As KwotaDT,'+
+' IsNull(Dekrety.KwotaCT,0) As KwotaCT,'+
+' IsNull(Dekrety.PozostajeDT,0) As PozostajeDT,'+
+' IsNull(Dekrety.PozostajeCT,0) As PozostajeCT,'+
+' Dekrety.Opis,'+
+' Dekrety.DokZrd,'+
+' DataRozrachunku'+
+' FROM CDN.Konta'+
+        ' LEFT OUTER JOIN'+
+        ' ('+
+                ' SELECT'+
+                        ' KKS_GIDNumer as KKSNumer,'+
+                        ' max(CDN.NumerDekretu(DT_Bufor,DT_Dziennik,DT_Rok,DT_Miesiac,DZK_RMNumer,DEL_Pozycja,DZK_Prosty,DZK_OkrSymbol)) As NrDektetu,'+
+                        ' max(cdn.Ymd(DT_Rok, DT_Miesiac, DT_Dzien)) As Data,'+
+                        ' DT_GIDNumer,'+
+                        ' DT_GIDLp,'+
+                        ' case when DT_DC=1 Then DT_Kwota Else 0 End As KwotaDT,'+
+                        ' case when DT_DC=2 Then DT_Kwota Else 0 End As KwotaCT,'+
+''+
+''+
+                        ' sign(DT_Kwota)*('+
+                        ' case when DT_DC = 1 then'+
+                                ' abs(DT_Kwota) -'+
+                                ' sum(case when @Waluta='''+@WalutaSys+''' THEN isNull(R2_KwotaSys,0) ELSE isNull(R2_KwotaWal1,0) END)'+
+                        ' else'+
+                                ' 0'+
+                        ' end)'+
+                        ' As PozostajeDT,'+
+''+
+                        ' sign(DT_Kwota)*('+
+                        ' case when DT_DC = 2 then'+
+                                ' abs(DT_Kwota) -'+
+                                ' sum(case when @Waluta='''+@WalutaSys+''' THEN isNull(R2_KwotaSys,0) ELSE isNull(R2_KwotaWal1,0) END)'+
+                        ' else'+
+                                ' 0'+
+                        ' end)'+
+                        ' As PozostajeCT,'+
+''+
+                        ' max(DEL_Opis) As Opis,'+
+                        ' max(DEL_DokumentZrodlowy) As DokZrd,'+
+                        ' max(R2_DataRozrachunku) as DataRozrachunku'+
+                ' FROM CDN.Konta'+
+                        ' join cdn.KontaNastLinki'+
+                                ' on KKS_GIDNumer = KLI_NastNumer'+
+                        ' JOIN CDN.Dekrety'+
+                                ' on KLI_PoprzNumer = DT_KKSNumer'+
+                                ' and DT_DataDekr between @p_DataOd and @p_DataDo and not( DT_KorektaBO = 1 and DT_Rozliczony=0 AND DT_NieRozliczony=0)'+
+                                ' and DT_Waluta = @Waluta' + case when @KsiegaGlowna&lt;&gt;2 then ' and DT_Bufor=''''' else '' end +
+                        ' JOIN CDN.DziennikElem'+
+                                ' ON DEL_GIDNumer=DT_GIDNumer AND DEL_GIDLp=DT_GIDLp'+
+                        ' JOIN CDN.Dziennik'+
+                                ' ON DZK_GIDNumer=DEL_GIDNumer'+
+                        ' LEFT OUTER JOIN'+
+                                ' (SELECT R2_Dekret1Numer as R2_DekretNumer,'+
+                                        ' R2_Dekret1Lp as R2_DekretLp,'+
+                                        ' R2_Dekret1DC as R2_DekretDC,'+
+                                        ' R2_DataRozrachunku,'+
+                                        ' R2_KwotaSys,'+
+                                        ' R2_KwotaWal1,'+
+                                        ' R2_KwotaWal2,'+
+                                        ' R2_Waluta1 AS R2_Waluta'+
+                                ' FROM CDN.Rozliczenia'+
+                                ' where R2_DataRozrachunku between @p_DataOd and @p_NaDzien'+
+                                ' UNION ALL'+
+                                ' SELECT R2_Dekret2Numer as R2_DekretNumer,'+
+                                        ' R2_Dekret2Lp as R2_DekretLp,'+
+                                        ' R2_Dekret2DC as R2_DekretDC,'+
+                                        ' R2_DataRozrachunku,'+
+                                        ' R2_KwotaSys,'+
+                                        ' R2_KwotaWal1,'+
+                                        ' R2_KwotaWal2,'+
+                                        ' R2_Waluta2 AS R2_Waluta'+
+                                ' FROM CDN.Rozliczenia'+
+                                ' where R2_DataRozrachunku between @p_DataOd and @p_NaDzien'+
+                                ' ) AS ROZ'+
+                                        ' ON R2_DekretNumer=DT_GIDNumer AND R2_DekretLp=DT_GIDLp AND R2_DekretDC=DT_DC'+
+                                        ' AND (R2_Waluta=DT_Waluta OR DT_Waluta='''+@WalutaSys+''')'+
+                ' WHERE KKS_OkresID = @OkresID AND KKS_Rozrachunkowe&lt;&gt;0 AND'+
+					' ('+
+						case 
+						when @TypMaski = 0 then 'KKS_KontoOrd BETWEEN @p_KontoOD AND @p_KontoDo'
+						when @TypMaski = 1 then 'KKS_Klasa = @NumerKlasyKonta'
+						when @TypMaski = 2 then 'KKS_KontoOrd LIKE @MaskaKonta'
+						end +
+					' )'+
+                ' GROUP BY KKS_GIDNumer, DT_GIDNumer,DT_GIDLp, DT_DC, DT_WalutaObca, DT_Kwota'+
+                ' HAVING'+
+                case 
+                when @Rozliczone=0 then 
+                ' ('+
+                        ' (sign(DT_Kwota)*('+
+                        ' case when DT_DC = 1 then'+
+                                ' abs(DT_Kwota) -'+
+                                ' sum(case when @Waluta='''+@WalutaSys+''' THEN isNull(R2_KwotaSys,0) ELSE isNull(R2_KwotaWal1,0) END)'+
+                        ' else'+
+                                ' 0'+
+                        ' end) &lt;&gt; 0'+
+                        ' or'+
+                        ' sign(DT_Kwota)*('+
+                        ' case when DT_DC = 2 then'+
+                                ' abs(DT_Kwota) -'+
+                                ' sum(case when @Waluta='''+@WalutaSys+''' THEN isNull(R2_KwotaSys,0) ELSE isNull(R2_KwotaWal1,0) END)'+
+                        ' else'+
+                                ' 0'+
+                        ' end) &lt;&gt; 0)'+
+                ' )'
+                when @Rozliczone=1 then 
+                ' ('+
+                        ' (sign(DT_Kwota)*('+
+                        ' case when DT_DC = 1 then'+
+                                ' abs(DT_Kwota) -'+
+                                ' sum(case when @Waluta='''+@WalutaSys+''' THEN isNull(R2_KwotaSys,0) ELSE isNull(R2_KwotaWal1,0) END)'+
+                        ' else'+
+                                ' 0'+
+                        ' end)= 0'+
+                        ' and'+
+                        ' sign(DT_Kwota)*('+
+                        ' case when DT_DC = 2 then'+
+                                ' abs(DT_Kwota) -'+
+                                ' sum(case when @Waluta='''+@WalutaSys+''' THEN isNull(R2_KwotaSys,0) ELSE isNull(R2_KwotaWal1,0) END)'+
+                        ' else'+
+                                ' 0'+
+                        ' end) = 0)'+						
+                ' )'
+                when @Rozliczone=2 then 
+                '(1=1)'
+                end +
+' )As Dekrety'+
+        ' ON KKS_GIDNumer=Dekrety.KKSNumer'+
+' WHERE KKS_OkresID = @OkresID AND KKS_Rozrachunkowe&lt;&gt;0 and'+
+	' ('+
+		case 
+		when @TypMaski = 0 then 'KKS_KontoOrd BETWEEN @p_KontoOD AND @p_KontoDo'
+		when @TypMaski = 1 then 'KKS_Klasa = @NumerKlasyKonta'
+		when @TypMaski = 2 then 'KKS_KontoOrd LIKE @MaskaKonta'
+		end +
+	' )'+	-- KKS_KontoOrd BETWEEN @p_KontoOD AND @p_KontoDo AND 
+' '+
+' ORDER BY 1'
+
+--select @ssql
+--return
+
+
+exec sp_executeSQL @sSQL,N'@Waluta varchar(5),@KsiegaGlowna tinyint,@p_NaDzien int,@p_DataOd int,@p_DataDo int,@p_KontoOD varchar(50),@p_KontoDo varchar(50),@NumerKlasyKonta int,@MaskaKonta varchar(50),@OkresID int',
+	@Waluta = @Waluta,	
+	@KsiegaGlowna = @KsiegaGlowna,
+	@p_NaDzien = @p_NaDzien,
+	@p_DataOd = @p_DataOd,
+	@p_DataDo = @p_DataDo,
+	@p_KontoOD = @p_KontoOD,
+	@p_KontoDo = @p_KontoDo,
+	@NumerKlasyKonta = @NumerKlasyKonta,
+	@MaskaKonta = @MaskaKonta,
+	@OkresID = @OkresID
+	
+	
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury RozrachunkiDlaKont"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury RozrachunkiDlaKont */</I><BR>
+GRANT EXECUTE ON CDN.RozrachunkiDlaKont TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

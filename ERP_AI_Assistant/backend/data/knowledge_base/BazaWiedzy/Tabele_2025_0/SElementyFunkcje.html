@@ -1,0 +1,316 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[ZwrocDaneSElementyNag]"></A><PRE>
+          <FONT SIZE="2"><I>/* [ZwrocDaneSElementyNag] */</I><BR>
+CREATE FUNCTION [CDN].[ZwrocDaneSElementyNag] (
+	@p_TrETyp INT
+	, @p_TrENumer INT
+	, @p_TrELp INT
+	)
+RETURNS TABLE
+AS
+RETURN (
+		SELECT sum(CASE 
+					WHEN @p_TrETyp= 2005 /*WZE*/
+						THEN korektyElem.TrE_WartoscPoRabacie
+					ELSE korektyElem.TrE_KsiegowaNetto
+					END) WartoscPoKorekcie
+			, isnull(sum(CASE
+						WHEN korektyElem.TrE_GIDTyp in (1490 /*PZI*/, 1498 /*PKI*/) AND CDN.CzyElementZafakturowany(korektyElem.TrE_GIDTyp, korektyElem.TrE_GIDNumer, korektyElem.TrE_GIDLp) = 1 
+							THEN korektyElem.TrE_KsiegowaNetto			
+						WHEN @p_TrETyp = 2005
+							THEN 0--korektyElem.TrE_WartoscPoRabacie
+						WHEN naglowkowy.TrN_SpiTyp &gt; 0
+							THEN korektyElem.TrE_KsiegowaNetto						
+						ELSE 0
+						END), 0) WartoscZafakturowana
+			, sum(korektySubElem.IloscPoKorekcie) IloscPoKorekcie
+			, isnull(sum(CASE
+						WHEN korektyElem.TrE_GIDTyp in (1490 /*PZI*/, 1498 /*PKI*/) AND CDN.CzyElementZafakturowany(korektyElem.TrE_GIDTyp, korektyElem.TrE_GIDNumer, korektyElem.TrE_GIDLp) = 1 
+							THEN korektySubElem.IloscPoKorekcie			
+						WHEN naglowkowy.TrN_SpiTyp &gt; 0
+							THEN korektySubElem.IloscPoKorekcie
+						ELSE 0
+						END), 0) IloscZafakturowana
+		FROM cdn.TraElem korektyElem
+		INNER JOIN cdn.TraNag naglowkowy
+			ON naglowkowy.TrN_GIDNumer = korektyElem.TrE_GIDNumer
+		INNER JOIN (
+			SELECT sum(korektySubElem.TrS_Ilosc) IloscPoKorekcie
+				, TrS_GIDNumer
+				, TrS_GIDLp
+			FROM cdn.TrasElem korektySubElem
+			WHERE korektySubElem.TrS_ZwrNumer = @p_TrENumer
+				AND korektySubElem.TrS_ZwrLp = @p_TrELp
+			GROUP BY TrS_GIDNumer
+				, TrS_GIDLp
+			) korektySubElem
+			ON korektySubElem.TrS_GIDNumer = korektyElem.TrE_GIDNumer
+				AND korektySubElem.TrS_GIDLp = korektyElem.TrE_GIDLp
+		)
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[ZwrocDaneSElementyElem]"></A><PRE>
+          <FONT SIZE="2"><I>/* [ZwrocDaneSElementyElem] */</I><BR>
+CREATE FUNCTION [CDN].[ZwrocDaneSElementyElem] (
+	@p_TrETyp INT
+	, @p_TrENumer INT
+	, @p_TrELp INT
+	)
+RETURNS TABLE
+AS
+RETURN (
+		SELECT isnull(sum(korektySubElemSpietego.TrS_Ilosc), 0) IloscZafakturowanaElem
+			, cast(CASE 
+					WHEN isnull(sum(korektyElem.TrE_Ilosc), 1) = 0
+						THEN 0
+					ELSE isnull(sum(korektySubElemSpietego.TrS_Ilosc), 0) * isnull(sum(CASE 
+									WHEN @p_TrETyp =2005
+										THEN korektyElem.TrE_WartoscPoRabacie
+									ELSE korektyElem.TrE_KsiegowaNetto
+									END), 0) / isnull(sum(korektyElem.TrE_Ilosc), 1)
+					END AS DECIMAL(15, 2)) WartoscZafakturowanaElem
+		FROM cdn.TraSElem korektySubElemSpietego
+		INNER JOIN cdn.TraSElem subElemSpiety
+			ON korektySubElemSpietego.TrS_ZwrNumer = subElemSpiety.TrS_GIDNumer
+				AND korektySubElemSpietego.TrS_ZwrLp = subElemSpiety.TrS_GIDLp
+				AND korektySubElemSpietego.TrS_SubZwrLp = subElemSpiety.TrS_SubGIDLp
+		INNER JOIN cdn.TraElem korektyElem
+			ON korektySubElemSpietego.TrS_GIDNumer = korektyElem.TrE_GIDNumer
+				AND korektySubElemSpietego.TrS_GIDLp = korektyElem.TrE_GIDLp
+		WHERE subElemSpiety.TrS_SpiNumer = @p_TrENumer
+			AND subElemSpiety.TrS_SpiLp = @p_TrELp
+		)
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="ZwrocDaneSElementy_IloscPoKorekcie"></A><PRE>
+          <FONT SIZE="2"><I>/* ZwrocDaneSElementy_IloscPoKorekcie */</I><BR>
+CREATE FUNCTION CDN.ZwrocDaneSElementy_IloscPoKorekcie (
+	@p_TrETyp INT
+	, @p_TrENumer INT
+	, @p_TrELp INT
+	, @p_TrEIlosc DECIMAL(15, 4)
+	)
+RETURNS DECIMAL(15, 4)
+AS
+BEGIN
+	RETURN (
+			SELECT isnull(IloscPoKorekcie, @p_TrEIlosc)
+			FROM cdn.ZwrocDaneSElementyNag(@p_TrETyp, @p_TrENumer, @p_TrELp)
+			)
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="ZwrocDaneSElementy_IloscZafakturowana"></A><PRE>
+          <FONT SIZE="2"><I>/* ZwrocDaneSElementy_IloscZafakturowana */</I><BR>
+CREATE FUNCTION CDN.ZwrocDaneSElementy_IloscZafakturowana (
+	@p_TrETyp INT
+	, @p_TrENumer INT
+	, @p_TrELp INT
+	)
+RETURNS DECIMAL(15, 4)
+AS
+BEGIN
+	RETURN (
+			SELECT IloscZafakturowana
+			FROM cdn.ZwrocDaneSElementyNag(@p_TrETyp, @p_TrENumer, @p_TrELp)
+			) + (
+			SELECT IloscZafakturowanaElem
+			FROM cdn.ZwrocDaneSElementyElem(@p_TrETyp, @p_TrENumer, @p_TrELp)
+			)
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="ZwrocDaneSElementy_IloscNieZafakturowana"></A><PRE>
+          <FONT SIZE="2"><I>/* ZwrocDaneSElementy_IloscNieZafakturowana */</I><BR>
+CREATE FUNCTION CDN.ZwrocDaneSElementy_IloscNieZafakturowana (
+	@p_TrETyp INT
+	, @p_TrENumer INT
+	, @p_TrELp INT
+	, @p_TrEIlosc DECIMAL(15, 4)
+	)
+RETURNS DECIMAL(15, 4)
+AS
+BEGIN
+	RETURN (
+			SELECT isnull(IloscPoKorekcie, @p_TrEIlosc) - IloscZafakturowana
+			FROM cdn.ZwrocDaneSElementyNag(@p_TrETyp, @p_TrENumer, @p_TrELp)
+			) - (
+			SELECT IloscZafakturowanaElem
+			FROM cdn.ZwrocDaneSElementyElem(@p_TrETyp, @p_TrENumer, @p_TrELp)
+			)
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="ZwrocDaneSElementy_CenaPoKorekcie"></A><PRE>
+          <FONT SIZE="2"><I>/* ZwrocDaneSElementy_CenaPoKorekcie */</I><BR>
+CREATE FUNCTION CDN.ZwrocDaneSElementy_CenaPoKorekcie (
+	@p_TrETyp INT
+	, @p_TrENumer INT
+	, @p_TrELp INT
+	)
+RETURNS DECIMAL(15, 4)
+AS
+BEGIN
+	RETURN (
+			--SELECT cast(CASE 
+			--			WHEN isnull(IloscPoKorekcie, @p_TrEIlosc) = 0
+			--				THEN 0
+			--			ELSE WartoscPoKorekcie / isnull(IloscPoKorekcie, @p_TrEIlosc)
+			--			END AS DECIMAL(15, 4))
+			--FROM cdn.ZwrocDaneSElementyNag(@p_TrENumer, @p_TrELp)
+			--Bug #341724: [Spinacze elementów] (s)Elementy - niepoprawna cena po korekcie (wartość po korekcie/ilość mimo że nie wygenerowano korekty)
+			SELECT TOP 1 CASE 
+					WHEN TrE_FlagaNB = 'B'
+						THEN TrE_Cena * 100 / (100 + TrE_StawkaPod)
+					ELSE TrE_Cena
+					END
+			FROM cdn.TraElem
+			INNER JOIN cdn.TrasElem
+				ON TrE_GIDNumer = TrS_GIDNumer
+					AND TrE_GIDLp = TrS_GIDLp
+			WHERE TrS_ZwrNumer = @p_TrENumer
+				AND TrS_ZwrLp = @p_TrELp
+				AND TrS_GIDTyp &lt;&gt; 2003 --Bug #398782: Funkcja [CDN].[ZwrocDaneSElementy_CenaPoKorekcie] niepotrzebnie uwzględnia dokumenty KK
+			ORDER BY TrS_GIDNumer DESC
+				, TrS_GIDLp
+			)
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="ZwrocDaneSElementy_WartoscPoKorekcie"></A><PRE>
+          <FONT SIZE="2"><I>/* ZwrocDaneSElementy_WartoscPoKorekcie */</I><BR>
+CREATE FUNCTION CDN.ZwrocDaneSElementy_WartoscPoKorekcie (
+	@p_TrETyp INT
+	, @p_TrENumer INT
+	, @p_TrELp INT
+	)
+RETURNS DECIMAL(15, 4)
+AS
+BEGIN
+	RETURN (
+			SELECT WartoscPoKorekcie
+			FROM cdn.ZwrocDaneSElementyNag(@p_TrETyp, @p_TrENumer, @p_TrELp)
+			)
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="ZwrocDaneSElementy_WartoscZafakturowana"></A><PRE>
+          <FONT SIZE="2"><I>/* ZwrocDaneSElementy_WartoscZafakturowana */</I><BR>
+CREATE FUNCTION CDN.ZwrocDaneSElementy_WartoscZafakturowana (
+	@p_TrETyp INT
+	, @p_TrENumer INT
+	, @p_TrELp INT
+	)
+RETURNS DECIMAL(15, 4)
+AS
+BEGIN
+	RETURN (
+			SELECT WartoscZafakturowana
+			FROM cdn.ZwrocDaneSElementyNag(@p_TrETyp, @p_TrENumer, @p_TrELp)
+			) + (
+			SELECT WartoscZafakturowanaElem
+			FROM cdn.ZwrocDaneSElementyElem(@p_TrETyp, @p_TrENumer, @p_TrELp)
+			)
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="ZwrocDaneSElementy_WartoscNieZafakturowana"></A><PRE>
+          <FONT SIZE="2"><I>/* ZwrocDaneSElementy_WartoscNieZafakturowana */</I><BR>
+CREATE FUNCTION CDN.ZwrocDaneSElementy_WartoscNieZafakturowana (
+	@p_TrETyp INT
+	, @p_TrENumer INT
+	, @p_TrELp INT
+	)
+RETURNS DECIMAL(15, 4)
+AS
+BEGIN
+	RETURN (
+			SELECT WartoscPoKorekcie - WartoscZafakturowana
+			FROM cdn.ZwrocDaneSElementyNag(@p_TrETyp, @p_TrENumer, @p_TrELp)
+			) - (
+			SELECT WartoscZafakturowanaElem
+			FROM cdn.ZwrocDaneSElementyElem(@p_TrETyp, @p_TrENumer, @p_TrELp)
+			)
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="ZwrocDaneSElementy_CenaPoKorekcieBrutto"></A><PRE>
+          <FONT SIZE="2"><I>/* ZwrocDaneSElementy_CenaPoKorekcieBrutto */</I><BR>
+CREATE FUNCTION CDN.ZwrocDaneSElementy_CenaPoKorekcieBrutto (
+	@p_TrETyp INT
+	, @p_TrENumer INT
+	, @p_TrELp INT
+	)
+RETURNS DECIMAL(15, 4)
+AS
+BEGIN
+	RETURN (
+			SELECT TOP 1 CASE 
+			WHEN TrE_FlagaNB = 'B' THEN
+						TrE_Cena
+					ELSE
+						TrE_Cena * (100 + TrE_StawkaPod) / 100				
+					END	
+			FROM cdn.TraElem
+			INNER JOIN cdn.TrasElem
+				ON TrE_GIDNumer = TrS_GIDNumer
+					AND TrE_GIDLp = TrS_GIDLp
+			WHERE TrS_ZwrNumer = @p_TrENumer
+				AND TrS_ZwrLp = @p_TrELp
+				AND TrS_GIDTyp &lt;&gt; 2003
+			ORDER BY TrS_GIDNumer DESC
+				, TrS_GIDLp
+			)
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,313 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="XLDodajAktualizujAtr"></A><PRE>
+          <FONT SIZE="2"><I>/* XLDodajAktualizujAtr */</I><BR>
+CREATE PROCEDURE CDN.XLDodajAktualizujAtr
+@AtK_Nazwa					VARCHAR(256)=NULL,
+@Atr_Wartosc				VARCHAR(512)=NULL,
+@Akronim					VARCHAR(100)=NULL,
+@Typ						SMALLINT=NULL, 
+@OpeIden					VARCHAR(8)=NULL,
+@TrELp					    SMALLINT = NULL,        --		Wykorzystywane przy dodawaniu wartosci atrybutu do pozycji dokumentu lub elementu umowy (wtedy to odpowiada UmE_Pozycja)
+@IgnorujBledy				TINYINT = NULL          --      Jeżeli różne od NULL wtedy nie jest wyswietlana informacja o bledzie
+AS
+BEGIN
+	SET NOCOUNT ON;
+
+DECLARE @AtK_ID				INTEGER 
+DECLARE @AtK_Typ			SMALLINT 
+DECLARE @AtK_Wielowart		TINYINT 
+DECLARE @AtK_Zamknieta		TINYINT
+
+DECLARE @Atr_Id				BIGINT
+DECLARE @AtH_Id				BIGINT
+DECLARE @AtH_TimeStamp		INTEGER 
+
+DECLARE @Atr_ObiTyp			SMALLINT	
+DECLARE @Atr_ObiFirma		INTEGER 
+DECLARE @Atr_ObiNumer		INTEGER 
+DECLARE @Atr_ObiLp			SMALLINT 
+DECLARE @Atr_ObiSubLp		SMALLINT 
+
+DECLARE @Atr_AtrTyp			SMALLINT
+DECLARE @Atr_AtrFirma		INTEGER
+DECLARE @Atr_AtrNumer		INTEGER 
+DECLARE @Atr_AtrLp			SMALLINT 
+
+SET @Atr_AtrTyp=0
+SET @Atr_AtrFirma=0
+SET @Atr_AtrNumer=0
+SET @Atr_AtrLp=0
+
+SET @Atr_ObiSubLp=0
+if @AtK_Nazwa is null or @AtK_Nazwa=''
+        begin
+                if @IgnorujBledy is null
+                        raiserror('Nie podano nazwy klasy - (-101)',16,1)
+                return -101
+        end
+        
+if @Atr_Wartosc is null or @Atr_Wartosc=''
+        begin
+                if @IgnorujBledy is null
+                        raiserror('Nie podano wartości atrybutu - (-102)',16,1)
+                return -102
+        end
+
+if @Akronim is null or @Akronim=''
+        begin
+                if @IgnorujBledy is null
+                        raiserror('Nie podano akronimu obiektu - (-103)',16,1)
+                return -103
+        end
+
+if @Typ is null
+        begin
+                if @IgnorujBledy is null
+                        raiserror('Nie podano typu obiektu - (-104)',16,1)
+                return -104
+        end
+ 
+if @Typ!=16 AND @Typ!=32 AND @Typ!=368 AND @Typ!=1617 AND @Typ!=4800
+	begin
+		if @IgnorujBledy is null
+			raiserror('Podany typ obiektu nie jest obsługiwany - (-105)',16,1)
+        return -105
+	end
+
+ if @Typ = 16
+			SELECT @Atr_ObiFirma=Twr_GIDFirma,@Atr_ObiNumer=Twr_GidNumer,@Atr_ObiTyp=Twr_GIDTyp,@Atr_ObiLp=Twr_GIDLp FROM CDN.TwrKarty where Twr_Kod=@Akronim 
+ else if @Typ=32
+			SELECT @Atr_ObiFirma=Knt_GIDFirma,@Atr_ObiNumer=Knt_GidNumer,@Atr_ObiTyp=Knt_GIDTyp,@Atr_ObiLp=Knt_GIDLp FROM cdn.Kntkarty where Knt_Akronim=@Akronim
+ else if @Typ=368
+			SELECT @Atr_ObiFirma=Srt_GIDFirma,@Atr_ObiNumer=Srt_GidNumer,@Atr_ObiTyp=Srt_GIDTyp,@Atr_ObiLp=Srt_GIDLp FROM cdn.Srtkarty where Srt_Akronim=@Akronim
+else if @Typ=4800 --umowy
+	if ISNUMERIC(@Akronim)=1
+			begin
+				SELECT @Atr_ObiFirma=CDN.GIDFirma(), @Atr_ObiNumer=UmN_Id, @Atr_ObiTyp=4800, @Atr_ObiLp=0 FROM CDN.UmwNag WHERE UmN_Id=@Akronim
+				if @TrELp is not NULL
+					begin
+						SET @Atr_ObiFirma = NULL
+						SELECT @Atr_ObiFirma=CDN.GIDFirma(), @Atr_ObiLp=UmE_GIDLp FROM CDN.UmwElem WHERE UmE_GIDNumer=@Atr_ObiNumer AND UmE_GIDTyp=@Atr_ObiTyp AND UmE_Pozycja=@TrELp
+					end
+			end
+	else
+			begin
+				if @IgnorujBledy is null
+				raiserror('GIDNumer dokumentu musi być liczbą - (-111)',16,1)
+				return -111
+			end
+ else
+	begin
+		if ISNUMERIC(@Akronim)=1
+			begin
+				SELECT @Atr_ObiFirma=TrN_GIDFirma, @Atr_ObiNumer=TrN_GIDNumer, @Atr_ObiTyp=TrN_GIDTyp, @Atr_ObiLp=TrN_GIDLp FROM CDN.TraNag WHERE TrN_GIDNumer=@Akronim
+				if @TrELp is not NULL
+					begin
+						SET @Atr_ObiFirma = NULL
+						SELECT @Atr_ObiFirma=TrE_GIDFirma, @Atr_ObiLp=TrE_GIDLp FROM CDN.TraElem WHERE TrE_GIDNumer=@Atr_ObiNumer AND TrE_GIDTyp=@Atr_ObiTyp AND TrE_GIDLp=@TrELp
+					end
+			end
+		else
+			begin
+				if @IgnorujBledy is null
+				raiserror('GIDNumer dokumentu musi być liczbą - (-111)',16,1)
+				return -111
+			end
+	end
+	
+if @Atr_ObiFirma is null
+	begin
+		if @IgnorujBledy is null
+		raiserror('Nie znaleziono obiektu do którego ma zostać dodany atrybut - (-112)',16,1)
+		return -112
+	end
+
+SELECT @AtK_ID=AtK_ID, @AtK_Typ=AtK_Typ, @AtK_Wielowart=AtK_Wielowart, @AtK_Zamknieta=AtK_Zamknieta FROM CDN.AtrybutyKlasy WHERE AtK_Nazwa=@AtK_Nazwa
+
+if @AtK_ID is null
+	begin
+		if @IgnorujBledy is null
+		raiserror('Nie znaleziono klasy obiektu o podanej nazwie - (-113)',16,1)
+		return -113
+	end
+
+if @AtK_Typ=4
+	begin
+		if NOT EXISTS(Select * from CDN.AtrybutyWartosci WHERE AtW_AtKId=@AtK_ID AND AtW_Wartosc=@Atr_Wartosc)
+			begin
+				if @AtK_Zamknieta=1
+					begin
+						if @IgnorujBledy is null
+							raiserror('Brak warości na liście - (-110)',16,1)
+						return -110
+					end
+				else 
+					begin
+						INSERT INTO CDN.AtrybutyWartosci(AtW_AtKId,AtW_Wartosc) VALUES(@AtK_ID, @Atr_Wartosc)
+						if @@ROWCOUNT = 0
+							begin
+								if @IgnorujBledy is null
+									raiserror('Nie udała się dodać wpisu do tabeli CDN.AtrybutyWartosci - (-1101)',16,1)
+								return -1101
+							end
+					end
+			end
+			
+		
+	end
+else if @AtK_Typ=11 OR @AtK_Typ=12
+	begin
+		if @AtK_Typ=11
+		begin
+			if not exists(SELECT Twr_GidNumer FROM cdn.twrkarty where twr_kod=@Atr_Wartosc)
+				begin
+					if @IgnorujBledy is null
+						raiserror('Nie odnaleziono towaru ''%s'' - (-107)',16,1, @Atr_Wartosc)
+					return -107
+				end
+			
+			SELECT  @Atr_AtrFirma=Twr_GIDFirma,@Atr_AtrNumer=Twr_GidNumer,@Atr_AtrTyp=Twr_GIDTyp,@Atr_AtrLp=Twr_GIDLp FROM cdn.twrkarty where twr_kod=@Atr_Wartosc
+		end
+		else if @AtK_Typ=12
+		begin
+			if not exists(Select Knt_GIDNumer from CDN.KntKarty where Knt_Akronim=@Atr_Wartosc)
+				begin
+					if @IgnorujBledy is null
+						raiserror('Nie odnaleziono kontrahenta - (-108)',16,1)
+					return -108
+				end
+				
+			SELECT @Atr_AtrFirma=Knt_GIDFirma,@Atr_AtrNumer=Knt_GidNumer, @Atr_AtrTyp=Knt_GIDTyp, @Atr_AtrLp=Knt_GIDLp FROM cdn.Kntkarty where Knt_Akronim=@Atr_Wartosc
+		end
+	end
+else if @AtK_Typ&gt;12
+	begin
+	if @IgnorujBledy is null
+			raiserror('Atrybut nie jest obsługiwany - (-106)',16,1)
+        return -106
+	end
+
+if  @AtK_Wielowart=0
+	begin
+		if @Typ = 16
+			Update cdn.Atrybuty 
+			set atr_wartosc= @Atr_Wartosc, Atr_ObiFirma=@Atr_ObiFirma, Atr_ObiLp=@Atr_ObiLp, Atr_ObiNumer=@Atr_ObiNumer, Atr_ObiSubLp=@Atr_ObiSubLp, Atr_ObiTyp=@Atr_ObiTyp
+			from cdn.atrybuty join cdn.twrkarty on Twr_GIDNumer=Atr_ObiNumer join cdn.AtrybutyKlasy on AtK_ID=Atr_AtkId where twr_gidnumer=@Atr_ObiNumer and atk_nazwa=@AtK_Nazwa and Atr_OBITyp=16 and Atr_OBILp = 0
+		else if @Typ = 32
+			Update cdn.Atrybuty 
+			set atr_wartosc= @Atr_Wartosc, Atr_ObiFirma=@Atr_ObiFirma, Atr_ObiLp=@Atr_ObiLp, Atr_ObiNumer=@Atr_ObiNumer, Atr_ObiSubLp=@Atr_ObiSubLp, Atr_ObiTyp=@Atr_ObiTyp
+			from cdn.atrybuty join cdn.Kntkarty on Knt_GIDNumer=Atr_ObiNumer join cdn.AtrybutyKlasy on AtK_ID=Atr_AtkId where Knt_gidnumer=@Atr_ObiNumer and atk_nazwa=@AtK_Nazwa and Atr_OBITyp=32 AND Atr_OBISubLp=0
+		else if @Typ = 368
+			Update cdn.Atrybuty 
+			set atr_wartosc= @Atr_Wartosc, Atr_ObiFirma=@Atr_ObiFirma, Atr_ObiLp=@Atr_ObiLp, Atr_ObiNumer=@Atr_ObiNumer, Atr_ObiSubLp=@Atr_ObiSubLp, Atr_ObiTyp=@Atr_ObiTyp
+			from cdn.atrybuty join cdn.Srtkarty on Srt_GIDNumer=Atr_ObiNumer join cdn.AtrybutyKlasy on AtK_ID=Atr_AtkId where Srt_gidnumer=@Atr_ObiNumer and atk_nazwa=@AtK_Nazwa and Atr_OBITyp=368       
+		else if @Typ = 4800 and isnull(@TrELp,0)=0
+			Update cdn.Atrybuty 
+			set atr_wartosc= @Atr_Wartosc, Atr_ObiFirma=@Atr_ObiFirma, Atr_ObiLp=@Atr_ObiLp, Atr_ObiNumer=@Atr_ObiNumer, Atr_ObiSubLp=@Atr_ObiSubLp, Atr_ObiTyp=@Atr_ObiTyp
+			from cdn.atrybuty join cdn.UmwNag on UmN_Id=Atr_ObiNumer join cdn.AtrybutyKlasy on AtK_ID=Atr_AtkId where UmN_Id=@Atr_ObiNumer and atk_nazwa=@AtK_Nazwa and Atr_OBITyp=4800      
+		else if @Typ = 4800
+			Update cdn.Atrybuty 
+			set atr_wartosc= @Atr_Wartosc, Atr_ObiFirma=@Atr_ObiFirma, Atr_ObiLp=@Atr_ObiLp, Atr_ObiNumer=@Atr_ObiNumer, Atr_ObiSubLp=@Atr_ObiSubLp, Atr_ObiTyp=@Atr_ObiTyp
+			from cdn.atrybuty join cdn.UmwElem on UmE_GIDNumer=Atr_ObiNumer and UmE_GIDLp=Atr_ObiLp join cdn.AtrybutyKlasy on AtK_ID=Atr_AtkId where UmE_GIDNumer=@Atr_ObiNumer and atk_nazwa=@AtK_Nazwa and Atr_OBITyp=4800 and Atr_ObiLp=@Atr_ObiLp      
+	end
+else
+begin
+
+		Select @Atr_Id=Atr_Id FROM CDN.Atrybuty where Atr_ObiSubLp=@Atr_ObiSubLp AND Atr_ObiLp=@Atr_ObiLp AND Atr_ObiNumer=@Atr_ObiNumer AND Atr_AtkId=@AtK_ID
+		
+		if EXISTS(Select * FROM CDN.AtrybutyHist Where AtH_AtkId=@AtK_ID And AtH_Wartosc=@Atr_Wartosc AND AtH_ObiFirma=@Atr_ObiFirma AND AtH_ObiLp=@Atr_ObiLp AND AtH_ObiNumer=@Atr_ObiNumer AND AtH_ObiSubLp=@Atr_ObiSubLp AND AtH_ObiTyp=@Atr_ObiTyp)
+		begin
+			if @IgnorujBledy is null
+				raiserror('Wybrana wartość jest już dodana - (-109)',16,1)
+			return -109
+		end
+		
+		BEGIN TRAN XLDodajAktualizujAtr
+		
+		INSERT INTO CDN.AtrybutyHist
+		(
+		AtH_Id,
+		AtH_ObiTyp, 
+		AtH_ObiFirma, 
+		AtH_ObiNumer,
+		AtH_ObiLp,  
+		AtH_ObiSubLp,
+		AtH_AtkId, 
+		AtH_Wartosc,
+		AtH_AtrFirma,
+		AtH_AtrLp,
+		AtH_AtrNumer,
+		AtH_AtrSubLp,
+		AtH_AtrTyp,
+		AtH_TimeStamp,
+		AtH_TimeStampDo,
+		AtH_OpeTyp,
+		AtH_OpeFirma,
+		AtH_OpeLp,
+		AtH_OpeNumer
+		)
+		Select 
+		Atr_Id,
+		@Atr_ObiTyp,
+		@Atr_ObiFirma,
+		@Atr_ObiNumer,
+		@Atr_ObiLp,
+		@Atr_ObiSubLp,
+		@AtK_ID,
+		@Atr_Wartosc,
+		@Atr_AtrFirma,
+		@Atr_AtrLp,
+		@Atr_AtrNumer,
+		0,
+		@Atr_AtrTyp,
+		IsNull((Select MAX(AtH_TimeStamp)+1 from CDN.AtrybutyHist where AtH_AtkId=@AtK_ID AND AtH_ObiNumer=@Atr_ObiNumer AND AtH_ObiLp=@Atr_ObiLp AND AtH_ObiSubLp=@Atr_ObiSubLp),1),
+		IsNull((Select MAX(AtH_TimeStamp)+1 from CDN.AtrybutyHist where AtH_AtkId=@AtK_ID AND AtH_ObiNumer=@Atr_ObiNumer AND AtH_ObiLp=@Atr_ObiLp AND AtH_ObiSubLp=@Atr_ObiSubLp),1),
+		Ope_GIDTyp,
+		Ope_GIDFirma,
+		Ope_GIDLp,
+		Ope_GIDNumer
+		FROM CDN.Atrybuty 
+		inner join CDN.OpeKarty ON Ope_Ident=@OpeIden
+		where Atr_ObiSubLp=@Atr_ObiSubLp AND Atr_ObiLp=@Atr_ObiLp AND Atr_ObiNumer=@Atr_ObiNumer AND Atr_AtkId=@AtK_ID
+		
+		if @@ROWCOUNT = 0
+        begin
+				ROLLBACK TRAN XLDodajAktualizujAtr
+                if @IgnorujBledy is null
+					raiserror('Nie udało się dodać wpisu do tabeli CDN.AtrybutyHist - (-1100)',16,1)
+                return -1100
+        end 
+		
+		Update CDN.Atrybuty set Atr_Wartosc='&lt;...&gt; time:'+ Convert(Varchar, DATEDIFF(S,'19900101',GETDATE())) WHERE AtR_ID=@Atr_Id
+		
+		if @@ROWCOUNT = 0
+        begin
+				ROLLBACK TRAN XLDodajAktualizujAtr
+                if @IgnorujBledy is null                
+					raiserror('Nie udała się aktualizacja tabeli CDN.Atrybuty - (-1102)',16,1)
+                return -1100
+        end 
+		
+		COMMIT TRAN XLDodajAktualizujAtr
+end
+     
+return 0
+
+END
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,166 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="XLModyfikujAnkiete"></A><PRE>
+          <FONT SIZE="2"><I>/* XLModyfikujAnkiete */</I><BR>
+CREATE PROCEDURE CDN.XLModyfikujAnkiete
+(
+/* ==========================================================================================
+	SQL API: Procedura serwerowa do modyfikowania ankiety
+
+	Dla uproszczenia założono, że jeżeli w systemie zewnętrznym zostanie zmodyfikowana ankieta,
+	to w trakcie modyfikowania jej przez API nie ma potrzeby kontrolowania uprawnień do obiektów, z których ona korzysta	
+
+	Parametry wejściowe: 
+   ========================================================================================== */
+	@Id INT,											-- Identyfikator ankiety
+	@RodzajId INT,										-- Identyfikator rodzaju ankiety
+	@Kod VARCHAR(40),									-- Kod ankiety
+	@Nazwa VARCHAR(100),								-- Nazwa ankiety
+	@Aktywna TINYINT = NULL,							-- Czy ankieta aktywna
+	@PodmiotWymagany TINYINT = NULL,					-- Czy podmiot ankiety wymagany
+	@Anonimowa INT = NULL,								-- Czy ankieta anonimowa
+	@PytaniaAnkiety AS CDN.PytaniaAnkietyTable READONLY	-- Pytania ankiety
+
+/* ==========================================================================================
+	Return:
+	 0 : Operacja zakończona sukcesem
+	-1 : Nie powiodło się modyfikacja wpisu do tabeli CDN.Ankiety
+	-2 : Wystąpił błąd podczas modyfikacji ankiety. Nie istnieje wpis w tabeli CDN.Ankiety o podanym identyfikatorze.
+	-2 : Wystąpił błąd podczas modyfikacji ankiety. Brak kodu ankiety.
+	-3 : Wystąpił błąd podczas modyfikacji ankiety. Brak nazwy ankiety.
+	-4 : Wystąpił błąd podczas modyfikacji ankiety. Nie powiodło się ustalenie rodzaju ankiety.
+	-5 : Wystąpił błąd podczas modyfikacji pytań do ankiety.
+	-6 : Wystąpił błąd podczas aktualizacji pytań ankiety. 
+	-7 : Wystąpił błąd podczas aktualizacji pytań ankiety. Istnieją zapisy powiązane z modyfikowanym rekordem (powiązanie z tabelą CDN.OdpowiedziZadania).
+	-8 : Wystąpił błąd podczas usuwania lub dodawania pytań ankiety.
+   ========================================================================================== */
+)
+AS
+BEGIN
+	declare @TypAnkieta INT = 14460,
+			@RodzId INT = 0,
+			@BladId INT = -2,
+			@BladOpis VARCHAR(2048) = 'Wystąpił błąd podczas modyfikacji ankiety. '
+
+	select @RodzId = SLW_Id
+	from cdn.SlownikiStruktura
+	join cdn.Slowniki on SLS_Id = SLW_SLSId
+	where SLS_Predefiniowany = 58 and SLW_Id = isnull(@RodzajId,0) and SLW_Aktywny = 1
+
+	select @BladId = case when isnull(@Kod, ANT_Kod) = '' then -3
+						when isnull(@Nazwa, ANT_Nazwa) = '' then -4
+						when @RodzajId is null and ANT_Rodzaj = 0 then -5
+						when isnull(@RodzajId,ANT_Rodzaj) &lt;&gt; ANT_Rodzaj and @RodzId = 0 then -5
+						else 0
+					end
+	from cdn.Ankiety
+	where ANT_Id = isnull(@Id,0)
+
+	if @BladId &lt; 0
+	begin
+		select @BladOpis = @BladOpis 
+							+ case @BladId 
+							when -2 then 'Nie istnieje wpis w tabeli CDN.Ankiety o podanym identyfikatorze.'
+							when -3 then 'Brak kodu ankiety.'
+							when -4 then 'Brak nazwy ankiety.'
+							when -5 then 'Nie powiodło się ustalenie rodzaju ankiety.'
+							end
+		raiserror(@BladOpis, 16, 1)
+		return @BladId
+	end
+
+	begin tran
+
+	update cdn.Ankiety
+	set ANT_Rodzaj = case when @RodzId = 0 then ANT_Rodzaj else @RodzId end,
+		ANT_Aktywna = isnull(@Aktywna, ANT_Aktywna),
+		ANT_Kod = isnull(@Kod, ANT_Kod),
+		ANT_Nazwa = isnull(@Nazwa, ANT_Nazwa),
+		ANT_PodmiotWymagany = isnull(@PodmiotWymagany, ANT_PodmiotWymagany),
+		ANT_Anonimowa = isnull(@Anonimowa, ANT_Anonimowa)		
+	where ANT_Id = @Id
+
+	if @@ERROR &lt;&gt; 0
+	begin
+		rollback tran		
+		raiserror ('Nie powiodła się modyfikacja wpisu w tabeli CDN.Ankieta.', 16, 1);
+		return -1
+	end
+
+	declare @ZaktualizowanePANTable table (akcja nvarchar(10), PytId int);
+
+	--Aktualizacja pytań ankiety:
+	;with ZmienionePytaniaAnkiety as (
+		select PYTId, isnull(PytWaga,PAN_PytWaga) PytWaga, isnull(Opis,PAN_Opis) Opis, isnull(Pozycja,PAN_Pozycja) Pozycja 
+		from @PytaniaAnkiety
+		join CDN.PytaniaAnkiety on PAN_AntId = @Id and PAN_PytId = PYTId
+		except
+		select PAN_PytId, PAN_PytWaga, PAN_Opis, PAN_Pozycja
+		from CDN.PytaniaAnkiety 
+		where PAN_AntId = @Id
+	)
+	merge cdn.PytaniaAnkiety as target
+	using (select PYTId, PytWaga, Opis, Pozycja 
+			from ZmienionePytaniaAnkiety
+			) as source (PYTId, PytWaga, Opis, Pozycja) 			
+		on target.PAN_PytId = source.PytId and target.PAN_AntId = @Id
+	when matched then
+		update set PAN_PytWaga = PytWaga,
+					PAN_Opis = Opis,
+					PAN_Pozycja = Pozycja
+	output $action,inserted.PAN_PYTId into @ZaktualizowanePANTable		
+	;
+
+	select @BladId = case when @@ERROR &lt;&gt; 0 then -6
+						when exists(select * 
+									from @ZaktualizowanePANTable
+									join CDN.OdpowiedziZadania on ODZ_PytId = PytId) then -7
+						else 0 end
+	if @BladId &lt; 0
+	begin
+		rollback tran
+		select @BladOpis = 'Wystąpił błąd podczas aktualizacji pytań ankiety. ' 
+							+ case @BladId when -7 then 'Istnieją zapisy powiązane z modyfikowanym rekordem (powiązanie z tabelą CDN.OdpowiedziZadania).' end
+		raiserror(@BladOpis, 16, 1)
+		return @BladId
+	end
+
+	--Usuwanie i dodawanie pytań ankiety:
+	merge cdn.PytaniaAnkiety as target
+	using (select PYTId, PytWaga, Opis, Pozycja 
+			from @PytaniaAnkiety
+			) as source (PYTId, PytWaga, Opis, Pozycja) 			
+		on target.PAN_PytId = source.PytId and target.PAN_AntId = @Id
+	when not matched by target then
+		insert (PAN_AntId, PAN_PytId, PAN_PytWaga, PAN_GrupWaga, PAN_Opis, PAN_Pozycja)
+		values (@Id, PYTId, PYTwaga, 0, Opis, Pozycja)
+	when not matched by source then 
+		delete
+	;
+
+	if @@ERROR &lt;&gt; 0
+	begin
+		rollback tran
+		raiserror('Wystąpił błąd podczas usuwania lub dodawania pytań ankiety.',16,1)
+		return -8
+	end
+
+	commit tran
+	RETURN 0
+	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

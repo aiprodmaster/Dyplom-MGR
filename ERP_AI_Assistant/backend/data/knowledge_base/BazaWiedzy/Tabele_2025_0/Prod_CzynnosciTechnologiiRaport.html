@@ -1,0 +1,308 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Prod_CzynnosciTechnologiiRaport"></A><PRE>
+          <FONT SIZE="2"><I>/* Prod_CzynnosciTechnologiiRaport */</I><BR>
+CREATE PROCEDURE CDN.Prod_CzynnosciTechnologiiRaport (@PTEID INT, @Filtr VARCHAR(100) = '')
+AS
+begin
+set nocount on
+
+declare @lPoziom smallint = 1
+
+declare @TypCzynnosc smallint = 40
+declare @TypProduktUboczny smallint = 47
+declare @TypProdukt smallint = 50
+declare @TypSurowiec smallint = 60
+DECLARE @TypZasob SMALLINT = 70
+DECLARE @TypFunkcja SMALLINT = 80
+DECLARE @TypPolProdukt SMALLINT = 90
+
+set @Filtr = '%' + @Filtr + '%'
+
+
+declare @tmpCzynnosci table (ID int, PTC_Ojciec int, Kod varchar(40), Nazwa varchar(255), Lp int, Poziom smallint
+, Typ int, Ilosc decimal(11,4), Jednostka Varchar(15), Filtr smallint
+, KodKop varchar(100), Zamiennik int, Podrzedne smallint, Polprodukt int, TwrNumer int, PTZKoszt int, TypZasobu int)
+
+
+declare @insert int
+set @insert = 0
+insert into @tmpCzynnosci
+select PTC_ID, PTC_Ojciec, PTC_Kod, PTC_Nazwa, PTC_Lp, @lPoziom, @TypCzynnosc, CDN.Prod_WartoscAtr(PTC_Ilosc,PTC_IloscAtr,14340,@PTEID,default,0), PTC_Jednostka,
+        case when PTC_Kod+PTC_Nazwa like @Filtr then 1 when exists(select * from CDN.Atrybuty
+        where Atr_ObiTyp=14341 and Atr_ObiNumer=PTC_Id and Atr_Wartosc like @Filtr) then 1 else 0 end, case when PTC_Kooperacja&gt;0 then Twr_Kod else '' end,
+        0, 0,0, 0
+		, 0 PTZKoszt,0
+from cdn.ProdTechnologiaCzynnosci
+left outer join Cdn.TwrKarty on PTC_TwrNumer = Twr_GidNumer AND  PTC_TwrTyp= Twr_GIDTyp
+where PTC_Technologia = @PTEID and isnull(PTC_Ojciec,0) = 0
+                
+		set @insert = 1
+
+        while (@insert &gt; 0)
+        begin
+                set @insert = 0
+                set @lPoziom = @lPoziom + 1
+                                insert into @tmpCzynnosci
+                select a1.PTZ_ID,a2.ID, a1.PTZ_Kod, a1.PTZ_Nazwa, PTZ_Lp, @lPoziom,
+                        case 
+						when a1.PTZ_TypZasobu = 0 then @TypProdukt
+						when a1.PTZ_TypZasobu = 4 then @TypProduktUboczny
+                        else @TypSurowiec end
+						, CDN.Prod_WartoscAtr(PTZ_Ilosc,PTZ_IloscAtr,14340,@PTEID,default,0), PTZ_Jednostka,
+                        case when Filtr&lt;&gt;0 or PTZ_Kod+PTZ_Nazwa like @Filtr then 1 when exists(select * from CDN.Atrybuty
+                        where Atr_ObiTyp=14342 and Atr_ObiNumer=PTZ_Id and Atr_Wartosc like @Filtr) then 1 else 0 end,  Twr_Kod,
+                        a1.PTZ_Zamiennik, 0,a1.PTZ_TechnologiaZasob
+						, PTZ_TwrNumer
+						, PTZ_Koszt PTZKoszt, 0
+                from cdn.ProdTechnologiaZasoby as a1
+                left outer join Cdn.TwrKarty on a1.PTZ_KopNumer = Twr_GidNumer AND a1.PTZ_KopTyp = Twr_GidTyp
+                inner join @tmpCzynnosci as a2 on a1.PTZ_Zamiennik = a2.ID and a2.Typ = @TypSurowiec and a2.Poziom = (@lPoziom - 1)
+				if @@RowCount&gt; 0  set @insert = 1
+
+
+                insert into @tmpCzynnosci
+                 select a1.PTZ_ID,a2.ID, a1.PTZ_Kod, a1.PTZ_Nazwa, PTZ_Lp, @lPoziom,
+                        case 
+						when a1.PTZ_TypZasobu = 0 then @TypProdukt
+						when a1.PTZ_TypZasobu = 4 then @TypProduktUboczny
+                        else @TypSurowiec end
+						, CDN.Prod_WartoscAtr(PTZ_Ilosc,PTZ_IloscAtr,14340,@PTEID,default,0), PTZ_Jednostka,
+                        case when Filtr&lt;&gt;0 or PTZ_Kod+PTZ_Nazwa like @Filtr then 1 when exists(select * from CDN.Atrybuty
+                        where Atr_ObiTyp=14342 and Atr_ObiNumer=PTZ_Id and Atr_Wartosc like @Filtr) then 1 else 0 end,  Twr_Kod
+                        , a1.PTZ_Zamiennik, 0, a1.PTZ_TechnologiaZasob, PTZ_TwrNumer
+						, PTZ_Koszt PTZKoszt,0
+                from cdn.ProdTechnologiaZasoby as a1
+                left outer join Cdn.TwrKarty on a1.PTZ_KopNumer = Twr_GidNumer AND a1.PTZ_KopTyp = Twr_GidTyp
+                inner join @tmpCzynnosci as a2 on a1.PTZ_TechnologiaCzynnosc = a2.ID and a2.Typ = @TypCzynnosc and a2.Poziom = (@lPoziom - 1)
+                where a1.PTZ_Zamiennik = 0
+                if @@RowCount&gt; 0  set @insert = 1
+
+				insert into @tmpCzynnosci
+				select a1.PFU_Id, a2.Id, a1.PFU_Kod, a1.PFU_Nazwa, 1,
+                       @lPoziom,@TypFunkcja as Typ,PTF_LiczbaObiektow as Ilosc,'zasób' as Jednostka,
+                       case when Filtr&lt;&gt;0 or PFU_Kod+PFU_Nazwa like @Filtr then 1 when exists(select * from CDN.Atrybuty
+                       where Atr_ObiTyp=14338 and Atr_ObiNumer=PFU_Id and Atr_Wartosc like @Filtr) then 1 else 0 end,'',
+                       0, 0,0,0
+					   , 0 PTZKoszt,0
+                  from CDN.ProdFunkcje as a1
+                  inner join CDN.ProdTechnologiaFunkcje on a1.PFU_Id=PTF_FUnkcja
+                  inner join @tmpCzynnosci as a2 on PTF_TechnologiaCzynnosc = a2.ID and a2.Typ =@TypCzynnosc and a2.Poziom = (@lPoziom - 1)
+
+				INSERT INTO @tmpCzynnosci
+				SELECT pob.POB_Id, tmp.ID, pob.POB_Kod, pob.POB_Nazwa, 1, @lPoziom, @TypZasob AS Typ, 1 AS Ilosc, 'zasób' AS Jednostka,CASE
+                                WHEN Filtr &lt;&gt; 0 OR POB_Kod + POB_Nazwa LIKE @Filtr
+                                        THEN 1
+                                WHEN EXISTS (
+                                                SELECT *
+                                                FROM CDN.Atrybuty
+                                                WHERE Atr_ObiTyp = 14338 AND Atr_ObiNumer = POB_Id AND Atr_Wartosc LIKE @Filtr
+                                                )
+                                        THEN 1
+                                ELSE 0
+                                END, '', 0, 0, 0, 0, 0, pob.POB_ObiTyp AS TypZasobu
+				FROM CDN.ProdObiekty pob
+				INNER JOIN CDN.ProdTechnologieZasobyGniazd zg ON pob.POB_Id = zg.PTG_ZasobGniazda
+				INNER JOIN @tmpCzynnosci tmp ON PTG_TechnologiaOperacje = tmp.ID AND tmp.Typ = @TypCzynnosc AND tmp.Poziom = (@lPoziom -1)
+
+                insert into @tmpCzynnosci
+                select a1.PTC_ID, a1.PTC_Ojciec, a1.PTC_Kod, a1.PTC_Nazwa, a1.PTC_Lp, @lPoziom, @TypCzynnosc, CDN.Prod_WartoscAtr(PTC_Ilosc,PTC_IloscAtr,14340,@PTEID,default,0), PTC_Jednostka,
+                        case when Filtr&lt;&gt;0 or PTC_Kod+PTC_Nazwa like @Filtr then 1 when exists(select * from CDN.Atrybuty
+                        where Atr_ObiTyp=14341 and Atr_ObiNumer=PTC_Id and Atr_Wartosc like @Filtr) then 1 else 0 end, case when PTC_Kooperacja&gt;0 then Twr_Kod else '' end,
+                        0, 0,0,0
+						, 0 PTZKoszt,0
+                from cdn.ProdTechnologiaCzynnosci as a1
+                left outer join Cdn.TwrKarty on a1.PTC_TwrNumer = Twr_GidNumer and a1.PTC_TwrTyp= Twr_GIDTyp
+                inner join @tmpCzynnosci as a2 on a1.PTC_Ojciec = a2.ID and a1.PTC_Technologia = @PTEID and a2.Typ = @TypCzynnosc and a2.Poziom = (@lPoziom - 1)
+                if @@RowCount&gt; 0  set @insert = 1
+        end
+
+        if @Filtr&lt;&gt;''
+                while 1=1
+                begin
+                        update Rodz set Filtr=1
+                        from @tmpCzynnosci Czyn
+                        inner join @tmpCzynnosci Rodz on Rodz.Id=Czyn.PTC_Ojciec
+                        where Czyn.Filtr=1 and Rodz.Filtr=0
+                        if @@RowCount=0 break
+                end
+
+        update Rodz set Podrzedne = 1
+            from @tmpCzynnosci Czyn
+            inner join @tmpCzynnosci Rodz on Rodz.Id=Czyn.PTC_Ojciec
+
+        select ID, PTC_Ojciec, Kod, Nazwa, Lp, Poziom, Typ, Ilosc, Jednostka,KodKop,case Typ
+                                                                             when @TypProdukt then Kod
+                                                                             when @TypSurowiec then Kod
+                                                                             when @TypFunkcja then Kod
+                                                                             else null
+                                                                             end Techn, Zamiennik, Podrzedne, Polprodukt, TwrNumer,PTZKoszt, TypZasobu
+        from @tmpCzynnosci
+        where Filtr&lt;&gt;0
+
+        order by Poziom, Typ,
+                (case Typ
+                                    when @TypFunkcja then Kod
+                        else null
+                end) desc,
+                Lp desc
+
+set nocount off
+
+end
+
+
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="ProdDrzewoTechnologiiDlaZasobu"></A><PRE>
+          <FONT SIZE="2"><I>/* ProdDrzewoTechnologiiDlaZasobu */</I><BR>
+CREATE PROCEDURE CDN.ProdDrzewoTechnologiiDlaZasobu(@PTZId INT, @PTEId INT)
+AS
+BEGIN
+	SET NOCOUNT ON
+	DECLARE @Poziom smallint = 1
+
+	DECLARE @TypCzynnosc SMALLINT = 40
+	DECLARE @TypProduktUboczny SMALLINT = 47
+	DECLARE @TypProdukt SMALLINT = 50
+	DECLARE @TypSurowiec SMALLINT = 60
+	DECLARE @TypZasob SMALLINT = 70
+	DECLARE @TypFunkcja SMALLINT = 80
+	DECLARE @TypPolProdukt SMALLINT = 90
+	DECLARE @Inserted INT = 1
+
+	DECLARE @TypTechnologia INT = 14340
+
+	DECLARE @DrzewoDlaZasobu TABLE (ID INT, PTC_Ojciec INT, Kod VARCHAR(40), Nazwa VARCHAR(255), Lp int, Poziom SMALLINT DEFAULT NULL, Typ INT, Ilosc DECIMAL(11,4), Jednostka VARCHAR(15), 
+		Filtr SMALLINT, KodKop VARCHAR(100), Zamiennik INT, Podrzedne SMALLINT, Polprodukt INT, TwrNumer INT, PTZKoszt INT, TypZasobu INT)
+
+	DECLARE @ZasobyDoProdukcjiZasobu TABLE (IdZasobu INT, IdCzynnosci INT)
+
+	;WITH RecursiveCTE AS
+	(
+		SELECT ZI.PTZ_Id, ZI.PTZ_TechnologiaZasob, PTC_Id
+		FROM CDN.ProdTechnologiaZasoby ZO
+			LEFT JOIN CDN.ProdTechnologiaZasoby ZI ON ZI.PTZ_TechnologiaCzynnosc = ZO.PTZ_TechnologiaCzynnosc AND ZO.PTZ_TypZasobu in (0,4)
+			LEFT JOIN CDN.ProdTechnologiaZasoby ZIPolprod  ON ZO.PTZ_TypZasobu IN (1,2) AND ZO.PTZ_TechnologiaZasob &lt;&gt; 0 AND ZO.PTZ_TechnologiaZasob = ZIPolprod.PTZ_Id
+			LEFT JOIN CDN.ProdTechnologiaCzynnosci C ON ZI.PTZ_TechnologiaCzynnosc = C.PTC_Id OR ZIPolprod.PTZ_TechnologiaCzynnosc = C.PTC_Id
+		WHERE ZO.PTZ_Id = @PTZId AND (ZI.PTZ_Id IS NOT NULL OR ZIPolprod.PTZ_Id IS NOT NULL) AND C.PTC_Technologia = @PTEId
+		UNION ALL
+		SELECT PTZ2.PTZ_Id, PTZ2.PTZ_TechnologiaZasob, PTC.PTC_Id
+		FROM RecursiveCTE cte
+			JOIN CDN.ProdTechnologiaZasoby PTZ ON PTZ.PTZ_Id = cte.PTZ_TechnologiaZasob
+			JOIN CDN.ProdTechnologiaCzynnosci PTC ON PTC.PTC_Id = PTZ.PTZ_TechnologiaCzynnosc
+			JOIN CDN.ProdTechnologiaZasoby PTZ2 ON PTZ2.PTZ_TechnologiaCzynnosc = PTC.PTC_Id
+		WHERE PTC.PTC_Technologia = @PTEId
+	)
+	INSERT INTO @ZasobyDoProdukcjiZasobu
+	SELECT PTZ_Id, PTC_Id FROM RecursiveCTE
+
+	INSERT INTO @DrzewoDlaZasobu 
+	SELECT PTC_ID, PTC_Ojciec, PTC_Kod, PTC_Nazwa, PTC_Lp, NULL, @TypCzynnosc, CDN.Prod_WartoscAtr(PTC_Ilosc, PTC_IloscAtr, @TypTechnologia, @PTEID, DEFAULT, 0), PTC_Jednostka, 0, 
+		CASE WHEN PTC_Kooperacja &gt; 0 THEN Twr_Kod ELSE '' END, 0, 0, 0, 0, 0 PTZKoszt, 0
+	FROM CDN.ProdTechnologiaCzynnosci
+		LEFT OUTER JOIN Cdn.TwrKarty on PTC_TwrNumer = Twr_GidNumer AND PTC_TwrTyp= Twr_GIDTyp
+	WHERE PTC_Technologia = @PTEId AND ((PTC_Id IN (SELECT DISTINCT IdCzynnosci FROM @ZasobyDoProdukcjiZasobu)) OR PTC_Planowana &gt; 0)
+
+	UPDATE DDZ
+	SET Poziom = @Poziom
+	FROM @DrzewoDlaZasobu DDZ
+	WHERE DDZ.ID IN (
+		SELECT PTC_Id
+		FROM CDN.ProdTechnologiaCzynnosci
+		WHERE PTC_Technologia = @PTEID and ISNULL(PTC_Ojciec, 0) = 0
+	)
+
+	WHILE @Inserted &gt; 0
+	BEGIN
+		SET @Inserted = 0
+		SET @Poziom = @Poziom + 1
+
+		INSERT INTO @DrzewoDlaZasobu
+        SELECT a1.PTC_ID, a1.PTC_Ojciec, a1.PTC_Kod, a1.PTC_Nazwa, a1.PTC_Lp, @Poziom, @TypCzynnosc, CDN.Prod_WartoscAtr(PTC_Ilosc, PTC_IloscAtr, 14340, @PTEID, DEFAULT, 0), PTC_Jednostka,
+			0, CASE WHEN PTC_Kooperacja &gt; 0 THEN Twr_Kod ELSE '' END, 0, 0, 0, 0, 0 PTZKoszt, 0
+        FROM CDN.ProdTechnologiaCzynnosci AS a1
+			LEFT OUTER JOIN Cdn.TwrKarty ON a1.PTC_TwrNumer = Twr_GidNumer AND a1.PTC_TwrTyp= Twr_GIDTyp
+            INNER JOIN @DrzewoDlaZasobu AS a2 ON a1.PTC_Ojciec = a2.ID AND a1.PTC_Technologia = @PTEID AND a2.Typ = @TypCzynnosc AND a2.Poziom = (@Poziom - 1)
+		WHERE a1.PTC_Id NOT IN (SELECT DISTINCT IdCzynnosci FROM @ZasobyDoProdukcjiZasobu)
+        
+		IF @@RowCount &gt; 0  
+			SET @Inserted = 1
+
+		UPDATE DDZ
+		SET Poziom = @Poziom
+		FROM @DrzewoDlaZasobu DDZ
+			JOIN @DrzewoDlaZasobu DDZOjciec ON DDZ.PTC_Ojciec = DDZOjciec.ID AND DDZOjciec.Poziom = @Poziom - 1
+
+		IF @@ROWCOUNT &gt; 0 
+			SET @Inserted = 1
+	END
+
+	INSERT INTO @DrzewoDlaZasobu
+	SELECT PTZ_Id, IdCzynnosci, PTZ_Kod, PTZ_Nazwa, PTZ_Lp, DDZ.Poziom + 1, 
+		CASE 
+			WHEN PTZ_TypZasobu = 0 THEN @TypProdukt
+			WHEN PTZ_TypZasobu = 4 THEN @TypProduktUboczny
+			ELSE @TypSurowiec
+		END, CDN.Prod_WartoscAtr(PTZ_Ilosc, PTZ_IloscAtr, @TypTechnologia, @PTEId, 0, 0), PTZ_Jednostka, 0, Twr_Kod, PTZ_Zamiennik, 0, PTZ_TechnologiaZasob, PTZ_TwrNumer, PTZ_Koszt, 0
+	FROM CDN.ProdTechnologiaZasoby
+		LEFT JOIN CDN.TwrKarty ON PTZ_KopNumer = Twr_GIDNumer AND PTZ_KopTyp = Twr_GIDTyp
+		JOIN @ZasobyDoProdukcjiZasobu ZDPZ ON ZDPZ.IdZasobu = PTZ_Id
+		JOIN @DrzewoDlaZasobu DDZ ON DDZ.ID = PTZ_TechnologiaCzynnosc AND DDZ.Typ = @TypCzynnosc
+
+
+	INSERT INTO @DrzewoDlaZasobu
+	SELECT PFU_Id, DDZ.ID, PFU_Kod, PFU_Nazwa, 1, DDZ.Poziom + 1, @TypFunkcja, PTF_LiczbaObiektow AS Ilosc, 'zasób' AS Jednostka, 0,'', 0, 0, 0, 0, 0 PTZKoszt,0
+    FROM CDN.ProdFunkcje
+		JOIN CDN.ProdTechnologiaFunkcje ON PFU_Id = PTF_Funkcja
+		JOIN @DrzewoDlaZasobu DDZ ON PTF_TechnologiaCzynnosc = DDZ.ID AND DDZ.Typ = @TypCzynnosc
+
+
+	INSERT INTO @DrzewoDlaZasobu
+	SELECT POB_Id, DDZ.ID, POB_Kod, POB_Nazwa, 1, DDZ.Poziom + 1, @TypZasob, 1 AS Ilosc, 'zasób' AS Jednostka, 0, '', 0, 0, 0, 0, 0, POB_ObiTyp AS TypZasobu
+	FROM CDN.ProdObiekty pob
+		JOIN CDN.ProdTechnologieZasobyGniazd zg ON pob.POB_Id = zg.PTG_ZasobGniazda
+		JOIN @DrzewoDlaZasobu DDZ ON PTG_TechnologiaOperacje = DDZ.ID AND DDZ.Typ = @TypCzynnosc
+
+	update Rodz set Podrzedne = 1
+    from @DrzewoDlaZasobu Czyn
+		inner join @DrzewoDlaZasobu Rodz on Rodz.Id=Czyn.PTC_Ojciec
+
+	SELECT ID, PTC_Ojciec, Kod, Nazwa, Lp, Poziom, Typ, Ilosc, Jednostka, KodKop, 
+		CASE Typ
+			WHEN @TypProdukt THEN Kod
+			WHEN @TypSurowiec THEN Kod
+            WHEN @TypFunkcja THEN Kod
+            ELSE null
+        END Techn, Zamiennik, Podrzedne, Polprodukt, TwrNumer,PTZKoszt, TypZasobu
+	FROM @DrzewoDlaZasobu
+    ORDER BY Poziom, Typ,
+		(
+			CASE Typ
+				WHEN @TypFunkcja THEN Kod
+				ELSE null
+			END) DESC,
+		Lp DESC
+
+	SET NOCOUNT OFF
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

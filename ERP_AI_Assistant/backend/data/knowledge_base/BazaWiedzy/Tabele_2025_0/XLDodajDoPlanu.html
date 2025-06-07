@@ -1,0 +1,218 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="XLDodajDoPlanu"></A><PRE>
+          <FONT SIZE="2"><I>/* XLDodajDoPlanu */</I><BR>
+CREATE PROCEDURE CDN.XLDodajDoPlanu
+	@Plan		INT,
+
+	@Okres		INT = null Output ,
+	@OkresOd	int = null,
+	@OkresDo	int = null,
+    @Nazwa		VARCHAR(40) = null, 
+
+	@TwrKod		Varchar(40)= null,
+	@TwrTyp		SMALLINT = null ,
+	@TwrNumer	INT = null,
+
+
+	@IloscPoprzednia DECIMAL(11,4)= null, 
+	@Ilosc DECIMAL(11,4) = null, 
+
+	@JmZ VARCHAR(8) = null, 
+	@TypJm TINYINT = null, 
+	@JmFormat TINYINT = null,
+	@JmFormatZ TINYINT = null,
+	@PrzeliczM DECIMAL(15)	= null,
+	@PrzeliczL DECIMAL(15)	= null ,
+	@Technologia INT		= null
+ 	
+AS
+declare	@PlanId INT
+declare	@OkresId INT
+
+declare @PleTwrTyp SMALLINT 
+declare	@PleTwrNumer INT
+
+declare	@PleIloscPoprzednia DECIMAL(11,4) 
+declare	@PleIlosc DECIMAL(11,4) 
+declare	@PleJmZ VARCHAR(8) 
+declare	@PleTypJm TINYINT 
+declare	@PleJmFormat TINYINT 
+declare	@PleJmFormatZ TINYINT
+declare	@PlePrzeliczM DECIMAL(15)
+declare	@PlePrzeliczL DECIMAL(15)
+declare	@PleTechnologia INT
+declare @PleId			int 
+
+
+SET NOCOUNT ON
+
+
+if exists( select * from Cdn.PlanNag where Pln_Id =  @Plan and Pln_Stan = 0)
+	set @PlanID  = @Plan
+else
+	begin
+		--rollback tran XLDodajPlanElem
+		--if @IgnorujBledy is null
+		raiserror('Nie znaleziono nagłówka planu zapotrzebowania  - (-1)',16,1)
+		return -1
+	end
+
+
+IF @Okres is not null
+	Begin
+		If exists ( select * from Cdn.PlanOkres where Plo_Id = @Okres and Plo_Plan = @PlanID)
+			set @OkresId = @Okres
+		Else
+			begin
+				If @OkresOd is not null and @OkresDo is not null  
+					If exists (select  Plo_Id from Cdn.PlanOkres where Plo_OkresOd = @OkresOd and Plo_OkresDo = @OkresDo  and Plo_Plan = @PlanID)
+						select @OkresId = Plo_Id from Cdn.PlanOkres where Plo_OkresOd = @OkresOd and Plo_OkresDo = @OkresDo  and Plo_Plan = @PlanID
+					else
+						set @OkresId = 0  
+						--- dodać okres
+				Else 
+					begin
+						raiserror('Nie znaleziono okresu  - (-2)',16,1)
+						return -2
+					end				
+			End 
+	End 
+ELSE
+	begin
+		If @OkresOd is not null and @OkresDo is not null  
+			If exists (select  Plo_Id from Cdn.PlanOkres where Plo_OkresOd = @OkresOd and Plo_OkresDo = @OkresDo  and Plo_Plan = @PlanID)
+				select @OkresId = Plo_Id from Cdn.PlanOkres where Plo_OkresOd = @OkresOd and Plo_OkresDo = @OkresDo  and Plo_Plan = @PlanID
+			else
+				set @OkresId = 0  
+				--- dodać okres
+		Else 
+			begin
+				raiserror('Nie znaleziono okresu  - (-2)',16,1)
+				return -2
+			end	
+	End 
+
+
+if @TwrKod is not null 
+	select @PleTwrTyp = Twr_GidTyp, @PleTwrNumer = Twr_GidNumer from Cdn.TwrKarty where Twr_Kod = @TwrKod
+else 
+	if exists( select * from Cdn.TwrKarty where Twr_GidNumer  =  @TwrNumer and Twr_GidTyp = @TwrTyp )
+		begin
+			set @PleTwrTyp = @TwrTyp 
+			set	@PleTwrNumer = @TwrNumer
+		end 
+	else
+		begin
+			set @PleTwrTyp = 0
+			set	@PleTwrNumer = 0
+		end
+
+If @PleTwrTyp is null or @PleTwrNumer is null 
+	begin
+		set @PleTwrTyp = 0
+		set	@PleTwrNumer = 0
+	end
+
+
+If @Ilosc is null 
+	set @PleIlosc = 0
+else 
+	set @PleIlosc = @Ilosc	
+
+If @IloscPoprzednia is null
+	set @PleIloscPoprzednia = 0
+else 
+	set @PleIloscPoprzednia = @IloscPoprzednia
+
+If @Technologia is null
+	select @PleTechnologia = Twr_ProdTechnologia from Cdn.TwrKarty where Twr_GidTyp = @PleTwrTyp and Twr_GidNumer=@PleTwrNumer
+Else
+	set @PleTechnologia	= @Technologia
+
+select @PleJmZ = Twr_Jm  from Cdn.TwrKarty where Twr_GidTyp = @PleTwrTyp and Twr_GidNumer=@PleTwrNumer
+
+
+set	@PleJmFormat =1
+set	@PleJmFormatZ =1
+set @PlePrzeliczM = 1
+set	@PlePrzeliczL =1
+
+BEGIN TRAN XLDodajDoPlanu
+
+
+If @OkresId = 0  
+Begin
+	INSERT INTO Cdn.PlanOkres
+		(
+			Plo_Plan,
+			Plo_OkresOd,
+			Plo_OkresDo,
+			Plo_Nazwa 
+		)
+	Values
+		(
+			@PlanID,
+			@OkresOd,
+			@OkresDo,
+			@Nazwa
+		)
+
+	select @OkresId =   @@IDENTITY 
+	set @PleId = @OkresId
+End 
+
+If @PleTwrNumer &lt;&gt; 0 
+Begin
+	INSERT INTO Cdn.PlanElem
+		(
+			Ple_Plan,
+			Ple_Okres,
+			Ple_TwrTyp,
+			Ple_TwrNumer,
+			Ple_IloscPoprzednia,
+			Ple_Ilosc,
+			Ple_JmZ,
+			Ple_TypJm,
+			Ple_JmFormat,
+			Ple_JmFormatZ,
+			Ple_PrzeliczM,
+			Ple_PrzeliczL,
+			Ple_Technologia
+		)
+	Values
+		(
+			@PlanId,
+			@OkresID,
+			@PleTwrTyp,
+			@PleTwrNumer,
+			@PleIloscPoprzednia,
+			@PleIlosc,
+			@PleJmZ,
+			@PleTypJm,
+			@PleJmFormat,
+			@PleJmFormatZ,
+			@PlePrzeliczM,
+			@PlePrzeliczL,
+			@PleTechnologia
+		)
+	select @PleId =   @@IDENTITY 	
+End
+COMMIT TRAN  XLDodajDoPlanu
+SET NOCOUNT OFF
+RETURN @PleId
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

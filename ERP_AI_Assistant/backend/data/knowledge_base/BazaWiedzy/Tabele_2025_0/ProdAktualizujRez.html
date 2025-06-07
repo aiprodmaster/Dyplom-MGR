@@ -1,0 +1,73 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="ProdAktualizujRez"></A><PRE>
+          <FONT SIZE="2"><I>/* ProdAktualizujRez */</I><BR>
+CREATE PROCEDURE CDN.ProdAktualizujRez @PZAID int
+AS
+begin
+	DECLARE @PZAIlosc DECIMAL(11,4) = 0,@PZARezIlosc DECIMAL(11,4) = 0
+	DECLARE @RezGidNumer INT,@RezIlosc DECIMAL(11,4),@RezIloscZreal DECIMAL(11,4)
+
+	SELECT @PZAIlosc = (PZA_Ilosc-ISNULL((IsNull( (Select Sum(Trs_Ilosc) from cdn.traselem inner join CDN.TraElem on TrE_GIDTyp=TrS_GIDTyp AND TrE_GIDNumer=TrS_GIDNumer AND TrE_GIDLp=TrS_GIDLp  
+				inner join cdn.TraNag on TrN_GIDNumer = TrE_GidNumer
+				where TrN_Stan &gt; 3 AND Trs_ZlcTyp =14346 and TRS_ZlcNumer = PZA_ID  and PZA_TwrNumer = Tre_TwrNumer),0)+
+				isnull((select sum(Mas_Ilosc) from cdn.MagSElem inner join cdn.MagElem on MaE_GIDNumer = MaS_GIDNumer and MaS_GIDLp = MaE_GIDLp
+				JOIN CDN.MagNag ON MaN_GIDNumer = MaE_GIDNumer
+				where MaN_Stan &gt; 3 AND MaS_ZlcTyp = 14346 and MaS_ZlcNumer = PZA_Id and PZA_TwrNumer = MaE_TwrNumer and (Mas_ZrdTyp not in (1616, 1617))),0)+
+				ISNULL((SELECT SUM(PZAZw1.PZA_Ilosc) FROM CDN.ProdZasoby PZAZw1 WHERE PZAGl.PZA_Id = PZAZw1.PZA_Zasob),0)+
+				(ISNULL((SELECT SUM(PZAGl.PZA_Ilosc) FROM CDN.ProdZasoby PZAZw2 WHERE PZAGl.PZA_Zasob = PZAZw2.PZA_Id),0))+
+				ISNULL((SELECT SUM(PZP_Ilosc) FROM CDN.ProdZwiazanePolprodukty WHERE PZAGl.PZA_Id IN (PZP_PZAIdPlanowany,PZP_PZAIdWykonany)),0)),0)),
+				@PZARezIlosc = ISNULL(SUM(Rez_Ilosc),0)
+				FROM CDN.ProdZasoby PZAGl
+				LEFT JOIN CDN.Rezerwacje ON Rez_ZrdTyp = 14346 AND Rez_ZrdNumer = PZA_ID WHERE PZA_Id = @PZAId
+				GROUP BY PZA_Id,PZA_Ilosc,PZA_TwrNumer,PZA_Zasob
+
+	IF @PZARezIlosc &gt; @PZAIlosc
+	BEGIN
+		SET @PZARezIlosc = @PZARezIlosc - @PZAIlosc
+		declare RezerwacjeZas cursor fast_forward for
+			SELECT Rez_GidNumer,Rez_Ilosc,Rez_Zrealizowano + Rez_IloscMag
+			FROM cdn.Rezerwacje 
+			WHERE Rez_ZrdTyp = 14346 AND Rez_zrdNumer = @PZAId AND (Rez_Ilosc - Rez_Zrealizowano - Rez_IloscMag) &gt; 0
+			ORDER BY Rez_DataAktywacji DESC,Rez_GIDNumer DESC
+		open RezerwacjeZas
+		fetch next from RezerwacjeZas into @RezGidNumer,@RezIlosc,@RezIloscZreal
+ 
+
+		while @@FETCH_STATUS = 0 and @PZARezIlosc &gt; 0
+		begin
+			IF @RezIlosc-@RezIloscZreal &gt; @PZARezIlosc
+			BEGIN
+				UPDATE CDN.Rezerwacje SET Rez_Ilosc = Rez_Ilosc - @PZARezIlosc WHERE Rez_GIDNumer = @RezGidNumer
+				SET @PZARezIlosc = 0
+			END
+			ELSE
+			BEGIN
+				SET @PZARezIlosc = @PZARezIlosc - (@RezIlosc - @RezIloscZreal)
+				IF @RezIloscZreal &gt; 0
+					UPDATE CDN.Rezerwacje SET Rez_Ilosc = Rez_Ilosc - (@RezIlosc - @RezIloscZreal) WHERE Rez_GIDNumer = @RezGidNumer
+				ELSE
+					DELETE FROM CDN.Rezerwacje WHERE Rez_GIDNumer = @RezGidNumer
+			
+			END
+			fetch next from RezerwacjeZas into @RezGidNumer,@RezIlosc,@RezIloscZreal
+		end
+		close RezerwacjeZas
+		deallocate RezerwacjeZas
+	END
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

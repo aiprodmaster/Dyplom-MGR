@@ -1,0 +1,98 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="WFL_JestOpiekunemPracownika"></A><PRE>
+          <FONT SIZE="2"><I>/* WFL_JestOpiekunemPracownika */</I><BR>
+Create FUNCTION cdn.WFL_JestOpiekunemPracownika (
+@Prc_GIDTyp smallint, --GIDTyp pracownika  (operatora jesli biezacy operator nie ma pracownika)
+@Prc_GIDNumer int, --GIDNumer pracownika  
+@Opi_GIDTyp smallint, -- GIDTyp opiekuna
+@Opi_GIDNumer int, --GIDNumer opiekuna
+@DataOd int, --data obowiazywania Od
+@DataDo int, --data obowiazywania Do
+@FrS_ID int = 0)	-- id centrum operatora TFS 233768 
+RETURNS smallint
+AS
+BEGIN
+
+declare @PrcTyp smallint
+set @PrcTyp = 944
+declare @OpeTyp smallint
+set @OpeTyp = 128
+declare @XLAutoTyp smallint
+set @XLAutoTyp = 12289
+
+declare @rv smallint
+
+declare @tmpPrcNumer int
+declare @tmpOpeNumer int
+
+declare @uwzgledniajKontekstOpe smallint = 0
+select @uwzgledniajKontekstOpe = Kon_Wartosc from cdn.Konfig where Kon_Numer = 2135 
+
+
+	if (@Prc_GIDNumer = 0 and @Opi_GIDTyp = @XLAutoTyp and @Opi_GIDNumer = 0) or 
+		(@Prc_GIDTyp = @Opi_GIDTyp and @Prc_GIDNumer = @Opi_GIDNumer)
+		set @rv = 1
+	else
+	begin
+		if @Prc_GIDTyp = @PrcTyp
+		begin
+			set @tmpPrcNumer = @Prc_GIDNumer
+			set @tmpOpeNumer = 0
+		end
+		else
+		begin
+			set @tmpPrcNumer = 0
+			set @tmpOpeNumer = @Prc_GIDNumer
+		end
+
+		if @uwzgledniajKontekstOpe = 1 and @Opi_GIDTyp = -4272 --opiekunem jest centrum
+		begin
+			declare @opiekunowie table(
+				FRS_ID int,
+				FRS_GIDTyp smallint,
+				FRS_GIDNumer int,
+				FRS_GROTyp smallint,
+				FRS_GRONumer int)
+			
+			insert into @opiekunowie
+			select distinct FRS_Id, FRS_GIDTyp, FRS_GIDNumer, FRS_GROTyp,FRS_GRONumer from cdn.WFL_Opiekunowie(@tmpPrcNumer,@tmpOpeNumer,0,0,@DataOd,@DataDo);			
+			with opiPodrzedniCentrum as (
+				select FRS_Id, FRS_GIDTyp, FRS_GIDNumer, FRS_GROTyp,FRS_GRONumer
+				from @opiekunowie
+				where Frs_GIDTyp = @Opi_GIDTyp and Frs_GIDNumer = @Opi_GIDNumer
+
+				union all
+
+				select opi.FRS_Id, opi.FRS_GIDTyp, opi.FRS_GIDNumer, opi.FRS_GROTyp,opi.FRS_GRONumer
+				from opiPodrzedniCentrum opiPod
+				join @opiekunowie opi on opi.Frs_GROTyp = opiPod.FRS_GIDTyp and opi.Frs_GRONumer = opiPod.FRS_GIDNumer 
+			) 
+			select @rv = case when exists(select * from opiPodrzedniCentrum where FRS_Id = @FrS_Id) then 1 else 0 end
+		end
+		else if exists(select top 1 Frs_ID 
+			from cdn.WFL_Opiekunowie(@tmpPrcNumer,@tmpOpeNumer,0,0,@DataOd,@DataDo)
+			where Frs_GIDTyp = @Opi_GIDTyp and
+				Frs_GIDNumer = @Opi_GIDNumer) 	
+			set @rv = 1
+		else
+			set @rv = 0
+	end
+
+	return(@rv)
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

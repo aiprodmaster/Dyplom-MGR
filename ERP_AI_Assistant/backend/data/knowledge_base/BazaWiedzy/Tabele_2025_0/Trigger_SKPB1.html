@@ -1,0 +1,89 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="TraNag_KontrolujVAT"></A><PRE>
+          <FONT SIZE="2"><I>/* TraNag_KontrolujVAT */</I><BR>
+CREATE TRIGGER CDN.TraNag_KontrolujVAT
+  ON CDN.TraNag
+  FOR UPDATE 
+AS 
+declare @dop_blad decimal(15,2)
+set @dop_blad=0.02	
+																			--wartosc dopuszczalnego bledu dla dokumentow przychodowych
+if @@ROWCOUNT = 1
+BEGIN
+
+	IF EXISTS (select * from inserted 
+				JOIN deleted ON inserted.TrN_GIDNumer = deleted.TrN_GIDNumer
+				where ((inserted.TrN_GIDTyp IN (2001		--WZ
+											 ,2034          --PA
+											 ,1490))		--PZI							
+                OR (inserted.TrN_GIDTyp = 2033 AND inserted.TrN_SPITyp in (2033, -2033)))					-- FS nie spinacz
+				AND inserted.TrN_TrNTyp NOT IN (13, 35)											-- nie A-Vista
+			    AND inserted.TrN_Stan&gt;2 AND deleted.TrN_Stan&lt;3) -- tylko przy wyciąganiu z bufora
+	BEGIN
+		
+		IF EXISTS(select TrV_GIDNumer
+				from inserted join CDN.TraVat on
+					TrV_GIDTyp=inserted.TrN_GIDTyp AND  
+					TrV_GIDNumer=inserted.TrN_GIDNumer
+				left join CDN.TraElem on
+					--TrV_GIDTyp=TrE_VatTyp AND 
+					--TrV_GIDNumer=TrE_VatNumer AND
+					--TrV_GIDLp=TrE_VatLp
+					TrV_GIDNumer = TrE_GIDNumer AND
+					TrV_StawkaPod = TrE_StawkaPod AND
+					TrV_FlagaVat = TrE_FlagaVat AND
+					TrV_Zrodlowa = TrE_Zrodlowa
+					AND TrV_KatDatyOP = TrE_KatDatyOP -- TFSID: 172731
+				where TrV_Zaliczkowy=0	-- bez zaliczkowych i niwelujących groszowe różnice
+				group by TrV_GIDTyp, TrV_GIDFirma, TrV_GIDNumer, TrV_GIDLp, TrV_NettoP, TrV_NettoR, TrN_FlagaNB, TrV_VatR, TrV_VatP, TrV_StawkaPod
+				having (TrN_FlagaNB='N' and				--dla dokumentów od netto
+							(
+								((abs(TrV_NettoR-sum(isnull(TrE_KsiegowaNetto,0)))&gt;@dop_blad OR abs(TrV_VatR-round(sum(isnull(TrE_KsiegowaNetto,0))*TrV_StawkaPod/100,2))&gt;@dop_blad) and TrV_GIDTyp in (2001,2033,2034))	--dla dokumentów rozchodowych
+								or							
+								((abs(TrV_NettoP-sum(isnull(TrE_KsiegowaNetto,0)))&gt;@dop_blad OR abs(TrV_VatP-round(sum(isnull(TrE_KsiegowaNetto,0))*TrV_StawkaPod/100,2))&gt;@dop_blad) and TrV_GIDTyp = 1490)	--dla dokumentów przychodowych
+						    )
+						)
+						or 
+						(TrN_FlagaNB='B' AND			--dla dokumentów od brutto
+							  (
+								  (abs(TrV_NettoR+TrV_VatR-sum(isnull(TrE_KsiegowaBrutto,0))) &gt; @dop_blad and TrV_GIDTyp in (2001,2033,2034))		--dla dokumentów rozchodowych
+								  or 
+								  (abs(TrV_NettoP+TrV_VatP-sum(isnull(TrE_KsiegowaBrutto,0))) &gt; @dop_blad and TrV_GIDTyp = 1490)			--dla dokumentów przychodowych
+							  )
+						)
+		         )			--koniec EXISTS
+		BEGIN
+			RAISERROR('Niepoprawna wartość dokumentu-CDNXL_SKPB001-1. Powiadom o tym: asysta_xl@comarch.pl', 16, 1)
+			rollback tran
+		END
+		
+		IF EXISTS(select TrN_GIDNumer
+				from inserted join CDN.TraVat on
+					TrV_GIDTyp=inserted.TrN_GIDTyp AND  
+					TrV_GIDNumer=inserted.TrN_GIDNumer
+				group by TrN_GIDNumer,TrN_FlagaNB, TrN_NettoR, TrN_NettoP, TrN_VatR, TrN_VatP
+				having (((sum(TrV_NettoR)&lt;&gt;TrN_NettoR OR sum(TrV_VatR)&lt;&gt;TrN_VatR) or (sum(TrV_NettoP)&lt;&gt;TrN_NettoP OR sum(TrV_VatP)&lt;&gt;TrN_VatP)) AND TrN_FlagaNB='N')
+					OR ((sum(TrV_NettoR+TrV_VatR)&lt;&gt;TrN_NettoR+TrN_VatR or sum(TrV_NettoP+TrV_VatP)&lt;&gt;TrN_NettoP+TrN_VatP) AND TrN_FlagaNB='B')
+				)
+		BEGIN
+			RAISERROR('Niepoprawna wartość dokumentu-CDNXL_SKPB001-2. Powiadom o tym: asysta_xl@comarch.pl', 16, 1)
+			rollback tran
+		END
+	END
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

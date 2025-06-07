@@ -1,0 +1,57 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[POS_EksportRelacjeGrupKontrahentow]"></A><PRE>
+          <FONT SIZE="2"><I>/* [POS_EksportRelacjeGrupKontrahentow] */</I><BR>
+CREATE PROCEDURE [CDN].[POS_EksportRelacjeGrupKontrahentow]
+	@rowVersion bigint,
+	@PointOfSaleId int
+AS
+BEGIN
+SET NOCOUNT ON;	
+
+	declare @Grupy table(Id int)			
+		insert into @grupy select KnG_SyncId as Id			
+		from cdn.PicoKonfig 
+		join cdn.PicoStanowiska on pck_picoid = psa_pckid
+		outer apply cdn.PobierzDrzewoGrupKontrahentow(PcK_KnGENumer,default)
+		outer apply [CDN].[PobierzDrzewoGrupKntKuKorzeniowi](AktuGIDNumer,-32,AktuGrONumer)
+		join cdn.KntGrupy on KnG_GIDNumer = PobierzDrzewoGrupKontrahentow.AktuGidNumer and KnG_GIDTyp = -32
+		join cdn.KntWzorce on KnW_GrpTyp=KnG_GIDTyp AND KnW_GrpNumer=KnG_GIDNumer
+		where ((@pointOfSaleId is not null and PSa_ID = @pointOfSaleId) or (@pointOfSaleId is null and PSa_TypAplikacji = 2)) AND PobierzDrzewoGrupKontrahentow.Poziom = [PobierzDrzewoGrupKntKuKorzeniowi].Poziom
+		group by KnG_SyncId,KnG_Akronim,KnW_Typ,KnG_GIDNumer,PcK_KnGENumer
+
+
+	SELECT @rowVersion+1 AS [@RowVersion]
+		,(		
+			select distinct 
+				lisc.KnG_syncId as [@Id],
+				isnull(min(parent.KnG_SyncId),0) as [@ParentGroupId],
+				lisc.KnG_SyncId as [@ChildGroupId]	
+			from cdn.PicoKonfig 
+			join cdn.PicoStanowiska on pck_picoid = psa_pckid
+			outer apply cdn.PobierzDrzewoGrupKontrahentow(PcK_KnGENumer,default)
+			outer apply [CDN].[PobierzDrzewoGrupKntKuKorzeniowi](AktuGIDNumer,-32,AktuGrONumer)
+			join cdn.KntGrupy as lisc on lisc.KnG_GrONumer = PobierzDrzewoGrupKontrahentow.AktuGidNumer AND lisc.KnG_GrOTyp = -32
+			left join cdn.KntGrupy as parent on parent.KnG_GIDNumer = lisc.KnG_GrONumer and parent.KnG_GIDTyp = -32
+			where ((@pointOfSaleId is not null and PSa_ID = @pointOfSaleId) or (@pointOfSaleId is null and PSa_TypAplikacji = 2)) AND PobierzDrzewoGrupKontrahentow.Poziom = [PobierzDrzewoGrupKntKuKorzeniowi].Poziom and lisc.KnG_GIDNumer &lt;&gt; PcK_KnGENumer and lisc.KnG_syncId in (select * from @grupy) 	
+			group by lisc.KnG_syncId
+			having isnull(min(parent.KnG_SyncId),0) in (select * from @grupy) 
+		for xml path('CustomerGroupRelation'), type)
+	for xml path('CustomerGroupRelations')
+	SET NOCOUNT OFF;	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

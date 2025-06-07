@@ -1,0 +1,377 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[PobierzDrzewoGrupTowarowych]"></A><PRE>
+          <FONT SIZE="2"><I>/* [PobierzDrzewoGrupTowarowych] */</I><BR>
+CREATE FUNCTION [CDN].[PobierzDrzewoGrupTowarowych] (
+	@GIDNumer INT
+	, @GIDTyp SMALLINT = - 16
+	, @GrONumer INT = NULL
+	, @SciezkaTyp TINYINT = NULL
+	, @Separator VARCHAR(3) = '\'
+	, @Kierunek TINYINT = 0
+	)
+RETURNS TABLE
+AS
+RETURN (
+		WITH DrzewoGrupTwr AS (
+				SELECT TwG_Kod Kod
+					, TwG_Nazwa Nazwa
+					, TwG_GIDNumer GIDNumer
+					, TwG_GIDTyp GIDTyp
+					, TwG_GrONumer GrONumer
+					, 1 Poziom
+					, CASE @SciezkaTyp
+						WHEN 1
+							THEN CONVERT(VARCHAR(1000), TwG_Kod)
+						WHEN 2
+							THEN CONVERT(VARCHAR(1000), TwG_Nazwa)
+						WHEN 3
+							THEN CONVERT(VARCHAR(1000), TwG_GIDNumer)
+						ELSE ''
+						END Sciezka
+				FROM CDN.TwrGrupy
+				WHERE TwG_GIDNumer = @GIDNumer
+					AND TwG_GIDTyp = ISNULL(@GIDTyp, - 16)
+					AND TwG_GrONumer = ISNULL(@GrONumer, TwG_GrONumer)
+				
+				UNION ALL
+				
+				SELECT TwG_Kod Kod
+					, TwG_Nazwa Nazwa
+					, TwG_GIDNumer GIDNumer
+					, TwG_GIDTyp GIDTyp
+					, TwG_GrONumer GrONumer
+					, Poziom + 1 Poziom
+					, CASE @SciezkaTyp
+						WHEN 1
+							THEN CONVERT(VARCHAR(1000), (
+										CASE 
+											WHEN @Kierunek = 0
+												THEN Sciezka
+											ELSE TwG_Kod
+											END + @Separator + CASE 
+											WHEN @Kierunek = 0
+												THEN TwG_Kod
+											ELSE Sciezka
+											END
+										))
+						WHEN 2
+							THEN CONVERT(VARCHAR(1000), (
+										CASE 
+											WHEN @Kierunek = 0
+												THEN Sciezka
+											ELSE TwG_Nazwa
+											END + @Separator + CASE 
+											WHEN @Kierunek = 0
+												THEN TwG_Nazwa
+											ELSE Sciezka
+											END
+										))
+						WHEN 3
+							THEN CONVERT(VARCHAR(1000), (
+										CASE 
+											WHEN @Kierunek = 0
+												THEN Sciezka
+											ELSE CONVERT(VARCHAR(1000), TwG_GIDNumer)
+											END + @Separator + CASE 
+											WHEN @Kierunek = 0
+												THEN CONVERT(VARCHAR(1000), TwG_GIDNumer)
+											ELSE Sciezka
+											END
+										))
+						ELSE ''
+						END Sciezka
+				FROM DrzewoGrupTwr
+				INNER JOIN CDN.TwrGrupy
+					ON (
+							GIDNumer = CASE 
+								WHEN @Kierunek = 0
+									THEN TwG_GrONumer
+								ELSE NULL
+								END
+							OR GrONumer = CASE 
+								WHEN @Kierunek = 0
+									THEN NULL
+								ELSE TwG_GIDNumer
+								END
+							)
+						AND TwG_GIDTyp = - 16
+				)
+		SELECT *
+		FROM DrzewoGrupTwr
+		)
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[PobierzDrzewoGrupTowarowychKuLisciom]"></A><PRE>
+          <FONT SIZE="2"><I>/* [PobierzDrzewoGrupTowarowychKuLisciom] */</I><BR>
+CREATE FUNCTION [CDN].[PobierzDrzewoGrupTowarowychKuLisciom] (
+	@GIDNumer INT
+	, @GIDTyp SMALLINT = - 16
+	, @GrONumer INT = NULL
+	, @SciezkaTyp TINYINT = NULL
+	, @Separator VARCHAR(3) = '\'
+	--, @Kierunek TINYINT = 0
+	)
+RETURNS TABLE
+AS
+RETURN (
+		SELECT ISNULL(TGD_Kod, '[Nieznany]') Kod
+			, ISNULL(TwG_Nazwa, '[Nieznana]') Nazwa
+			, TwL_GIDNumer GIDNumer
+			, TwL_GIDTyp GIDTyp
+			, TwL_GrONumer GrONumer
+			, 1 Poziom
+			, '' Sciezka
+		FROM cdn.TwrLinki
+		LEFT JOIN cdn.TwrGrupyDom
+			ON TGD_GIDNumer = TwL_GIDNumer
+				AND TGD_GidTyp = TwL_GIDTyp
+		LEFT JOIN CDN.TwrGrupy
+			ON TGD_GIDNumer = TwG_GIDNumer
+				AND TGD_GIDTyp = TwG_GIDTyp
+				AND TGD_GroTyp = TwG_GrOTyp
+				AND TGD_GroNumer = TwG_GroNumer
+		WHERE (
+				TwL_GrONumer = @GIDNumer
+				AND TwL_GIDTyp = ISNULL(@GIDTyp, - 16)
+				)
+			OR (
+				TwL_GIDNumer = @GIDNumer
+				AND TwL_GIDTyp = ISNULL(@GIDTyp, - 16)
+				)
+			AND TwL_GrONumer = ISNULL(@GrONumer, TwL_GrONumer)
+		
+		UNION ALL
+		
+		SELECT 'Grupa Główna' Kod
+			, 'Grupa Główna' Nazwa
+			, 0 GIDNumer
+			, - 16 GIDTyp
+			, - 1 GrONumer
+			, 0 Poziom
+			, '' Sciezka
+		WHERE 0 = @GIDNumer
+			AND - 16 = ISNULL(@GIDTyp, - 16)
+		)
+	--RETURNS @DrzewoGrupTowarowychKuLisciom TABLE (
+	--	Kod VARCHAR(40)
+	--	, Nazwa VARCHAR(255)
+	--	, GIDNumer INT
+	--	, GIDTyp INT
+	--	, GrONumer INT
+	--	, Poziom INT
+	--	, Sciezka VARCHAR(1000)
+	--	)
+	--AS
+	--BEGIN
+	--	DECLARE @poziom INT
+	--	SET @poziom = 0
+	--	INSERT INTO @DrzewoGrupTowarowychKuLisciom
+	--	SELECT TwG_Kod Kod
+	--		, TwG_Nazwa Nazwa
+	--		, TwG_GIDNumer GIDNumer
+	--		, TwG_GIDTyp GIDTyp
+	--		, TwG_GrONumer GrONumer
+	--		, @poziom Poziom
+	--		, CASE @SciezkaTyp
+	--			WHEN 1
+	--				THEN CONVERT(VARCHAR(1000), TwG_Kod)
+	--			WHEN 2
+	--				THEN CONVERT(VARCHAR(1000), TwG_Nazwa)
+	--			WHEN 3
+	--				THEN CONVERT(VARCHAR(1000), TwG_GIDNumer)
+	--			ELSE ''
+	--			END Sciezka
+	--	FROM CDN.TwrGrupy
+	--	INNER JOIN cdn.TwrGrupyDom ON TGD_GIDTyp = TwG_GIDTyp
+	--		AND TGD_GIDNumer = TwG_GIDNumer
+	--		AND TGD_GrOTyp = TwG_GrOTyp
+	--		AND TGD_GrONumer = TwG_GrONumer
+	--	WHERE TwG_GIDNumer = @GIDNumer
+	--		AND TwG_GIDTyp = ISNULL(@GIDTyp, - 16)
+	--		AND TwG_GrONumer = ISNULL(@GrONumer, TwG_GrONumer)
+	--	WHILE 1 = 1
+	--	BEGIN
+	--		SET @poziom = @poziom + 1
+	--		INSERT INTO @DrzewoGrupTowarowychKuLisciom
+	--		SELECT TwG_Kod Kod
+	--			, TwG_Nazwa Nazwa
+	--			, TwG_GIDNumer GIDNumer
+	--			, TwG_GIDTyp GIDTyp
+	--			, TwG_GrONumer GrONumer
+	--			, @poziom Poziom
+	--			, CASE @SciezkaTyp
+	--				WHEN 1
+	--					THEN CONVERT(VARCHAR(1000), (aktu.Sciezka + @Separator + TwG_Kod))
+	--				WHEN 2
+	--					THEN CONVERT(VARCHAR(1000), (aktu.Sciezka + @Separator + TwG_Nazwa))
+	--				WHEN 3
+	--					THEN CONVERT(VARCHAR(1000), (aktu.Sciezka + @Separator + CONVERT(VARCHAR(1000), TwG_GIDNumer)))
+	--				ELSE ''
+	--				END Sciezka
+	--		FROM @DrzewoGrupTowarowychKuLisciom aktu
+	--		INNER JOIN CDN.TwrGrupy ON TwG_GrONumer = aktu.GIDNumer
+	--			AND TwG_GIDTyp = - 16
+	--		--INNER JOIN cdn.TwrGrupyDom ON TGD_GIDTyp = TwG_GIDTyp
+	--		--	AND TGD_GIDNumer = TwG_GIDNumer
+	--		--	AND TGD_GrOTyp = TwG_GrOTyp
+	--		--	AND TGD_GrONumer = TwG_GrONumer
+	--		WHERE NOT EXISTS (
+	--				SELECT *
+	--				FROM @DrzewoGrupTowarowychKuLisciom a
+	--				WHERE TwG_GIDNumer = a.GIDNumer
+	--					AND TwG_GrONumer = a.GrONumer
+	--				)
+	--		IF @@ROWCOUNT = 0
+	--			OR @@ERROR &gt; 0
+	--			OR @poziom &gt; 100 -- dodatkowe zabezpieczenie?
+	--			BREAK
+	--	END
+	--	RETURN
+	--END
+	--RETURN (
+	--		WITH DrzewoGrupTwr AS (
+	--				SELECT TwG_Kod Kod
+	--					, TwG_Nazwa Nazwa
+	--					, TwG_GIDNumer GIDNumer
+	--					, TwG_GIDTyp GIDTyp
+	--					, TwG_GrONumer GrONumer
+	--					, 1 Poziom
+	--					, CASE @SciezkaTyp
+	--						WHEN 1
+	--							THEN CONVERT(VARCHAR(1000), TwG_Kod)
+	--						WHEN 2
+	--							THEN CONVERT(VARCHAR(1000), TwG_Nazwa)
+	--						WHEN 3
+	--							THEN CONVERT(VARCHAR(1000), TwG_GIDNumer)
+	--						ELSE ''
+	--						END Sciezka
+	--				FROM CDN.TwrGrupy
+	--				WHERE TwG_GIDNumer = @GIDNumer
+	--					AND TwG_GIDTyp = ISNULL(@GIDTyp, - 16)
+	--					AND TwG_GrONumer = ISNULL(@GrONumer, TwG_GrONumer)
+	--				UNION ALL
+	--				SELECT TwG_Kod Kod
+	--					, TwG_Nazwa Nazwa
+	--					, TwG_GIDNumer GIDNumer
+	--					, TwG_GIDTyp GIDTyp
+	--					, TwG_GrONumer GrONumer
+	--					, Poziom + 1 Poziom
+	--					, CASE @SciezkaTyp
+	--						WHEN 1
+	--							THEN CONVERT(VARCHAR(1000), (Sciezka + @Separator + TwG_Kod))
+	--						WHEN 2
+	--							THEN CONVERT(VARCHAR(1000), (Sciezka + @Separator + TwG_Nazwa))
+	--						WHEN 3
+	--							THEN CONVERT(VARCHAR(1000), (Sciezka + @Separator + CONVERT(VARCHAR(1000), TwG_GIDNumer)))
+	--						ELSE ''
+	--						END Sciezka
+	--				FROM DrzewoGrupTwr
+	--				INNER JOIN CDN.TwrGrupy ON GIDNumer = TwG_GrONumer
+	--					AND TwG_GIDTyp = - 16
+	--				)
+	--		SELECT *
+	--		FROM DrzewoGrupTwr
+	--		)
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[PobierzDrzewoGrupTowarowychKuKorzeniowi]"></A><PRE>
+          <FONT SIZE="2"><I>/* [PobierzDrzewoGrupTowarowychKuKorzeniowi] */</I><BR>
+CREATE FUNCTION [CDN].[PobierzDrzewoGrupTowarowychKuKorzeniowi] (
+	@GIDNumer INT
+	, @GIDTyp SMALLINT = - 16
+	, @GrONumer INT = NULL
+	, @SciezkaTyp TINYINT = NULL
+	, @Separator VARCHAR(3) = '\'
+	--, @Kierunek TINYINT = 0
+	)
+RETURNS TABLE
+AS
+RETURN (
+		SELECT TGD_Kod Kod
+			, TwG_Nazwa Nazwa
+			, TGD_GIDNumer GIDNumer
+			, TGD_GidTyp GIDTyp
+			, TGD_GrONumer GrONumer
+			, 1 Poziom
+			, '' Sciezka
+		FROM CDN.TwrLinki
+		INNER JOIN CDN.TwrGrupyDom
+			ON TwL_GrONumer = TGD_GIDNumer
+				AND TGD_GidTyp = TwL_GrOTyp
+		INNER JOIN CDN.TwrGrupy
+			ON TGD_GIDNumer = TwG_GIDNumer
+				AND TGD_GIDTyp = TwG_GIDTyp
+				AND TGD_GroTyp = TwG_GrOTyp
+		WHERE TwL_GIDNumer = @GIDNumer
+			AND TwL_GIDTyp = ISNULL(@GIDTyp, - 16)
+			--AND TwL_GrONumer = ISNULL(@GrONumer, TwL_GrONumer)
+			--		WHERE TwG_GIDNumer = @GIDNumer
+			--			AND TwG_GIDTyp = ISNULL(@GIDTyp, - 16)
+			--			AND TwG_GrONumer = ISNULL(@GrONumer, TwG_GrONumer)
+			--WITH DrzewoGrupTwr AS (
+			--		SELECT TwG_Kod Kod
+			--			, TwG_Nazwa Nazwa
+			--			, TwG_GIDNumer GIDNumer
+			--			, TwG_GIDTyp GIDTyp
+			--			, TwG_GrONumer GrONumer
+			--			, 1 Poziom
+			--			, CASE @SciezkaTyp
+			--				WHEN 1
+			--					THEN CONVERT(VARCHAR(1000), TwG_Kod)
+			--				WHEN 2
+			--					THEN CONVERT(VARCHAR(1000), TwG_Nazwa)
+			--				WHEN 3
+			--					THEN CONVERT(VARCHAR(1000), TwG_GIDNumer)
+			--				ELSE ''
+			--				END Sciezka
+			--		FROM CDN.TwrGrupy
+			--		WHERE TwG_GIDNumer = @GIDNumer
+			--			AND TwG_GIDTyp = ISNULL(@GIDTyp, - 16)
+			--			AND TwG_GrONumer = ISNULL(@GrONumer, TwG_GrONumer)
+			--		UNION ALL
+			--		SELECT TwG_Kod Kod
+			--			, TwG_Nazwa Nazwa
+			--			, TwG_GIDNumer GIDNumer
+			--			, TwG_GIDTyp GIDTyp
+			--			, TwG_GrONumer GrONumer
+			--			, Poziom + 1 Poziom
+			--			, CASE @SciezkaTyp
+			--				WHEN 1
+			--					THEN CONVERT(VARCHAR(1000), (TwG_Kod + @Separator + Sciezka))
+			--				WHEN 2
+			--					THEN CONVERT(VARCHAR(1000), (TwG_Nazwa + @Separator + Sciezka))
+			--				WHEN 3
+			--					THEN CONVERT(VARCHAR(1000), (CONVERT(VARCHAR(1000), TwG_GIDNumer)) + @Separator + Sciezka)
+			--				ELSE ''
+			--				END Sciezka
+			--		FROM DrzewoGrupTwr
+			--		INNER JOIN CDN.TwrGrupy ON GrONumer = TwG_GIDNumer
+			--			AND TwG_GIDTyp = - 16
+			--		)
+			--SELECT *
+			--FROM DrzewoGrupTwr
+		)
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

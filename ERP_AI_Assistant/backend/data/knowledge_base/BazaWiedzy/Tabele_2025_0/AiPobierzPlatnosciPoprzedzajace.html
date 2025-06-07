@@ -1,0 +1,79 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="AiPobierzPlatnosciPoprzedzajace"></A><PRE>
+          <FONT SIZE="2"><I>/* AiPobierzPlatnosciPoprzedzajace */</I><BR>
+Create Procedure CDN.AiPobierzPlatnosciPoprzedzajace(@TrpTyp smallint, @TrpNumer int, @TrpLp smallint, @LiczbaRekordowDoZwrocenia int)
+    as
+    begin
+        SET NOCOUNT ON;
+		IF EXISTS(SELECT * FROM sys.tables WHERE name = '#Platnosci')
+			DROP TABLE #Platnosci
+
+        create table #Platnosci(TrpTyp int, TrpNumer int, TrpLp smallint, DataWystawienia int, TerminPlatnosci int, TerminSplaty int, KwotaSys decimal(15,2));
+
+	declare @DokKntGidTyp smallint, @DokKntGidNumer int 
+
+	select @DokKntGidTyp = TTV_KntTyp, @DokKntGidNumer = TTV_KntNumer
+	from CDN.TrpTrnView
+	where TTV_GIDTyp=@TrpTyp and TTV_GIDNumer=@TrpNumer and TTV_GIDLp=@TrpLp;
+
+	with TrpTrnViewPlat as
+	(
+		select TrP_GIDTyp, TrP_GIDNumer, TrP_GIDLp, TTV_Data, TTV_Termin
+		from CDN.TraPlat
+		inner join CDN.TrpTrnView on TTV_GIDNumer=TrP_GIDNumer and TTV_GIDTyp=TrP_GIDTyp and TTV_GIDLp=TrP_GIDLp
+		where TTV_KntNumer=@DokKntGidNumer and TTV_KntTyp=@DokKntGidTyp
+        and TTV_Data &lt;= DATEDIFF(d, '1800-12-28',  getdate())
+		and TTV_Data + 1095 &gt;= DATEDIFF(d, '1800-12-28',  getdate())
+		and TrP_Rozliczona=1
+		and TrP_GIDTyp not in (
+			4608						-- KBN (Kompensata braków i nadwyżek)
+			,7690,7684					-- Preliminarz wpływów/wydatków/płatności
+			,2984						-- Delegacje pracowników
+			,2978,2979,2980,2981,2977	-- Listy płac
+			,2768,6272,6400,6402,7691,7696,7712	-- deklaracje z PodNag
+			,800						-- raport kasowy
+			,7942,7943					-- prolongaty
+			,2833,2832					-- Upomnienia, Noty odsetkowe
+			,2039,2047					-- RS, RSK
+		)
+	)
+	insert into #Platnosci
+	select top (@LiczbaRekordowDoZwrocenia) i.TrP_GIDTyp, i.TrP_GIDNumer, i.TrP_GIDLp, max(DataWystawienia), max(TerminPlatnosci), max(DataRozliczenia), sum(KwotaSys) from
+	(
+		select ttvp.TrP_GIDTyp, ttvp.TrP_GIDNumer, ttvp.TrP_GIDLp, ttvp.TTV_Data DataWystawienia, ttvp.TTV_Termin TerminPlatnosci, r1.R2_DataRozliczenia DataRozliczenia, r1.R2_KwotaSys KwotaSys
+		from TrpTrnViewPlat ttvp
+			join CDN.Rozliczenia r1 on ttvp.Trp_GIDTyp=r1.R2_Dok1Typ AND ttvp.Trp_GIDNumer=r1.R2_Dok1Numer AND ttvp.Trp_GIDLp=r1.R2_Dok1Lp
+		where
+			TTV_Termin &gt;= (SELECT MAX(TDate) FROM (VALUES (ttvp.TTV_Data),(ttvp.ttv_termin),(r1.R2_DataRozliczenia)) AS AllDates(TDate))
+			-- ignorujemy prolongaty
+			and (R1.R2_Dok1Typ is null or (R1.R2_Dok1Typ not in (7942, 7943) and R1.R2_Dok2Typ not in (7942, 7943)))
+		union all
+		select ttvp.TrP_GIDTyp, ttvp.TrP_GIDNumer, ttvp.TrP_GIDLp, ttvp.TTV_Data DataWystawienia, ttvp.TTV_Termin TerminPlatnosci, r2.R2_DataRozliczenia DataRozliczenia, r2.R2_KwotaSys KwotaSys
+		from TrpTrnViewPlat ttvp
+			join CDN.Rozliczenia r2 on ttvp.Trp_GIDTyp=r2.R2_Dok2Typ AND ttvp.Trp_GIDNumer=r2.R2_Dok2Numer AND ttvp.Trp_GIDLp=r2.R2_Dok2Lp
+		where
+			TTV_Termin &gt;= (SELECT MAX(TDate) FROM (VALUES (ttvp.TTV_Data),(ttvp.ttv_termin),(r2.R2_DataRozliczenia)) AS AllDates(TDate))
+			-- ignorujemy prolongaty
+				and (R2.R2_Dok1Typ is null or (R2.R2_Dok1Typ not in (7942, 7943) and R2.R2_Dok2Typ not in (7942, 7943)))
+		
+	) i
+	group by i.TrP_GIDTyp, i.TrP_GIDNumer, i.TrP_GIDLp
+
+	select * from #Platnosci;
+    end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

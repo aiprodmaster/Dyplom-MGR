@@ -1,0 +1,396 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="InwPrzygotujArkusz"></A><PRE>
+          <FONT SIZE="2"><I>/* InwPrzygotujArkusz */</I><BR>
+CREATE PROCEDURE CDN.InwPrzygotujArkusz(
+@Polozenie      smallint, 
+@RodzajIlosci   smallint, 
+@TylkoNiezerowe smallint,
+@DzielNaPartie	smallint, 
+@TwGTyp         smallint, 
+@TwGNumer       int, 
+@MagNumer       int, -- jeśli podany @MagNumer jedynie dla wskazanego, jeśli 0 to dla wszystkich magazynów z nagłówka
+@AdresOd        varchar(255), 
+@AdresDo        varchar(255),
+@InnId			int,
+@TylkoJLogWMS	tinyint=0,
+@RealizujWPOS	tinyint=0
+)
+AS
+DECLARE @Sql VARCHAR(max)
+DECLARE @WarunekMag VARCHAR(2049)
+SET @WarunekMag = ''
+
+DECLARE @IloscMag SMALLINT
+SELECT @IloscMag=COUNT(InM_MagNumer) FROM CDN.InwMag WHERE InM_InNId=@InnId
+
+IF @MagNumer&gt;0 
+	BEGIN
+		SET @WarunekMag='='+CAST(@MagNumer AS VARCHAR)
+
+		IF @RealizujWPOS&gt;0 BEGIN
+
+			DECLARE @PcKTwGETyp SMALLINT
+			DECLARE @PcKTwGENumer INT
+
+			SELECT @PcKTwGETyp=PcK_TwGETyp, @PcKTwGENumer=PcK_TwGENumer
+			FROM CDN.Magazyny 
+			JOIN CDN.PicoKonfig ON PcK_PicoID=MAG_PcKId AND PcK_Typ=8 --E_PCO_WYMIANA_XL_POS
+			WHERE MAG_GIDNumer=@MagNumer
+
+            IF @TwGTyp=16 BEGIN --Towar
+				--Sprawdzamy czy należy do grupy
+				IF NOT EXISTS(SELECT * FROM CDN.TwrLinki WHERE TwL_GidTyp=@TwGTyp AND TwL_GIDNumer=@TwGNumer AND TwL_GrOTyp=@PcKTwGETyp AND TwL_GrONumer=@PcKTwGENumer)
+					RETURN	
+			END ELSE BEGIN -- Grupa
+				IF @TwGTyp&lt;&gt;@PcKTwGETyp OR @TwGNumer&lt;&gt;@PcKTwGENumer BEGIN
+					-- Jest nadrzędna dla tej z POS
+					IF EXISTS(SELECT * FROM CDN.TwrLinki WHERE TwL_GidTyp=@PcKTwGETyp AND TwL_GIDNumer=@PcKTwGENumer AND TwL_GrOTyp=@TwGTyp AND TwL_GrONumer=@TwGNumer) BEGIN
+						-- Zawężamy tylko do tej z POS
+						SET @TwGTyp = @PcKTwGETyp
+						SET @TwGNumer = @PcKTwGENumer
+					END ELSE BEGIN
+						-- Nie jest podrzędną dla tej z POS
+						IF NOT EXISTS(SELECT * FROM CDN.TwrLinki WHERE TwL_GidTyp=@TwGTyp AND TwL_GIDNumer=@TwGNumer AND TwL_GrOTyp=@PcKTwGETyp AND TwL_GrONumer=@PcKTwGENumer)
+							RETURN		
+						-- Jest podrzędną dla tej z POS, czyli możemy ją zostawić						
+					END
+				END
+			END
+		END
+	END
+ELSE BEGIN 	
+	IF (@IloscMag)=0
+		BEGIN
+			RAISERROR('Nie można wygenerować arkusza dla inwentaryzacji. Brak magazynów.',16,1)
+			RETURN	
+		END
+	ELSE BEGIN
+		SELECT @WarunekMag=@WarunekMag+CAST(InM_MagNumer AS VARCHAR)+',' FROM CDN.InwMag WHERE InM_InNId=@InnId
+		SET @WarunekMag = SUBSTRING(@WarunekMag,1,LEN(@WarunekMag)-1)
+		IF CHARINDEX(',',@WarunekMag)=0
+			SET @WarunekMag='='+@WarunekMag
+		ELSE BEGIN
+			IF @Polozenie = 0
+				SET @WarunekMag=' IN ('+@WarunekMag+')'
+			ELSE BEGIN
+				RAISERROR('Nie można wygenerować arkusza dla inwentaryzacji według położenia dla wielu magazynów.',16,1)
+				RETURN			
+			END	
+		END					
+	END	
+END
+
+IF @Polozenie = 0
+BEGIN -- @Polozenie = 0
+  -- Inwentaryzacja wedlug towarow
+        IF @RodzajIlosci=0
+        BEGIN
+                -- Inwentaryzaja po ilosci magazynowej
+			SET @Sql = 
+                'SELECT '+
+				CASE WHEN @DzielNaPartie=1
+					 THEN 'tpa_id,tpa_twrnumer twrnumer,sum(tzm_ilosc) as ilosc,tpa_ccknumer,tpa_cecha,'+
+							CASE WHEN @IloscMag=1
+							THEN 'tzm_mgaid mgaid,Twr_Kod,
+							isnull((MgO_Kod+(CASE WHEN MgA_Segment1 &lt;&gt; '''' THEN ''-'' ELSE '''' END)+MgA_Segment1+
+							(CASE WHEN MgA_Segment2 &lt;&gt; '''' THEN ''-'' ELSE '''' END)+MgA_Segment2+
+							(CASE WHEN MgA_Segment3 &lt;&gt; '''' THEN ''-'' ELSE '''' END)+MgA_Segment3+
+							(CASE WHEN MgA_Segment4 &lt;&gt; '''' THEN ''-'' ELSE '''' END)+MgA_Segment4),'''') Polozenie'
+							ELSE '0 mgaid,Twr_Kod,'''' Polozenie' END +'
+							,isnull(cck_nazwa,'''') ccknazwa,tpa_ean,tpa_dataw'
+					 ELSE '0 tpa_id,twr_gidnumer twrnumer,sum(tzm_ilosc) as ilosc,0 tpa_ccknumer, '''' tpa_cecha,'+
+							CASE WHEN @IloscMag=1
+							THEN 'tzm_mgaid mgaid,Twr_Kod,
+							isnull((MgO_Kod+(CASE WHEN MgA_Segment1 &lt;&gt; '''' THEN ''-'' ELSE '''' END)+MgA_Segment1+
+							(CASE WHEN MgA_Segment2 &lt;&gt; '''' THEN ''-'' ELSE '''' END)+MgA_Segment2+
+							(CASE WHEN MgA_Segment3 &lt;&gt; '''' THEN ''-'' ELSE '''' END)+MgA_Segment3+
+							(CASE WHEN MgA_Segment4 &lt;&gt; '''' THEN ''-'' ELSE '''' END)+MgA_Segment4),'''') Polozenie'
+							ELSE '0 mgaid,Twr_Kod,'''' Polozenie' END +'
+							,'''' ccknazwa,twr_ean tpa_ean,0 tpa_dataw'
+				END + '			
+                FROM CDN.TwrZasobyMag
+                JOIN CDN.TwrPartie ON TZM_TPaId = TPa_Id AND TZM_MagNumer'+@WarunekMag+'
+                JOIN CDN.TwrKarty ON TPa_TwrNumer=Twr_GIDNumer
+                JOIN CDN.TwrLinki ON Twr_GIDTyp=TwL_GIDTyp AND Twr_GIDNumer=TwL_GIDNumer'+
+				CASE WHEN @IloscMag=1
+					THEN ' LEFT OUTER JOIN cdn.magadresy on tzm_mgaid = mga_id
+					  LEFT OUTER JOIN cdn.magobszary on mga_mgoid = mgo_id'
+					ELSE ''
+				END +		  
+				CASE WHEN @DzielNaPartie=1
+					 THEN ' LEFT OUTER JOIN cdn.cechyklasy on tpa_ccknumer = cck_gidnumer'
+					 ELSE '' --@DzielNaPartie=0
+				END + '									
+                WHERE Twr_Archiwalny = 0 AND Twr_GIDNumer&gt;0 AND Twr_Typ IN(1,2' + CASE WHEN @RealizujWPOS&gt;0 THEN '' ELSE ',5' END + ') AND ' +
+				CASE WHEN @RealizujWPOS&gt;0 THEN 'Twr_Kaucja=0 AND ' ELSE '' END + 
+				CASE WHEN @TwGTyp=-16 
+					THEN 'TwL_GrOTyp='+CAST(@TwGTyp AS VARCHAR)+' AND TwL_GrONumer='+CAST(@TwGNumer AS VARCHAR)
+					ELSE 'TwL_GrOTyp=-16 AND TwL_GrONumer=0 AND TwL_GIDTyp='+CAST(@TwGTyp AS VARCHAR)+' AND TwL_GIDNumer='+CAST(@TwGNumer AS VARCHAR) 
+				END +
+				CASE WHEN @TylkoJLogWMS=0
+					THEN ' AND Twr_JLogWMS=0' 
+					ELSE ' AND Twr_JLogWMS=1' 
+				END +
+                CASE WHEN @DzielNaPartie=1
+					 THEN ' group by tpa_id,' + CASE WHEN @IloscMag=1 THEN 'tzm_mgaid,' ELSE '' END + 'tpa_twrnumer,twr_kod,tpa_ccktyp,tpa_ccknumer,tpa_cecha,isnull(cck_nazwa,''''),tpa_ean,tpa_dataw'                                 
+					 ELSE ' group by ' + CASE WHEN @IloscMag=1 THEN 'tzm_mgaid,' ELSE '' END + 'twr_gidnumer,twr_kod,twr_ean'                                 
+				END + 
+				CASE WHEN @IloscMag=1
+				THEN ',isnull((MgO_Kod+(CASE WHEN MgA_Segment1 &lt;&gt; '''' THEN ''-'' ELSE '''' END)+MgA_Segment1+
+						(CASE WHEN MgA_Segment2 &lt;&gt; '''' THEN ''-'' ELSE '''' END)+MgA_Segment2+
+						(CASE WHEN MgA_Segment3 &lt;&gt; '''' THEN ''-'' ELSE '''' END)+MgA_Segment3+
+						(CASE WHEN MgA_Segment4 &lt;&gt; '''' THEN ''-'' ELSE '''' END)+MgA_Segment4),'''')'
+				ELSE '' END +
+			CASE WHEN @TylkoNiezerowe=0 THEN
+                ' UNION ALL
+                SELECT '+
+				CASE WHEN @DzielNaPartie=1
+					 /* 
+						TID:178329 + TFS:72216 
+					    + zakomentowano max(Dst_TPAId)
+					    + wyrzucono join do CDN.Dostawy
+					    + dodano grupowanie po elementach partii tak aby można było zwrócić jej dane (cecha + data ważności)
+				     */
+					 THEN 'coalesce(--max(Dst_TPAId),
+							        max(case when tpa_ccknumer = 0 and tpa_cecha = '''' and (tpa_ean = twr_ean or tpa_ean = '''') and tpa_dataw = 0 and tpa_dstnumer = 0 then tpa_id else null end),
+                                    max(TPA_Id),0) TPA_Id,twr_gidnumer, 0 as ilosc,isnull(tpa_ccknumer,0),isnull(tpa_cecha,''''),0,Twr_Kod,'''',
+                                    isnull(cck_nazwa,''''),isnull(tpa_ean,''''),isnull(tpa_dataw,0)'
+					 ELSE '0,twr_gidnumer, 0 as ilosc,0,'''',0,Twr_Kod,'''', '''','''',0'
+				END + '
+                FROM CDN.TwrKarty
+                JOIN CDN.TwrLinki ON Twr_GIDTyp=TwL_GIDTyp AND Twr_GIDNumer=TwL_GIDNumer
+				LEFT OUTER JOIN CDN.Twrpartie ON Twr_GIDNumer=TPa_TwrNumer
+                LEFT OUTER JOIN CDN.TwrZasobyMag ON  TZM_TPaId=TPa_Id AND TZM_MagNumer'+@WarunekMag+
+				CASE WHEN @DzielNaPartie=1
+					 THEN ' LEFT OUTER JOIN CDN.TwrZasoby ON TwZ_TwrNumer = Twr_GIDNumer AND TwZ_MagNumer'+@WarunekMag+
+						  --'	LEFT OUTER JOIN CDN.Dostawy ON Dst_GIDNumer = TwZ_DstNumer'+
+						  ' LEFT OUTER JOIN CDN.CechyKlasy ON TPa_CCKNumer = CCK_GIDNumer'
+					 ELSE '' --@DzielNaPartie=0
+				END + '		
+                WHERE Twr_Archiwalny = 0 AND Twr_GIDNumer&gt;0 AND Twr_Typ IN(1,2' + CASE WHEN @RealizujWPOS&gt;0 THEN '' ELSE ',5' END + ') AND '+
+				CASE WHEN @RealizujWPOS&gt;0 THEN 'Twr_Kaucja=0 AND ' ELSE '' END + 
+				CASE WHEN @TwGTyp=-16 
+					THEN 'TwL_GrOTyp='+CAST(@TwGTyp AS VARCHAR)+' AND TwL_GrONumer='+CAST(@TwGNumer AS VARCHAR)
+					ELSE 'TwL_GrOTyp=-16 AND TwL_GrONumer=0 AND TwL_GIDTyp='+CAST(@TwGTyp AS VARCHAR)+' AND TwL_GIDNumer='+CAST(@TwGNumer AS VARCHAR) 
+				END +
+				--TFS:72216 BEGIN
+                CASE WHEN @DzielNaPartie=1
+					 THEN ' AND (TZM_Ilosc=0 OR TZM_Ilosc IS NULL) AND (TwZ_IlMag=0 OR TwZ_IlMag IS NULL)'
+					 ELSE ''
+				END +  
+				CASE WHEN @TylkoJLogWMS=0
+					THEN ' AND Twr_JLogWMS=0' 
+					ELSE ' AND Twr_JLogWMS=1' 
+				END +
+				--TFS:72216 END					
+				' GROUP BY twr_gidnumer,twr_kod'+
+				CASE WHEN @DzielNaPartie=1
+					 THEN ',TPA_Id,isnull(tpa_ccknumer,0),isnull(tpa_cecha,''''),isnull(cck_nazwa,''''),isnull(tpa_ean,''''),isnull(tpa_dataw,0)'						                 
+					 ELSE ''
+				END +  				
+                ' HAVING SUM(ISNULL(TZM_Ilosc,0))=0 '
+			ELSE '' END -- @TylkoNiezerowe&lt;&gt;0
+        END
+        ELSE 
+        BEGIN -- @RodzajIlosci&lt;&gt;0
+            -- Inwentaryzaja po ilosci handlowej
+            SET @Sql =
+				' SELECT '+
+				CASE WHEN @DzielNaPartie=1
+					 THEN 'tpa_id,twz_twrnumer twrnumer,sum(twz_ilspr) as ilosc,tpa_ccknumer,tpa_cecha,0 mgaid,Twr_Kod,'''' Polozenie, isnull(cck_nazwa,'''') ccknazwa,tpa_ean,tpa_dataw'
+					 ELSE '0 tpa_id,twz_twrnumer twrnumer,sum(twz_ilspr) as ilosc, 0 tpa_ccknumer, ''''tpa_cecha,0 mgaid,Twr_Kod,'''' Polozenie, '''' ccknazwa, twr_ean tpa_ean, 0 tpa_dataw'
+				END + '	 
+                FROM CDN.TwrKarty
+                JOIN CDN.TwrLinki ON Twr_GIDTyp=TwL_GIDTyp AND Twr_GIDNumer=TwL_GIDNumer
+                JOIN CDN.TwrZasoby ON Twr_GIDNumer=TwZ_TwrNumer AND TwZ_MagNumer'+@WarunekMag+
+                CASE WHEN @DzielNaPartie=1
+				THEN ' JOIN CDN.Dostawy ON TwZ_DstNumer = Dst_GIDNumer
+						JOIN cdn.twrpartie on dst_tpaid = tpa_id
+						LEFT OUTER JOIN CDN.CechyKlasy ON tpa_ccknumer = cck_gidnumer'
+				ELSE '' --@DzielNaPartie=0
+				END + '
+                WHERE Twr_Archiwalny = 0 AND Twr_GIDNumer&gt;0 AND Twr_Typ IN(1,2' + CASE WHEN @RealizujWPOS&gt;0 THEN '' ELSE ',5' END + ') AND ' +
+				CASE WHEN @RealizujWPOS&gt;0 THEN 'Twr_Kaucja=0 AND ' ELSE '' END + 
+				CASE WHEN @TwGTyp=-16 
+					THEN 'TwL_GrOTyp='+CAST(@TwGTyp AS VARCHAR)+' AND TwL_GrONumer='+CAST(@TwGNumer AS VARCHAR)
+					ELSE 'TwL_GrOTyp=-16 AND TwL_GrONumer=0 AND TwL_GIDTyp='+CAST(@TwGTyp AS VARCHAR)+' AND TwL_GIDNumer='+CAST(@TwGNumer AS VARCHAR) 
+				END +
+				CASE WHEN @TylkoJLogWMS=0
+					THEN ' AND Twr_JLogWMS=0' 
+					ELSE ' AND Twr_JLogWMS=1' 
+				END +
+                CASE WHEN @DzielNaPartie=1
+					 THEN ' group by tpa_id,twz_twrnumer,Twr_kod,tpa_ccktyp,tpa_ccknumer,tpa_cecha,isnull(cck_nazwa,''''),tpa_ean,tpa_dataw'
+					 ELSE ' group by twz_twrnumer,Twr_kod,twr_ean'
+				END + '	 
+                HAVING SUM(TwZ_Ilspr)&gt;0 '+
+            CASE WHEN @TylkoNiezerowe=0 THEN
+                'UNION ALL
+                SELECT '+
+                CASE WHEN @DzielNaPartie=1
+					 THEN 'coalesce(max(TZM_TPAId),
+									max(case when tpa_ccknumer = 0 and tpa_cecha = '''' and (tpa_ean = twr_ean or tpa_ean = '''') and tpa_dataw = 0 and tpa_dstnumer = 0 then tpa_id else null end),
+									max(TPA_Id),0) TPA_Id,twr_gidnumer, 0 as ilosc,isnull(tpa_ccknumer,0),isnull(tpa_cecha,''''),0,Twr_Kod,'''',isnull(cck_nazwa,''''),isnull(tpa_ean,''''),isnull(tpa_dataw,0)'
+					 ELSE '0 tpa_id,twr_gidnumer, 0 as ilosc,0,'''',0,Twr_Kod,'''', '''','''',0'
+				END + '	
+                FROM CDN.TwrKarty
+                JOIN CDN.TwrLinki ON Twr_GIDTyp=TwL_GIDTyp AND Twr_GIDNumer=TwL_GIDNumer
+                LEFT OUTER JOIN CDN.TwrZasoby ON Twr_GIDNumer=TwZ_TwrNumer AND TwZ_MagNumer'+@WarunekMag+
+                CASE WHEN @DzielNaPartie=1
+					THEN ' LEFT OUTER JOIN CDN.TwrPartie ON TPA_TwrNumer=Twr_GIDNumer
+						   LEFT OUTER JOIN CDN.TwrZasobyMag ON TZM_TPAId=TPA_Id AND TZM_MagNumer'+@WarunekMag+
+						 ' LEFT OUTER JOIN CDN.CechyKlasy ON tpa_ccknumer = cck_gidnumer '
+					ELSE '' --@DzielNaPartie=0
+				END + '				
+                WHERE Twr_Archiwalny = 0 AND Twr_GIDNumer&gt;0 AND Twr_Typ IN(1,2' + CASE WHEN @RealizujWPOS&gt;0 THEN '' ELSE ',5' END + ') AND '+
+				CASE WHEN @RealizujWPOS&gt;0 THEN 'Twr_Kaucja=0 AND ' ELSE '' END + 
+				CASE WHEN @TwGTyp=-16 
+					THEN 'TwL_GrOTyp='+CAST(@TwGTyp AS VARCHAR)+' AND TwL_GrONumer='+CAST(@TwGNumer AS VARCHAR)
+					ELSE 'TwL_GrOTyp=-16 AND TwL_GrONumer=0 AND TwL_GIDTyp='+CAST(@TwGTyp AS VARCHAR)+' AND TwL_GIDNumer='+CAST(@TwGNumer AS VARCHAR) 
+				END +
+				CASE WHEN @TylkoJLogWMS=0
+					THEN ' AND Twr_JLogWMS=0' 
+					ELSE ' AND Twr_JLogWMS=1' 
+				END +
+				CASE WHEN @DzielNaPartie=1
+					 THEN ' group by tpa_id,twr_gidnumer,Twr_kod,tpa_ccktyp,tpa_ccknumer,tpa_cecha,isnull(cck_nazwa,''''),tpa_ean,tpa_dataw'
+					 ELSE ' group by twr_gidnumer,Twr_kod'
+				END + 
+                ' HAVING SUM(ISNULL(TwZ_Ilspr,0))=0 '
+			ELSE '' END -- @TylkoNiezerowe&lt;&gt;0
+        END -- @RodzajIlosci&lt;&gt;0
+END -- @Polozenie = 0
+ELSE 
+BEGIN -- @Polozenie&lt;&gt;0
+  -- Inwentaryzacja wedlug polozenia
+    SET @Sql = 
+		'SELECT '+
+		CASE WHEN @DzielNaPartie=1
+			THEN 'tpa_id,tpa_twrnumer twrnumer,sum(tzm_ilosc) as ilosc,tpa_ccknumer,tpa_cecha,mga_id mgaid,twr_kod,'+
+			'(MgO_Kod+(CASE WHEN MgA_Segment1 &lt;&gt; '''' THEN ''-'' ELSE '''' END)+MgA_Segment1+'+
+            ' (CASE WHEN MgA_Segment2 &lt;&gt; '''' THEN ''-'' ELSE '''' END)+MgA_Segment2+'+
+            ' (CASE WHEN MgA_Segment3 &lt;&gt; '''' THEN ''-'' ELSE '''' END)+MgA_Segment3+'+
+            ' (CASE WHEN MgA_Segment4 &lt;&gt; '''' THEN ''-'' ELSE '''' END)+MgA_Segment4) Polozenie,'+
+            ' isnull(cck_nazwa,'''') ccknazwa,tpa_ean,tpa_dataw'
+			ELSE '0 tpa_id,twr_gidnumer twrnumer,sum(tzm_ilosc) as ilosc,0 tpa_ccknumer,'''' tpa_cecha,mga_id mgaid,twr_kod,'+
+			'(MgO_Kod+(CASE WHEN MgA_Segment1 &lt;&gt; '''' THEN ''-'' ELSE '''' END)+MgA_Segment1+'+
+            ' (CASE WHEN MgA_Segment2 &lt;&gt; '''' THEN ''-'' ELSE '''' END)+MgA_Segment2+'+
+            ' (CASE WHEN MgA_Segment3 &lt;&gt; '''' THEN ''-'' ELSE '''' END)+MgA_Segment3+'+
+            ' (CASE WHEN MgA_Segment4 &lt;&gt; '''' THEN ''-'' ELSE '''' END)+MgA_Segment4) Polozenie,'+
+			' '''' ccknazwa, twr_ean tpa_ean, 0 tpa_dataw'
+		END + '              
+		from cdn.twrzasobymag
+        join cdn.twrpartie on tzm_tpaid = tpa_id
+        join cdn.magadresy on tzm_mgaid = mga_id
+        join cdn.magobszary on mga_mgoid = mgo_id
+        join cdn.twrkarty on tpa_twrnumer = twr_gidnumer'+
+		CASE WHEN @DzielNaPartie=1
+			 THEN ' left outer join cdn.cechyklasy on tpa_ccknumer = cck_gidnumer'
+			 ELSE '' --@DzielNaPartie=0
+		END + '	
+        where tzm_magnumer'+@WarunekMag+' and twr_archiwalny = 0 and twr_typ in (1,2' + CASE WHEN @RealizujWPOS&gt;0 THEN '' ELSE ',5' END + ') and ' +
+			CASE WHEN @RealizujWPOS&gt;0 THEN 'Twr_Kaucja=0 AND ' ELSE '' END + '
+			(MgO_Kod+(CASE WHEN MgA_Segment1 &lt;&gt; '''' THEN ''-'' ELSE '''' END)+MgA_Segment1+
+            (CASE WHEN MgA_Segment2 &lt;&gt; '''' THEN ''-'' ELSE '''' END)+MgA_Segment2+
+            (CASE WHEN MgA_Segment3 &lt;&gt; '''' THEN ''-'' ELSE '''' END)+MgA_Segment3+
+            (CASE WHEN MgA_Segment4 &lt;&gt; '''' THEN ''-'' ELSE '''' END)+MgA_Segment4) &gt;= '''+@AdresOd+''''+
+		' and
+			(MgO_Kod+(CASE WHEN MgA_Segment1 &lt;&gt; '''' THEN ''-'' ELSE '''' END)+MgA_Segment1+
+            (CASE WHEN MgA_Segment2 &lt;&gt; '''' THEN ''-'' ELSE '''' END)+MgA_Segment2+
+            (CASE WHEN MgA_Segment3 &lt;&gt; '''' THEN ''-'' ELSE '''' END)+MgA_Segment3+
+            (CASE WHEN MgA_Segment4 &lt;&gt; '''' THEN ''-'' ELSE '''' END)+MgA_Segment4) &lt;= '''+@AdresDo +''''+
+		CASE WHEN @TylkoJLogWMS=0
+			THEN ' AND Twr_JLogWMS=0' 
+			ELSE ' AND Twr_JLogWMS=1' 
+		END +
+		' group by '+
+		CASE WHEN @DzielNaPartie=1
+			THEN 'tpa_id,
+				(MgO_Kod+(CASE WHEN MgA_Segment1 &lt;&gt; '''' THEN ''-'' ELSE '''' END)+MgA_Segment1+
+				(CASE WHEN MgA_Segment2 &lt;&gt; '''' THEN ''-'' ELSE '''' END)+MgA_Segment2+
+				(CASE WHEN MgA_Segment3 &lt;&gt; '''' THEN ''-'' ELSE '''' END)+MgA_Segment3+
+				(CASE WHEN MgA_Segment4 &lt;&gt; '''' THEN ''-'' ELSE '''' END)+MgA_Segment4),
+				twr_kod,tpa_id,tpa_ccknumer,tpa_cecha,tpa_twrnumer,mga_id,isnull(cck_nazwa,''''),tpa_ean,tpa_dataw'
+			ELSE '
+				(MgO_Kod+(CASE WHEN MgA_Segment1 &lt;&gt; '''' THEN ''-'' ELSE '''' END)+MgA_Segment1+
+				(CASE WHEN MgA_Segment2 &lt;&gt; '''' THEN ''-'' ELSE '''' END)+MgA_Segment2+
+				(CASE WHEN MgA_Segment3 &lt;&gt; '''' THEN ''-'' ELSE '''' END)+MgA_Segment3+
+				(CASE WHEN MgA_Segment4 &lt;&gt; '''' THEN ''-'' ELSE '''' END)+MgA_Segment4),
+				twr_kod,twr_gidnumer,mga_id,twr_ean'
+		END --@DzielNaPartie=1
+				
+END -- @Polozenie&lt;&gt;0
+
+set @Sql = 
+'select tpa_id,twrnumer,ilosc,tpa_ccknumer,tpa_cecha,mgaid,Twr_Kod,Polozenie,ccknazwa,tpa_ean,tpa_dataw,--IlMagTpa,WartMagTpa,IlTpa,WartTpa,IlMag,WartMag,Il,Wart,
+CASE WHEN isnull(tpa_id,0) &gt; 0 AND IlMagTpa&gt;0 AND WartMagTpa&gt;0 THEN WartMagTpa/IlMagTpa
+	 WHEN isnull(tpa_id,0) &gt; 0 AND IlTpa&gt;0 AND WartTpa&gt;0 THEN WartTpa/IlTpa
+	 WHEN IlMag&gt;0 AND WartMag&gt;0 THEN WartMag/IlMag
+	 WHEN Il&gt;0 AND Wart&gt;0 THEN Wart/Il
+	 ELSE isnull(CDN.WartoscWWalucieSys(twc_wartosc,twc_waluta,twc_nrkursu,DATEDIFF(second, CONVERT(DATETIME,''1990-01-01'',120),GETDATE())),0)
+	 END Cena, NiezgodneIlosci,Duplikacja
+from (
+	select tpa_id,twrnumer,ilosc,tpa_ccknumer,tpa_cecha,mgaid,Twr_Kod,Polozenie,ccknazwa,tpa_ean,tpa_dataw,
+		sum(CASE WHEN TwZ_MagNumer'+@WarunekMag+' AND Dst_TpaID=tpa_id AND (twz_ksiegowanetto &gt;= 0 and TwZ_IlSpr &gt; 0)
+				 THEN TwZ_IlSpr ELSE 0 END) IlMagTpa,
+		sum(CASE WHEN TwZ_MagNumer'+@WarunekMag+' AND Dst_TpaID = tpa_id AND twz_ksiegowanetto &gt;= 0 and TwZ_IlSpr &gt; 0 
+				 THEN twz_ksiegowanetto 
+    			 ELSE 0 END) WartMagTpa,
+		sum(CASE WHEN Dst_TpaID=tpa_id AND (twz_ksiegowanetto &gt;= 0 and TwZ_IlSpr &gt; 0)
+				 THEN TwZ_IlSpr ELSE 0 END) IlTpa,
+		sum(CASE WHEN Dst_TpaID = tpa_id AND twz_ksiegowanetto &gt;= 0 and TwZ_IlSpr &gt; 0 
+				 THEN twz_ksiegowanetto 
+    			 ELSE 0 END) WartTpa,
+		sum(CASE WHEN TwZ_MagNumer'+@WarunekMag+' AND (twz_ksiegowanetto &gt;= 0 and TwZ_IlSpr &gt; 0)
+				 THEN TwZ_IlSpr ELSE 0 END) IlMag,
+		sum(CASE WHEN TwZ_MagNumer'+@WarunekMag+' AND twz_ksiegowanetto &gt;= 0 and TwZ_IlSpr &gt; 0 
+				 THEN twz_ksiegowanetto 
+    			 ELSE 0 END) WartMag,
+		sum(CASE WHEN (twz_ksiegowanetto &gt;= 0 and TwZ_IlSpr &gt; 0)
+				 THEN TwZ_IlSpr ELSE 0 END) Il,
+		sum(CASE WHEN twz_ksiegowanetto &gt;= 0 and TwZ_IlSpr &gt; 0 
+				 THEN twz_ksiegowanetto 
+    			 ELSE 0 END) Wart,
+		CASE WHEN sum(CASE WHEN TwZ_MagNumer'+@WarunekMag+' AND Dst_TpaID = tpa_id THEN TwZ_IlSpr ELSE 0 END)
+			&lt;&gt; sum(CASE WHEN TwZ_MagNumer'+@WarunekMag+' AND Dst_TpaID = tpa_id THEN TwZ_IlMag ELSE 0 END) THEN 1 ELSE 0 END NiezgodneIlosci,
+        CASE WHEN isnull(int_id,0)&lt;&gt;0 THEN 1 '+
+			CASE WHEN EXISTS (
+				SELECT * FROM CDN.InwMag
+				JOIN CDN.Magazyny ON MAG_GIDNumer = InM_MagNumer
+				WHERE InM_InNId = @InnId AND MAG_WMS = 1
+			)
+			AND EXISTS (
+				SELECT * FROM sys.objects o
+				JOIN sys.schemas s on s.schema_id = o.schema_id
+				WHERE s.name = 'wms' AND o.name = 'Stocktaking_IsArticleOnWmsStocktaking'
+			) THEN ' WHEN (SELECT Result FROM [WMS].[Stocktaking_IsArticleOnWmsStocktaking]('+CAST(@InnId as varchar)+', TwrNumer, tpa_id))=1 then 1 ' else '' end
+		+' ELSE 0 END Duplikacja
+		from ('+@Sql+') S
+	left join CDN.TwrZasoby ON TwZ_TwrNumer = TwrNumer
+	left join CDN.Dostawy ON Dst_GIDNumer = TwZ_DstNumer
+	left join CDN.InwTwr ON Int_TwrNumer = TwrNumer AND Int_TpaId = isnull(tpa_id,0) AND Int_MgaID = mgaid AND Int_InnId = '+CAST(@InnId as varchar)+'
+	group by tpa_id,twrnumer,ilosc,tpa_ccknumer,tpa_cecha,mgaid,Twr_Kod,Polozenie,ccknazwa,tpa_ean,tpa_dataw,int_id
+) S 
+left join CDN.TwrCeny ON TwC_TwrNumer = TwrNumer AND TwC_TwrLp = 0
+ORDER BY '+
+CASE WHEN @Polozenie = 0 THEN 'Twr_Kod' ELSE 'Polozenie,twr_kod,tpa_id' END 
+
+
+EXEC(@Sql)
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

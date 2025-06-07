@@ -1,0 +1,306 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Usuwanie procedury CDN.SrtTabelaAmortWydr"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Usuwanie procedury CDN.SrtTabelaAmortWydr */</I><BR>
+if exists(select name from sysobjects where name='SrtTabelaAmortWydr' and type='P')
+	drop procedure CDN.SrtTabelaAmortWydr
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury CDN.SrtTabelaAmortWydr"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury CDN.SrtTabelaAmortWydr */</I><BR>
+CREATE   PROCEDURE CDN.SrtTabelaAmortWydr(@Rok varchar(4), @Tor smallint = 0, @FiltrApp varchar(2000) = '1=1', @CDN_Tekst3 varchar(2000) = '1=1', @Zlikwidowane smallint = 0, @Waluta varchar(4) = 'PLN', @WalutaSys varchar(4) = 'PLN', @Order smallint = 0, @MiejsceWywolania smallint = 0)
+AS
+BEGIN
+	set nocount on
+	set QUOTED_IDENTIFIER OFF
+
+	declare @strZapytanie varchar(max)
+
+	declare @WartoscSys varchar(1) = '0'
+		, @ZestTryb varchar(1) = '0'
+		, @DataDok varchar(6) = 'null'
+		, @Zakres varchar(1) = '2'
+		--, @MiejsceWywolania smallint = 0  -- 0 - Księga inw (wszystkie zakładki poza Znajdź), 1 - Księga inw. -&gt; Znajdź, 2 - Tabela am. -&gt; zakładka Grupy, 3 - Tabela am. -&gt; zakładka Odpisy, 4 - Tabela am. -&gt; zakładka Generacja
+
+	declare @PierwszyMiesiacRP tinyint,
+		@MiesiacP varchar(10) = '',
+		@MiesiacK varchar(10) = ''
+
+	select @PierwszyMiesiacRP = convert(tinyint, Kon_Wartosc) from cdn.Konfig where Kon_Numer = 242
+	--select @PierwszyMiesiacRP
+
+	declare @AktMiesiac tinyint = ( @PierwszyMiesiacRP ) % 12,		-- 1 miesiąc roku
+		@NastMiesiac tinyint = 0,
+		@AktRok smallint = convert(smallint, @Rok)
+
+
+	declare @StyczenP varchar(10) = ''
+		, @StyczenK varchar(10) = ''
+		, @LutyP varchar(10) = ''
+		, @LutyK varchar(10) = ''
+		, @MarzecP varchar(10) = ''
+		, @MarzecK varchar(10) = ''
+		, @KwiecienP varchar(10) = ''
+		, @KwiecienK varchar(10) = ''
+		, @MajP varchar(10) = ''
+		, @MajK varchar(10) = ''
+		, @CzerwiecP varchar(10) = ''
+		, @CzerwiecK varchar(10) = ''
+		, @LipiecP varchar(10) = ''
+		, @LipiecK varchar(10) = ''
+		, @SierpienP varchar(10) = ''
+		, @SierpienK varchar(10) = ''
+		, @WrzesienP varchar(10) = ''
+		, @WrzesienK varchar(10) = ''
+		, @PazdziernikP varchar(10) = ''
+		, @PazdziernikK varchar(10) = ''
+		, @ListopadP varchar(10) = ''
+		, @ListopadK varchar(10) = ''
+		, @GrudzienP varchar(10) = ''
+		, @GrudzienK varchar(10) = ''
+		, @sTor varchar(2) = convert(varchar(2), @tor)
+		
+
+
+	-- ustalenie dat początku i końca poszczególnych miesięcy
+	declare @i tinyint = 0
+	while (@i &lt; 12)
+	begin	
+		select @AktMiesiac = ( @PierwszyMiesiacRP + @i ) % 12
+
+		if @AktMiesiac = 0
+			select @AktMiesiac = 12, @NastMiesiac = 1
+		else
+			select @NastMiesiac = @AktMiesiac + 1
+
+
+		if @AktMiesiac = 1 AND @AktMiesiac &lt; @PierwszyMiesiacRP
+			select @AktRok = @AktRok + 1
+
+
+		select @MiesiacP = '01-' + case when @AktMiesiac &lt; 10 then '0' + convert(varchar(1), @AktMiesiac) else convert(varchar(2), @AktMiesiac) end + '-' + convert(varchar(4), @AktRok)
+	
+		if @AktMiesiac = 12
+			select @MiesiacK = '01-' + case when @NastMiesiac &lt; 10 then '0' + convert(varchar(1), @NastMiesiac) else convert(varchar(2), @NastMiesiac) end + '-' + convert(varchar(4), @AktRok+1)
+		else
+			select @MiesiacK = '01-' + case when @NastMiesiac &lt; 10 then '0' + convert(varchar(1), @NastMiesiac) else convert(varchar(2), @NastMiesiac) end + '-' + convert(varchar(4), @AktRok)
+
+		select @MiesiacP = convert(varchar(6), DateDiff(d, convert(datetime,'28-12-1800',105),convert(datetime, @MiesiacP,105)))
+			, @MiesiacK = convert(varchar(6), DateDiff(d, convert(datetime,'28-12-1800',105),convert(datetime, @MiesiacK,105)-1))	
+
+		if @i = 0
+			select @StyczenP = @MiesiacP, @StyczenK = @MiesiacK
+		else if @i = 1
+			select @LutyP = @MiesiacP, @LutyK = @MiesiacK
+		else if @i = 2
+			select @MarzecP = @MiesiacP, @MarzecK = @MiesiacK
+		else if @i = 3
+			select @KwiecienP = @MiesiacP, @KwiecienK = @MiesiacK
+		else if @i = 4
+			select @MajP = @MiesiacP, @MajK = @MiesiacK
+		else if @i = 5
+			select @CzerwiecP = @MiesiacP, @CzerwiecK = @MiesiacK
+		else if @i = 6
+			select @LipiecP = @MiesiacP, @LipiecK = @MiesiacK
+		else if @i = 7
+			select @SierpienP = @MiesiacP, @SierpienK = @MiesiacK
+		else if @i = 8
+			select @WrzesienP = @MiesiacP, @WrzesienK = @MiesiacK
+		else if @i = 9
+			select @PazdziernikP = @MiesiacP, @PazdziernikK = @MiesiacK
+		else if @i = 10
+			select @ListopadP = @MiesiacP, @ListopadK = @MiesiacK
+		else if @i = 11
+			select @GrudzienP = @MiesiacP, @GrudzienK = @MiesiacK
+		
+		select @i = @i + 1
+	end
+
+
+	if (@Waluta = @WalutaSys)
+		set @WartoscSys = '1'	
+
+
+	-- RodzajWiersza: 0 - zwykły wiersz danych, 1 - podsumowanie
+
+	set @strZapytanie = 'create table #tmpWynik
+	(
+		srt_gidtyp smallint
+		, srt_gidnumer int
+		, srt_gidlp smallint
+		, srt_nrInw int
+		, srt_nrEwid varchar(30)
+		, srt_nazwa varchar(50)
+		, srt_akronim varchar(40)
+		, srt_krst varchar(20)
+		, srt_datalikw int
+		, srt_waluta varchar(3)
+		, RodzajWiersza tinyint
+		, Stawka decimal(7,2)
+		, Tory tinyint
+		, WartoscBO decimal(15,2)
+		, KwotaZwiekszenWartosci decimal(15,2)
+		, KwotaZmniejszenWartosci decimal(15,2)
+		, BO_Amortyzacji decimal(15,2)
+		, ZwiekszeniaAmortyzacji decimal(15,2)
+		, ZmniejszeniaAmortyzacji decimal(15,2)
+		, SrtKwotaAmortyzacji_Styczen decimal(15,2)
+		, SrtKwotaAmortyzacji_Luty decimal(15,2)
+		, SrtKwotaAmortyzacji_Marzec decimal(15,2)
+		, SrtKwotaAmortyzacji_Kwiecien decimal(15,2)
+		, SrtKwotaAmortyzacji_Maj decimal(15,2)
+		, SrtKwotaAmortyzacji_Czerwiec decimal(15,2)
+		, SrtKwotaAmortyzacji_Lipiec decimal(15,2)
+		, SrtKwotaAmortyzacji_Sierpien decimal(15,2)
+		, SrtKwotaAmortyzacji_Wrzesien decimal(15,2)
+		, SrtKwotaAmortyzacji_Pazdziernik decimal(15,2)
+		, SrtKwotaAmortyzacji_Listopad decimal(15,2)
+		, SrtKwotaAmortyzacji_Grudzien decimal(15,2)
+	)'
+
+	set @strZapytanie = @strZapytanie +	'insert into #tmpWynik '+
+
+			'select srt_gidtyp, srt_gidnumer, srt_gidlp, srt_nrInw, srt_nrEwid, srt_nazwa, srt_akronim, srt_krst, srt_datalikw, srt_waluta, 0 RodzajWiersza 
+				, MAX(cdn.SrtStanStawka(SRT_GIDNumer, '+@sTor+', 0, '+@GrudzienK+', '+@DataDok+', '+@ZestTryb+', 0)) Stawka 
+				, MAX(cdn.SrtStanWielotorowosc(Srt_GIDNumer, '+@GrudzienK+', null )) Tory
+				, MAX(ISNULL(CDN.SrtBiezacaWartosc(Srt_GIDNumer, '+@StyczenP+'-1, null, 0, '+@sTor+', '+@WartoscSys+', '+@ZestTryb+'), 0)) WartoscBO 				
+				, MAX(CDN.SrtKwotaZwiekszenWartoscInwWydr(srt_gidnumer, '+@GrudzienK+', '+@StyczenP+'-1, '+@StyczenP+'-1, '+@Zakres+', '+@DataDok+', '+@WartoscSys+', '+@sTor+')) KwotaZwiekszenWartosci
+				, MAX(abs(CDN.SrtKwotaZmniejszenWartoscInwWydr(srt_gidnumer, '+@GrudzienK+', '+@StyczenP+'-1, '+@StyczenP+'-1, '+@Zakres+', '+@DataDok+', '+@WartoscSys+', '+@sTor+'))) KwotaZmniejszenWartosci	
+			
+				, MAX(CDN.SrtKwotaAmortyzacjiWUbieglychLatach(Srt_GIDNumer, ('+@StyczenP+'-1), 0, ('+@StyczenP+'-1), '+@DataDok+', '+@WartoscSys+', '+@sTor+') ' +
+					case when @tor &lt;&gt; 1 then ' + CDN.SrtKwotaAktualizacjiWUbieglychLatach(Srt_GIDNumer, ('+@StyczenP+'-1), 0, ('+@StyczenP+'-1), '+@DataDok+', '+@WartoscSys+', '+@sTor+') ' else '' end + ') BO_Amortyzacji 
+				, MAX(CDN.SrtZwiekszeniaAmWDanymRoku(Srt_GIDNumer, '+@StyczenP+', '+@GrudzienK+', '+@sTor+', '+@DataDok+', '+@WartoscSys+')) ZwiekszeniaAmortyzacji	
+				, MAX(abs(CDN.SrtZmniejszeniaAmWDanymRoku(Srt_GIDNumer, '+@StyczenP+', '+@GrudzienK+', '+@sTor+', '+@DataDok+', '+@WartoscSys+'))) ZmniejszeniaAmortyzacji
+		
+				, MAX(CDN.SrtKwotaAmortyzacjiWDanymRoku(srt_gidnumer, '+@StyczenK+', '+@StyczenP+', '+@StyczenP+', '+@GrudzienK+', '+@WartoscSys+', 1, '+@sTor+')) SrtKwotaAmortyzacji_Styczen
+				, MAX(CDN.SrtKwotaAmortyzacjiWDanymRoku(srt_gidnumer, '+@LutyK+', '+@LutyP+', '+@LutyP+', '+@GrudzienK+', '+@WartoscSys+', 1, '+@sTor+')) SrtKwotaAmortyzacji_Luty
+				, MAX(CDN.SrtKwotaAmortyzacjiWDanymRoku(srt_gidnumer, '+@MarzecK+', '+@MarzecP+', '+@MarzecP+', '+@GrudzienK+', '+@WartoscSys+', 1, '+@sTor+')) SrtKwotaAmortyzacji_Marzec
+				, MAX(CDN.SrtKwotaAmortyzacjiWDanymRoku(srt_gidnumer, '+@KwiecienK+', '+@KwiecienP+', '+@KwiecienP+', '+@GrudzienK+', '+@WartoscSys+', 1, '+@sTor+')) SrtKwotaAmortyzacji_Kwiecien
+				, MAX(CDN.SrtKwotaAmortyzacjiWDanymRoku(srt_gidnumer, '+@MajK+', '+@MajP+', '+@MajP+', '+@GrudzienK+', '+@WartoscSys+', 1, '+@sTor+')) SrtKwotaAmortyzacji_Maj
+				, MAX(CDN.SrtKwotaAmortyzacjiWDanymRoku(srt_gidnumer, '+@CzerwiecK+', '+@CzerwiecP+', '+@CzerwiecP+', '+@GrudzienK+', '+@WartoscSys+', 1, '+@sTor+')) SrtKwotaAmortyzacji_Czerwiec
+		
+				, MAX(CDN.SrtKwotaAmortyzacjiWDanymRoku(srt_gidnumer, '+@LipiecK+', '+@LipiecP+', '+@LipiecP+', '+@GrudzienK+', '+@WartoscSys+', 1, '+@sTor+')) SrtKwotaAmortyzacji_Lipiec
+				, MAX(CDN.SrtKwotaAmortyzacjiWDanymRoku(srt_gidnumer, '+@SierpienK+', '+@SierpienP+', '+@SierpienP+', '+@GrudzienK+', '+@WartoscSys+', 1, '+@sTor+')) SrtKwotaAmortyzacji_Sierpien
+				, MAX(CDN.SrtKwotaAmortyzacjiWDanymRoku(srt_gidnumer, '+@WrzesienK+', '+@WrzesienP+', '+@WrzesienP+', '+@GrudzienK+', '+@WartoscSys+', 1, '+@sTor+')) SrtKwotaAmortyzacji_Wrzesien
+				, MAX(CDN.SrtKwotaAmortyzacjiWDanymRoku(srt_gidnumer, '+@PazdziernikK+', '+@PazdziernikP+', '+@PazdziernikP+', '+@GrudzienK+', '+@WartoscSys+', 1, '+@sTor+')) SrtKwotaAmortyzacji_Pazdziernik
+				, MAX(CDN.SrtKwotaAmortyzacjiWDanymRoku(srt_gidnumer, '+@ListopadK+', '+@ListopadP+', '+@ListopadP+', '+@GrudzienK+', '+@WartoscSys+', 1, '+@sTor+')) SrtKwotaAmortyzacji_Listopad
+				, MAX(CDN.SrtKwotaAmortyzacjiWDanymRoku(srt_gidnumer, '+@GrudzienK+', '+@GrudzienP+', '+@GrudzienP+', '+@GrudzienK+', '+@WartoscSys+', 1, '+@sTor+')) SrtKwotaAmortyzacji_Grudzien '
+
+	
+	IF @MiejsceWywolania = 3		-- tabela amortyzacji/odpisy
+	begin		
+
+		set @strZapytanie = @strZapytanie  +
+			' from cdn.srtkarty sk 
+			inner join cdn.srtGrupy SrtGrupy on sk.srt_gidTyp = SrtGrupy.srg_gidtyp and sk.srt_gidnumer = SrtGrupy.srg_gidnumer ' +	
+			'inner join cdn.SrtHistElem on SrtHistElem.SHE_SrtNumer = sk.SRT_GIDNumer inner join cdn.SrtHistNag on SrtHistNag.SHN_GIDNumer = SrtHistElem.SHE_GIDNumer AND SrtHistNag.SHN_GIDTyp = SrtHistElem.SHE_GIDTyp ' +	
+			'WHERE ' + @FiltrApp + ' AND Srt_DataEksp&lt;&gt;0 ' +
+			case when @Zlikwidowane = 0 then ' AND (Srt_DataLikw = 0 OR Srt_DataLikw &gt;= ' + convert(varchar(6), @StyczenP) + ')' else '' end +
+				' AND Srt_DataZak &lt;= ' + convert(varchar(6), @GrudzienK) + ' AND Srt_DataZak &lt;= ' + convert(varchar(6), @GrudzienK) + ' AND (Srt_Waluta = ''' + @Waluta + ''' AND ''' + @Waluta + ''' &lt;&gt; ''' + @WalutaSys + ''' OR ''' + @Waluta + ''' = ''' + @WalutaSys + ''') ' +
+			+ ' GROUP BY srt_gidtyp, srt_gidnumer, srt_gidlp, srt_nrInw, srt_nrEwid, srt_nazwa, srt_akronim, srt_krst, srt_datalikw, srt_waluta , Srt_Rodzaj, Srt_Ksiega' +
+			' ORDER BY Srt_Rodzaj,  Srt_Ksiega,  Srt_NrInw '
+		  
+	end	
+	else
+	begin
+
+		set @strZapytanie = @strZapytanie +	
+				' from cdn.srtkarty sk 
+			inner join cdn.srtGrupy SrtGrupy on sk.srt_gidTyp = SrtGrupy.srg_gidtyp and sk.srt_gidnumer = SrtGrupy.srg_gidnumer ' +
+			case @MiejsceWywolania 
+			when 1 then 'inner join cdn.rptkolejka2 rk on sk.srt_gidnumer = rk.RpQ2_Pole22  '	
+			when 4 then 'inner join cdn.rptzaznaczenia2 rz on sk.srt_gidtyp = rz.rpz2_gidtyp and sk.srt_gidnumer = rz.rpz2_gidnumer  '
+			else '' end +
+			'WHERE ' + case when @MiejsceWywolania = 2 then @CDN_Tekst3 else @FiltrApp end + ' AND Srt_DataEksp&lt;&gt;0 ' +
+			case when @Zlikwidowane = 0 then ' AND (Srt_DataLikw = 0 OR Srt_DataLikw &gt;= ' + convert(varchar(6), @StyczenP) + ')' else '' end +
+				' AND Srt_DataZak &lt;= ' + convert(varchar(6), @GrudzienK) + ' AND Srt_DataZak &lt;= ' + convert(varchar(6), @GrudzienK) + ' AND (Srt_Waluta = ''' + @Waluta + ''' AND ''' + @Waluta + ''' &lt;&gt; ''' + @WalutaSys + ''' OR ''' + @Waluta + ''' = ''' + @WalutaSys + ''') ' +	
+				' GROUP BY srt_gidtyp, srt_gidnumer, srt_gidlp, srt_nrInw, srt_nrEwid, srt_nazwa, srt_akronim, srt_krst, srt_datalikw, srt_waluta, Srt_Rodzaj, Srt_Ksiega ' +
+			' ORDER BY ' +
+			case when @Order = 2 then 'Srt_Rodzaj,  Srt_Ksiega,  Srt_NrInw ' else 
+			case when @Order = 3 then 'Srt_Akronim ' else
+			case when @Order = 4 then 'Srt_Nazwa, Srt_Akronim ' else
+			case when @Order = 5 then 'Srt_KRST,  Srt_Rodzaj,  Srt_Ksiega,  Srt_NrInw ' else
+				'Srt_Nazwa, Srt_Akronim '
+			end end end end
+	end
+  
+  
+	set @strZapytanie = @strZapytanie +
+		' select * 
+			, (WartoscBO + KwotaZwiekszenWartosci - KwotaZmniejszenWartosci) WartoscBZ
+			, (BO_Amortyzacji + ZwiekszeniaAmortyzacji - ZmniejszeniaAmortyzacji) BZ_Amortyzacji
+			, ( (WartoscBO + KwotaZwiekszenWartosci - KwotaZmniejszenWartosci) - case when SRT_DataLikw &gt; 0 and SRT_DataLikw &lt; '+@GrudzienK+' then 0 else (BO_Amortyzacji + ZwiekszeniaAmortyzacji - ZmniejszeniaAmortyzacji) end ) StanKoncowy
+			, (SrtKwotaAmortyzacji_Styczen + SrtKwotaAmortyzacji_Luty + SrtKwotaAmortyzacji_Marzec + SrtKwotaAmortyzacji_Kwiecien + 
+			SrtKwotaAmortyzacji_Maj + SrtKwotaAmortyzacji_Czerwiec + SrtKwotaAmortyzacji_Lipiec + SrtKwotaAmortyzacji_Sierpien + 
+			SrtKwotaAmortyzacji_Wrzesien + SrtKwotaAmortyzacji_Pazdziernik + SrtKwotaAmortyzacji_Listopad + SrtKwotaAmortyzacji_Grudzien) amortRoczna
+		from #tmpWynik
+		where Tory &amp; '+convert(nvarchar(2), @Tor+1)+' &gt; 0
+		union all
+		select 0 srt_gidtyp, 0 srt_gidnumer, 0 srt_gidlp, 0 srt_nrInw, '''' srt_nrEwid, '''' srt_nazwa, '''' srt_akronim, '''' srt_krst, 0 srt_datalikw, '''' srt_waluta, 1 RodzajWiersza, 0.0 Stawka, 0 Tory
+			, sum(WartoscBO)
+			, sum(KwotaZwiekszenWartosci)
+			, sum(KwotaZmniejszenWartosci)
+			, sum(BO_Amortyzacji)
+			, sum(ZwiekszeniaAmortyzacji)
+			, sum(ZmniejszeniaAmortyzacji)
+			, sum(SrtKwotaAmortyzacji_Styczen)
+			, sum(SrtKwotaAmortyzacji_Luty)
+			, sum(SrtKwotaAmortyzacji_Marzec)
+			, sum(SrtKwotaAmortyzacji_Kwiecien)
+			, sum(SrtKwotaAmortyzacji_Maj)
+			, sum(SrtKwotaAmortyzacji_Czerwiec)
+			, sum(SrtKwotaAmortyzacji_Lipiec)
+			, sum(SrtKwotaAmortyzacji_Sierpien)
+			, sum(SrtKwotaAmortyzacji_Wrzesien)
+			, sum(SrtKwotaAmortyzacji_Pazdziernik)
+			, sum(SrtKwotaAmortyzacji_Listopad)
+			, sum(SrtKwotaAmortyzacji_Grudzien)
+	
+			, sum(WartoscBO + KwotaZwiekszenWartosci - KwotaZmniejszenWartosci) WartoscBZ
+			, sum(BO_Amortyzacji + ZwiekszeniaAmortyzacji - ZmniejszeniaAmortyzacji) BZ_Amortyzacji
+			, sum( (WartoscBO + KwotaZwiekszenWartosci - KwotaZmniejszenWartosci) - case when SRT_DataLikw &gt; 0 and SRT_DataLikw &lt; '+@GrudzienK+' then 0 else (BO_Amortyzacji + ZwiekszeniaAmortyzacji - ZmniejszeniaAmortyzacji) end ) StanKoncowy
+			, sum(SrtKwotaAmortyzacji_Styczen + SrtKwotaAmortyzacji_Luty + SrtKwotaAmortyzacji_Marzec + SrtKwotaAmortyzacji_Kwiecien +
+				SrtKwotaAmortyzacji_Maj + SrtKwotaAmortyzacji_Czerwiec + SrtKwotaAmortyzacji_Lipiec + SrtKwotaAmortyzacji_Sierpien + 
+				SrtKwotaAmortyzacji_Wrzesien + SrtKwotaAmortyzacji_Pazdziernik + SrtKwotaAmortyzacji_Listopad + SrtKwotaAmortyzacji_Grudzien)  amortRoczna
+	
+		from #tmpWynik 
+		where Tory &amp; '+convert(nvarchar(2), @Tor+1)+' &gt; 0
+
+		if object_id(''tempdb..#tmpWynik'') is not null 
+			Drop table #tmpWynik '  
+  
+	  
+	exec (@strZapytanie);
+
+
+	set QUOTED_IDENTIFIER ON
+	set nocount off
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury SrtTabelaAmortWydr"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury SrtTabelaAmortWydr */</I><BR>
+GRANT EXECUTE ON CDN.SrtTabelaAmortWydr TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

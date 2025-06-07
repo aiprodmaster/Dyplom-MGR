@@ -1,0 +1,151 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="AtrybutyKlasy_Kasowanie"></A><PRE>
+          <FONT SIZE="2"><I>/* AtrybutyKlasy_Kasowanie */</I><BR>
+CREATE TRIGGER CDN.AtrybutyKlasy_Kasowanie
+  ON CDN.AtrybutyKlasy
+  FOR DELETE
+AS
+SET NOCOUNT ON
+
+    -- obsługa sprawdzania relacji restrict do tabeli CDN.AtrybutyObiekty
+    IF EXISTS
+       ( SELECT * FROM CDN.AtrybutyObiekty, deleted
+          WHERE
+                deleted.AtK_ID = CDN.AtrybutyObiekty.AtO_AtKId
+       AND ( CDN.AtrybutyObiekty.AtO_AtKID&gt;0)
+       )
+    BEGIN
+      RAISERROR('Istnieją zapisy powiązane z modyfikowanym rekordem (powiązanie z tabelą AtrybutyObiekty). ', 16, 1)
+      ROLLBACK TRAN
+      SET NOCOUNT OFF
+      RETURN
+    END
+	IF EXISTS( SELECT * FROM deleted WHERE deleted.AtK_Synchronizowany = 1)
+    BEGIN
+      RAISERROR('#CDN_INFO/##CDN_1=Informacje o klasie atrybutu są współdzielone z oddziałami. Nie można usunąć klasy atrybutu./#',16,1)
+      ROLLBACK TRAN
+      SET NOCOUNT OFF
+      RETURN
+    END
+
+SET NOCOUNT OFF
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="AtrybutyKomplety_Kasuj"></A><PRE>
+          <FONT SIZE="2"><I>/* AtrybutyKomplety_Kasuj */</I><BR>
+CREATE TRIGGER CDN.AtrybutyKomplety_Kasuj
+  ON CDN.AtrybutyKomplety
+  FOR DELETE
+AS
+SET NOCOUNT ON
+
+    -- obsługa sprawdzania relacji restrict do tabeli CDN.AtrybutyObiekty
+    IF EXISTS
+       ( SELECT * FROM CDN.AtrybutyObiekty, deleted
+          WHERE
+                deleted.AKp_Id = - CDN.AtrybutyObiekty.AtO_AtKId
+       AND ( CDN.AtrybutyObiekty.AtO_AtKID&lt;0)
+       )
+    BEGIN
+      RAISERROR('Istnieją zapisy powiązane z modyfikowanym rekordem (powiązanie z tabelą AtrybutyObiekty). ', 16, 1)
+      ROLLBACK TRAN
+      SET NOCOUNT OFF
+      RETURN
+    END
+
+
+SET NOCOUNT OFF
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="AtrybutyObiekty_Zmiana"></A><PRE>
+          <FONT SIZE="2"><I>/* AtrybutyObiekty_Zmiana */</I><BR>
+CREATE TRIGGER CDN.AtrybutyObiekty_Zmiana
+  ON CDN.AtrybutyObiekty
+  FOR INSERT,UPDATE
+AS
+SET NOCOUNT ON
+
+
+    IF EXISTS (SELECT * FROM inserted WHERE  inserted.AtO_AtKID&lt;0)
+        -- Sprawdzenie obecności wierszy w tabeli nadrzędnej
+        IF EXISTS
+           ( SELECT * FROM inserted LEFT OUTER JOIN CDN.AtrybutyKomplety ON
+                    inserted.AtO_AtKId = - CDN.AtrybutyKomplety.AKp_Id
+              WHERE CDN.AtrybutyKomplety.AKp_Id IS NULL AND ( inserted.AtO_AtKID&lt;0)
+           )
+        BEGIN
+          RAISERROR('Nie istnieje zapis w tabeli nadrzędnej (powiązanie z tabelą  AtrybutyKomplety). ', 16, 1)
+          ROLLBACK TRAN
+          SET NOCOUNT ON
+          RETURN
+        END
+
+    IF EXISTS (SELECT * FROM inserted WHERE  inserted.AtO_AtKID&gt;0)
+        -- Sprawdzenie obecności wierszy w tabeli nadrzędnej
+        IF EXISTS
+           ( SELECT * FROM inserted LEFT OUTER JOIN CDN.AtrybutyKlasy ON
+                    inserted.AtO_AtKId = CDN.AtrybutyKlasy.AtK_ID
+              WHERE CDN.AtrybutyKlasy.AtK_ID IS NULL AND ( inserted.AtO_AtKID&gt;0)
+           )
+        BEGIN
+          RAISERROR('Nie istnieje zapis w tabeli nadrzędnej (powiązanie z tabelą  AtrybutyKlasy). ', 16, 1)
+          ROLLBACK TRAN
+          SET NOCOUNT ON
+          RETURN
+        END
+
+SET NOCOUNT OFF
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Atrybuty_Kasowanie"></A><PRE>
+          <FONT SIZE="2"><I>/* Atrybuty_Kasowanie */</I><BR>
+CREATE TRIGGER CDN.Atrybuty_Kasowanie
+  ON CDN.Atrybuty
+  FOR DELETE
+AS
+SET NOCOUNT ON
+    INSERT INTO CDN.PicoUsuniete (PcU_PckID, PcU_ObiTyp, PcU_ObiNumer, PcU_ObiektTyp, PcU_ObiektID, PcU_TSUsuniecia, PcU_Ident, PcU_PSaID) 
+    SELECT PcL_PcKID, -14417, deleted.Atr_ID, deleted.Atr_ObiTyp, deleted.Atr_ObiNumer, DATEDIFF(second,CONVERT(DATETIME,'1990-01-01',120),GETDATE()), deleted.Atr_GUID, PSa_ID
+    FROM CDN.PicoLog
+        INNER JOIN deleted ON PCL_OBITyp = deleted.Atr_ObiTyp
+             AND PCL_ObiNumer = Atr_ObiNumer
+        INNER JOIN CDN.PicoKonfig ON PcK_PicoID = PcL_PcKID
+        INNER JOIN CDN.PicoStanowiska ON PSa_PckID = PCK_PicoID
+		join cdn.AtrybutyKlasy on AtK_ID = Atr_AtkId
+        LEFT OUTER JOIN CDN.PicoUsuniete AS PicoUs ON PicoUs.PcU_ObiTyp = deleted.Atr_ObiTyp
+             AND PicoUs.PcU_ObiNumer = deleted.Atr_ID
+             AND PicoUs.PcU_ObiTyp = -14417
+             AND PicoUs.PcU_ObiektTyp = deleted.Atr_ObiTyp
+             AND PicoUs.PcU_ObiektID = deleted.Atr_ObiNumer
+             AND PicoUs.PcU_PSaID = PSa_ID
+    WHERE PicoUs.PcU_ID IS NULL AND deleted.Atr_ObiTyp IN (16,32) and AtK_Wielowart &lt;&gt; 1;
+SET NOCOUNT OFF
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,73 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[POS_EksportGrupyTowarow]"></A><PRE>
+          <FONT SIZE="2"><I>/* [POS_EksportGrupyTowarow] */</I><BR>
+CREATE PROCEDURE [CDN].[POS_EksportGrupyTowarow] 
+	@rowVersion bigint,
+	@PointOfSaleId int
+AS
+BEGIN
+SET NOCOUNT ON;	
+
+	declare @grp table(GIDNumer int,GIDTyp int,Sciezka NVARCHAR(256),Kod NVARCHAR(256),IsRoot int,PcK_TSZmianyGrupyEksportuTwr int,PicoID int,GrONumer int)
+	declare @grupy table([@Id] INT , [@Name] NVARCHAR(256), [@IsActive] VARCHAR(5),[@IsAnalytical] VARCHAR(5),[@HierarchyPath] VARCHAR(256),[@IsRoot] VARCHAR(5),RW INT,[@QuickSalesOrdinalNumber] int)
+	
+
+	insert into @grp 
+	select distinct 
+	GIDNumer,
+	GIDTyp,
+	Sciezka,
+	Kod,
+	case when GIDNumer = PcK_TwGENumer then 1 else 0 end,
+	PcK_TSZmianyGrupyEksportuTwr,
+	PcK_PicoID,
+	GrONumer
+	from cdn.PicoKonfig 
+	join cdn.PicoStanowiska on pck_picoid = psa_pckid
+	outer apply cdn.PobierzDrzewoGrupTowarowych(PcK_TwGENumer,DEFAULT,DEFAULT,1,DEFAULT,DEFAULT)
+	where (psa_id = @PointOfSaleId and @PointOfSaleId is not null) or (PSa_TypAplikacji = 2 and @PointOfSaleId is null)
+
+	insert into @grupy 
+	select distinct
+		TwG_SyncId as [@Id],
+		Kod as [@Name],
+		'true' as [@IsActive],
+		'false' as [@IsAnalytical],
+		min(Sciezka) as [@HierarchyPath],
+		max(IsRoot),
+		case when @PointOfSaleId is null and max(oddzialBylWyslany) = 0 and max(PSaDataDodania) &gt; max(PcK_TSZmianyGrupyEksportuTwr) and max(PSaDataDodania) &gt; max(TwG_CzasModyfikacji) then max(PSaDataDodania) else
+		MAX(case when TwG_CzasModyfikacji &gt; PcK_TSZmianyGrupyEksportuTwr then TwG_CzasModyfikacji else PcK_TSZmianyGrupyEksportuTwr end) end,
+		case when (select PSS_Pozycja from cdn.PicoSzybkaSprzedaz where PSS_PicoID = PicoID and PSS_TwgSyncID = TwG_SyncId) is not null and @PointOfSaleId is not null then (select PSS_Pozycja from cdn.PicoSzybkaSprzedaz where PSS_PicoID = PicoID and PSS_TwgSyncID = TwG_SyncId) else null end as [@QuickSalesOrdinalNumber]
+	FROM @grp 
+	join cdn.TwrGrupy on GIDNumer=TwG_GIDNumer and GIDTyp=TwG_GIDTyp and TwG_GrONumer = GrONumer
+	join cdn.POS_OddzialyDoEksportu(@PointOfSaleId, @rowVersion) on PicoID = PckPicoID
+	where (case when TwG_CzasModyfikacji &gt; PcK_TSZmianyGrupyEksportuTwr then TwG_CzasModyfikacji else PcK_TSZmianyGrupyEksportuTwr end &gt; @rowVersion OR @rowVersion = 0
+	OR (@PointOfSaleId is null and oddzialBylWyslany = 0))
+	group by TwG_SyncId,Kod,TwG_GIDNumer,PicoID
+
+	SELECT (SELECT MAX(rw) FROM @grupy) AS [@RowVersion]
+		,(
+			SELECT distinct gr1.[@Id], gr1.[@Name], gr1.[@IsActive], gr1.[@IsAnalytical], gr1.[@HierarchyPath], gr1.[@IsRoot],gr1.[@QuickSalesOrdinalNumber]
+			from @grupy gr1
+			left join @grupy gr2 on gr1.[@Id] = gr2.[@Id] and gr1.[@Name] = gr2.[@Name] and gr1.[@IsActive] = gr2.[@IsActive] and gr1.[@IsAnalytical] = gr2.[@IsAnalytical] and gr1.[@IsRoot] &lt;&gt; gr2.[@IsRoot]
+			where (gr2.[@Id] is null) or (gr2.[@Id] is not null and gr1.[@IsRoot] = 0)
+		for xml path('ProductGroup'), type)
+	for xml path('ProductGroups')
+	SET NOCOUNT OFF;	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

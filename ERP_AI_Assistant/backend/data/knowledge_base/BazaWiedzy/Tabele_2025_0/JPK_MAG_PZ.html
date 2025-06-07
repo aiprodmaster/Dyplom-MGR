@@ -1,0 +1,311 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="JPKMAG_PZWartosc"></A><PRE>
+          <FONT SIZE="2"><I>/* JPKMAG_PZWartosc */</I><BR>
+CREATE FUNCTION CDN.JPKMAG_PZWartosc 
+(
+	@PONDataOd           int,                    --okres za jaki dane mają być zaczytane.
+    @PONDataDo           int,                    --okres za jaki dane mają być zaczytane.
+    @MAGMagazyn            int,					 --numer magazynu/składu celnego
+	@MAGMagazynTyp         int,					 --rozróznienie czy magazyn czy skład celny (Typ_Mag/Typ_SC)
+    @MAGKryteriumDatSprzedazy nvarchar(50)       --1-data operacji (Trn_DataMag), 2-data dokumentu (Trn_Data2)
+)
+RETURNS 
+@Dane TABLE
+(
+        NumerPZ                    nvarchar(256),
+        DataPZ                     int,
+        WartoscPZ                   decimal(18,2),
+        DataOtrzymaniaPZ			int,
+        DostawcaPZ                  nvarchar(256),
+        NumerFaPZ                   nvarchar(256),
+        DataFaPZ                    int,
+        gidtyp                    int,
+        gidnumer                      int
+)
+AS
+BEGIN
+	if @MAGKryteriumDatSprzedazy='Data operacji'
+	begin
+		if @MAGMagazynTyp = 208
+		begin
+			insert into @Dane
+			select distinct
+			CDN.NumerDokumentu(t1.TrN_GIDTyp,t1.TrN_SpiTyp,t1.TrN_TrNTyp,t1.TrN_TrNNumer,t1.TrN_TrNRok,t1.TrN_TrNSeria,t1.TrN_TrNMiesiac),
+			TrN_Data2,
+			(select sum(ts.TrS_KosztKsiegowy) from CDN.TraSElem ts
+				join cdn.traelem te on te.tre_gidnumer = ts.TrS_GIDNumer and te.tre_gidlp = ts.trs_gidlp
+				join cdn.twrkarty on te.TrE_TwrNumer = Twr_GIDNumer
+				where ts.trs_gidnumer = t1.TrN_GIDNumer and ts.TrS_GIDTyp = t1.TrN_GIDTyp and ts.TrS_MagNumer = @MAGMagazyn)  +
+			
+			isnull((select (sum(kdz.TrE_KosztKsiegowy)/max(case when kdz.tre_ilosc = 0 then 1 else kdz.tre_ilosc end)) * max(ISNULL(sumaTrs,1))
+				from cdn.traelem kdz
+				left join (
+					select trs_gidnumer,trs_gidlp, sum(s2.trs_ilosc) as sumaTrs from cdn.traselem s2 where s2.trs_magnumer=@MAGMagazyn group by trs_gidnumer,trs_gidlp
+				) s2 on s2.trs_gidnumer=kdz.tre_zlcnumer and s2.trs_gidlp=kdz.TrE_ZlcLp
+				where kdz.TrE_ZlcNumer = trn_gidnumer and kdz.TrE_ZlcTyp = TrN_GIDTyp and kdz.tre_gidtyp = 1232),0),
+			TrN_DataMag,
+			case when kna_gidnumer is null and trn_gidtyp in (1617,1625) then Frm_DNazwa else KnA_Nazwa1+' '+KnA_Nazwa2 end,
+			case when t1.trn_spiTyp &lt; 0 then '&lt;&lt;dok_spiety&gt;&gt;' when TrN_SaNNumer &lt;&gt; 0 then ImN_DokumentObcy when TrN_SpiNumer = 0 then trn_dokumentobcy  else (select t2.trn_dokumentobcy  from CDN.TraNag t2 where t2.trn_gidnumer = t1.trn_spinumer) end,
+			case when TrN_SaNNumer &lt;&gt; 0 then ImN_DataWystawienia when TrN_SpiNumer = 0 then TrN_Data2  else (select t2.TrN_Data2  from CDN.TraNag t2 where t2.trn_gidnumer = t1.trn_spinumer) end,
+			TrN_GIDTyp,
+			TrN_GIDNumer
+			from cdn.tranag t1
+			left join cdn.ImpNag on t1.TrN_SaNNumer = ImN_GIDNumer and t1.TrN_SaNTyp = ImN_GIDTyp
+			left join CDN.KntAdresy on KnA_GIDTyp=TrN_KnATyp AND KnA_GIDNumer=TrN_KnANumer
+			left join CDN.TraElem dok on TrN_GIDTyp=dok.tre_GIDTyp AND TrN_GIDNumer=dok.tre_GIDNumer
+			left join cdn.traselem on dok.tre_GIDTyp=TrS_GIDTyp AND dok.tre_GIDNumer=TrS_GIDNumer AND dok.tre_GIDLp=TrS_GIDLp and trs_magnumer = @MAGMagazyn
+			join cdn.magazyny on TrS_Magnumer = mag_gidnumer and trs_magtyp = mag_gidtyp
+			left join cdn.firma on T1.TRN_frmnumer = frm_gidnumer
+			where TrN_Stan in (3,4,5)
+			and (trn_gidtyp in (1489,1490,2002,1497,1498,2010,1617,1625) or  (trn_spinumer &lt;&gt; 0 and trn_gidtyp in (1521,1520,1529,1528)))
+			and mag_kod = (select MAG_Kod from CDN.Magazyny where MAG_GIDNumer = @MAGMagazyn)
+			and TrN_DataMag &gt;= @PONDataOd and TrN_DataMag &lt;= @PONDataDo
+			and TrN_KosztUstalono =1
+		end
+		else 
+		begin
+			insert into @Dane
+			select distinct 
+			CDN.NumerDokumentu(t1.san_GIDTyp,0,t1.san_sanTyp,t1.san_sanNumer,t1.san_sanRok,t1.san_sanSeria,t1.san_sanMiesiac),
+			DateDiff(d, convert(datetime,'28-12-1800',105),(select DATEADD(second,SaN_TStampU,convert(datetime,'01-01-1990',105)))),
+			sum(isnull(agrilosc,0)),
+			SaN_DataPrzyjecia,
+			KnA_Nazwa1 + ' '+KnA_Nazwa2,			
+			imn_dokumentobcy,	
+			ImN_DataWystawienia,
+			SaN_GIDTyp,
+			san_gidnumer
+			from cdn.sadnag t1
+			join cdn.SadElem on SaN_GIDNumer=SaE_GIDNumer
+			join cdn.twrkarty on sae_twrnumer = Twr_GIDNumer and twr_typ not in (3,4,6)
+			join 
+			(
+				select round(
+					isnull(max(sn1.SaN_KursL)/max(sn1.SaN_KursM),1)*sum(SaS_WartoscDostawy)+
+					case when max(sn1.san_waluta) = max(sas_walutaKosztuKrajowego) then isnull(max(sn1.SaN_KursL)/max(sn1.SaN_KursM),1)*sum(SaS_KosztKraj)	else sum(SaS_KosztKraj) end +
+					case when max(sn1.san_waluta) = max(sas_walutakosztuzagranicznego) then isnull(max(sn1.SaN_KursL)/max(sn1.SaN_KursM),1)*sum(SaS_KosztZagr)	else sum(SaS_KosztZagr) end
+				,2) as agrilosc ,
+				min(sas_gidnumer) as sas_gidnumer, min(sas_gidlp) as sas_gidlp,min(sas_subgidlp) as sas_subgidlp 
+				from cdn.SadSElem 
+				left join cdn.sadnag sn1 on sn1.san_gidnumer = sas_gidnumer
+				group by sas_gidnumer, sas_gidlp
+			) s2 on sae_gidnumer = sas_gidnumer and sae_gidlp = sas_gidlp and sas_subgidlp = 1
+			join cdn.impnag on imn_gidnumer = (select top 1 imn_gidnumer from cdn.impnag where imn_gidnumer in (select s1.SaE_Impnumer from cdn.SadElem s1 where s1.SaE_GIDNumer=t1.san_gidnumer) order by imn_wartosc desc,imn_gidnumer)
+			left join CDN.KntAdresy on KnA_GIDTyp=ImN_KnATyp AND KnA_GIDNumer=Imn_KnANumer     
+			where 
+			SaN_Stan in (3,4,5)
+			and SaN_SCnumer = @MAGMagazyn
+			and SaN_Gidtyp = 3377
+			and SaN_DataPrzyjecia &gt;= @PONDataOd and SaN_DataPrzyjecia &lt;= @PONDataDo
+			group by san_gidtyp,SaN_SaNTyp,SaN_SaNNumer,SaN_SaNRok,SaN_SaNSeria,SaN_SaNMiesiac,SaN_TStampU,SaN_DataPrzyjecia,KnA_Nazwa1,KnA_Nazwa2,ImN_DokumentObcy,ImN_DataWystawienia,SaN_GIDNumer
+		end
+	end
+	else if @MAGKryteriumDatSprzedazy='Data dokumentu'
+	begin
+		if @MAGMagazynTyp = 208
+		begin	
+			insert into @Dane
+			select distinct
+			CDN.NumerDokumentu(t1.TrN_GIDTyp,t1.TrN_SpiTyp,t1.TrN_TrNTyp,t1.TrN_TrNNumer,t1.TrN_TrNRok,t1.TrN_TrNSeria,t1.TrN_TrNMiesiac),
+			TrN_Data2,
+			(select sum(ts.TrS_KosztKsiegowy) from CDN.TraSElem ts
+				join cdn.traelem te on te.tre_gidnumer = ts.TrS_GIDNumer and te.tre_gidlp = ts.trs_gidlp
+				join cdn.twrkarty on te.TrE_TwrNumer = Twr_GIDNumer
+				where ts.trs_gidnumer = t1.TrN_GIDNumer and ts.TrS_GIDTyp = t1.TrN_GIDTyp and ts.TrS_MagNumer = @MAGMagazyn)  +
+			isnull((select sum(kdz.TrE_KosztKsiegowy)/max(case when kdz.tre_ilosc = 0 then 1 else kdz.tre_ilosc end)*isnull((select sum(s2.trs_ilosc) from cdn.traselem s2 where s2.trs_gidnumer=dok.tre_gidnumer and s2.trs_gidlp=dok.tre_gidlp and s2.trs_magnumer=@MAGMagazyn),0)
+				from cdn.traelem kdz
+				where kdz.TrE_ZlcNumer = trn_gidnumer and kdz.TrE_ZlcTyp = TrN_GIDTyp and kdz.tre_gidtyp = 1232),0),
+			TrN_DataMag,
+			case when kna_gidnumer is null and trn_gidtyp in (1617,1625) then Frm_DNazwa else KnA_Nazwa1+' '+KnA_Nazwa2 end,
+			case when t1.trn_spiTyp &lt; 0 then '&lt;&lt;dok_spiety&gt;&gt;' when TrN_SaNNumer &lt;&gt; 0 then ImN_DokumentObcy when TrN_SpiNumer = 0 then trn_dokumentobcy  else (select t2.trn_dokumentobcy  from CDN.TraNag t2 where t2.trn_gidnumer = t1.trn_spinumer) end,
+			case when TrN_SaNNumer &lt;&gt; 0 then ImN_DataWystawienia when TrN_SpiNumer = 0 then TrN_Data2  else (select t2.TrN_Data2  from CDN.TraNag t2 where t2.trn_gidnumer = t1.trn_spinumer) end,
+			TrN_GIDTyp,
+			TrN_GIDNumer
+			from cdn.tranag t1
+			left join cdn.ImpNag on t1.TrN_SaNNumer = ImN_GIDNumer and t1.TrN_SaNTyp = ImN_GIDTyp
+			left join CDN.KntAdresy on KnA_GIDTyp=TrN_KnATyp AND KnA_GIDNumer=TrN_KnANumer
+			left join CDN.TraElem dok on TrN_GIDTyp=dok.tre_GIDTyp AND TrN_GIDNumer=dok.tre_GIDNumer			
+			left join cdn.traselem on dok.tre_GIDTyp=TrS_GIDTyp AND dok.tre_GIDNumer=TrS_GIDNumer AND dok.tre_GIDLp=TrS_GIDLp and trs_magnumer = @MAGMagazyn
+			left join cdn.firma on T1.TRN_frmnumer = frm_gidnumer
+			join cdn.magazyny on TrS_Magnumer = mag_gidnumer and trs_magtyp = mag_gidtyp
+			where TrN_Stan in (3,4,5)
+			and (trn_gidtyp in (1489,1490,2002,1497,1498,2010,1617,1625) or  (trn_spinumer &lt;&gt; 0 and trn_gidtyp in (1521,1520,1529,1528)))
+			and mag_kod = (select MAG_Kod from CDN.Magazyny where MAG_GIDNumer = @MAGMagazyn)
+			and TrN_Data2 &gt;= @PONDataOd and TrN_Data2 &lt;= @PONDataDo
+			and TrN_KosztUstalono =1
+		end
+		else
+		begin
+			insert into @Dane
+			select distinct 
+			CDN.NumerDokumentu(t1.san_GIDTyp,0,t1.san_sanTyp,t1.san_sanNumer,t1.san_sanRok,t1.san_sanSeria,t1.san_sanMiesiac),
+			DateDiff(d, convert(datetime,'28-12-1800',105),(select DATEADD(second,SaN_TStampU,convert(datetime,'01-01-1990',105)))),
+			sum(isnull(agrilosc,0)),
+			SaN_DataPrzyjecia,
+			KnA_Nazwa1 + ' '+KnA_Nazwa2,			
+			imn_dokumentobcy,	
+			ImN_DataWystawienia,
+			SaN_GIDTyp,
+			san_gidnumer
+			from cdn.sadnag t1
+			join cdn.SadElem on SaN_GIDNumer=SaE_GIDNumer
+			join cdn.twrkarty on sae_twrnumer = Twr_GIDNumer and twr_typ not in (3,4,6)
+			join 
+			(
+				select round(
+					isnull(max(sn1.SaN_KursL)/max(sn1.SaN_KursM),1)*sum(SaS_WartoscDostawy)+
+					case when max(sn1.san_waluta) = max(sas_walutaKosztuKrajowego) then isnull(max(sn1.SaN_KursL)/max(sn1.SaN_KursM),1)*sum(SaS_KosztKraj)	else sum(SaS_KosztKraj) end +
+					case when max(sn1.san_waluta) = max(sas_walutakosztuzagranicznego) then isnull(max(sn1.SaN_KursL)/max(sn1.SaN_KursM),1)*sum(SaS_KosztZagr)	else sum(SaS_KosztZagr) end
+				,2) as agrilosc ,
+				min(sas_gidnumer) as sas_gidnumer, min(sas_gidlp) as sas_gidlp,min(sas_subgidlp) as sas_subgidlp 
+				from cdn.SadSElem 
+				left join cdn.sadnag sn1 on sn1.san_gidnumer = sas_gidnumer
+				group by sas_gidnumer, sas_gidlp
+			) s2 on sae_gidnumer = sas_gidnumer and sae_gidlp = sas_gidlp and sas_subgidlp = 1
+			join cdn.impnag on imn_gidnumer = (select top 1 imn_gidnumer from cdn.impnag where imn_gidnumer in (select s1.SaE_Impnumer from cdn.SadElem s1 where s1.SaE_GIDNumer=t1.san_gidnumer) order by imn_wartosc desc,imn_gidnumer)
+			left join CDN.KntAdresy on KnA_GIDTyp=ImN_KnATyp AND KnA_GIDNumer=Imn_KnANumer     
+			where 
+			SaN_Stan in (3,4,5)
+			and SaN_SCnumer = @MAGMagazyn
+			and SaN_Gidtyp = 3377
+			and DateDiff(d, convert(datetime,'28-12-1800',105),(select DATEADD(second,SaN_TStampU,convert(datetime,'01-01-1990',105)))) &gt;= @PONDataOd 
+			and DateDiff(d, convert(datetime,'28-12-1800',105),(select DATEADD(second,SaN_TStampU,convert(datetime,'01-01-1990',105)))) &lt;= @PONDataDo
+			group by san_gidtyp,SaN_SaNTyp,SaN_SaNNumer,SaN_SaNRok,SaN_SaNSeria,SaN_SaNMiesiac,SaN_TStampU,SaN_DataPrzyjecia,KnA_Nazwa1,KnA_Nazwa2,ImN_DokumentObcy,ImN_DataWystawienia,SaN_GIDNumer
+		end
+	end
+	
+	DECLARE @SPINACZE TABLE(Typ INT, Numer INT, NUMERDOK NVARCHAR(256), ORGTYP INT, ORGNUMER INT, DataDok int)
+	
+	INSERT INTO @SPINACZE select distinct trs_gidtyp,trs_gidnumer,TrN_DokumentObcy,gidtyp,gidnumer,TrN_Data2
+	FROM @Dane 
+	join cdn.TraSElem on TrS_SpiNumer=gidnumer
+	join cdn.tranag on trn_gidnumer = TrS_GIDNumer
+	where NumerFaPZ = '&lt;&lt;dok_spiety&gt;&gt;' AND TrN_GIDTyp in (1520,1528,1521,1529)
+
+		
+	UPDATE @Dane set DataFaPZ = DataDok
+	from @SPINACZE					
+	where ORGNUMER=gidnumer AND ORGTYP=gidtyp AND NumerFaPZ='&lt;&lt;dok_spiety&gt;&gt;'
+		
+	UPDATE @Dane set NumerFaPZ= 
+		isnull((select STUFF(REPLACE((SELECT '@@@'+NUMERDOK AS 'data()'
+			from @SPINACZE					
+			where ORGNUMER=gidnumer AND ORGTYP=gidtyp
+			FOR XML PATH('')),' @@@',', '),1,3,'')),'')
+			where NumerFaPZ='&lt;&lt;dok_spiety&gt;&gt;'
+	RETURN 
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="JPKMAG_PZWiersz"></A><PRE>
+          <FONT SIZE="2"><I>/* JPKMAG_PZWiersz */</I><BR>
+CREATE FUNCTION CDN.JPKMAG_PZWiersz 
+(
+	@PONDataOd           int,                    --okres za jaki dane mają być zaczytane.
+    @PONDataDo           int,                    --okres za jaki dane mają być zaczytane.
+    @MAGMagazyn          int,					 --numer magazynu/składu celnego
+	@MAGMagazynTyp       int,					 --rozróznienie czy magazyn czy skład celny (Typ_Mag/Typ_SC)
+    @MAGKryteriumDatSprzedazy                     nvarchar(50)                 --1-data operacji (Trn_DataMag), 2-data dokumentu (Trn_Data2)
+)
+RETURNS 
+@DanePZWiersz TABLE
+(
+        Numer2PZ                    nvarchar(256),
+        KodTowaruPZ                 nvarchar(256),
+        NazwaTowaruPZ               nvarchar(256),
+        IloscPrzyjetaPZ				decimal(22,6),
+        JednostkaMiaryPZ            nvarchar(256),
+        CenaJednPZ		            decimal(18,2),
+        WartoscPozycjiPZ            decimal(18,2),
+        gidtyp                      int,
+        gidnumer                    int,
+        gidlp						int
+)
+AS
+BEGIN
+
+	if @MAGMagazynTyp = 208
+	begin		
+		insert into @DanePZWiersz
+		select distinct
+        CDN.NumerDokumentu(tn.TrN_GIDTyp, tn.TrN_SpiTyp, tn.TrN_TrnTyp, tn.TrN_TrNNumer, tn.TrN_TrNRok, tn.TrN_TrNSeria,tn.TrN_TrNMiesiac) 'Numer2PZ',
+        dok.tre_twrkod 'KodTowaruPZ',
+        dok.tre_twrNazwa 'NazwaTowaruPZ',
+        (select sum(ts.trs_ilosc) from CDN.TraSElem ts where ts.trs_gidnumer = tn.TrN_GIDNumer and ts.TrS_GIDTyp = tn.TrN_GIDTyp and (ts.TrS_MagNumer = @MAGMagazyn or twr_typ in (3,4,6)) and ts.TrS_GIDLp= dok.tre_gidlp) 'IloscPrzyjetaPZ',
+        Twr_Jm 'JednostkaMiaryPZ',        
+		case when dok.tre_gidtyp in (2010,1497,1529,1498,1528,1625) and not exists(select * from CDN.TraElem dok2 where dok2.TrE_GIDNumer = dok.TrE_GIDNumer and dok2.TrE_GIDLp = -dok.tre_gidlp) then dok.tre_cena - tep_poczcena else 
+			dok.tre_cena end +
+			 isnull((select sum(kdz.tre_kosztksiegowy) from cdn.traelem kdz where kdz.tre_zlcnumer = Trs_GIDNumer and kdz.TrE_ZlcTyp=Trs_GIDTyp and kdz.TrE_ZlcLp = trs_gidlp and kdz.tre_gidtyp = 1232),0)/case when dok.TrE_Ilosc = 0 then 1 else dok.TrE_Ilosc end,		
+		(select sum(ts.TrS_KosztKsiegowy) from CDN.TraSElem ts where ts.trs_gidnumer = tn.TrN_GIDNumer and ts.TrS_GIDTyp = tn.TrN_GIDTyp and (ts.TrS_MagNumer = @MAGMagazyn or twr_typ in (3,4,6)) and ts.TrS_GIDLp= dok.tre_gidlp)  
+			+ isnull((select sum(kdz.tre_kosztksiegowy)*isnull((select sum(s2.trs_ilosc) from cdn.traselem s2 where s2.trs_gidnumer=dok.tre_gidnumer and s2.trs_gidlp=dok.tre_gidlp and s2.trs_magnumer=@MAGMagazyn),0) from cdn.traelem kdz where kdz.tre_zlcnumer = Trs_GIDNumer and kdz.TrE_ZlcTyp=Trs_GIDTyp and kdz.TrE_ZlcLp = trs_gidlp and kdz.tre_gidtyp = 1232),0)/case when dok.TrE_Ilosc = 0 then 1 else dok.TrE_Ilosc end,		
+		tn.TrN_GIDTyp,
+        tn.TrN_GIDNumer,
+        dok.TrE_GIDLp
+		from CDN.TraNag tn
+        left join CDN.TraElem dok on tn.trn_GIDTyp=TrE_GIDTyp AND tn.trn_GIDNumer=TrE_GIDNumer
+	   	left join cdn.traselem on dok.tre_GIDTyp=TrS_GIDTyp AND dok.tre_GIDNumer=TrS_GIDNumer AND dok.tre_GIDlp=TrS_GIDlp
+        join cdn.magazyny on TrS_Magnumer = mag_gidnumer and trs_magtyp = mag_gidtyp
+        left join CDN.TwrKarty on dok.tre_TwrNumer = Twr_GIDNumer
+		outer apply CDN.LancuchKorekt2(dok.TrE_GIDNumer,dok.tre_gidlp)
+		where tn.trn_Stan in (3,4,5)
+        and (tn.TrN_GIDTyp in (1489,1490,2002,1497,1498,2010,1617,1625) or  (tn.TrN_SpiNumer &lt;&gt; 0 and tn.TrN_GIDTyp in (1521,1520,1529,1528)))
+        and TrS_Magnumer = @MAGMagazyn
+		and tn.trn_KosztUstalono =1
+        and (select case when @MAGKryteriumDatSprzedazy='Data operacji' then tn.TrN_DataMag else tn.TrN_Data2 end) &gt;= @PONDataOd
+        and (select case when @MAGKryteriumDatSprzedazy='Data operacji' then tn.TrN_DataMag else tn.TrN_Data2 end) &lt;= @PONDataDo	
+		and (trs_magnumer &lt;&gt; 0 or trs_gidnumer is null)
+	end
+	else
+	begin
+		insert into @DanePZWiersz
+		select distinct
+		CDN.NumerDokumentu(san_GIDTyp,0,san_sanTyp,san_sanNumer,san_sanRok,san_sanSeria,san_sanMiesiac),
+		SaE_TwrKod,
+		SaE_TwrNazwa,
+		SaE_Ilosc,
+		Twr_jm,
+		--sum(((SaS_WartoscDostawy + SaS_KosztKraj + SaS_KosztZagr)/SaE_Ilosc) * SaN_KursL/SaN_KursM),
+		(sum(SaS_WartoscDostawy) * max(SaN_KursL)/max(SaN_KursM)+
+			case when max(san_waluta) = max(sas_walutaKosztuKrajowego) then sum(SaS_KosztKraj)*max(SaN_KursL)/max(SaN_KursM) else sum(SaS_KosztKraj) end + 
+			case when max(san_waluta) = max(sas_walutaKosztuZagranicznego) then sum(SaS_KosztZagr)*max(SaN_KursL)/max(SaN_KursM) else sum(SaS_KosztZagr) end)/SaE_Ilosc,
+		sum(SaS_WartoscDostawy) * max(SaN_KursL)/max(SaN_KursM)+
+			case when max(san_waluta) = max(sas_walutaKosztuKrajowego) then sum(SaS_KosztKraj)*max(SaN_KursL)/max(SaN_KursM) else sum(SaS_KosztKraj) end + 
+			case when max(san_waluta) = max(sas_walutaKosztuZagranicznego) then sum(SaS_KosztZagr)*max(SaN_KursL)/max(SaN_KursM) else sum(SaS_KosztZagr) end,
+		sae_gidtyp,
+		sae_gidnumer,
+		SaE_GIDLp
+		from cdn.SadNag
+		join cdn.SadElem se on SaN_GIDNumer=se.SaE_GIDNumer
+		join cdn.SadSElem on se.SaE_GIDNumer=SaS_GIDNumer AND se.SaE_GIDLp=SaS_GIDLp			
+		join cdn.twrkarty on Twr_GIDNumer = SaE_TwrNumer and twr_typ not in (3,4,6)
+		where 			
+		SaN_Stan in (3,4,5)
+		and SaN_SCnumer = @MAGMagazyn
+		and SaN_Gidtyp = 3377
+		and (select case when @MAGKryteriumDatSprzedazy='Data operacji' then SaN_DataPrzyjecia else DateDiff(d, convert(datetime,'28-12-1800',105),(select DATEADD(second,SaN_TStampU,convert(datetime,'01-01-1990',105)))) end) &gt;= @PONDataOd
+        and (select case when @MAGKryteriumDatSprzedazy='Data operacji' then SaN_DataPrzyjecia else DateDiff(d, convert(datetime,'28-12-1800',105),(select DATEADD(second,SaN_TStampU,convert(datetime,'01-01-1990',105)))) end) &lt;= @PONDataDo	
+		group by Twr_jm,sae_gidtyp,sae_gidnumer,SaE_GIDLp,san_GIDTyp,san_sanTyp,san_sanNumer,san_sanRok,san_sanSeria,san_sanMiesiac,SaE_TwrKod,SaE_TwrNazwa,SaE_Ilosc
+	end
+	update @DanePZWiersz set IloscPrzyjetaPZ = 0, WartoscPozycjiPZ=0 where IloscPrzyjetaPZ is null and WartoscPozycjiPZ is null	
+	RETURN 
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

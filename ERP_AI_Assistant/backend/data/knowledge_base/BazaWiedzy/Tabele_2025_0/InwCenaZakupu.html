@@ -1,0 +1,160 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="InwCenaZakupu"></A><PRE>
+          <FONT SIZE="2"><I>/* InwCenaZakupu */</I><BR>
+CREATE PROCEDURE CDN.InwCenaZakupu
+(
+	@TwrNumer INTEGER,		-- Numer obiektu CRM
+	@MagNumer INTEGER,		-- GidNumer wiązanego dokumentu
+	@TpaID INTEGER,			-- Numer obiektu CRM
+	@InNId INTEGER,			-- GidNumer wiązanego dokumentu
+	@Cena DECIMAL(15,4)=0	OUTPUT  -- Cena
+)
+AS
+BEGIN
+
+	declare @SQL nvarchar(max)
+	declare @zapytanie nvarchar(max)
+	declare @zapytanieBezTPa nvarchar(max)
+	declare @filtr nvarchar(max)
+	declare @WarunekMag nvarchar(max)
+	declare @OstaniaCenaZakupu nvarchar(max)
+
+	declare @TimeStamp varchar(10)
+
+	set @TimeStamp = convert(varchar(10), DATEDIFF(s,'19900101',GETDATE()))
+
+	SET @WarunekMag = ''
+
+	IF @MagNumer&gt;0 
+		BEGIN
+			SET @WarunekMag='='+CAST(@MagNumer AS VARCHAR)
+		END
+	ELSE BEGIN 	
+		IF (SELECT COUNT(InM_MagNumer) FROM CDN.InwMag WHERE InM_InNId=@InnId)=0
+			BEGIN
+				RAISERROR('Brak magazynów na nagłówku inwentaryzacji.',16,1)
+				RETURN	
+			END
+		ELSE BEGIN
+			SELECT @WarunekMag=@WarunekMag+CAST(InM_MagNumer AS VARCHAR)+',' FROM CDN.InwMag WHERE InM_InNId=@InnId
+			SET @WarunekMag = SUBSTRING(@WarunekMag,1,LEN(@WarunekMag)-1)
+			IF CHARINDEX(',',@WarunekMag)=0
+				SET @WarunekMag='='+@WarunekMag
+            ELSE
+				SET @WarunekMag=' IN ('+@WarunekMag+')'
+		END	
+	END
+
+	set @zapytanie = 'select @Cena=isnull(sum(' +
+               ' case when (twz_ksiegowanetto &gt;= 0 and TwZ_IlSpr &gt; 0)' +
+                        ' then twz_ksiegowanetto' +
+                    ' when CDN.WartoscWWalucieSys(isnull(twc_wartosc,0),isnull(twc_waluta,''''),isnull(twc_nrkursu,0),'+@TimeStamp+')*twz_ilspr &gt; 0' +
+                        ' then CDN.WartoscWWalucieSys(isnull(twc_wartosc,0),isnull(twc_waluta,''''),isnull(twc_nrkursu,0),'+@TimeStamp+')*twz_ilspr end)/' +
+               ' sum(case when (twz_ksiegowanetto &gt;= 0 and TwZ_IlSpr &gt; 0) or' +
+               ' CDN.WartoscWWalucieSys(isnull(twc_wartosc,0),isnull(twc_waluta,''''),isnull(twc_nrkursu,0),'+@TimeStamp+')*twz_ilspr &gt; 0' +
+               ' then twz_ilspr end),0)' +
+               ' from cdn.twrzasoby' +
+               ' left outer join cdn.twrceny on' +
+               ' twz_twrnumer = twc_twrnumer and' +
+               ' twc_twrlp = 0' +
+               ' join cdn.dostawy on' +
+               ' twz_dstnumer = dst_gidnumer' +
+               ' join cdn.twrpartie on' +
+               ' dst_tpaid = tpa_id' +
+               ' where'
+
+	set @OstaniaCenaZakupu = 'select @Cena=isnull((select CDN.WartoscWWalucieSys(twc_wartosc,twc_waluta,twc_nrkursu,'+@TimeStamp+') from cdn.twrceny where twc_twrnumer='+convert(varchar,@TwrNumer)+' and twc_twrlp = 0),0)'
+
+	IF @TpaID&gt;0 
+		BEGIN
+			--szukamy wg partii i magazynu
+			set @Filtr = 'twz_twrnumer='+convert(varchar,@TwrNumer)+' and twz_magnumer'+@WarunekMag+' and tpa_id='+convert(varchar,@TpaID)
+			set @SQL = @zapytanie+' '+@Filtr
+			exec sp_executesql @SQL, N'@Cena decimal(15,4) output', @Cena output
+  
+			if @Cena=0 --jeśli zero szukamy we wszystkich magazynach
+				begin
+					set @Filtr = 'twz_twrnumer='+convert(varchar,@TwrNumer)+' and tpa_id='+convert(varchar,@TpaID)
+					set @SQL = @zapytanie+' '+@Filtr
+					exec sp_executesql @SQL, N'@Cena decimal(15,4) output', @Cena output
+
+					if @Cena=0 --jeśli zero szukamy bez zawężenia do partii ale z zawężeniem do magazynu
+						begin
+							set @Filtr = 'twz_twrnumer='+convert(varchar,@TwrNumer)+' and twz_magnumer'+@WarunekMag+''
+							set @SQL = @zapytanie+' '+@Filtr
+							exec sp_executesql @SQL, N'@Cena decimal(15,4) output', @Cena output
+
+							if @Cena=0 --jeśli zero szukamy bez zawężenia do partii i bez zawężenia do magazynu
+								begin
+									set @Filtr = 'twz_twrnumer = '+convert(varchar,@TwrNumer)
+									set @SQL = @zapytanie+' '+@Filtr
+									exec sp_executesql @SQL, N'@Cena decimal(15,4) output', @Cena output
+
+									if @Cena=0
+										
+										IF EXISTS(SELECT * FROM CDN.TwrZasoby JOIN CDN.Dostawy ON Twz_DstNumer=Dst_GidNumer JOIN CDN.TwrPartie ON Dst_TPaId=TPa_Id WHERE Twz_TwrNumer=@TwrNumer)
+											return @cena
+										else
+											begin
+												exec sp_executesql @OstaniaCenaZakupu, N'@Cena decimal(15,4) output', @Cena output
+												return @cena
+											end
+								end
+							else
+								return @Cena
+						end
+					else
+						return @Cena
+				end
+			else
+				return @Cena
+		END 
+	ELSE 
+		BEGIN
+
+		set @zapytanieBezTPa = 'select @Cena=isnull(sum(' +
+               ' case when (twz_ksiegowanetto &gt;= 0 and TwZ_IlSpr &gt; 0)' +
+                        ' then twz_ksiegowanetto' +
+                    ' when CDN.WartoscWWalucieSys(isnull(twc_wartosc,0),isnull(twc_waluta,''''),isnull(twc_nrkursu,0),'+@TimeStamp+')*twz_ilspr &gt; 0' +
+                        ' then CDN.WartoscWWalucieSys(isnull(twc_wartosc,0),isnull(twc_waluta,''''),isnull(twc_nrkursu,0),'+@TimeStamp+')*twz_ilspr end)/' +
+               ' sum(case when (twz_ksiegowanetto &gt;= 0 and TwZ_IlSpr &gt; 0) or' +
+               ' CDN.WartoscWWalucieSys(isnull(twc_wartosc,0),isnull(twc_waluta,''''),isnull(twc_nrkursu,0),'+@TimeStamp+')*twz_ilspr &gt; 0' +
+               ' then twz_ilspr end),0)' +
+               ' from cdn.twrceny join cdn.TwrZasoby on twz_twrnumer = twc_twrnumer where '
+
+			set @Filtr = 'twz_twrnumer='+convert(varchar,@TwrNumer)+' and twz_magnumer'+@WarunekMag
+			set @SQL = @zapytanieBezTPa+' '+@Filtr
+			exec sp_executesql @SQL, N'@Cena decimal(15,4) output', @Cena output
+
+			if @Cena=0 
+			begin
+				exec sp_executesql @OstaniaCenaZakupu, N'@Cena decimal(15,4) output', @Cena output
+				if @Cena=0 
+					begin
+						set @Filtr = 'twz_twrnumer = '+convert(varchar,@TwrNumer)
+						set @SQL = @zapytanie+' '+@Filtr
+						exec sp_executesql @SQL, N'@Cena decimal(15,4) output', @Cena output
+					end
+			end
+
+		END
+
+
+	return @Cena
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

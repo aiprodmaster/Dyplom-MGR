@@ -1,0 +1,100 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie procedury ESKLEP_EksportTwrProducent"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie procedury ESKLEP_EksportTwrProducent */</I><BR>
+if exists (select * from dbo.sysobjects where id = object_id(N'CDN.ESKLEP_EksportTwrProducent') and OBJECTPROPERTY(id, N'IsProcedure') = 1)
+  drop procedure CDN.ESKLEP_EksportTwrProducent
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury ESKLEP_EksportTwrProducent"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury ESKLEP_EksportTwrProducent */</I><BR>
+CREATE PROCEDURE [CDN].[ESKLEP_EksportTwrProducent]
+  @ID INT      -- ID e-sklepu
+ ,@TypExp INT  -- Typ eksportu (0 - różnicowy, 1 - pełny)
+AS
+
+WITH PDR AS(
+SELECT DISTINCT
+      Knt_GIDNumer AS PdrID
+      , Knt_Akronim AS ProducentKod
+      , CDN.XLValidateXMLChars(ISNULL(RTRIM(Knt_Nazwa1 +' '+ Knt_Nazwa2 +' ' + Knt_Nazwa3),'')) AS ProducentNazwa
+      , ISNULL(Knt_URL,'') AS ProducentURL
+      , (SELECT top 1 DAO_DABId FROM CDN.DaneObiekty JOIN CDN.DaneBinarne ON DAO_DABId = DAB_ID 
+		JOIN CDN.Slowniki ON SLW_ID = DAB_TypId JOIN CDN.SlownikiStruktura ON SLS_ID = SLW_SLSID AND SLS_Predefiniowany = 64 AND SLW_Predefiniowany = 1
+		WHERE DAO_ObiTyp = PDR.Knt_GIDTyp AND DAO_ObiNumer = PDR.Knt_GIDNumer AND DAB_eSklep = 1 order by DAO_Pozycja)  AS ProducentLogo
+FROM CDN.TwrKarty
+JOIN CDN.TwrCeny A ON Twr_GIDNumer = A.TwC_TwrNumer
+JOIN CDN.PicoKonfig ON Pck_PicoId = @ID
+JOIN CDN.KntKarty PDR ON Twr_PrdNumer = Knt_GIDNumer AND Twr_PrdTyp = Knt_GIDTyp
+JOIN CDN.FrsAplikacje FRAKnt ON FrA_ObiNumer = PDR.Knt_GIDNumer AND FrA_ObiTyp = 32 AND FrA_TypAplikacji = 2 AND FrA_NieWysylaj = 0 AND (FrA_FrsID = 0 OR FrA_FrsId = PcK_CentrumID)
+JOIN CDN.TwrGrupy PCKTWG ON PCKTWG.TwG_SyncId = PcK_TwGNumer AND PCKTWG.TwG_GIDTyp = -16
+LEFT OUTER JOIN CDN.PicoCenniki ON PcC_PcKID=@ID and PcC_TwCTwrTyp=64 AND PcC_TwCTwrNumer=A.TwC_ID and PcC_TwCTwrLp = 0
+LEFT OUTER JOIN CDN.PicoLog PCLTwr ON PCLTwr.PcL_PcKID = Pck_PicoId AND PCLTwr.PcL_ObiTyp = Twr_GIDTyp AND PcL_ObiNumer = Twr_GIDNumer
+LEFT OUTER JOIN CDN.PicoLog PCLKnt ON PCLKnt.PcL_PcKID = Pck_PicoId AND PCLKnt.PcL_ObiTyp = PDR.Knt_GIDTyp AND PCLKnt.PcL_ObiNumer = PDR.Knt_GIDNumer
+WHERE A.TwC_TwrLp IN (PcK_NrCeny, PcK_NrCenyDomyslnej) AND Twr_GIDNumer &gt; 0 AND Twr_eSklep = 1 AND Twr_Archiwalny = 0 AND Twr_LastModC &lt;&gt; 0
+AND ((A.twc_czasmodyfikacji &gt; CASE WHEN @TypExp=0 AND ISNULL(PcC_TS,0) &gt; 0 THEN PcK_TSSynchrTwrPtw ELSE 0 END OR ISNULL(PCLTwr.PcL_TStamp,PcK_TSSynchrTwrPtw + 1) &gt; PcK_TSSynchrTwrPtw) OR (PDR.Knt_LastModL &gt; CASE WHEN @TypExp=0 THEN PcK_TSSynchrKnt ELSE 0 END OR ISNULL(PCLKnt.PcL_TStamp,0) &lt; Knt_LastModL))
+AND A.TwC_ID = (
+				SELECT TOP 1 B.TwC_ID FROM CDN.TwrCeny B 
+				WHERE B.TwC_TwrNumer = Twr_GIDNumer AND B.TwC_TwrLp = A.TwC_TwrLp AND B.TwC_DataOd &lt;= DATEDIFF(s,CONVERT(DATETIME,'1990-01-01',120),GETDATE())
+				ORDER BY B.TwC_TwrLp,B.TwC_DataOd DESC
+				) 
+AND EXISTS(SELECT TwL_GrONumer FROM CDN.TwrLinki WHERE Twr_GIDTyp = TwL_GIDTyp AND Twr_GIDNumer = TwL_GIDNumer AND TwL_GrONumer = PCKTWG.TwG_GIDNumer )
+)
+SELECT PdrID, ProducentKod, ProducentNazwa, ProducentURL, ProducentLogo
+FROM PDR
+WHERE ProducentLogo IS NOT NULL
+FOR XML AUTO, ROOT('PDRI')
+
+	DECLARE @CennikiTmp TABLE(TWCID INT)
+	INSERT INTO @CennikiTmp
+		SELECT TwC_ID
+		FROM CDN.TwrKarty
+		JOIN CDN.TwrCeny A ON Twr_GIDNumer = A.TwC_TwrNumer
+		JOIN CDN.PicoKonfig ON Pck_PicoId = @ID
+		JOIN CDN.TwrGrupy PCKTWG ON PCKTWG.TwG_SyncId = PcK_TwGNumer AND PCKTWG.TwG_GIDTyp = -16
+		LEFT OUTER JOIN CDN.PicoCenniki ON PcC_PcKID=@ID and PcC_TwCTwrTyp=64 AND PcC_TwCTwrNumer=A.TwC_ID and PcC_TwCTwrLp = 0
+		JOIN CDN.KntKarty PDR ON Twr_PrdNumer = Knt_GIDNumer AND Twr_PrdTyp = Knt_GIDTyp
+		LEFT OUTER JOIN CDN.PicoLog ON PcL_PcKID = Pck_PicoId AND PcL_ObiTyp = Twr_GIDTyp AND PcL_ObiNumer = Twr_GIDNumer
+		WHERE A.TwC_TwrLp IN (PcK_NrCeny, PcK_NrCenyDomyslnej) AND Twr_GIDNumer &gt; 0 AND Twr_eSklep = 1 AND Twr_Archiwalny = 0 AND Twr_LastModC &lt;&gt; 0
+		AND (A.twc_czasmodyfikacji &gt; CASE WHEN @TypExp=0 AND ISNULL(PcC_TS,0) &gt; 0 THEN PcK_TSSynchrTwrPtw ELSE 0 END OR ISNULL(PcL_TStamp,PcK_TSSynchrTwrPtw + 1) &gt; PcK_TSSynchrTwrPtw)
+		AND A.TwC_ID = (
+						SELECT TOP 1 B.TwC_ID FROM CDN.TwrCeny B 
+						WHERE B.TwC_TwrNumer = Twr_GIDNumer AND B.TwC_TwrLp = A.TwC_TwrLp AND B.TwC_DataOd &lt;= DATEDIFF(s,CONVERT(DATETIME,'1990-01-01',120),GETDATE())
+						ORDER BY B.TwC_TwrLp,B.TwC_DataOd DESC
+						) 
+		AND EXISTS(SELECT TwL_GrONumer FROM CDN.TwrLinki WHERE Twr_GIDTyp = TwL_GIDTyp AND Twr_GIDNumer = TwL_GIDNumer AND TwL_GrONumer = PCKTWG.TwG_GIDNumer )
+
+		DELETE A FROM cdn.PicoCenniki A
+		JOIN @CennikiTmp ON TWCID = A.PcC_TwCTwrNumer
+	    WHERE PcC_PcKID = @ID AND PcC_TwCTwrTyp = 64 AND PcC_TwCTwrLp = 0
+
+		INSERT INTO cdn.PicoCenniki (PcC_TwCTwrTyp, PcC_TwCTwrNumer, PcC_TwCTwrLp, PcC_PcKID, PcC_TS)
+		SELECT 64, TWCID, 0, @ID, DATEDIFF(s,CONVERT(DATETIME,'1990-01-01',120),GETDATE()) FROM @CennikiTmp
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury ESKLEP_EksportTwrProducent"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury ESKLEP_EksportTwrProducent */</I><BR>
+GRANT EXECUTE ON CDN.ESKLEP_EksportTwrProducent TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

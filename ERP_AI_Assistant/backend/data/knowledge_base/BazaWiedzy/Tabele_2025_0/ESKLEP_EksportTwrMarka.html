@@ -1,0 +1,73 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[ESKLEP_EksportTwrMarka]"></A><PRE>
+          <FONT SIZE="2"><I>/* [ESKLEP_EksportTwrMarka] */</I><BR>
+CREATE PROCEDURE [CDN].[ESKLEP_EksportTwrMarka]
+  @ID INT      -- ID e-sklepu
+ ,@TypExp INT  -- Typ eksportu (0 - różnicowy, 1 - pełny)
+AS
+
+SELECT DISTINCT
+	  slw_id AS [MrkID]
+      ,'0' AS [PdrID]
+      ,CDN.XLValidateXMLChars(slw_wartoscs) AS [MarkaNazwa]
+      ,DAB_ID AS [MarkaLogo]
+FROM CDN.TwrKarty
+JOIN CDN.Slowniki MRK ON Twr_MarkaId = SLW_ID
+JOIN CDN.DaneBinarne ON SLW_WartoscL1 = DAB_ID
+JOIN CDN.TwrCeny A ON Twr_GIDNumer = A.TwC_TwrNumer
+JOIN CDN.PicoKonfig ON Pck_PicoId = @ID
+JOIN CDN.TwrGrupy PCKTWG ON PCKTWG.TwG_SyncId = PcK_TwGNumer AND PCKTWG.TwG_GIDTyp = -16
+LEFT OUTER JOIN CDN.PicoCenniki ON PcC_PcKID=@ID and PcC_TwCTwrTyp=64 AND PcC_TwCTwrNumer=A.TwC_ID and PcC_TwCTwrLp = 0
+LEFT OUTER JOIN CDN.PicoLog ON PcL_PcKID = Pck_PicoId AND PcL_ObiTyp = Twr_GIDTyp AND PcL_ObiNumer = Twr_GIDNumer
+WHERE A.TwC_TwrLp IN (PcK_NrCeny, PcK_NrCenyDomyslnej) AND Twr_GIDNumer &gt; 0 AND Twr_eSklep = 1 AND Twr_Archiwalny = 0 AND DAB_eSklep = 1 AND Twr_LastModC &lt;&gt; 0
+AND (A.twc_czasmodyfikacji &gt; CASE WHEN @TypExp=0 AND ISNULL(PcC_TS,0) &gt; 0 THEN PcK_TSSynchrTwrPtw ELSE 0 END OR ISNULL(PcL_TStamp,PcK_TSSynchrTwrPtw + 1) &gt; PcK_TSSynchrTwrPtw)
+AND A.TwC_ID = (
+				SELECT TOP 1 B.TwC_ID FROM CDN.TwrCeny B 
+				WHERE B.TwC_TwrNumer = Twr_GIDNumer AND B.TwC_TwrLp = A.TwC_TwrLp AND B.TwC_DataOd &lt;= DATEDIFF(s,CONVERT(DATETIME,'1990-01-01',120),GETDATE())
+				ORDER BY B.TwC_TwrLp,B.TwC_DataOd DESC
+				) 
+AND EXISTS(SELECT TwL_GrONumer FROM CDN.TwrLinki WHERE Twr_GIDTyp = TwL_GIDTyp AND Twr_GIDNumer = TwL_GIDNumer AND TwL_GrONumer = PCKTWG.TwG_GIDNumer )
+FOR XML AUTO, ROOT('MRKI')
+
+	DECLARE @CennikiTmp TABLE(TWCID INT)
+	INSERT INTO @CennikiTmp
+		SELECT TwC_ID
+		FROM CDN.TwrKarty
+		JOIN CDN.TwrCeny A ON Twr_GIDNumer = A.TwC_TwrNumer
+		JOIN CDN.PicoKonfig ON Pck_PicoId = @ID
+		JOIN CDN.TwrGrupy PCKTWG ON PCKTWG.TwG_SyncId = PcK_TwGNumer AND PCKTWG.TwG_GIDTyp = -16
+		LEFT OUTER JOIN CDN.PicoCenniki ON PcC_PcKID=@ID and PcC_TwCTwrTyp=64 AND PcC_TwCTwrNumer=A.TwC_ID and PcC_TwCTwrLp = 0
+		JOIN CDN.KntKarty PDR ON Twr_PrdNumer = Knt_GIDNumer AND Twr_PrdTyp = Knt_GIDTyp
+		LEFT OUTER JOIN CDN.PicoLog ON PcL_PcKID = Pck_PicoId AND PcL_ObiTyp = Twr_GIDTyp AND PcL_ObiNumer = Twr_GIDNumer
+		WHERE A.TwC_TwrLp IN (PcK_NrCeny, PcK_NrCenyDomyslnej) AND Twr_GIDNumer &gt; 0 AND Twr_eSklep = 1 AND Twr_Archiwalny = 0 AND Twr_LastModC &lt;&gt; 0
+		AND (A.twc_czasmodyfikacji &gt; CASE WHEN @TypExp=0 AND ISNULL(PcC_TS,0) &gt; 0 THEN PcK_TSSynchrTwrPtw ELSE 0 END OR ISNULL(PcL_TStamp,PcK_TSSynchrTwrPtw + 1) &gt; PcK_TSSynchrTwrPtw)
+		AND A.TwC_ID = (
+						SELECT TOP 1 B.TwC_ID FROM CDN.TwrCeny B 
+						WHERE B.TwC_TwrNumer = Twr_GIDNumer AND B.TwC_TwrLp = A.TwC_TwrLp AND B.TwC_DataOd &lt;= DATEDIFF(s,CONVERT(DATETIME,'1990-01-01',120),GETDATE())
+						ORDER BY B.TwC_TwrLp,B.TwC_DataOd DESC
+						) 
+		AND EXISTS(SELECT TwL_GrONumer FROM CDN.TwrLinki WHERE Twr_GIDTyp = TwL_GIDTyp AND Twr_GIDNumer = TwL_GIDNumer AND TwL_GrONumer = PCKTWG.TwG_GIDNumer )
+
+		DELETE A FROM cdn.PicoCenniki A
+		JOIN @CennikiTmp ON TWCID = A.PcC_TwCTwrNumer
+	    WHERE PcC_PcKID = @ID AND PcC_TwCTwrTyp = 64 AND PcC_TwCTwrLp = 0
+
+		INSERT INTO cdn.PicoCenniki (PcC_TwCTwrTyp, PcC_TwCTwrNumer, PcC_TwCTwrLp, PcC_PcKID, PcC_TS)
+		SELECT 64, TWCID, 0, @ID, DATEDIFF(s,CONVERT(DATETIME,'1990-01-01',120),GETDATE()) FROM @CennikiTmp
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

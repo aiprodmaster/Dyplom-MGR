@@ -1,0 +1,194 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="ImtPozycjeArkuszaImport"></A><PRE>
+          <FONT SIZE="2"><I>/* ImtPozycjeArkuszaImport */</I><BR>
+create procedure CDN.ImtPozycjeArkuszaImport
+	  (@GIDNumer		int	= null
+	, @GIDNumery	varchar(max) = ''
+	, @DataNaDzien	int = null
+	, @DataDok		int = null
+	, @OsobaOdp		varchar(20) = ''
+	, @MiejsceUz	varchar(30) = ''
+	, @Tryb			tinyint			-- 0 - środek trwały, 1 - lista środków trwałych, 2 - grupa środków trwałych
+									-- 3 - osoba odpowiedzialna, 4 - miejsce użytkowania, 5 - osoba i miejsce
+	, @UwzgledniajZlikwidowane	tinyint = 0		-- 1 - uwzględniaj, 0 - niezlikwidowane
+	, @ITNId		int = 0
+	, @ITAId		int = 0
+	, @TorLp		tinyint=1)
+	
+as	
+begin
+
+		declare @e_srt_RodzajKarty_ST varchar(1)
+		declare @e_srt_RodzajKarty_WNP varchar(1)
+		declare @e_srt_RodzajKarty_Wyp varchar(1)
+
+        declare @sZapytanie varchar(max)
+        declare @sDataNaDzien varchar(10)
+        declare @sDataDok varchar(10)
+        declare @sWhere varchar(max)
+        declare @sTorWFunkcji varchar(1)
+		set @sTorWFunkcji = CONVERT(VARCHAR,(@TorLp-1))
+
+        set @e_srt_RodzajKarty_ST = '1'
+		set @e_srt_RodzajKarty_WNP = '2'		-- tych nie wczytujemy
+		set @e_srt_RodzajKarty_Wyp = '3'
+        
+		set @sWhere = ''
+
+        IF @DataNaDzien IS NULL
+                set @sDataNaDzien = 'NULL'
+        ELSE
+                set @sDataNaDzien = CONVERT(varchar(10), @DataNaDzien)
+
+        IF @DataDok IS NULL
+                set @sDataDok = 'NULL'
+        ELSE
+                set @sDataDok = CONVERT(varchar(10), @DataDok)
+
+        set @sZapytanie =
+                N' select ' +
+                        N'  Srt_GIDNumer ' +
+                        N', Srt_Akronim ' +
+                        N', SrT_Nazwa ' +
+                        N', SrT_Ksiega ' +
+                        N', SrT_NrInw ' +
+                        N', SrT_EtykietaKod ' +
+                        N', SrT_Waluta ' +
+
+                        N', case when isnull(Srt_DataEksp, 0) = 0 then 0 else case when isnull(Srt_DataLikw, 0) = 0 then 1 else 0 end end Ilosc ' +
+
+                        N', cdn.SrtStanMiejsce(SRT_GIDNumer, ' + @sDataNaDzien + ', ' + @sDataDok + ') Miejsce ' +
+                        N', cdn.SrtStanOsoba(SRT_GIDNumer, 1, ' + @sDataNaDzien + ', ' + @sDataDok + ') Osoba ' +
+                        N', cdn.SrtStanOsobaId(SRT_GIDNumer, ' + @sDataNaDzien + ', ' + @sDataDok + ') OsobaId ' +
+
+                        N', CDN.SrtBiezacaWartosc (SRT_GIDNumer, ' + @sDataNaDzien + ', ' + @sDataDok + ', 0, '+@sTorWFunkcji+', 0, SRT_Zestaw) Brutto ' +
+                        N', CDN.SrtBiezacaWartosc (SRT_GIDNumer, ' + @sDataNaDzien + ', ' + @sDataDok + ', 1, '+@sTorWFunkcji+', 0, SRT_Zestaw) Netto ' +
+                        N', CDN.SrtBiezacaWartosc (SRT_GIDNumer, ' + @sDataNaDzien + ', ' + @sDataDok + ', 2, '+@sTorWFunkcji+', 0, SRT_Zestaw) PoczatDataPrzyj ' +
+
+                        N', CDN.SrtBiezacaWartosc (SRT_GIDNumer, ' + @sDataNaDzien + ', ' + @sDataDok + ', 0, '+@sTorWFunkcji+', 1, SRT_Zestaw) BruttoSys ' +
+                        N', CDN.SrtBiezacaWartosc (SRT_GIDNumer, ' + @sDataNaDzien + ', ' + @sDataDok + ', 1, '+@sTorWFunkcji+', 1, SRT_Zestaw) NettoSys ' +
+                        N', CDN.SrtBiezacaWartosc (SRT_GIDNumer, ' + @sDataNaDzien + ', ' + @sDataDok + ', 2, '+@sTorWFunkcji+', 1, SRT_Zestaw) PoczatDataPrzyjSys '
+
+		
+        IF @ITNId &gt; 0
+        BEGIN
+                --set @sZapytanie = @sZapytanie + N', isnull(ITA_Lp, 0) as ArkuszLp, isnull(IAE_Lp, 0) as ArkuszPozLp ' +
+                --                                                                N' from cdn.SrtKarty ' +
+                --                                                                N' left join cdn.ImtArkuszeElem on SRT_GIDNumer = IAE_SRTNumer ' +
+                --                                                                N' left join cdn.ImtArkusze on ITA_Id = IAE_ITAId '
+                --set @sWhere = ' ITA_ITNId= ' + CONVERT(varchar(10), @ITNId) + ' '
+                
+                set @sZapytanie = @sZapytanie + N', isnull(a.ITA_Lp, 0) as ArkuszLp, isnull(a.IAE_Lp, 0) as ArkuszPozLp ' +
+																				N', isnull(a.IAE_IloscSpis, 0) as IloscSpis ' +
+                                                                                N' from cdn.SrtKarty ' +
+                                                                                N' left join( '+
+																					N' select * from cdn.ImtArkuszeElem ' +
+																					N' inner join cdn.ImtArkusze on ITA_Id = IAE_ITAId and ITA_ITNId= ' + CONVERT(varchar(10), @ITNId) + ' ' +
+																				N' ) a on SRT_GIDNumer = a.IAE_SRTNumer '
+                
+				--IF @ITAId &gt; 0
+				--	set @sWhere = @sWhere + N' and (a.ITA_Lp is null or (a.ITA_Lp is not null and a.IAE_ITAId &lt;&gt; ' + CONVERT(varchar(10), @ITAId) + ' and a.IAE_IloscSpis = 0)) '
+				set @sWhere = N' ( '+
+							N' not exists ' +
+							N' ( ' +
+									N' select 1  ' +
+									N' from cdn.ImtArkuszeElem  ae2 ' +
+									N' inner join cdn.ImtArkusze a2 on a2.ITA_Id = ae2.IAE_ITAId and a2.ITA_ITNId= ' + CONVERT(varchar(10), @ITNId) + ' and a.IAE_SrtNumer = ae2.IAE_SrtNumer ' +
+									N' where ae2.IAE_IloscSpis = 1 ' +
+								N' ) OR a.IAE_IloscSpis = 1 ' +
+							N' )'
+				
+        END
+        ELSE        
+                set @sZapytanie = @sZapytanie + N', 0 as ArkuszLp, 0 as ArkuszPozLp, 0 IloscSpis from cdn.SrtKarty '
+                
+
+        IF @Tryb = 0
+                set @sZapytanie = @sZapytanie + N' WHERE SRT_GIDNumer = ' + CONVERT(varchar(100), @GIDNumer) + ' ' --+ case when @sWhere = '' then '' else ' and ' + @sWhere end
+												+ ' and SRT_Rodzaj in (' + @e_srt_RodzajKarty_ST + ', ' + @e_srt_RodzajKarty_Wyp + ') '
+												+ case when @UwzgledniajZlikwidowane = 0 then ' and SRT_DataLikw = 0 ' else '' end
+												+ ' and CDN.SrtSprawdzStatusZestaw(SRT_GIDNumer, ' + @sDataNaDzien + ') IN (0, 1) '	-- tylko niezależne środki trwałe lub zestawy
+												
+
+        ELSE IF @Tryb = 1
+                set @sZapytanie = @sZapytanie + N' WHERE SRT_GIDNumer in (' + @GIDNumery + ' )' 
+					+ case when @sWhere = '' then '' else ' and ' + @sWhere end + ' and SRT_Rodzaj in (' + @e_srt_RodzajKarty_ST + ', ' + @e_srt_RodzajKarty_Wyp + ') '
+					+ ' and CDN.SrtSprawdzStatusZestaw(SRT_GIDNumer, ' + @sDataNaDzien + ') IN (0, 1) '	-- tylko niezależne środki trwałe lub zestawy
+
+        ELSE IF @Tryb = 2
+        BEGIN
+
+                set @sZapytanie = @sZapytanie + N' inner join #drzewo on SrGGIDTyp = Srt_GIDTyp and SrGGIDNumer = Srt_GIDNumer '
+
+                set @sZapytanie =
+                        N'declare @licznik int; ' +
+                        N'set @licznik = 0; ' +
+
+                        N'create table #drzewo ' +
+                        N'( ' +
+                                N'SrGGIDTyp     smallint, ' +
+                                N'SrGGIDNumer int, ' +
+                                N'SrGAkronim    varchar(40) ' +
+                        N'); ' +
+
+                        N'insert into #drzewo ' +
+                        N'select SrG_GIDTyp, SrG_GIDNumer, SrG_Akronim ' +
+                        N'from cdn.SrtGrupy ' +
+                        N'where SrG_GrOTyp = -368 and SrG_GrONumer = ' + convert(varchar(10), @GIDNumer) + ' ' +
+                        N' while @licznik &lt;&gt; (select COUNT(*) from #drzewo) ' +
+                        N'begin ' +
+                                N'set @licznik = (select COUNT(*) from #drzewo) ' +
+
+                                N'insert into #drzewo ' +
+                                N'select c.SrG_GIDTyp, c.SrG_GIDNumer, c.SrG_Akronim ' +
+                                N'from #drzewo as d ' +
+                                N'join cdn.SrtGrupy c on d.SrGGIDTyp = c.SrG_GrOTyp and d.SrGGIDNumer = c.SrG_GrONumer ' +
+                                        N'and not exists (select 1 from #drzewo d where d.SrGGIDTyp = c.SrG_GIDTyp and d.SrGGIDNumer = c.SrG_GIDNumer) ' +
+                        N'end; ' + @sZapytanie --+ case when @sWhere = '' then '' else ' and ' + @sWhere end
+								+ ' where SRT_Rodzaj in (' + @e_srt_RodzajKarty_ST + ', ' + @e_srt_RodzajKarty_Wyp + ') '
+								+ case when @UwzgledniajZlikwidowane = 0 then ' and SRT_DataLikw = 0 ' else '' end
+								+ ' and CDN.SrtSprawdzStatusZestaw(SRT_GIDNumer, ' + @sDataNaDzien + ') IN (0, 1) '	-- tylko niezależne środki trwałe lub zestawy
+                        + N'; drop table #drzewo '
+        END
+        ELSE IF @Tryb = 3
+                set @sZapytanie = @sZapytanie + ' where cdn.SrtStanOsoba(SRT_GIDNumer, 1, ' + @sDataNaDzien + ', ' + @sDataDok + ') = ''' + @OsobaOdp + '''' --+ case when @sWhere = '' then '' else ' and ' + @sWhere end
+												+ ' and SRT_Rodzaj in (' + @e_srt_RodzajKarty_ST + ', ' + @e_srt_RodzajKarty_Wyp + ') '
+												+ case when @UwzgledniajZlikwidowane = 0 then ' and SRT_DataLikw = 0 ' else '' end
+												+ ' and CDN.SrtSprawdzStatusZestaw(SRT_GIDNumer, ' + @sDataNaDzien + ') IN (0, 1) '	-- tylko niezależne środki trwałe lub zestawy
+
+        ELSE IF @Tryb = 4
+                set @sZapytanie = @sZapytanie + ' where cdn.SrtStanMiejsce(SRT_GIDNumer, ' + @sDataNaDzien + ', ' + @sDataDok + ') = ''' + @MiejsceUz + '''' --+ case when @sWhere = '' then '' else ' and ' + @sWhere end
+												+ ' and SRT_Rodzaj in (' + @e_srt_RodzajKarty_ST + ', ' + @e_srt_RodzajKarty_Wyp + ') '
+												+ case when @UwzgledniajZlikwidowane = 0 then ' and SRT_DataLikw = 0 ' else '' end
+												+ ' and CDN.SrtSprawdzStatusZestaw(SRT_GIDNumer, ' + @sDataNaDzien + ') IN (0, 1) '	-- tylko niezależne środki trwałe lub zestawy
+
+        ELSE IF @Tryb = 5
+                set @sZapytanie = @sZapytanie + ' where cdn.SrtStanOsoba(SRT_GIDNumer, 1, ' + @sDataNaDzien + ', ' + @sDataDok + ') = ''' + @OsobaOdp + ''''
+                                                        + ' and cdn.SrtStanMiejsce(SRT_GIDNumer, ' + @sDataNaDzien + ', ' + @sDataDok + ') = ''' + @MiejsceUz + ''''
+                                                        + ' and SRT_Rodzaj in (' + @e_srt_RodzajKarty_ST + ', ' + @e_srt_RodzajKarty_Wyp + ') '
+                                                        + case when @UwzgledniajZlikwidowane = 0 then ' and SRT_DataLikw = 0 ' else '' end
+                                                        + ' and CDN.SrtSprawdzStatusZestaw(SRT_GIDNumer, ' + @sDataNaDzien + ') IN (0, 1) '	-- tylko niezależne środki trwałe lub zestawy
+                                                        --+ case when @sWhere = '' then '' else ' and ' + @sWhere end
+
+        --select @sZapytanie
+
+        exec (@sZapytanie)
+
+
+end	
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,136 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="wydrImpElementyPierwotne"></A><PRE>
+          <FONT SIZE="2"><I>/* wydrImpElementyPierwotne */</I><BR>
+CREATE     FUNCTION CDN.wydrImpElementyPierwotne(@p_Filtr Varchar(512))
+RETURNS @ElementyPierwotne TABLE (
+
+  TeP_GIDTyp            SMALLINT,
+  TeP_GIDNumer          INT,
+  TeP_GIDLp             SMALLINT,
+  TeP_Pozycja           SMALLINT,
+  TeP_TwrNazwa          VARCHAR(255),
+  TeP_Ilosc             DECIMAL(11,4),
+  TeP_Cena              DECIMAL(15,4),
+  TeP_Wartosc           DECIMAL(15,2),
+  Tep_Jmz		VARCHAR(8),
+  Tep_PCN		VARCHAR(10),
+  TeP_PKWiU		VARCHAR(20)
+)
+AS
+BEGIN
+
+DECLARE  @FiltrSQL    VARCHAR (512)
+DECLARE  @GIDTyp      SMALLINT
+DECLARE  @GIDNumer    INT
+DECLARE  @FiltrTyp    SMALLINT
+DECLARE  @FiltrNumer  INT
+DECLARE  @pos1        INT
+DECLARE  @pos2        INT
+
+SET @FiltrSQL = @p_Filtr
+SET @pos1 = Patindex('%Imn_GIDTyp=%', @FiltrSql)+11
+SET @pos2 = Patindex('%AND Imn_GIDFirma%', @FiltrSql)-2
+
+SET @pos2 = CASE WHEN @pos2&lt;0 THEN Patindex('%AND ImpNag.Imn_GIDFirma%', @FiltrSql)-2 ELSE @pos2 END
+SELECT @FiltrTyp = convert(smallint,substring(@filtrSQL,@pos1,@pos2-@pos1+1))
+SET @pos1 = Patindex('%Imn_GIDNumer=%', @FiltrSql)+13
+SET @pos2 = len(@p_filtr)
+SELECT  @FiltrNumer = convert(integer,substring(@filtrSQL,@pos1,@pos2-@pos1+1))
+
+SET  @GIDTyp = @FiltrTyp
+SET  @GIDNumer = @FiltrNumer
+
+        DECLARE @TeP_GIDTyp            SMALLINT
+        DECLARE @TeP_GIDNumer          INT
+        DECLARE @TeP_GIDLp             SMALLINT
+        DECLARE @TeP_Pozycja           SMALLINT
+        DECLARE @Tep_TwrNazwa          VARCHAR(255)
+        DECLARE @TeP_Ilosc             DECIMAL(11,4)
+        DECLARE @Tep_Cena              DECIMAL(15,4)
+        DECLARE @Tep_Wartosc           DECIMAL(15,2)
+        DECLARE @TeP_PrzeliczM          INT
+        DECLARE @TeP_PrzeliczL          INT
+        DECLARE @Tep_Jmz	       VARCHAR(8)
+        DECLARE @Tep_PCN	       VARCHAR(10)
+        DECLARE @TeP_PKWiU	       VARCHAR(20)
+
+
+        DECLARE @Dokumenty Table
+        (
+          LP          INT IDENTITY(1,1),
+          GIDTyp      INT,
+          GIDNumer    INT
+        );
+
+        WHILE 1=1
+        BEGIN
+          SELECT @GIDTyp=ImN_ZwrTyp, @GIDNumer=ImN_ZwrNumer FROM CDN.ImpNag WHERE ImN_GIDTyp=@GIDTyp AND ImN_GIDNumer=@GIDNumer
+          INSERT INTO @Dokumenty(GIDTyp,GIDNumer) VALUES(@GIDTyp,@GIDNumer)
+          IF @GIDTyp&amp;8=0 
+            BREAK
+        END
+
+
+
+DECLARE curKorekty CURSOR FOR
+  SELECT
+	Ime_gidtyp, 
+	Ime_gidnumer,
+	Ime_gidLp,
+	Ime_pozycja,
+	Ime_twrnazwa,
+	Ime_ilosc,
+	Ime_cena,
+	Ime_wartosc,
+        Ime_PrzeliczM,
+        Ime_PrzeliczL,
+	Ime_JmZ,
+	Twr_pcn,
+	twr_sww
+  FROM  CDN.ImpElem
+  JOIN cdn.twrkarty on Twr_GIDNumer=ImE_TwrNumer
+  JOIN @Dokumenty ON Ime_GidTyp=GidTyp AND Ime_GidNumer=GidNumer
+	order by Ime_gidnumer
+
+        OPEN curKorekty;
+
+FETCH NEXT FROM curKorekty
+        INTO @TeP_GIDTyp,@TeP_GIDNumer,@TeP_GIDLp,@TeP_Pozycja,@Tep_TwrNazwa,@TeP_Ilosc,@Tep_Cena,@Tep_Wartosc,@TeP_PrzeliczM,@TeP_PrzeliczL,@Tep_Jmz,@Tep_PCN,@Tep_PKWiU
+        WHILE @@Fetch_Status = 0
+        BEGIN
+          IF EXISTS(SELECT * FROM @ElementyPierwotne WHERE TeP_GIDLp=@TeP_GIDLp)
+            BEGIN
+              UPDATE @ElementyPierwotne SET
+              TeP_Ilosc = (TeP_Ilosc + @TeP_Ilosc)*@TeP_PrzeliczM/@TeP_PrzeliczL,
+              TeP_Cena = @TeP_Cena*@TeP_PrzeliczL/@TeP_PrzeliczM,
+              TeP_Wartosc = TeP_Wartosc + @TeP_Wartosc
+              WHERE TeP_GIDLp=@TeP_GIDLp
+            END
+          ELSE
+            BEGIN
+              INSERT INTO @ElementyPierwotne
+              VALUES (@FiltrTyp,@FiltrNumer,@TeP_GIDLp,@TeP_Pozycja,@Tep_TwrNazwa,@TeP_Ilosc*@TeP_PrzeliczM/@TeP_PrzeliczL,@Tep_Cena*@TeP_PrzeliczL/@TeP_PrzeliczM,@Tep_Wartosc,@Tep_Jmz,@Tep_PCN,@Tep_PKWiU)
+            END
+          FETCH NEXT FROM curKorekty
+            INTO @TeP_GIDTyp,@TeP_GIDNumer,@TeP_GIDLp,@TeP_Pozycja,@Tep_TwrNazwa,@TeP_Ilosc,@Tep_Cena,@Tep_Wartosc,@TeP_PrzeliczM,@TeP_PrzeliczL,@Tep_Jmz,@Tep_PCN,@Tep_PKWiU
+        END
+        CLOSE curKorekty;
+        DEALLOCATE curKorekty;
+        RETURN
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

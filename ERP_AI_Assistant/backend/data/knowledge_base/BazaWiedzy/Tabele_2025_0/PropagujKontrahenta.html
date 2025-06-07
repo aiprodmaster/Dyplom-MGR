@@ -1,0 +1,611 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[PropagujKontrahenta]"></A><PRE>
+          <FONT SIZE="2"><I>/* [PropagujKontrahenta] */</I><BR>
+CREATE PROCEDURE [CDN].[PropagujKontrahenta]
+        (
+                @IdCek int,
+                @IleEtapow int,
+                @OpeTypM smallint,
+                @OpeFirmaM int,
+                @OpeNumerM int,
+                @OpeLpM smallint,
+                @CKN_IleEtapow smallint,
+                @CKN_JedenWatek smallint,
+				@CzyZachowacNotatki tinyint=0 -- Czy zachować obecne notatki podczas cofania: 0 - nie, 1 - tak (dokleić' do notatek w poprzednim etapie), 2 - nadpisać (usuwać notatki z poprzedniego etapu i zastępować je tymi z usuwanego etapu)
+        )
+AS
+SET NOCOUNT ON
+
+DECLARE @_TRANCOUNT int;
+SELECT @_TRANCOUNT=@@TRANCOUNT; 
+
+declare @m_Status int
+
+select @m_Status=cek_status from cdn.crmkntetapy where cek_id=@IdCek
+
+if @m_Status &lt;&gt; 0 or @m_Status is null
+        begin
+                RAISERROR('(Operacja anulowana) Wskazany kontrahent został już spropagowany lub podany zapis nie istnieje.',16,1)
+                                SET NOCOUNT OFF
+                                RETURN 0 --1
+        end
+
+declare @gidt smallint
+declare @gidf int
+declare @gidn int
+declare @gidl smallint
+declare @nrcyklu smallint
+declare @CkePozycja smallint            -- aktualny etap
+declare @KntTyp smallint
+declare @KntFirma int
+declare @KntNumer int
+declare @KntLp smallint
+declare @EtapNadzorowany1 smallint
+declare @EtapNadzorowany2 smallint
+declare @WymuszajTransakcje smallint
+declare @WymagajPodaniaKwoty smallint
+DECLARE @ZadaniaWymagane smallint
+declare @Kwota decimal(15,2)
+DECLARE @nCKE_Archiwalny SMALLINT -- etep nastepny /poprzedni
+DECLARE @nCKE_EtapBezKnt SMALLINT -- etep nastepny /poprzedni
+DECLARE @nCKE_Kod varchar(40) -- etep nastepny /poprzedni
+DECLARE @nCKE_DataKoniec INT
+DECLARE @zadID INT
+DECLARE @KntAnonim TINYINT
+DECLARE @KntOsobaAnonim TINYINT
+DECLARE @AkwAnonim TINYINT
+DECLARE @AkwOsobaAnonim TINYINT
+
+select @gidt=cek_CkeTyp , @gidf=cek_CkeFirma , @gidn=cek_CkeNumer , @gidl=cek_CkeLp,
+@KntTyp = CEK_KntTyp ,@KntFirma = CEK_KntFirma ,@KntNumer = CEK_KntNumer ,
+@KntLp = CEK_KntLp, @nrcyklu = cek_numercyklu, @zadID = IsNull(CEK_AntZadId,0),
+@KntAnonim = IsNull(K.Knt_Anonim,0), @AkwAnonim = IsNull(A.Knt_Anonim,0),
+@KntOsobaAnonim = IsNull(OK.Kns_Anonim,0), @AkwOsobaAnonim = IsNull(OK.Kns_Anonim,0)
+from cdn.crmkntetapy
+left join cdn.KntKarty K  on K.Knt_GIDTyp=CEK_KntTyp and K.Knt_GIDNumer=CEK_KntNumer
+left join cdn.KntOsoby OK on OK.KnS_KntTyp=CEK_KntTyp and OK.KnS_KntNumer=CEK_KntNumer AND OK.KnS_KntLp=CEK_KntOsobaLp
+left join cdn.KntKarty A  on A.Knt_GIDTyp=CEK_AkwTyp and A.Knt_GIDNumer=CEK_AkwNumer
+left join cdn.KntOsoby OA on OK.KnS_KntTyp=CEK_AkwTyp and OA.KnS_KntNumer=CEK_AkwNumer AND OA.KnS_KntLp=CEK_AkwOsobaLp
+where cek_id=@IdCek
+
+if @KntAnonim &gt; 0
+        begin
+                RAISERROR('(Operacja anulowana) Kontrahent jest zanonimizowany. Wykonanie operacji nie jest możliwe.',16,1)
+                SET NOCOUNT OFF
+                RETURN 0 
+        end
+
+
+select @CkePozycja = CKE_Pozycja, @EtapNadzorowany1 = CKE_EtapNadzorowany
+from cdn.crmkampetapy
+where cke_gidtyp = @gidt and cke_gidfirma = @gidf and cke_gidnumer = @gidn and cke_gidlp = @gidl
+
+if @IleEtapow=0 set @IleEtapow=1
+
+if @IleEtapow &gt; 0 begin                 -- PROPAGACJA
+
+if @CkePozycja + @IleEtapow &gt; @CKN_IleEtapow
+        begin
+                RAISERROR('(Operacja anulowana) Licznik propagacji wykracza poza ostatni etap.',16,1)
+                SET NOCOUNT OFF
+                RETURN 0 --2
+        end
+
+declare @EtapKOD varchar(40)
+declare @CkeLp smallint
+declare @CkeNextLp smallint
+declare @CkeAkcjaWymagana smallint
+declare @CekAkcjaWykonana smallint
+declare @Iterator smallint
+declare @Maxid int
+declare @LastID int
+declare @PrevID int
+declare @EtapSzansa smallint
+declare @AkcjaZa smallint
+declare @DataZa datetime
+declare @AkcjaTxt varchar (2000)
+DECLARE @CKE_OpeTypA smallint
+DECLARE @CKE_OpeFirmaA int
+DECLARE @CKE_OpeNumerA int
+DECLARE @CKE_OpeLpA smallint
+
+DECLARE @nCKE_Terminarz smallint
+DECLARE @nCKE_Przypomnienie smallint
+DECLARE @nCKE_CzasPrzypomnienia int
+DECLARE @nCKE_CzasPrzypomnieniaJedn smallint
+DECLARE @nCKE_KwotaKontraktu decimal(15,2)
+DECLARE @nCKE_KntKoszt decimal(15,2)
+
+set @Iterator = 0
+set @LastID = @IdCek
+set @EtapNadzorowany1 = 0
+set @EtapNadzorowany2 = 0
+set @AkcjaZa = 0
+
+WHILE (@IleEtapow - @Iterator) &lt;&gt; 0
+	begin
+
+        set @EtapSzansa = 0
+        set @AkcjaTxt = ''
+
+        -- Aktualny Etap
+        select @CkeLp = CKE_GidLp, @CkeAkcjaWymagana = CKE_AkcjaWymagana , @EtapKOD = CKE_KOD,
+        @EtapNadzorowany1 = CKE_EtapNadzorowany,@WymuszajTransakcje=CKE_WymuszajTransakcje,
+        @WymagajPodaniaKwoty = CKE_KwotaWymagana, @ZadaniaWymagane = CKE_ZadaniaWymagane
+        from cdn.crmkampetapy
+        where cke_gidtyp = @gidt and cke_gidfirma = @gidf and cke_gidnumer = @gidn and cke_pozycja = @CkePozycja + @Iterator
+
+        -- Iterowany prospekt (następna pozycja)
+        select @CekAkcjaWykonana = CEK_AkcjaWykonana,@Kwota = CEK_Kwota
+        from cdn.crmkntetapy
+        where CEK_ID = @LastID
+
+        -- Następny etap
+        select @EtapSzansa = CKE_Szansa, @CkeNextLp = CKE_GidLp , @EtapNadzorowany2 = CKE_EtapNadzorowany,
+        @AkcjaZa = CKE_AkcjaZa , @AkcjaTxt = CKE_Akcja,
+        @CKE_OpeTypA = CKE_OpeTypA, @CKE_OpeFirmaA = CKE_OpeFirmaA, @CKE_OpeNumerA = CKE_OpeNumerA, @CKE_OpeLpA = CKE_OpeLpA,
+        @nCKE_Terminarz = CKE_Terminarz, @nCKE_Przypomnienie = CKE_Przypomnienie, @nCKE_CzasPrzypomnienia = CKE_CzasPrzypomnienia,
+        @nCKE_CzasPrzypomnieniaJedn = CKE_CzasPrzypomnieniaJedn, @nCKE_KwotaKontraktu = CKE_KwotaKontraktu,
+        @nCKE_EtapBezKnt = CKE_EtapBezKnt, @nCKE_Archiwalny = CKE_Archiwalny,
+        @nCKE_Kod = CKE_Kod, @nCKE_DataKoniec = CKE_DataKoniec, @nCKE_KntKoszt = CKE_KntKoszt
+        from cdn.crmkampetapy
+        where cke_gidtyp = @gidt and cke_gidfirma = @gidf and cke_gidnumer = @gidn and cke_pozycja = @CkePozycja + @Iterator + 1
+
+        -- Czy zadana akcja wykonana
+        if @CkeAkcjaWymagana = 1 and @CekAkcjaWykonana = 0
+        BEGIN
+            RAISERROR('(Operacja anulowana) Etap [%s] wymaga wykonania akcji.',16,1,@EtapKOD)
+            SET NOCOUNT OFF
+            RETURN 0 --3
+        END
+
+        -- Czy jest wymagana transakcja
+        if @WymuszajTransakcje = 1 begin
+                IF not exists (select * from CDN.CRMDokumentyLinki left join CDN.ZamNag on ZaN_GIDNumer=CDL_DokNumer
+                       where ZaN_ZamTyp in (768,1280) and CDL_DokTyp=960 and CDL_CRMTyp=341 and CDL_CRMNumer=@LastID)
+				BEGIN
+                        RAISERROR('(Operacja anulowana) Kontrahent nie może zostać spropagowany poza etap [%s] bez złożenia oferty bądź zamówienia.',16,1,@EtapKOD)
+                        SET NOCOUNT OFF
+                        RETURN 0 --11
+				END
+        end
+
+        -- Czy wymagane jest podanie kwoty
+        if @WymagajPodaniaKwoty = 1 AND @Kwota = 0
+        BEGIN
+                RAISERROR('(Operacja anulowana) Kontrahent nie może zostać spropagowany poza etap [%s] bez podania kwoty.',16,1,@EtapKOD)
+                SET NOCOUNT OFF
+                RETURN 0 --13
+        END
+
+        IF @ZadaniaWymagane = 1 BEGIN
+                IF exists (select * from CDN.SrsElem left join CDN.CRMKontrahenciWatki on CKW_SsnNumer=SsE_GidNumer
+                   where SsE_FlagaStatusu=0 and CKW_CekID=@LastID)
+				BEGIN
+                        RAISERROR('(Operacja anulowana) Kontrahent nie może zostać spropagowany poza etap [%s] bez wykonania wszystkich zadań.',16,1,@EtapKOD)
+                        SET NOCOUNT OFF
+                        RETURN 0 --17
+				END
+        END
+
+        -- Sprawdzenie etapu - czy bez knt bądz archiwalny
+        --if @nCKE_EtapBezKnt &gt; 0
+        --BEGIN
+        --    RAISERROR('(Operacja anulowana) Wskazany etap do propagacji [%s] jest oznaczony parametrem "Bez kontrahentów".',16,1,@EtapKOD)
+        --    SET NOCOUNT OFF
+        --    RETURN 0 --19
+        --END
+        --if @nCKE_Archiwalny &gt; 0
+        --BEGIN
+        --    RAISERROR('(Operacja anulowana) Wskazany etap do propagacji [%s] jest archiwalny.',16,1,@EtapKOD)
+        --    SET NOCOUNT OFF
+        --    RETURN 0 --20
+        --END
+        IF @nCKE_EtapBezKnt = 0 AND @nCKE_Archiwalny = 0 BEGIN
+
+			IF @_TRANCOUNT&gt;0 SAVE TRANSACTION PropagujKontrahenta_1;
+			ELSE BEGIN TRANSACTION PropagujKontrahenta_1;
+				
+			select @Maxid = max(cek_id)+1 from cdn.crmkntetapy
+
+			-- Jeżeli etap nie posiada wymuszonej szansy
+			if @EtapSzansa = 0 select @EtapSzansa = CEK_Szansa from cdn.crmkntetapy where CEK_ID = @LastID
+
+			set @DataZa = getdate()
+			-- Jeżeli zadana data akcji
+			if @AkcjaZa &lt;&gt; 0 set @DataZa = DateAdd ( day , @AkcjaZa , @DataZa )
+
+			-- Nowy rekord
+			declare @cCEK_CKETyp smallint
+			declare @cCEK_CKEFirma int
+			declare @cCEK_CKENumer int
+			declare @cCEK_KntTyp smallint
+			declare @cCEK_KntFirma int
+			declare @cCEK_KntNumer int
+			declare @cCEK_KntLp smallint
+			declare @cCEK_Kwota numeric(15,2)
+			--declare @cCEK_FiaskoID int
+			declare @cCEK_TStampAkt int
+			declare @cCEK_Notatki varchar(2000)
+			declare @cCEK_Url varchar(256)
+			declare @cCEK_OpeTyp smallint
+			declare @cCEK_OpeFirma int
+			declare @cCEK_OpeNumer int
+			declare @cCEK_OpeLp smallint
+			declare @cCEK_OpeNumerD int
+			declare @cCEK_AkwTyp smallint
+			declare @cCEK_AkwFirma int
+			declare @cCEK_AkwNumer int
+			declare @cCEK_AkwLp smallint
+			declare @cCEK_NumerCyklu smallint
+			declare @cCEK_Cykliczna smallint
+			declare @cCEK_CyklTyp smallint
+			declare @cCEK_CyklKoniec int
+			declare @cCEK_IloscCykli smallint
+			declare @cCEK_Interwal smallint
+			declare @cCEK_DataZakonczenia int
+			DECLARE @CEK_DataAkcji int
+			declare @cCEK_AkwOsobaLp smallint
+			declare @cCEK_KopiujAtrybuty smallint
+			DECLARE @cCEK_KntOsobaLp smallint
+			DECLARE @cCEK_KnATyp smallint
+			DECLARE @cCEK_KnANumer int
+			DECLARE @cCEK_KopiujBinarne smallint
+			DECLARE @cCEK_AntId	INT
+			DECLARE @cCEK_AntZadId	INT
+			DECLARE @cCEK_CZKZrdID	INT
+			declare @cCEK_KntKoszt numeric(15,2)
+			declare @cCEK_TypKnt INT
+			declare @cCEK_WyliczKwote TINYINT
+
+			SET @CEK_DataAkcji = DATEDIFF(day, '18001228',@DataZa)
+
+			IF @nCKE_DataKoniec &gt; @CEK_DataAkcji BEGIN      SET @cCEK_DataZakonczenia = @nCKE_DataKoniec END
+			ELSE BEGIN SET @cCEK_DataZakonczenia =  @CEK_DataAkcji  END
+
+			select
+			@cCEK_CKETyp = CEK_CKETyp,
+			@cCEK_CKEFirma = CEK_CKEFirma,
+			@cCEK_CKENumer = CEK_CKENumer,
+			@cCEK_KntTyp = CEK_KntTyp,
+			@cCEK_KntFirma = CEK_KntFirma,
+			@cCEK_KntNumer = CEK_KntNumer,
+			@cCEK_KntLp = CEK_KntLp,
+			@cCEK_Kwota = CEK_Kwota,
+			--@cCEK_FiaskoID = CEK_FiaskoID,
+			@cCEK_TStampAkt = CEK_TStampAkt,
+			@cCEK_Notatki = CEK_Notatki,
+			@cCEK_Url = CEK_Url,
+			@cCEK_OpeTyp = CEK_OpeTyp,
+			@cCEK_OpeFirma = CEK_OpeFirma,
+			@cCEK_OpeNumer = CEK_OpeNumer,
+			@cCEK_OpeLp = CEK_OpeLp,
+			@cCEK_OpeNumerD = CEK_OpeNumerD,
+			@cCEK_AkwTyp = CEK_AkwTyp,
+			@cCEK_AkwFirma = CEK_AkwFirma,
+			@cCEK_AkwNumer = CEK_AkwNumer,
+			@cCEK_AkwLp = CEK_AkwLp,
+			@cCEK_NumerCyklu = CEK_NumerCyklu,
+			@cCEK_Cykliczna = CEK_Cykliczna,
+			@cCEK_CyklTyp = CEK_CyklTyp,
+			@cCEK_CyklKoniec = CEK_CyklKoniec,
+			@cCEK_IloscCykli = CEK_IloscCykli,
+			@cCEK_Interwal = CEK_Interwal,
+			/*@cCEK_DataZakonczenia = CEK_DataZakonczenia,*/
+			@cCEK_AkwOsobaLp = CEK_AkwOsobaLp,
+			@cCEK_KopiujAtrybuty = CEK_KopiujAtrybuty,
+			@cCEK_KntOsobaLp=CEK_KntOsobaLp,
+			@cCEK_KnATyp=CEK_KnATyp,
+			@cCEK_KnANumer=CEK_KnANumer,
+			@cCEK_KopiujBinarne=CEK_KopiujBinarne,
+			@cCEK_AntId=CEK_AntId,
+			@cCEK_AntZadId=CEK_AntZadId,
+			@cCEK_CZKZrdID=CEK_CZKZrdID,
+			@cCEK_TypKnt=CEK_TypKnt,
+			@cCEK_WyliczKwote=CEK_WyliczKwote
+			from cdn.crmkntetapy
+			where CEK_ID = @LastID
+			
+			if @KntOsobaAnonim &gt; 0
+				SELECT @cCEK_KntOsobaLp=0
+
+			IF 	@AkwAnonim &gt; 0		
+				SELECT @cCEK_AkwTyp=0, @cCEK_AkwFirma=0, @cCEK_AkwNumer=0, @cCEK_AkwLp=0, @cCEK_AkwOsobaLp=0
+			
+			if @KntOsobaAnonim &gt; 0
+				SELECT @cCEK_AkwOsobaLp=0
+
+			--jesli w poprzednim byla wartosc nieustalona to przepisujemy z nowego etapu
+			IF @cCEK_Kwota&lt;=0 BEGIN SET @cCEK_Kwota=@nCKE_KwotaKontraktu END
+			SET @cCEK_KntKoszt=@nCKE_KntKoszt
+
+			insert into cdn.crmkntetapy (
+			CEK_ID,CEK_CKETyp,CEK_CKEFirma,CEK_CKENumer,CEK_CKELp,CEK_KntTyp,CEK_KntFirma,CEK_KntNumer,CEK_KntLp,
+			CEK_Szansa,CEK_Kwota,CEK_Status,CEK_SaZadania,CEK_FiaskoID,
+			CEK_DataStart,CEK_DataKoniec,
+			CEK_TStampAkt,CEK_Notatki,CEK_Url,
+			CEK_OpeTyp,CEK_OpeFirma,CEK_OpeNumer,CEK_OpeLp,CEK_OpeTypM,CEK_OpeFirmaM,CEK_OpeNumerM,CEK_OpeLpM,
+			CEK_AkwTyp,CEK_AkwFirma,CEK_AkwNumer,CEK_AkwLp,
+			CEK_OpeTypA,CEK_OpeFirmaA,CEK_OpeNumerA,CEK_OpeLpA,
+			CEK_DataAkcji,CEK_Akcja,CEK_AkcjaWykonana,
+			CEK_NumerCyklu,CEK_Cykliczna,CEK_CyklTyp,CEK_CyklKoniec,CEK_IloscCykli,CEK_Interwal,
+			CEK_DataZakonczenia,CEK_AkwOsobaLp,CEK_KopiujAtrybuty,CEK_CZKZrdID,CEK_AkwLpKoniec,
+			CEK_KntOsobaLp,CEK_Terminarz,CEK_Przypomnienie,CEK_KnATyp,CEK_KnANumer,CEK_CzasPrzypomnienia,
+			CEK_KopiujBinarne,CEK_CzasPrzypomnieniaJedn,CEK_PrzychodIlosc,CEK_AntId,CEK_AntZadId,CEK_OpeNumerD,
+			CEK_KntKoszt,CEK_PrzeniesionyZ,CEK_TypKnt,CEK_WyliczKwote)
+			values (
+			@Maxid,/*CEK_ID,*/@cCEK_CKETyp,@cCEK_CKEFirma,@cCEK_CKENumer,@CkeNextLp,/*CEK_CKELp,*/@cCEK_KntTyp,@cCEK_KntFirma,@cCEK_KntNumer,@cCEK_KntLp,
+			@EtapSzansa/*CEK_Szansa*/,@cCEK_Kwota,0,/*CEK_Status,*/0/*CEK_SaZadania*/,0/*@cCEK_FiaskoID*/,
+			DATEDIFF(day, '18001228',getdate()),/*CEK_DataStart,*/0,/*CEK_DataKoniec,*/
+			@cCEK_TStampAkt,@cCEK_Notatki,@cCEK_Url,
+			@cCEK_OpeTyp,@cCEK_OpeFirma,@cCEK_OpeNumer,@cCEK_OpeLp,@OpeTypM,@OpeFirmaM,@OpeNumerM,@OpeLpM,
+			@cCEK_AkwTyp,@cCEK_AkwFirma,@cCEK_AkwNumer,@cCEK_AkwLp,
+			@CKE_OpeTypA,@CKE_OpeFirmaA,@CKE_OpeNumerA,@CKE_OpeLpA,
+			@CEK_DataAkcji,/*CEK_DataAkcji,*/@AkcjaTxt/*CEK_Akcja*/,0/*CEK_AkcjaWykonana*/,
+			@cCEK_NumerCyklu,@cCEK_Cykliczna,@cCEK_CyklTyp,@cCEK_CyklKoniec,@cCEK_IloscCykli,@cCEK_Interwal,
+			@cCEK_DataZakonczenia,@cCEK_AkwOsobaLp,@cCEK_KopiujAtrybuty,@cCEK_CZKZrdID,0,
+			@cCEK_KntOsobaLp,@nCKE_Terminarz,@nCKE_Przypomnienie,@cCEK_KnATyp,@cCEK_KnANumer,@nCKE_CzasPrzypomnienia,
+			@cCEK_KopiujBinarne,@nCKE_CzasPrzypomnieniaJedn,0/*CEK_PrzychodIlosc - do usuniecia*/,@cCEK_AntId,@cCEK_AntZadId,@cCEK_OpeNumerD,
+			@cCEK_KntKoszt,0,@cCEK_TypKnt,@cCEK_WyliczKwote)
+
+			if @@error &lt;&gt; 0  begin
+											IF XACT_STATE()&lt;&gt;0 ROLLBACK TRANSACTION PropagujKontrahenta_1
+											RAISERROR ('Wystąpił błąd podczas przenoszenia prospektu [INSERT].', 16, 1)
+											SET NOCOUNT OFF
+											return 0 --4
+			end
+
+			-- Modyfikacja poprzedniego
+			update cdn.crmkntetapy set CEK_Status=1 , CEK_DataKoniec = DATEDIFF(day, '18001228',getdate()),
+			CEK_OpeTypM = @OpeTypM , CEK_OpeFirmaM = @OpeFirmaM , CEK_OpeNumerM = @OpeNumerM , CEK_OpeLpM = @OpeLpM
+			where CEK_ID = @LastID
+
+			if @@error &lt;&gt; 0  begin
+											IF XACT_STATE()&lt;&gt;0 ROLLBACK TRANSACTION PropagujKontrahenta_1
+											RAISERROR ('Wystąpił błąd podczas przenoszenia prospektu [UPDATE].', 16, 1)
+											SET NOCOUNT OFF
+											return 0 --5
+			end
+
+			--Kopiowanie atrybutów
+			DECLARE @AtrErr int
+			EXECUTE CDN.AtrKopiujAtrybuty 4176,@gidf,@LastID,0,32,4176,@gidf,@MaxID,0,32,@OpeTypM,@OpeFirmaM,@OpeNumerM,@OpeLpM,@AtrErr OUTPUT
+			IF @AtrErr &lt;&gt; 0
+			BEGIN
+							IF XACT_STATE()&lt;&gt;0 ROLLBACK TRANSACTION PropagujKontrahenta_1
+							RAISERROR ('Wystąpił błąd podczas kopiowania atrybutów.', 16, 1)
+							SET NOCOUNT OFF
+							RETURN 0 --12
+			END
+
+			-- Kopiowanie towarów
+			INSERT INTO CDN.CRMKntEtapyTwr(CPT_CEKId,CPT_CKTId,CPT_PrzychodIlosc)
+			SELECT @MaxID,CPT_CKTId,CPT_PrzychodIlosc FROM CDN.CRMKntEtapyTwr WHERE CPT_CEKId=@LastID AND CPT_PrzychodIlosc&lt;&gt;0
+
+			INSERT INTO CDN.CRMKntEtapyTwr(CPT_CEKId,CPT_CKTId,CPT_PrzychodIlosc)
+			SELECT @MaxID,CET_CKTId,CET_PrzychodIlosc FROM CDN.CRMEtapyTwr WHERE CET_CKENumer=@cCEK_CKENumer AND CET_CKELp=@CkeNextLp AND CET_PrzychodIlosc&lt;&gt;0
+			AND CET_CKTId not in (SELECT CPT_CKTId FROM CDN.CRMKntEtapyTwr WHERE CPT_CEKId=@MaxID)
+
+			IF @cCEK_WyliczKwote&gt;0 
+			BEGIN				
+				SELECT @cCEK_Kwota=IsNull(Sum(CDN.WartoscWWalucieSys(TwC_Wartosc,TwC_Waluta,TwC_NrKursu,DATEDIFF(S,'19900101',GETDATE()))*CPT_PrzychodIlosc),0)
+				FROM CDN.CRMKntEtapyTwr
+				JOIN CDN.CRMKampTwr ON CKT_ID=CPT_CKTId
+				JOIN CDN.TwrKarty ON Twr_GIDNumer=CKT_TwrNumer AND Twr_GIDTyp=CKT_TwrTyp
+				JOIN CDN.TwrCeny ON TwC_TwrNumer=Twr_GIDNumer AND TwC_TwrTyp=Twr_GIDTyp AND TwC_TwrLp=Twr_CenaSpr
+				WHERE CPT_CEKId=@MaxID
+					
+				UPDATE CDN.CRMKntEtapy SET CEK_Kwota=@cCEK_Kwota WHERE CEK_Id=@MaxID					
+			END
+			-- Czy przenieść wątek konwersacji?
+			if @CKN_JedenWatek = 1 begin
+					INSERT INTO CDN.CRMKontrahenciWatki (CKW_SsnNumer,CKW_CekID)
+					SELECT CKW_SsnNumer, @MaxID FROM CDN.CRMKontrahenciWatki WHERE CKW_CekID=@LastID
+			end
+
+			set @LastID = @Maxid
+			IF @_TRANCOUNT=0 COMMIT TRANSACTION PropagujKontrahenta_1;		
+			
+		END -- dla if'a sprawdzajacego czy BezKnt/Archiwalny
+		set @Iterator = @Iterator + 1
+		
+     end -- end while
+end else begin                                  -- COFNIĘCIE
+		
+		DECLARE @TranWatki TINYINT
+		SET @TranWatki = 0
+        -- Czy prospekt jest na pozycji pierwszej?
+        if @CkePozycja = 1      begin
+                                        RAISERROR ('(Operacja anulowana) Anulowanie propagacji w pierwszym etapie jest niemożliwe.', 16, 1)
+                                        SET NOCOUNT OFF
+                                        return 0 --6
+                        end
+
+        select @EtapSzansa = CKE_Szansa, @CkeLp = CKE_GidLp, @EtapNadzorowany2 = CKE_EtapNadzorowany,
+        @nCKE_EtapBezKnt = CKE_EtapBezKnt, @nCKE_Archiwalny = CKE_Archiwalny, @nCKE_Kod = CKE_Kod
+        from cdn.crmkampetapy
+        where cke_gidtyp = @gidt and cke_gidfirma = @gidf and cke_gidnumer = @gidn and cke_pozycja = @CkePozycja  + @IleEtapow
+
+        -- Czy w tym etapie znajduje się wątek konwersacji?
+        if exists (select * from CDN.CRMKontrahenciWatki where CKW_CEKID = @IdCek) begin
+
+            SELECT @_TRANCOUNT=@@TRANCOUNT; 
+			IF @_TRANCOUNT&gt;0 SAVE TRANSACTION T_Watki;
+			ELSE BEGIN TRANSACTION T_Watki;
+
+			SET @TranWatki=1
+            DECLARE @_CKW_SsnNumer INT
+
+                DECLARE C1 CURSOR FAST_FORWARD FOR
+                        SELECT CKW_SsnNumer
+                        FROM CDN.CRMKontrahenciWatki
+                        WHERE CKW_CekID = @IdCek
+                        ORDER BY CKW_SsnNumer
+                OPEN C1;
+                FETCH NEXT FROM C1 INTO @_CKW_SsnNumer
+                WHILE @@fetch_status = 0
+                BEGIN
+                        -- jesli zwykly watek to go zostawiamy a usuwamy powiazanie
+                        IF 0=(SELECT SsN_GidLp FROM CDN.SrSNag where SsN_GidNumer=@_CKW_SsnNumer) BEGIN
+                                DELETE CDN.CRMKontrahenciWatki WHERE CKW_SsnNumer=@_CKW_SsnNumer AND CKW_CekID=@IdCek
+                                if @@error &lt;&gt; 0  begin
+                                        IF XACT_STATE()&lt;&gt;0 ROLLBACK TRANSACTION T_Watki
+                                        CLOSE C1;
+                                        DEALLOCATE C1;
+                                        RAISERROR ('Wystąpił błąd podczas usuwania konwersacji [SrsNag 0].', 16, 1)
+                                        SET NOCOUNT OFF
+                                        return 0 --16
+                                end
+                    END ELSE BEGIN
+                        -- watki "sztuczne" - usuwamy watek
+                                -- jesli jest juz jakies zadanie wykonane lub watek powiazany z innymi to tylko kasujemy to powiazanie
+                                if exists (select * from CDN.SrsElem where SsE_GidNumer=@_CKW_SsnNumer and SsE_FlagaStatusu&lt;&gt;0) OR
+                                   exists (SELECT * FROM CDN.CRMKontrahenciWatki WHERE CKW_SsnNumer=@_CKW_SsnNumer AND CKW_CekID &lt;&gt; @IdCek)
+                                begin
+                                        DELETE CDN.CRMKontrahenciWatki WHERE CKW_SsnNumer=@_CKW_SsnNumer AND CKW_CekID=@IdCek
+                                        if @@error &lt;&gt; 0  begin
+                                                IF XACT_STATE()&lt;&gt;0 ROLLBACK TRANSACTION T_Watki
+                                                CLOSE C1;
+                                                DEALLOCATE C1;
+                                                RAISERROR ('Wystąpił błąd podczas usuwania konwersacji [SrsNag -1(CKW)].', 16, 1)
+                                                SET NOCOUNT OFF
+                                                return 0 --16
+                                        end
+                                end else begin
+                                        DELETE CDN.SrsNag WHERE SsN_GidNumer=@_CKW_SsnNumer
+                                        if @@error &lt;&gt; 0  begin
+                                                IF XACT_STATE()&lt;&gt;0 ROLLBACK TRANSACTION T_Watki
+                                                CLOSE C1;
+                                                DEALLOCATE C1;
+                                                RAISERROR ('Wystąpił błąd podczas usuwania konwersacji [SrsNag -1(SSN)].', 16, 1)
+                                                SET NOCOUNT OFF
+                                                return 0 --16
+                                        end
+                                end
+                        END
+
+                        FETCH NEXT FROM C1 INTO @_CKW_SsnNumer
+                END
+                CLOSE C1;
+                DEALLOCATE C1;
+                --COMMIT TRAN T_Watki
+                -- koniec usuwania powiazan z watkami
+		end
+        -- sprawdzamy czy ma dokumenty
+        if exists (select * from CDN.CRMDokumentyLinki where CDL_CRMTyp=341 and CDL_CRMNumer=@IdCek) begin
+				IF @TranWatki=1 BEGIN 
+					IF XACT_STATE()&lt;&gt;0 ROLLBACK TRANSACTION T_Watki
+				END
+                RAISERROR ('(Operacja anulowana) W aktualnym etapie z kontrahentem powiązane są dokumenty - cofnięcie propagacji niemożliwe.', 16, 1)
+                SET NOCOUNT OFF
+                return 0 --14
+		end
+        -- sprawdzamy czy byla wykonana akcja
+        IF 1=(SELECT CEK_AkcjaWykonana FROM CDN.CrmKntEtapy where CEK_ID=@IdCek) BEGIN
+				IF @TranWatki=1 BEGIN 
+					IF XACT_STATE()&lt;&gt;0 ROLLBACK TRANSACTION T_Watki
+				END
+                RAISERROR ('(Operacja anulowana) W aktualnym etapie kontrahent ma już wykonaną akcję - cofnięcie propagacji niemożliwe.', 16, 1)
+                SET NOCOUNT OFF
+                return 0 --15
+		END
+
+        set @PrevID = 0
+
+        -- Czy kontrahent jest w poprzednim etapie
+        select @PrevID = CEK_ID from cdn.crmkntetapy
+        where CEK_CKETyp = @gidt and CEK_CKEFirma = @gidf and CEK_CKENumer = @gidn and CEK_CKELp = @CkeLp
+        and CEK_KntTyp = @KntTyp and CEK_KntFirma = @KntFirma and CEK_KntNumer = @KntNumer and CEK_KntLp = @KntLp and @nrcyklu = cek_numercyklu
+
+        if isnull (@PrevID,0) = 0 begin
+			IF @TranWatki=1 BEGIN 
+				IF XACT_STATE()&lt;&gt;0 ROLLBACK TRANSACTION T_Watki
+			END
+            RAISERROR ('(Operacja anulowana) Brak kontrahenta w poprzednim etapie [%s].', 16, 1,@nCKE_KOD)
+            SET NOCOUNT OFF
+            return 0 --8
+        end
+
+        -- Jeżeli etap nie posiada wymuszonej szansy
+        if @EtapSzansa = 0 begin
+			select @EtapSzansa = CEK_Szansa from cdn.crmkntetapy where CEK_ID = @PrevID
+        end
+
+		IF @_TRANCOUNT&gt;0 SAVE TRANSACTION PropagujKontrahenta_2;
+		ELSE BEGIN TRANSACTION PropagujKontrahenta_2;
+
+		declare @AktualneCEK_Notatki VARCHAR(1999)
+		if IsNull(@CzyZachowacNotatki,0)&lt;&gt;0 begin
+			select @AktualneCEK_Notatki=CEK_Notatki from cdn.crmkntetapy  where CEK_ID = @IdCek
+		end
+
+        -- Modyfikacja poprzedniego
+        update cdn.crmkntetapy
+        set CEK_Status=0 , CEK_DataKoniec = 0, CEK_OpeTypM = @OpeTypM ,
+        CEK_OpeFirmaM = @OpeFirmaM , CEK_OpeNumerM = @OpeNumerM , CEK_OpeLpM = @OpeLpM,
+        CEK_Szansa = @EtapSzansa, CEK_Notatki = case IsNull(@CzyZachowacNotatki,0) when 1 then CEK_Notatki+' '+@AktualneCEK_Notatki when 2 then @AktualneCEK_Notatki else CEK_Notatki end
+        where CEK_ID = @PrevID
+
+        if @@error &lt;&gt; 0  begin
+			IF @TranWatki=1 BEGIN 
+				IF XACT_STATE()&lt;&gt;0 ROLLBACK TRANSACTION T_Watki
+			END
+			IF XACT_STATE()&lt;&gt;0 ROLLBACK TRANSACTION PropagujKontrahenta_2
+            RAISERROR ('Wystąpił błąd podczas anulowania propagacji.', 16, 1)
+            SET NOCOUNT OFF
+            return 0 --9
+        end
+
+
+		--Usuń aktualny
+        delete cdn.crmkntetapy where CEK_ID = @IdCek
+
+        if @@error &lt;&gt; 0  begin
+			IF @TranWatki=1 BEGIN 
+				IF XACT_STATE()&lt;&gt;0 ROLLBACK TRANSACTION T_Watki
+			END
+            IF XACT_STATE()&lt;&gt;0 ROLLBACK TRANSACTION PropagujKontrahenta_2
+            RAISERROR ('Wystąpił błąd podczas anulowania propagacji.', 16, 1)
+            SET NOCOUNT OFF
+            return 0 --10
+        end
+		
+        --Usuń zadanie zwiazane z ankietą (tylko jeśli jest to zadanie wylacznie dla tego CEK'a
+		IF NOT EXISTS(SELECT CEK_ID FROM cdn.CrmKntEtapy WHERE CEK_AntZadId&gt;0 AND CEK_AntZadId=@zadID) begin
+			DELETE CDN.ZADANIA WHERE ZAD_ID=@zadID
+			if @@error &lt;&gt; 0  begin
+				IF @TranWatki=1 BEGIN 
+					IF XACT_STATE()&lt;&gt;0 ROLLBACK TRANSACTION T_Watki
+				END
+				IF XACT_STATE()&lt;&gt;0 ROLLBACK TRANSACTION PropagujKontrahenta_2
+				RAISERROR ('Wystąpił błąd podczas anulowania propagacji.', 16, 1)
+				SET NOCOUNT OFF
+				return 0 --18
+			end
+		end
+		IF @TranWatki=1 BEGIN 
+			IF @_TRANCOUNT=0 COMMIT TRANSACTION T_Watki;
+		END		
+        IF @_TRANCOUNT=0 COMMIT TRANSACTION PropagujKontrahenta_2
+end -- enf else
+
+IF @IleEtapow &gt; 0 RETURN @Maxid
+ELSE RETURN @PrevID
+
+SET NOCOUNT OFF
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

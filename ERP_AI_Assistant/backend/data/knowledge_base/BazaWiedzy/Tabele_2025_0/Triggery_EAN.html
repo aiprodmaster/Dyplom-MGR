@@ -1,0 +1,504 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="TwrKartyEAN_InsertUpdateHandler"></A><PRE>
+          <FONT SIZE="2"><I>/* TwrKartyEAN_InsertUpdateHandler */</I><BR>
+CREATE TRIGGER CDN.TwrKartyEAN_InsertUpdateHandler ON CDN.TwrKarty
+FOR INSERT
+	, UPDATE
+AS
+IF 
+	UPDATE (Twr_EAN)
+
+BEGIN
+	DECLARE @ean VARCHAR(40)
+	DECLARE @GIDTyp SMALLINT
+	DECLARE @GIDNumer INT
+
+    DECLARE insertedean_cursor CURSOR FAST_FORWARD FORWARD_ONLY READ_ONLY
+	FOR
+	SELECT Twr_EAN
+		, Twr_GIDTyp
+		, Twr_GIDNumer
+	FROM inserted
+
+	OPEN insertedean_cursor
+
+	FETCH NEXT
+	FROM insertedean_cursor
+	INTO @ean
+		, @GIDTyp
+		, @GIDNumer
+
+	WHILE @@FETCH_STATUS = 0
+	BEGIN
+		IF (
+				@ean &lt;&gt; '0'
+				AND @ean &lt;&gt; ''
+				AND @ean IS NOT NULL
+				)
+		BEGIN
+			-- jeśli w bazie jest już taki EAN w kartach towarów, jednostkach miary, albo dostawach innego towaru to błąd 
+			--IF (EXISTS(SELECT * FROM CDN.TwrKarty WHERE Twr_EAN = @ean AND NOT(Twr_GIDTyp = @GIDTyp AND Twr_GIDNumer = @GIDNumer))
+			IF (
+					EXISTS (
+						SELECT *
+						FROM CDN.TwrKody
+						WHERE TwK_Kod = @ean
+							AND TwK_TwrNumer &lt;&gt; @GIDNumer
+						)
+					OR EXISTS (
+						SELECT *
+						FROM CDN.TwrZasoby
+						WHERE TwZ_Ean = @ean
+							AND NOT (
+								/*TwZ_TwrTyp = @GIDTyp
+								AND*/ TwZ_TwrNumer = @GIDNumer
+								)
+						)
+					OR EXISTS (
+						SELECT *
+						FROM CDN.Dostawy
+						WHERE Dst_EAN = @ean
+							AND NOT (
+								/*Dst_TwrTyp = @GIDTyp
+								AND*/ Dst_TwrNumer = @GIDNumer
+								)
+						)
+					)
+			BEGIN
+				RAISERROR (
+						'Zduplikowany EAN (%s)  '
+						, 16
+						, 1
+						, @ean
+						)
+
+				ROLLBACK TRANSACTION
+			END
+		END
+
+		FETCH NEXT
+		FROM insertedean_cursor
+		INTO @ean
+			, @GIDTyp
+			, @GIDNumer
+	END
+
+	CLOSE insertedean_cursor
+
+	DEALLOCATE insertedean_cursor
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="TwrJmEAN_InsertUpdateHandler"></A><PRE>
+          <FONT SIZE="2"><I>/* TwrJmEAN_InsertUpdateHandler */</I><BR>
+CREATE   TRIGGER CDN.TwrJmEAN_InsertUpdateHandler 
+ON CDN.TwrJm 
+FOR INSERT,UPDATE 
+AS 
+ 
+IF UPDATE(TwJ_EAN)
+BEGIN
+ DECLARE @ean VARCHAR(40) 
+ DECLARE @GIDTyp SMALLINT 
+ DECLARE @GIDNumer INT 
+ DECLARE @GIDLp SMALLINT
+
+ DECLARE insertedtwjean_cursor CURSOR 
+		FOR SELECT TwJ_EAN, TwJ_TwrTyp, TwJ_TwrNumer, TwJ_TwrLp FROM inserted 
+ OPEN insertedtwjean_cursor 
+	  
+ FETCH NEXT FROM insertedtwjean_cursor INTO @ean, @GIDTyp, @GIDNumer, @GIDLp
+	  
+ WHILE @@FETCH_STATUS = 0 
+ BEGIN 
+		IF (@ean&lt;&gt;'0' AND @ean&lt;&gt;'' AND @ean IS NOT NULL) 
+		BEGIN 
+				-- jeśli w bazie jest już taki EAN w kartach towarów, jednostkach miary, albo dostawach innego towaru to błąd 
+				IF (EXISTS(SELECT * FROM CDN.TwrKarty WHERE Twr_EAN = @ean) 
+			OR EXISTS(SELECT * FROM CDN.TwrJm WHERE TwJ_EAN = @ean AND NOT (TwJ_TwrTyp = @GIDTyp AND TwJ_TwrNumer = @GIDNumer AND TwJ_TwrLp = @GIDLP)) 
+						OR EXISTS(SELECT * FROM CDN.TwrZasoby WHERE TwZ_Ean = @ean )
+			OR EXISTS(SELECT * FROM CDN.Dostawy WHERE Dst_EAN = @ean)
+			)
+				BEGIN 
+						RAISERROR('Zduplikowany EAN: (%s) ',16,1,@ean) 
+						ROLLBACK TRAN 
+				END 
+		END 
+		FETCH NEXT FROM insertedtwjean_cursor INTO @ean, @GIDTyp, @GIDNumer, @GIDLp
+ END 
+	  
+ CLOSE insertedtwjean_cursor 
+ DEALLOCATE insertedtwjean_cursor 
+END
+*/
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="TwrZasobyEAN_InsertUpdateHandler"></A><PRE>
+          <FONT SIZE="2"><I>/* TwrZasobyEAN_InsertUpdateHandler */</I><BR>
+CREATE TRIGGER CDN.TwrZasobyEAN_InsertUpdateHandler ON CDN.TwrZasoby
+FOR INSERT
+	, UPDATE
+AS
+IF 
+	UPDATE (TwZ_EAN)
+
+BEGIN
+	DECLARE @ean VARCHAR(40)
+	DECLARE @GIDTyp SMALLINT
+	DECLARE @GIDNumer INT
+	DECLARE @DstTyp SMALLINT
+	DECLARE @DstNumer INT
+	DECLARE @TwrEan VARCHAR(40)
+
+	DECLARE insertedtwzean_cursor CURSOR FAST_FORWARD FORWARD_ONLY READ_ONLY
+	FOR
+	SELECT TwZ_EAN
+		, TwZ_TwrTyp
+		, TwZ_TwrNumer
+		, TwZ_DstTyp
+		, TwZ_DstNumer
+		, Twr_EAN
+	FROM inserted
+	INNER JOIN CDN.TwrKarty ON Twr_GIDNumer = TwZ_TwrNumer
+
+	OPEN insertedtwzean_cursor
+
+	FETCH NEXT
+	FROM insertedtwzean_cursor
+	INTO @ean
+		, @GIDTyp
+		, @GIDNumer
+		, @DstTyp
+		, @DstNumer
+		, @TwrEan
+
+	WHILE @@FETCH_STATUS = 0
+	BEGIN
+		IF (
+				@ean &lt;&gt; '0'
+				AND @ean &lt;&gt; ''
+				AND @ean IS NOT NULL
+				AND @ean &lt;&gt; @TwrEan
+				)
+		BEGIN
+			-- dopuszczamy tylko eany unikalne albo pokrywające się z eanami z towaru tego zasobu 
+			-- albo którejś z jego jednostek miary 
+			IF (
+					EXISTS (
+						SELECT *
+						FROM CDN.TwrKarty
+						WHERE Twr_EAN = @ean
+							AND NOT (
+								/*Twr_GIDTyp = @GIDTyp
+								AND*/ Twr_GIDNumer = @GIDNumer
+								)
+						)
+					OR EXISTS (
+						SELECT *
+						FROM CDN.TwrKody
+						WHERE TwK_Kod = @ean
+							AND TwK_TwrNumer &lt;&gt; @GIDNumer --Bug #281857: Błędna kontrola unikalności kodu EAN
+						)
+					OR EXISTS (
+						SELECT *
+						FROM CDN.TwrZasoby
+						WHERE TwZ_Ean = @ean
+							AND NOT (
+								/*TwZ_TwrTyp = @GIDTyp
+								AND*/ TwZ_TwrNumer = @GIDNumer
+								)
+						)
+					-- opis ponizszego - patrz analogiczny trigger przy tabeli Dostawy
+					OR (
+						EXISTS (
+							SELECT *
+							FROM CDN.Dostawy
+							WHERE Dst_EAN = @ean
+								AND Dst_TwrNumer &lt;&gt; @GIDNumer
+								AND NOT (
+									Dst_GIDTyp = @DstTyp
+									AND Dst_GIDNumer = @DstNumer
+									OR EXISTS (
+										SELECT * -- sprawdzenie czy nie kopia z FAI TID: 34383
+										FROM CDN.TraSElem
+										WHERE TrS_DsfTyp = Dst_GIDTyp
+											AND TrS_DsfNumer = Dst_GIDNumer
+											AND TrS_DstTyp = @DstTyp
+											AND TrS_DstNumer = @DstNumer
+										)
+									)
+							)
+						AND NOT EXISTS (
+							SELECT Dst_EAN
+							FROM CDN.TwrKarty
+								, CDN.Dostawy
+							WHERE Dst_EAN = @ean
+								AND Twr_EAN = @ean
+								AND Dst_TwrTyp = @GIDTyp
+								AND Dst_TwrNumer = @GIDNumer
+								AND Dst_TwrTyp = Twr_GIDTyp
+								AND Dst_TwrNumer = Twr_GIDNumer
+							)
+						)
+					)
+			BEGIN
+				RAISERROR (
+						'Zduplikowany EAN: (%s) '
+						, 16
+						, 1
+						, @ean
+						)
+
+				ROLLBACK TRANSACTION
+			END
+		END
+
+		FETCH NEXT
+		FROM insertedtwzean_cursor
+		INTO @ean
+			, @GIDTyp
+			, @GIDNumer
+			, @DstTyp
+			, @DstNumer
+			, @TwrEan
+	END
+
+	CLOSE insertedtwzean_cursor
+
+	DEALLOCATE insertedtwzean_cursor
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="DostawyEAN_InsertUpdateHandler"></A><PRE>
+          <FONT SIZE="2"><I>/* DostawyEAN_InsertUpdateHandler */</I><BR>
+CREATE TRIGGER CDN.DostawyEAN_InsertUpdateHandler ON CDN.Dostawy
+FOR
+
+INSERT
+	,
+
+UPDATE AS
+
+IF 
+	UPDATE (Dst_EAN)
+
+BEGIN
+	DECLARE @ean VARCHAR(40)
+	DECLARE @GIDTyp SMALLINT
+	DECLARE @GIDNumer INT
+	DECLARE @TwrTyp SMALLINT
+	DECLARE @TwrNumer INT
+	DECLARE @TrnTyp SMALLINT
+	DECLARE @TrnNumer INT
+	DECLARE @TrnLp SMALLINT
+	DECLARE @SubTrnLp SMALLINT
+	DECLARE @TwrEan VARCHAR(40)
+
+	DECLARE insertedean_cursor CURSOR FAST_FORWARD FORWARD_ONLY READ_ONLY
+	FOR
+	SELECT Dst_EAN
+		, Dst_GIDTyp
+		, Dst_GIDNumer
+		, Dst_TwrTyp
+		, Dst_TwrNumer
+		, Dst_TrnTyp
+		, Dst_TrnNumer
+		, Dst_TrnLp
+		, Dst_SubTrnLp
+		, Twr_Ean
+	FROM inserted
+	INNER JOIN CDN.TwrKarty ON Twr_GIDNumer = Dst_TwrNumer
+
+	OPEN insertedean_cursor
+
+	FETCH NEXT
+	FROM insertedean_cursor
+	INTO @ean
+		, @GIDTyp
+		, @GIDNumer
+		, @TwrTyp
+		, @TwrNumer
+		, @TrnTyp
+		, @TrnNumer
+		, @TrnLp
+		, @SubTrnLp
+		, @TwrEan
+
+	WHILE @@FETCH_STATUS = 0
+	BEGIN
+		IF (
+				@ean &lt;&gt; '0'
+				AND @ean &lt;&gt; ''
+				AND @ean IS NOT NULL
+				AND @ean &lt;&gt; @TwrEan
+				)
+		BEGIN
+			IF (
+					(
+						NOT EXISTS (
+							SELECT * -- sprawdzenie czy nie kopia z FAI TID: 34383
+							FROM CDN.Dostawy
+								, CDN.TraSElem
+							WHERE Dst_EAN = @ean
+								AND TrS_DsFTyp = Dst_GIDTyp
+								AND TrS_DsFNumer = Dst_GIDNumer -- AND TrS_DsFLp = Dst_GIDLp  
+								AND TrS_GIDTyp = @TrnTyp
+								AND TrS_GIDNumer = @TrNNumer
+								AND TrS_GIDLp = @TrNLp
+								AND TrS_SubGIDLp = @SubTrNLp
+							)
+						)
+					AND NOT EXISTS (
+						SELECT * -- sprawdzenie czy FAI nie z PZI
+						FROM CDN.Dostawy
+							, CDN.TraNag
+						WHERE Dst_EAN = @ean
+							AND TrN_GIDTyp = Dst_TrnTyp
+							AND TrN_GIDNumer = Dst_TrnNumer
+							AND TrN_SaNNumer = @TrNNumer
+							AND TrN_SaNTyp = @TrnTyp
+							AND Dst_SubTrnLp = @SubTrNLp
+							AND Dst_TrnLp = @TrNLp
+						)
+					AND (
+						EXISTS (
+							SELECT *
+							FROM CDN.Dostawy
+							WHERE Dst_EAN = @ean -- czyli ten EAN 
+								AND (
+									NOT (
+										/*Dst_TwrTyp = @TwrTyp
+										AND*/ Dst_TwrNumer = @TwrNumer
+										) -- nie ten sam towar 
+									)
+							)
+						OR EXISTS (
+							SELECT *
+							FROM CDN.Dostawy
+								, CDN.TwrKarty
+							WHERE Dst_EAN = @ean -- czyli ten EAN 
+								AND NOT (
+									Dst_GIDTyp = @GIDTyp
+									AND Dst_GIDNumer = @GIDNumer
+									)
+								AND (
+									/*Dst_TwrTyp = @TwrTyp
+									AND*/ Dst_TwrNumer = @TwrNumer
+									--AND Twr_GIDTyp = @TwrTyp
+									AND Twr_GIDNumer = @TwrNumer
+									--AND @ean &lt;&gt; Twr_EAN -- a jesli juz ten sam towar, to ean dwoch dostaw taki sam, a inny niz na karcie 
+									AND @ean NOT IN (
+										SELECT TwK_Kod
+										FROM CDN.TwrKody
+										WHERE TwK_TwrNumer = @TwrNumer
+										) --Bug #281673: Błąd kontroli unikalności EAN 
+									)
+							)
+						OR EXISTS (
+							SELECT *
+							FROM CDN.TwrKody
+							WHERE TwK_Kod = @ean
+								AND TwK_TwrNumer &lt;&gt; @TwrNumer --Bug #281673: Błąd kontroli unikalności EAN 
+							)
+						OR EXISTS (
+							SELECT *
+							FROM CDN.TwrKarty
+							WHERE Twr_EAN = @ean
+								AND NOT (
+									Twr_GIDTyp = @TwrTyp
+									AND Twr_GIDNumer = @TwrNumer
+									)
+							)
+						OR (
+							EXISTS (
+								SELECT *
+								FROM CDN.TwrZasoby
+								WHERE TwZ_EAN = @ean -- 1. czyli ten sam EAN 
+									AND NOT (
+										TwZ_DstTyp = @GIDTyp
+										AND TwZ_DstNumer = @GIDNumer
+										) -- i 2. nie ta sama dostawa 
+								)
+							AND -- oraz nie istnieje takie cos: 
+							(
+								NOT EXISTS (
+									SELECT TwZ_EAN
+									FROM CDN.TwrZasoby
+										, CDN.TwrKarty
+									WHERE TwZ_EAN = @ean
+										--AND Twr_EAN = @ean -- 1. ten sam EAN (i taki jak na karcie) 
+										AND Twr_EAN IN (
+											SELECT TwK_Kod
+											FROM CDN.TwrKody
+											WHERE TwK_TwrNumer = @TwrNumer
+											) --Bug #281673: Błąd kontroli unikalności EAN 
+										AND (
+											TwZ_TwrTyp = @TwrTyp
+											AND TwZ_TwrNumer = @TwrNumer -- i 2. towar ten sam 
+											AND TwZ_TwrTyp = Twr_GIDTyp
+											AND TwZ_TwrNumer = Twr_GIDNumer
+											) -- 3. i rowniez taki, jak na karcie 
+									)
+								)
+							)
+						)
+					)
+			BEGIN
+				RAISERROR (
+						'Zduplikowany EAN (%s)  '
+						, 16
+						, 1
+						, @ean
+						)
+
+				ROLLBACK TRANSACTION
+			END
+		END
+
+		FETCH NEXT
+		FROM insertedean_cursor
+		INTO @ean
+			, @GIDTyp
+			, @GIDNumer
+			, @TwrTyp
+			, @TwrNumer
+			, @TrnTyp
+			, @TrnNumer
+			, @TrnLp
+			, @SubTrnLp
+			, @TwrEan
+	END
+
+	CLOSE insertedean_cursor
+
+	DEALLOCATE insertedean_cursor
+END
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

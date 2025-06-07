@@ -1,0 +1,82 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="DaneObiekty_UaktualnijDAB"></A><PRE>
+          <FONT SIZE="2"><I>/* DaneObiekty_UaktualnijDAB */</I><BR>
+CREATE TRIGGER CDN.DaneObiekty_UaktualnijDAB ON CDN.DaneObiekty 
+FOR INSERT,UPDATE,DELETE
+AS
+BEGIN
+	SET NOCOUNT ON;
+	IF UPDATE(DAO_Retail) OR UPDATE(DAO_Domyslna) OR UPDATE(DAO_eSklep) --TFSID:222919
+		UPDATE D SET D.DAB_CzasModyfikacji = DATEDIFF(s,CONVERT(DATETIME,'1990-01-01',120),GETDATE()) FROM CDN.DaneBinarne D JOIN inserted ON inserted.DAO_DABId = D.DAB_ID
+	IF UPDATE(DAO_Retail) OR (NOT EXISTS(SELECT * FROM INSERTED) AND EXISTS(SELECT * FROM DELETED))
+	BEGIN
+		IF EXISTS(SELECT * FROM CDN.PicoKonfig WHERE PcK_Typ = 5) --TFSID:203909
+		BEGIN
+			DECLARE @Count		INT
+					,@Indeks    INT
+
+			DECLARE @PcKId      INT
+					,@ObiTyp    SMALLINT
+					,@ObiNumer  INT
+					,@ObiektTyp    SMALLINT
+					,@ObiektNumer  INT
+            
+			SELECT 
+				PcK_PicoID
+				,deleted.DAO_DABID
+				,ROW_NUMBER() OVER( ORDER BY PcK_PicoID) Indeks
+				,deleted.DAO_ObiTyp
+				,deleted.DAO_ObiNumer
+			INTO #Deleted
+			FROM deleted
+				CROSS JOIN CDN.PicoKonfig
+			WHERE PcK_Typ = 5 AND deleted.DAO_Retail = 1
+
+			SELECT 
+				@Count = COUNT(*)
+				,@Indeks = 1
+				,@ObiTyp = -14400
+			FROM #Deleted
+		
+			WHILE @Indeks &lt;= @Count
+			BEGIN		   
+				SELECT 
+					@PcKId = PcK_PicoID
+					,@ObiNumer = DAO_DABID
+					,@ObiektTyp = DAO_ObiTyp
+					,@ObiektNumer = DAO_ObiNumer
+				FROM #Deleted
+				WHERE Indeks = @Indeks		
+				-- Dopisanie do usuniŕtych obiektˇw, jesli byly kiedykolwiek wyslane do oddzialu
+				IF ISNULL(@PcKId,0) &lt;&gt; 0 AND ISNULL(@ObiTyp,0) &lt;&gt; 0 AND ISNULL(@ObiNumer,0) &lt;&gt; 0
+					AND EXISTS(select * from cdn.PicoLog where PcL_ObiTyp = -@ObiTyp AND PcL_ObiNumer = ISNULL(@ObiNumer,0) and PcL_PckID = ISNULL(@PcKId,0))
+				BEGIN
+					DELETE FROM CDN.PicoUsuniete WHERE PcU_ObiTyp = @ObiTyp AND PcU_ObiNumer = @ObiNumer AND PcU_ObiektTyp = @ObiektTyp AND PcU_ObiektID = @ObiektNumer AND PcU_PcKId = @PcKId
+					IF NOT EXISTS(SELECT * FROM CDN.PicoUsuniete WHERE PcU_ObiTyp = @ObiTyp AND PcU_ObiNumer = @ObiNumer AND PcU_ObiektTyp = @ObiektTyp AND PcU_ObiektID = @ObiektNumer AND PcU_PcKId = @PcKId)
+						EXEC CDN.OFFLXLSrv_LogUsunObiekt @PcKId, @ObiTyp, @ObiNumer, @ObiektTyp,@ObiektNumer
+				END        
+				-- Zwiŕkszenie indeksu
+				SET @Indeks = @Indeks + 1
+			END    
+			DROP TABLE #Deleted
+			DELETE FROM CDN.PicoUsuniete FROM CDN.PicoUsuniete DEL JOIN inserted ON DEL.PcU_ObiTyp = -14400 AND DEL.PcU_ObiNumer = inserted.DAO_DABID AND DEL.PcU_ObiektTyp = inserted.DAO_ObiTyp AND DEL.PcU_ObiektID = inserted.DAO_ObiNumer AND DEL.PcU_Stan &lt; 2 AND inserted.DAO_Retail = 1--ponowne zaznaczenie po odznaczeniu, ale przed sycnhronizacją
+		END
+	END
+	SET NOCOUNT OFF;
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

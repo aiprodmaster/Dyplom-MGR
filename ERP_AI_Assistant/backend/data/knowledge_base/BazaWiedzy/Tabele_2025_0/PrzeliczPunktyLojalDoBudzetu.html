@@ -1,0 +1,84 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="PrzeliczPunktyLojalDoBudzetu"></A><PRE>
+          <FONT SIZE="2"><I>/* PrzeliczPunktyLojalDoBudzetu */</I><BR>
+CREATE PROCEDURE CDN.PrzeliczPunktyLojalDoBudzetu
+    @PrmId  int,
+    @Sesja  int,
+    @TStamp int,
+    @KntNumer  int,
+    @CzyPowiekszac int,
+    @OznaczJakoOdebrane int,
+    -- 0 - progowo
+    -- 1 - proporcjonalnie
+    @SposobNaliczania int,
+    @PrzelicznikPunkty int,
+    @PrzelicznikWartosc int
+AS
+/* ==========================================================================================
+        Błędy:
+          1 - nie przypisano budżetu - kontrahent miał już przyznany budżet
+   ========================================================================================== */
+
+
+
+DECLARE @KntAkronim	varchar(20) = '', --Akronim kontrahenta
+	@KntTyp		smallint = NULL, --gid kontrahenta na promocji
+	@KntFirma 	int = NULL,
+	@KntLp		smallint = NULL,
+    @WyliczonyRabat    DECIMAL(15,4)=0,
+    @WyliczonePunkty    DECIMAL(13,2)=0
+declare @TableVar table ( 
+	ERROR int, 
+	delstat int )
+
+IF NOT exists(select * from cdn.KntPromocje where KPR_PrmId=@PrmId AND KPR_KntNumer=@KntNumer)
+BEGIN
+SELECT @KntTyp=Knt_GIDTyp, @KntLp=Knt_GIDLp, @KntFirma=Knt_GIDFirma, @KntAkronim=Knt_Akronim FROM CDN.KntKarty WHERE Knt_GIDNumer=@KntNumer
+EXEC CDN.PrmModyfikacja @PrmId, 1, @Sesja, @TStamp,@KntAkronim,@KntTyp,@KntFirma,@KntNumer,@KntLp,@KntTyp
+END
+ELSE
+BEGIN
+IF (@CzyPowiekszac=0)
+BEGIN
+INSERT INTO #TmpWyn SELECT 1 ERROR
+RETURN 1
+END
+END
+
+if @SposobNaliczania=1
+SELECT @WyliczonyRabat = Knt_Punkty*@PrzelicznikWartosc/@PrzelicznikPunkty, @WyliczonePunkty=Knt_Punkty from cdn.KntKarty where Knt_GIDNumer=@KntNumer
+ELSE 
+BEGIN
+SELECT @WyliczonyRabat = ROUND(Knt_Punkty/@PrzelicznikPunkty,0,1)*@PrzelicznikWartosc from cdn.KntKarty where Knt_GIDNumer=@KntNumer
+SET @WyliczonePunkty=@WyliczonyRabat/@PrzelicznikWartosc*@PrzelicznikPunkty
+END
+
+
+update cdn.KntPromocje SET KPR_Wartosc=KPR_Wartosc+@WyliczonyRabat WHERE KPR_PrmId=@PrmId AND KPR_KNTNumer=@KntNumer
+
+if @OznaczJakoOdebrane=1
+BEGIN
+update cdn.KntKarty SET /*Knt_Punkty=Knt_Punkty-@WyliczonePunkty,*/ KNT_PunktyOdebr=KNT_PunktyOdebr-@WyliczonePunkty where Knt_GIDNumer=@KntNumer
+update cdn.KntPromocje SET  KPR_Punkty=KPR_Punkty+@WyliczonePunkty WHERE KPR_PrmId=@PrmId AND KPR_KNTNumer=@KntNumer
+END
+
+INSERT INTO #TmpWyn SELECT 0 ERROR
+RETURN 0
+
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

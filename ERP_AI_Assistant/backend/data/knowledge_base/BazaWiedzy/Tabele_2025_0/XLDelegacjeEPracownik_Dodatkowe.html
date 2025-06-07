@@ -1,0 +1,162 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="EP_PobranieOperatora"></A><PRE>
+          <FONT SIZE="2"><I>/* EP_PobranieOperatora */</I><BR>
+CREATE PROCEDURE CDN.EP_PobranieOperatora
+AS SET NOCOUNT ON
+ 
+SELECT Ope_GIDNumer AS Operator FROM cdn.OpeKarty
+WHERE Ope_Ident = (SELECT Kon_Wartosc FROM cdn.Konfig WHERE kon_numer = 20129)
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="EP_GrafikUrlopowy_ListaDelegacjeXl"></A><PRE>
+          <FONT SIZE="2"><I>/* EP_GrafikUrlopowy_ListaDelegacjeXl */</I><BR>
+CREATE PROCEDURE CDN.EP_GrafikUrlopowy_ListaDelegacjeXl
+@listaIdPracownikow VARCHAR (MAX),
+@DataDo	DATETIME,
+@DataOd DATETIME
+AS SET NOCOUNT ON
+ 
+SELECT dv.Id AS Id, dv.PodmiotId AS PodmiotId, dv.DataWyjazdu AS DataWyjazdu, dv.DataPowrotu AS DataPowrotu, dv.STATUS AS Status
+FROM CDN.EP_DelegacjeView AS dv WHERE dv.Status &lt;&gt; 6 AND dv.PodmiotId in (SELECT [Val] FROM cdn.[EP_SplitString] (@listaIdPracownikow, ','))
+     AND ISNULL(@listaIdPracownikow, '') != '' AND dv.DataWyjazdu &lt;= @DataDo AND dv.DataPowrotu &gt;= @DataOd;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[EP_DelegacjeView]"></A><PRE>
+          <FONT SIZE="2"><I>/* [EP_DelegacjeView] */</I><BR>
+CREATE VIEW [CDN].[EP_DelegacjeView]
+AS
+SELECT   MAX([d].[DLG_GIDNumer]) AS Id,
+         cdn.NumerDokumentu(DLG_GIDTyp, DLG_GIDTyp, 0, DLG_Numer, DLG_Rok, DLG_Seria, DLG_Miesiac) AS Numer,
+         MAX([p].[Prc_OptimaId]) AS PodmiotId,
+         MAX([d].[DLG_Stan]) AS Status,
+         MAX(DATEADD(d, d.[DLG_TStampRozp], CONVERT (DATETIME, '28-12-1800', 105))) AS DataWyjazdu,
+         MAX(DATEADD(d, d.[DLG_TStampZak], CONVERT (DATETIME, '28-12-1800', 105))) AS DataPowrotu,
+         isnull(SUM([w].[WNO_Kwota]), 0) AS Zaliczka,
+         MAX([d].[DLG_WyjazdZMiejscaZam]) AS WyjazdZmiejscaZam,
+         MAX([d].[DLG_Miejsce]) AS Miejsce,
+         MAX([d].[DLG_Cel]) AS Cel,
+         MAX([d].[DLG_PokazKomentarz]) AS PokazKomentarz,
+         MAX([d].[DLG_Komentarz]) AS Komentarz,
+         MAX([d].[DLG_Zaakceptowana]) AS Zaakceptowano,
+         MAX(DATEADD(d, d.[DLG_TStampAkcept], CONVERT (DATETIME, '28-12-1800', 105))) AS AkceptacjaData,
+         MAX(isnull(w.WNO_Stan, 0)) AS ZatwierdzonaZaliczka,
+         CASE 
+         WHEN isnull(MAX([d].[DLG_Miejsce]), '') = '' THEN 0 
+         WHEN isnull(MAX([d].[DLG_Cel]), '') = '' THEN 0 ELSE 1 
+         END AS CzyNaglowekKompletny,
+		 [p].Prc_Nazwisko AS PracownikNazwisko, --nowe
+		 [p].Prc_Imie1 AS PracownikImie, --nowe
+		 [p].Prc_akronim AS PracownikAkronim
+FROM     [CDN].[Delegacje] AS d
+         INNER JOIN
+         [CDN].[PrcKarty] AS p
+         ON [d].[DLG_PRCNumer] = [p].[Prc_GIDNumer]
+         LEFT OUTER JOIN
+         [CDN].[Wnioski] AS w
+         ON [w].[WNO_DlgNumer] = [d].[DLG_GIDNumer]
+            AND [w].[WNO_Stan] != 4
+GROUP BY [d].[DLG_GIDTyp], [DLG_Seria], [DLG_Rok], [DLG_Miesiac], [d].[DLG_Numer],[p].[Prc_Nazwisko],[p].[Prc_Imie1],[p].Prc_Akronim;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="EP_PobierzZaznaczoneDelegacje"></A><PRE>
+          <FONT SIZE="2"><I>/* EP_PobierzZaznaczoneDelegacje */</I><BR>
+CREATE PROCEDURE CDN.EP_PobierzZaznaczoneDelegacje
+@zaznaczoneDelegacje NVARCHAR (MAX), @rekordOdIndeks INT, @rekordDoIndeks INT, @filtr NVARCHAR (MAX), @status INT, @dataOd DATETIME, @dataDo DATETIME, @ileRekordow int out
+
+AS
+SET NOCOUNT ON;
+Declare
+@calyWarunek NVARCHAR(max),
+@sqlcount NVARCHAR(max),
+@sql NVARCHAR(max),
+@params NVARCHAR(4000)
+
+set @calyWarunek =' '
+
+IF len(@zaznaczoneDelegacje) &gt; 0 
+	SET @calyWarunek =  @calyWarunek + ' AND ID in ('+ @zaznaczoneDelegacje + ') '
+
+IF len(@filtr) &gt; 0 
+	SET @calyWarunek = @calyWarunek + ' AND PracownikNazwisko+PracownikImie+Numer like ''' +@filtr +''''
+
+IF @status &lt;&gt; 0  
+	SET @calyWarunek =  @calyWarunek + ' and Status = '+  CAST(@status AS varchar) 
+
+select @sqlcount =N'select @ileRekordow = count(*) from cdn.EP_DelegacjeView where 1=1 '+ @calyWarunek + ' AND ( DataWyjazdu &gt;= @dataOd   and DataPowrotu &lt;=@dataDo)'   
+SELECT @params =N'@dataOd DATETIME,@dataDo DATETIME,@ileRekordow INT OUTPUT'
+EXEC sp_executesql @sqlcount, @params,@dataOd,@dataDo, @ileRekordow OUTPUT
+
+select @sql =N'select * from (select *,(ROW_NUMBER() over (order by (select 0))) WierszID from cdn.EP_DelegacjeView where 1=1 '+ @calyWarunek+' AND ( DataWyjazdu &gt;= @dataOd and DataPowrotu &lt;=@dataDo))DelegacjePrc
+where WierszID between @rekordOdIndeks and @rekordDoIndeks order by  CONVERT(DATETIME,DataWyjazdu, 105) asc, PracownikNazwisko+PracownikImie asc  '   
+SELECT @params =N'@dataOd DATETIME,@dataDo DATETIME,@rekordOdIndeks INT,@rekordDoIndeks INT'
+EXEC sp_executesql @sql, @params,@dataOd,@dataDo,@rekordOdIndeks,@rekordDoIndeks
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="EP_PobierzZaznaczoneDelegacjePracownikow"></A><PRE>
+          <FONT SIZE="2"><I>/* EP_PobierzZaznaczoneDelegacjePracownikow */</I><BR>
+CREATE PROCEDURE CDN.EP_PobierzZaznaczoneDelegacjePracownikow
+@listaIdPracownikow  NVARCHAR (MAX), @rekordOdIndeks INT, @rekordDoIndeks INT, @filtr NVARCHAR (MAX), @status INT, @dataOd DATETIME, @dataDo DATETIME, @ileRekordow int out
+
+AS
+SET NOCOUNT ON;
+Declare
+@calyWarunek NVARCHAR(max),
+@sql NVARCHAR(max),
+@sqlcount NVARCHAR(max),
+@params NVARCHAR(4000)
+
+set @calyWarunek =' '
+
+IF len(@listaIdPracownikow ) &gt; 0 
+	SET @calyWarunek =  @calyWarunek + ' AND PodmiotId in ('+ @listaIdPracownikow  + ') '
+
+IF len(@filtr) &gt; 0 
+	SET @calyWarunek = @calyWarunek + ' AND PracownikNazwisko+PracownikImie+Numer like ''' +@filtr +''''
+
+IF @status &lt;&gt; 0  
+	SET @calyWarunek =  @calyWarunek + ' and Status = '+  CAST(@status AS varchar) 
+
+select @sqlcount =N'select @ileRekordow = count(*) from cdn.EP_DelegacjeView where 1=1 '+ @calyWarunek + ' AND ( DataWyjazdu &gt;= @dataOd   and DataPowrotu &lt;=@dataDo)'   
+SELECT @params =N'@dataOd DATETIME,@dataDo DATETIME,@ileRekordow INT OUTPUT'
+EXEC sp_executesql @sqlcount, @params,@dataOd,@dataDo, @ileRekordow OUTPUT
+
+select @sql =N'select * from (select *,(ROW_NUMBER() over (order by (select 0))) WierszID from cdn.EP_DelegacjeView where 1=1 '+ @calyWarunek+' AND ( DataWyjazdu &gt;= @dataOd and DataPowrotu &lt;=@dataDo))DelegacjePrc
+where WierszID between @rekordOdIndeks and @rekordDoIndeks order by CONVERT(DATETIME,DataWyjazdu, 105) asc, PracownikNazwisko+PracownikImie asc '   
+SELECT @params =N'@dataOd DATETIME,@dataDo DATETIME,@rekordOdIndeks INT,@rekordDoIndeks INT'
+EXEC sp_executesql @sql, @params,@dataOd,@dataDo,@rekordOdIndeks,@rekordDoIndeks
+
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

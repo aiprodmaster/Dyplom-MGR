@@ -1,0 +1,560 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Usuwanie procedury XLNowyAdres"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Usuwanie procedury XLNowyAdres */</I><BR>
+if exists (select * from sysobjects where name = 'XLNowyAdres' and xtype = 'P')
+  drop procedure CDN.XLNowyAdres
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury XLNowyAdres"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury XLNowyAdres */</I><BR>
+CREATE PROCEDURE CDN.XLNowyAdres
+(     
+/* ==========================================================================================
+	SQL API: Procedura serwerowa do dodawania adresu kontrahenta
+
+	Paremetry obowiązkowe: KntNumer
+	Parametry wejściowe: 
+   ========================================================================================== */
+@KntNumer   INT,                        
+@AdresAkronim    VARCHAR(21)=NULL,         
+@Wysylkowy  TINYINT=NULL,   
+@Nazwa1     VARCHAR(50)=NULL,         
+@Nazwa2     VARCHAR(50)=NULL,        
+@Nazwa3     VARCHAR(250)=NULL,       
+@KodP       VARCHAR(10)=NULL,        
+@Miasto     VARCHAR(30)=NULL,       
+@Ulica      VARCHAR(30)=NULL,        
+@Adres      VARCHAR(30)=NULL,        
+@NipPrefiks	VARCHAR(2)=NULL,		  
+@NipE       VARCHAR(13)=NULL,         
+@Regon      VARCHAR(20)=NULL,        
+@Pesel      VARCHAR(11)=NULL,         
+@Bank       VARCHAR(20)=NULL,
+@NrRachunku VARCHAR(50)=NULL,
+@Odleglosc      DECIMAL(10,2)= NULL,  
+@Kraj           VARCHAR(2)=NULL, 
+@Wojewodztwo    VARCHAR(30)=NULL, 
+@Powiat         VARCHAR(30)=NULL,    
+@Gmina          VARCHAR(30)=NULL,   
+@NRB			SMALLINT=NULL,     
+@NiePublikuj	SMALLINT=NULL,       
+@RegionCRM      INT=NULL,			
+@Telefon1       VARCHAR(30)=NULL,   
+@Telefon2       VARCHAR(30)=NULL,    
+@Fax            VARCHAR(30)=NULL,   
+@Modem          VARCHAR(30)=NULL,    
+@Telex          VARCHAR(30)=NULL,   
+@EMail          VARCHAR(255)=NULL,   
+@KontoDostawcy  VARCHAR(30)=NULL,   
+@KontoOdbiorcy  VARCHAR(30)=NULL,
+@CzyDodacKodPocztowy SMALLINT=NULL, -- -1 nie dodawaj, 0- jak w konfiguracji, 1 -dodaj
+@CharsetANSI	TINYINT = NULL
+/* ==========================================================================================
+	Return:
+	8	- Nie znaleziono kontrahenta	
+	47	- Nie znaleziono banku
+	48	- Nie powiodło się dodanie wpisu do tabeli KntAdresy
+	49  - Nie powiodło się dodanie wpisu do tabeli KntKody
+	52	- Podano niepoprawny NIP. NIP musi składać się z cyfr i kresek
+	53	- Podano niepoprawny kod pocztowy. Dla kontrahenta krajowego kod pocztowy powinien mieć postać ##-###
+	54  - Podano niepoprawny Pesel
+	60  - Nie znaleziono Banku
+	61  - Nieprawidłowa wartość pola NRB 
+	62  - Nie ustawiono Banku	
+   ========================================================================================== */   
+)
+
+AS
+BEGIN
+
+	DECLARE			@wynik   int
+	DECLARE @blad nvarchar(2048)
+	DECLARE @AdresGIDNumer		int  
+	
+	-- pobranie numer FirmaID 
+	DECLARE			@FirmaID int 
+	DECLARE         @WartoscGIDFirma varchar(20)
+	DECLARE         @F1     varchar(10)
+	DECLARE         @F2     varchar(10)
+	DECLARE         @F3     varchar(10)
+	select @WartoscGIDFirma=sys_wartosc from cdn.systemcdn where sys_id=2
+	select @F1=SUBSTRING(@WartoscGIDFirma,0,PATINDEX('%.%',@WartoscGIDFirma))
+	Set @WartoscGIDFirma = SUBSTRING(@WartoscGIDFirma,PATINDEX('%.%',@WartoscGIDFirma)+1,LEN(@WartoscGIDFirma))
+	select @F2=SUBSTRING(@WartoscGIDFirma,0,PATINDEX('%.%',@WartoscGIDFirma))
+	Set @WartoscGIDFirma = SUBSTRING(@WartoscGIDFirma,PATINDEX('%.%',@WartoscGIDFirma)+1,LEN(@WartoscGIDFirma))
+	select @F3=SUBSTRING(@WartoscGIDFirma,0,PATINDEX('%.%',@WartoscGIDFirma))
+	Set @WartoscGIDFirma = SUBSTRING(@WartoscGIDFirma,PATINDEX('%.%',@WartoscGIDFirma)+1,LEN(@WartoscGIDFirma))
+	select @FirmaID = CAST(@WartoscGIDFirma as int)+CAST(@F3 as int)*POWER(2,8)+CAST(@F2 as int)*POWER(2,16)
+	
+	
+	DECLARE @Knt_GIDNumer		int    
+	DECLARE @Knt_Akronim		VARCHAR(21)
+	DECLARE @Knt_Nazwa1			VARCHAR(51)
+	DECLARE @Knt_Nazwa2			VARCHAR(51)
+	DECLARE @Knt_Nazwa3			VARCHAR(251)	
+	DECLARE @Knt_KodP			VARCHAR(11) 
+	DECLARE @Knt_Kraj			VARCHAR(3)	
+	DECLARE @Knt_Miasto			VARCHAR(31)
+	DECLARE	@Knt_Ulica			VARCHAR(31)
+	DECLARE @Knt_Adres			VARCHAR(31)	
+	DECLARE @Knt_Wojewodztwo	VARCHAR(31)
+	DECLARE @Knt_Powiat			VARCHAR(31)
+	DECLARE @Knt_Gmina			VARCHAR(31)
+	DECLARE @Bnk_Typ			smallint  
+	DECLARE @Bnk_Firma			int 
+	DECLARE @Bnk_Numer			int 
+	DECLARE @Bnk_Lp				smallint 
+	DECLARE @Bnk_NrRachunku varchar(10)		
+	DECLARE @Knt_BnkFirma		int
+	DECLARE @Knt_BnkTyp			smallint	
+	DECLARE @Knt_BnkNumer		int	
+	DECLARE @Knt_BnkLp			smallint
+	DECLARE @Knt_NRB			SMALLINT
+	DECLARE @Knt_NrRachunku		VARCHAR(50)
+	DECLARE @Knt_NipE		    varchar (13)
+	DECLARE @Knt_NipPrefiks		varchar (3)
+	DECLARE @Knt_ExpoKraj		TINYINT
+	DECLARE @Knt_Regon			varchar (21)
+	DECLARE @Knt_Pesel			varchar (12)
+	DECLARE @Knt_Odleglosc		DECIMAL(10,2)
+	DECLARE @Knt_RegionCRM		int
+    DECLARE @Knt_Telefon1		varchar(21)
+	DECLARE @Knt_Telefon2		varchar(21)
+	DECLARE @Knt_Fax			varchar(21)
+	DECLARE @Knt_Modem			varchar(21)
+	DECLARE @Knt_Telex			varchar(21)	
+	DECLARE @Knt_KontoDostawcy	varchar(30)	
+	DECLARE @Knt_KontoOdbiorcy  varchar(30)	
+	DECLARE @Knt_Email			varchar(255)	
+	DECLARE @Knt_CharsetANSI	TINYINT
+
+		
+    select		
+	@Knt_GIDNumer = Knt_GIDNumer,   
+	@Knt_Akronim = Knt_Akronim,
+	@Knt_Nazwa1 = Knt_Nazwa1, 
+	@Knt_Nazwa2 = Knt_Nazwa2, 
+	@Knt_Nazwa3 = Knt_Nazwa3,
+	@Knt_KodP = Knt_KodP,
+	@Knt_Kraj = Knt_Kraj,
+	@Knt_Miasto	= Knt_Miasto,	
+	@Knt_Ulica	= Knt_Ulica,
+	@Knt_Adres	= Knt_Adres,			
+	@Knt_Wojewodztwo = Knt_Wojewodztwo,	
+	@Knt_Powiat = Knt_Powiat,		
+	@Knt_Gmina = Knt_Gmina,
+	@Knt_BnkFirma = Knt_BnkFirma,	
+	@Knt_BnkTyp= Knt_BnkTyp,	
+	@Knt_BnkNumer= Knt_BnkNumer,	
+	@Knt_BnkLp = Knt_BnkLp,		
+	@Knt_NRB= Knt_NRB,
+	@Knt_NrRachunku= Knt_NrRachunku,
+	@Knt_NipE = Knt_NipE,	
+	@Knt_NipPrefiks = Knt_NipPrefiks,
+	@Knt_ExpoKraj = Knt_ExpoKraj,
+	@Knt_Regon	= Knt_Regon,	
+	@Knt_Pesel	= Knt_Pesel,
+	@Knt_RegionCRM = Knt_RegionCRM,
+	@Knt_Telefon1 = Knt_Telefon1,		
+	@Knt_Telefon2= Knt_Telefon2	,
+	@Knt_Fax = Knt_Fax,		
+	@Knt_Modem = Knt_Modem,			
+	@Knt_Telex = Knt_Telex,		
+	@Knt_KontoDostawcy = Knt_KontoDostawcy,	
+	@Knt_KontoOdbiorcy = Knt_KontoOdbiorcy,
+	@Knt_Email = Knt_Email,
+	@Knt_CharsetANSI = Knt_CharsetANSI
+	from CDN.KntKarty 		
+	where Knt_GIDNumer =  @KntNumer
+			
+    --błąd nie znaleziono kontranehnta      
+	IF @@ROWCOUNT=0 BEGIN 
+		IF NOT EXISTS(SELECT * FROM CDN.KntKarty 
+		where Knt_GIDNumer = @KntNumer 
+
+		) BEGIN
+			RAISERROR ('Wystąpił błąd podczas dodawania adresu kontrahenta. Nie znaleziono kontrahenta', 16, 1)
+			RETURN 8 
+		  END						
+	END
+	
+	--sprawdzanie NIPu		
+	if isNull(@NipPrefiks,'') &lt;&gt; ''	AND isNull(@NipE,'') = '' 
+	BEGIN			
+		RAISERROR('Podano prefiks NIP, bez podania numeru NIP [%d]- (65)',16,1)
+		RETURN 65				
+	END		
+	
+	set @NipPrefiks = UPPER(@NipPrefiks)	
+	if isNull(@NipPrefiks,'') &lt;&gt; '' AND NOT exists (select * from cdn.krajecelne where kpc_gkrID=1 and KPC_Kod=@NipPrefiks)
+	BEGIN
+		RAISERROR('Wystąpił błąd podczas dodawania adresu kontrahenta. Podany prefiks nie znajduje się na liście dostępnych prefiksów [%s] - (52)',16,1,@NipPrefiks)
+		RETURN 152
+	END
+		
+	if @NipPrefiks is Null Set @NipPrefiks = @Knt_NipPrefiks
+											
+	set @Kraj = UPPER(@Kraj)
+	if isNull(@Kraj,'') &lt;&gt; '' AND NOT exists (select * from cdn.krajecelne where KPC_Kod=@Kraj)  
+	BEGIN
+		RAISERROR('Wystąpił błąd podczas dodawania adresu kontrahenta. Podany kraj nie znajduje się na liście dostępnych krajów [%s] - (52)',16,1,@Kraj)
+		RETURN 153
+	END		
+	ELSE
+		IF @NipPrefiks is null Set @NipPrefiks = @Kraj 
+
+				
+	
+	IF 	isNull(@NipE,'') &lt;&gt; '' 
+	BEGIN
+		IF (isNull(@NipPrefiks,'')='' OR upper(@NipPrefiks)='PL') --and (UPPER(@Kraj)='PL' OR isNULL(@Kraj,'')='')
+		BEGIN
+			EXEC @wynik =  CDN.CzyPoprawnyNip @NipE
+			if @wynik &lt;&gt; 0
+			BEGIN
+				RAISERROR('Wystąpił błąd podczas dodawania adresu kontrahenta. Niepoprawny numer NIP [%s] - (52)',16,1,@NipE)
+				RETURN 52
+			END
+		END
+	END	
+	ELSE
+	BEGIN
+		Set @NipE = @Knt_NipE	
+		Set @NipPrefiks = @Knt_NipPrefiks
+	END
+	
+
+	IF isNull(@KodP,'') &lt;&gt; '' AND @Knt_ExpoKraj = 1 AND ( isNull(@Kraj,'') = '' OR Upper(@Kraj) = 'PL' )
+	BEGIN
+		EXEC @wynik =  CDN.CzyPoprawnyKodPocztowy @KodP
+		if @wynik &lt;&gt; 0
+		BEGIN
+			RAISERROR ('Wystąpił błąd podczas dodawania adresu kontrahenta. Niepoprawny kod pocztowy', 16, 1)
+			RETURN 53
+		END			
+	END
+	
+	IF isNull(@RegionCRM,0) &lt;&gt; 0 
+	BEGIN
+		if NOT EXISTS(select * from CDN.Rejony where REJ_Id = @RegionCRM) 
+		set @RegionCRM = NULL		
+	END
+	
+			
+   --ustawGeografie
+	set @Kraj = COALESCE(@Kraj,@Knt_Kraj, 'PL')
+	--set @Kraj=  ISNULL(ISNULL(@Kraj,@Knt_Kraj), 'PL')
+	IF  isNull(@KodP,'')= '' OR @KodP = @Knt_KodP
+	BEGIN --nie przeslano kodu pocztowego, lub kod pocztowy jest taki sam jak na karcie kontrahenta
+		set @KodP = @Knt_KodP
+		set @Miasto = isNull(@Miasto, @Knt_Miasto)
+		set @Wojewodztwo = isNull(@Wojewodztwo,@Knt_Wojewodztwo)
+		set @Powiat = isNull(@Powiat, @Knt_Powiat)
+		set @Gmina = isNull(@Gmina, @Knt_Gmina)
+	END
+	ELSE  --przeslano kod pocztowy, czyli szuka kodu z tabeli kodów
+	BEGIN
+		IF @Kraj = 'PL' AND  isNull(@Miasto,'') = '' 
+		BEGIN
+			SELECT top 1
+			@Miasto = isNull(@Miasto,KnP_Miasto),
+			@Wojewodztwo = isNull(@Wojewodztwo,KnP_Wojewodztwo),
+			@Powiat = ISNULL(@Powiat,KnP_Powiat),
+			@Gmina = ISNULL(@Gmina,KnP_Gmina)
+			from CDN.KntKody where KnP_KodP&lt;&gt;'00-000' and KnP_Kraj is null or KnP_Kraj='' or KnP_Kraj='PL' and KnP_KodP=@KodP
+			order by KnP_Wojewodztwo,KnP_Miasto,KnP_KodP				
+		END		
+	END
+	
+	
+	IF isNull(@NrRachunku,'')&lt;&gt;'' AND isNull(@Bank,'')='' --AND isNull(@Knt_BnkNumer,'') =''
+    BEGIN -- nie podano banku i podano Rachunek
+			RAISERROR ('Wystąpił błąd podczas dodawania adresu kontrahenta. Nie ustawiono Banku', 16, 1) 
+			RETURN 62
+	END
+
+	--sprawdza czy bank istniej w bazie danych
+	IF  isNull(@Bank,'') &lt;&gt; '' -- podano numer banku 
+	BEGIN			
+		SELECT @Bnk_NrRachunku = bnk_numer, @Bnk_Typ = Bnk_GIDTyp,	@Bnk_Firma = Bnk_GIDFirma,	@Bnk_Numer = Bnk_GIDNumer,	@Bnk_Lp = Bnk_GIDLp
+		FROM CDN.Banki where Bnk_Kod =@Bank		
+		IF @@ROWCOUNT=0 --nie ma takiego numeru banku
+		BEGIN
+			RAISERROR ('Wystąpił błąd podczas dodawania adresu kontrahenta. Nie znaleziono Banku', 16, 1) 
+			RETURN 60
+	    END
+	END	
+	ELSE
+	BEGIN
+		SELECT @Bnk_NrRachunku = bnk_numer FROM CDN.Banki where Bnk_GIDNumer = @Knt_BnkNumer	
+		set @Bnk_Typ  = @Knt_BnkTyp
+		set @Bnk_Firma =@Knt_BnkFirma
+		set @Bnk_Numer = @Knt_BnkNumer
+		set @Bnk_Lp = @Knt_BnkLp	
+	END	
+	
+
+	IF @NRB is NULL 
+	BEGIN
+		set @NRB = @Knt_NRB
+		IF @NRRachunku IS NULL set @NRRachunku = @Knt_NrRachunku
+	END
+	
+	IF @NRB is not null
+	BEGIN   --jeśli nrb ma byc zaznaczony to musi być podany bank i nr rachunku
+			IF @NRB in (0,1)
+			BEGIN
+					IF @NRB = 1
+					BEGIN  --sprawdzanie czy można zaznaczyć ten check
+							IF len(@NRRachunku)&lt;24 and charindex(@Bnk_NrRachunku,@NrRachunku)=0
+										Set @NrRachunku = @Bnk_NrRachunku +'-'+ @NrRachunku
+							ELSE	--z @NrRachunku wycina tylko numer rachunku i łączy z numerem rozliczeniowym banku
+									Set @NrRachunku = @Bnk_NrRachunku +'-'+ SUBSTRING ( @NrRachunku  ,charindex('-',@NrRachunku)+1 , LEN(@NrRachunku) - charindex('-',@NrRachunku)  )
+
+							EXECUTE @wynik=Cdn.SprawdzPoprawnoscNRB @NrRachunku OUTPUT  --zwracany numer z cyframi kontrolnymi
+							IF @wynik&lt;&gt;0
+							BEGIN
+									RAISERROR('Numer niezgodny ze standardem NRB [%s] - (61)',16,1,@NrRachunku)
+									RETURN 61
+							END
+									--Set @NRB = 0 --nr niezgodny z NRB, check nie moze byc zaznaczony
+					END
+					ELSE
+					IF @NRB=0 AND len(@NRRachunku)&lt;24 AND charindex(@Bnk_NrRachunku,@NrRachunku)=0
+							Set @NrRachunku = @Bnk_NrRachunku +'-'+ @NrRachunku
+			END
+			ELSE
+			BEGIN
+					RAISERROR('Nieprawidłowa wartość pola NRB [%d]- (61)',16,1,@NRB)
+					RETURN 61
+			END
+	END
+	
+	if isNull(@Bank,'') = '' AND isNull(@NrRachunku,'') = '' --jeśli nie podano banku ani rachunku to bieżemy z kontrahenta
+	BEGIN
+		if  EXISTS(select * from CDN.Banki where Bnk_Kod =@Bank	)	
+		BEGIN
+			set @Bnk_Firma = @Knt_BnkFirma	
+			set @Bnk_Typ= @Knt_BnkTyp
+			set @Bnk_Numer= @Knt_BnkNumer	
+			set @Bnk_Lp = @Knt_BnkLp
+			set @NrRachunku = @Knt_NRB
+			set @NRB = @Knt_NRB
+		END	
+		else
+		BEGIN
+			set @Bnk_Firma = 0
+			set @Bnk_Typ= 0
+			set @Bnk_Numer= 0	
+			set @Bnk_Lp = 0
+			set @NrRachunku = ''
+			set @NRB = 0
+		END
+	END
+			
+															
+	
+	--sprawdza poprawnosc peselu
+	IF ISNULL(@Pesel,'') &lt;&gt; ''
+	BEGIN
+		EXEC @wynik =  CDN.CzyPoprawnyPesel @Pesel
+		if @wynik &lt;&gt; 0
+		BEGIN
+			RAISERROR('Wystąpił błąd podczas dodawania adresu kontrahenta. Niepoprawny numer Pesel [%s] - (52)',16,1,@NipE)
+			RETURN 54
+		END
+	END
+
+	BEGIN TRAN
+	
+	BEGIN TRY
+		--dodwanie adresu
+		insert into CDN.KntAdresy
+		(
+		 KnA_GIDTyp,
+		 KnA_GIDFirma,
+		 KnA_GIDLp,
+		 KnA_KntTyp,
+		 KnA_KntFirma,
+		 KnA_KntNumer,
+		 KnA_KntLp, 
+		 KnA_Akronim,
+		 KnA_Wysylkowy,
+		 KnA_Nazwa1,
+		 KnA_Nazwa2,
+		 KnA_Nazwa3,
+		 KnA_KodP,
+		 KnA_Miasto,
+		 KnA_Ulica,
+		 KnA_Adres,
+		 KnA_NipPrefiks,
+		 KnA_NipE,
+		 KnA_Nip,
+		 KnA_Regon,
+		 KnA_Pesel,
+		 KnA_KontoDostawcy,
+		 KnA_KontoOdbiorcy,
+		 KnA_Kraj,
+		 KnA_Powiat,
+		 KnA_Gmina,
+		 KnA_Wojewodztwo,
+		 KnA_RegionCRM,
+		 KnA_Telefon1,
+		 KnA_Telefon2,
+		 KnA_Fax,
+		 KnA_Modem,
+		 KnA_Telex,
+		 KnA_EMail,
+		 KnA_BnkTyp,    
+		 KnA_BnkFirma,
+		 KnA_BnkNumer,
+		 KnA_BnkLp,
+		 KnA_NrRachunku,
+		 KnA_LastModL,
+		 KnA_Odleglosc,
+		 KnA_NRB,
+		 KnA_NiePublikuj,
+		 KnA_DataArc,
+		 KnA_GLN,
+		 KnA_Domyslny,
+		 KnA_DokumentTozsamosci,
+		 KnA_DataWydania,
+		 KnA_OrganWydajacy,
+		 KnA_RolnikRyczaltowy,
+		 KnA_StanPostep,
+		 KnA_PlatnikVat,
+		 KnA_GPSsz,
+		 KnA_GPSDl,
+		 KnA_GPSDataPobrania,
+		 KnA_GPSGodzinaPobrania,
+		 KnA_CharsetANSI
+		)
+		values
+		(
+		896,							--KnA_GIDTyp
+		@FirmaID,						--KnA_GIDFirma		
+		0,								--KnA_GIDLp	
+		32,								--KnA_KntTyp,
+		@FirmaID,						--KnA_KntFirma,
+		@Knt_GIDNumer,					--KnA_KntNumer,
+		0,								--KnA_KntLp
+		isNull(@AdresAkronim,@Knt_Akronim),  --KnA_Akronim,
+		case when @Wysylkowy NOT IN(0,1) then 1 else isNull(@Wysylkowy,0) end,   --KnA_Wysylkowy,
+		isNull(@Nazwa1,@Knt_Nazwa1),	--KnA_Nazwa1
+		isNull(@Nazwa2,@Knt_Nazwa2),	--KnA_Nazwa2
+		isNull(@Nazwa3,@Knt_Nazwa3),	--KnA_Nazwa3
+		isNull(@KodP,''),							--KnA_KodP,
+		isNull(@Miasto,''),
+		ISNULL(@Ulica, @Knt_Ulica),		--KnA_Ulica,
+		ISNULL(@Adres, @Knt_Adres),		--KnA_Adres,
+		isNull(@NipPrefiks,''),
+		isNull(@NipE,''),
+		REPLACE(@NipE,'-',''),
+		ISNULL(@Regon, @Knt_Regon),		--KnA_Regon,
+		ISNULL(@Pesel,@Knt_Pesel),		--KnA_Pesel,
+		ISNULL(@KontoDostawcy,@Knt_KontoDostawcy), --KnA_KontoDostawcy,
+		ISNULL(@KontoOdbiorcy,@Knt_KontoOdbiorcy), --KnA_KontoOdbiorcy,
+		isNull(@Kraj,''),							--KnA_Kraj,
+		isNull(@Powiat,'')	,					--KnA_Powiat,
+		isNull(@Gmina,'')	,						--KnA_Gmina,
+		isNull(@Wojewodztwo,''),				--KnA_Wojewodztwo, 
+		ISNULL(@RegionCRM, @Knt_RegionCRM),--KnA_RegionCRM,
+		ISNULL(@Telefon1, @Knt_Telefon1),--KnA_Telefon1,
+		ISNULL(@Telefon2, @Knt_Telefon2),--KnA_Telefon2,
+		ISNULL(@Fax, @Knt_Fax),			--KnA_Fax,
+		ISNULL(@Modem, @Knt_Modem),		--KnA_Modem,
+		ISNULL(@Telex, @Knt_Telex),		--KnA_Telex,
+		ISNULL(@EMail, @Knt_Email),		--KnA_EMail,
+		@Bnk_Typ,						--GID banku
+		@Bnk_Firma,
+		@Bnk_Numer,
+		@Bnk_Lp,
+		isNull(@NrRachunku,''),
+		datediff ( s , '19900101' , getdate()),--KnA_LastModL,
+		--ISNULL(@Odleglosc,@Knt_Odleglosc),--KnA_Odleglosc,
+		COALESCE(@Odleglosc,@Knt_Odleglosc,0),--KnA_Odleglosc, 
+		isNull(@NRB,0),
+		isNull(@NiePublikuj,0),					--KnA_NiePublikuj,
+		0, -- KnA_DataArc,
+		0, --KnA_GLN,
+		0,  --KnA_Domyslny
+		'', --KnA_DokumentTozsamosci
+		0,  --KnA_DataWydania	
+		'', --KnA_OrganWydajacy,
+		0,  --KnA_RolnikRyczaltowy	
+		0, --KnA_StanPostep,
+		0, --KnA_PlatnikVat,
+		0, --KnA_GPSsz,
+		0, --KnA_GPSDl,
+		0, --KnA_GPSDataPobrania,
+		0, --KnA_GPSGodzinaPobrania
+		COALESCE(@CharsetANSI,@Knt_CharsetANSI,238)--KnA_CharsetANSI
+		)
+	    END TRY
+		BEGIN CATCH
+			ROLLBACK TRAN 
+			set @blad = ERROR_MESSAGE()	
+			RAISERROR ('Nie powiodło się dodanie wpisu do tabeli KntAdresy. %s', 16, 1, @blad )
+			RETURN 48	 						
+		END CATCH
+					
+		set @AdresGIDNumer= SCOPE_IDENTITY()
+			
+		select @wynik = Kon_Wartosc from CDN.Konfig where Kon_Numer =986
+		--jeśli zaznaczony jest parametr Automatyczne zapisuj kody pocztowe w konfiguracji na zakładce: Sprzedaż/Parametry 2 to kod pocztowy ma się również dodawać
+		
+		IF ((isNULL(@CzyDodacKodPocztowy,0) = 0 AND  @wynik = 1) OR @CzyDodacKodPocztowy = 1)
+		AND NOT( ISNULL(@Miasto,'') = '' OR --nie podano miasta
+		(ISNULL(@kraj,'') &lt;&gt; '' AND UPPER(@Kraj) &lt;&gt; 'PL') OR @KodP = '00-000' ) --podano kraj inny niz PL
+		BEGIN
+			IF NOT EXISTS(select * from CDN.KntKody where 
+			isNull(KnP_KodP,'') = @KodP AND
+			isNull(KnP_Miasto,'') = @Miasto ) -- nie istniej taki kod w bazie danych
+			BEGIN --dodanie adresu pocztowego	
+			    BEGIN TRY
+				Insert into CDN.KntKody (KnP_KodP, KnP_Miasto, KnP_Wojewodztwo, KnP_Powiat, KnP_Gmina,KnP_Kraj,KnP_SzerGeog, KnP_DlugGeog, KnP_Region )
+				VALUES(@KodP, @Miasto, isNull(@Wojewodztwo,''), isNull(@Powiat,''), isNull(@Gmina,''), isNull(@Kraj,''),0,0,0)
+				END TRY
+				BEGIN CATCH
+					ROLLBACK TRAN 
+					set @blad = ERROR_MESSAGE()	
+					RAISERROR ('Nie powiodło się dodanie wpisu do tabeli KntKody. %s', 16, 1, @blad)
+					RETURN 49	 						
+				END CATCH
+			END
+		END
+		
+	COMMIT TRAN
+	
+	select @AdresGIDNumer
+	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury XLNowyAdres"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury XLNowyAdres */</I><BR>
+GRANT EXECUTE ON CDN.XLNowyAdres TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

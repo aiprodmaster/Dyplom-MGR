@@ -1,0 +1,221 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie procedury ESKLEP_EksportCeny"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie procedury ESKLEP_EksportCeny */</I><BR>
+IF EXISTS (SELECT * FROM dbo.sysobjects WHERE id = OBJECT_ID(N'CDN.ESKLEP_EksportCeny') AND OBJECTPROPERTY(id, N'IsProcedure') = 1)
+  DROP PROCEDURE CDN.ESKLEP_EksportCeny
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury ESKLEP_EksportCeny"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury ESKLEP_EksportCeny */</I><BR>
+CREATE PROCEDURE CDN.ESKLEP_EksportCeny
+  @ID INT      -- ID e-sklepu
+ ,@TypExp INT  -- Typ eksportu cennika (0 - różnicowy, 1 - pełny)
+
+AS
+SET NOCOUNT ON
+
+CREATE TABLE #tmpRecordSet(
+           /*     Ceny */  TwrGIDNumer INT, TwCTwrLp SMALLINT, TwCWartoscNetto DECIMAL(15,2), TwCWartoscBrutto DECIMAL(15,2), TwCPodatek INT, TwCPunkty INT
+                          )
+                          
+DECLARE @idwalutydomyslnej varchar(4) -- waluta domyślna dla iSklepu
+SELECT @idwalutydomyslnej = PcK_Waluta from cdn.PicoKonfig where PcK_PicoID = @ID
+DECLARE @TypNumerycznyPL INT = 616
+
+DECLARE @Lokalizacja INT
+DECLARE @LokalizacjaKraje TABLE (LokalizacjaId INT, KodKraju NVARCHAR(8))
+
+INSERT INTO @LokalizacjaKraje (LokalizacjaId, KodKraju) VALUES
+(616, 'PL'),(840, 'US'),(276, 'DE'),(804, 'UA'),(250, 'FR'),(756, 'CH')
+
+SELECT @Lokalizacja = COALESCE(
+(SELECT LK.LokalizacjaId
+FROM CDN.Konfig
+JOIN @LokalizacjaKraje LK on Kon_Wartosc = LK.KodKraju
+WHERE Kon_Numer = 2154)
+,616)
+                          
+INSERT INTO #tmpRecordSet
+SELECT
+         Twr_GIDNumer
+         ,/*TFSID:225895 CASE WHEN TwC_TwrLp = PcK_NrCeny THEN 1 ELSE 2 END*/TwC_TwrLp
+		 ,CONVERT(DECIMAL(15,2),ROUND(CDN.CenaNetto(TwC_Wartosc,Twc_TwrLp,Twr_StawkaPodSpr),2))*WalutyiSklep.PwL_KursL/WalutyiSklep.PwL_KursM As TwCWartoscNetto
+		 ,CONVERT(DECIMAL(15,2),ROUND(CDN.CenaBrutto(TwC_Wartosc,Twc_TwrLp,Twr_StawkaPodSpr),2))*WalutyiSklep.PwL_KursL/WalutyiSklep.PwL_KursM As TwCWartoscBrutto
+		 ,Twr_StawkaPodSpr AS TwC_Podatek
+		 ,Twr_Punkty AS TwCPunkty
+FROM CDN.TwrKarty
+JOIN CDN.TwrCeny A ON Twr_GIDNumer = A.TwC_TwrNumer
+JOIN (select PwL_SymbolM, PwL_KursM, PwL_KursL,PwL_KursTS from cdn.PicoWaluty where PwL_PckID = @ID AND PwL_TSArchiwizacji = 0 
+	UNION ALL select @idwalutydomyslnej, 1, 1, (2^31-1)) WalutyiSklep on A.TwC_Waluta = WalutyiSklep.PwL_SymbolM /* tylko dla walut uzywanych w iSklepie */
+JOIN CDN.PicoKonfig ON Pck_PicoId = @ID
+JOIN CDN.TwrGrupy PCKTWG (NOLOCK) ON PCKTWG.TwG_SyncId = PcK_TwGNumer AND PCKTWG.TwG_GIDTyp = -16
+LEFT OUTER JOIN CDN.PicoCenniki ON PcC_PcKID=@ID and PcC_TwCTwrTyp=64 AND PcC_TwCTwrNumer=A.TwC_ID and PcC_TwCTwrLp = 0
+LEFT OUTER JOIN CDN.PicoLog ON PcL_PcKID = Pck_PicoId AND PcL_ObiTyp = Twr_GIDTyp AND PcL_ObiNumer = Twr_GIDNumer
+WHERE A.TwC_TwrLp IN (SELECT ID FROM CDN.ESKLEP_CenyEksportowane(@ID)) and A.TwC_TwrLp&lt;&gt;0 AND Twr_GIDNumer &gt; 0 AND Twr_eSklep = 1 AND Twr_Archiwalny = 0 AND Twr_LastModC &lt;&gt; 0
+AND EXISTS(SELECT * FROM CDN.TwrCeny WHERE Twr_GIDNumer = TwC_TwrNumer AND TwC_TwrLp = PcK_NrCeny)
+AND (EXISTS(select * from cdn.TwrCeny where A.TwC_TwrNumer = Twr_GIDNumer and A.twc_czasmodyfikacji &gt; CASE WHEN @TypExp=0 AND ISNULL(PcC_TS,0) &gt; 0 THEN PcK_TSSynchrTwrPtw ELSE 0 END OR ISNULL(PcL_TStamp,PcK_TSSynchrTwrPtw + 1) &gt; PcK_TSSynchrTwrPtw OR (PwL_KursTS &gt; CASE WHEN @TypExp=0 THEN PcK_TSSynchrPtw ELSE 0 END)))
+AND A.TwC_ID = (
+				SELECT TOP 1 B.TwC_ID FROM CDN.TwrCeny B 
+				WHERE B.TwC_TwrNumer = Twr_GIDNumer AND B.TwC_TwrLp = A.TwC_TwrLp AND B.TwC_DataOd &lt;= DATEDIFF(s,CONVERT(DATETIME,'1990-01-01',120),GETDATE())
+				ORDER BY B.TwC_TwrLp,B.TwC_DataOd DESC
+				) 
+AND EXISTS(SELECT TwL_GrONumer FROM CDN.TwrLinki WHERE Twr_GIDTyp = TwL_GIDTyp AND Twr_GIDNumer = TwL_GIDNumer AND TwL_GrONumer = PCKTWG.TwG_GIDNumer )
+
+-- Stawki VAT
+CREATE TABLE #tmpTwrVAT(TwrGIDNumer INT, KrajID INT, Vat DECIMAL(5,2))
+
+INSERT INTO #tmpTwrVAT
+SELECT DISTINCT TwrGIDNumer, @Lokalizacja, TwCPodatek
+FROM #tmpRecordSet 
+
+MERGE #tmpTwrVAT AS Target
+USING(
+SELECT DISTINCT TwV_TwrNumer as TwrNumer, KPC_KodNumeryczny as KodNumeryczny, TwV_StawkaPod as StawkaPod
+FROM #tmpRecordSet T
+JOIN CDN.TwrStawkiVAT ON T.TwrGIDNumer = TwV_TwrNumer AND 16 = TwV_TwrTyp
+JOIN CDN.KrajeCelne ON TwV_Kraj = KPC_Kod
+WHERE TwV_TwrTyp = 16
+) AS Source (TwrNumer,KodNumeryczny,StawkaPod)
+ON Target.TwrGIDNumer = Source.TwrNumer AND Target.KrajID = Source.KodNumeryczny
+WHEN NOT MATCHED BY Target THEN
+INSERT (TwrGIDNumer, KrajID, Vat)
+   VALUES (source.TwrNumer, source.KodNumeryczny, source.StawkaPod);
+
+SELECT DISTINCT 1 AS Tag, NULL AS Parent
+	,NULL AS [PRCLI!1]
+	,NULL AS [TWR!2!GIDNumer]
+	,NULL AS [PRCI!3]
+	,NULL AS [PRC!4!ID], NULL AS [PRC!4!CenaN], NULL AS [PRC!4!CenaB]
+	,NULL AS [VATI!5]
+	,NULL AS [VAT!6!KrajID], NULL AS [VAT!6!VAT]
+	FROM #tmpRecordSet
+
+UNION ALL 
+
+SELECT  DISTINCT 2 AS Tag, 1 AS Parent
+	,NULL AS [PRCLI!1]
+	,TwrGIDNumer AS [TWR!2!GIDNumer]
+	,NULL AS [PRCI!3]
+	,NULL AS [PRC!4!ID], NULL AS [PRC!4!CenaN], NULL AS [PRC!4!CenaB]
+	,NULL AS [VATI!5]
+	,NULL AS [VAT!6!KrajID], NULL AS [VAT!6!VAT]
+	FROM #tmpRecordSet
+
+UNION ALL 
+
+SELECT  DISTINCT 3 AS Tag, 2 AS Parent
+	,NULL AS [PRCLI!1]
+	,TwrGIDNumer AS [TWR!2!GIDNumer]
+	,NULL AS [PRCI!3]
+	,NULL AS [PRC!4!ID], NULL AS [PRC!4!CenaN], NULL AS [PRC!4!CenaB]
+	,NULL AS [VATI!5]
+	,NULL AS [VAT!6!KrajID], NULL AS [VAT!6!VAT]
+	FROM #tmpRecordSet
+
+UNION ALL 
+
+SELECT  DISTINCT 4 AS Tag, 3 AS Parent
+	,NULL AS [PRCLI!1]
+	,TwrGIDNumer AS [TWR!2!GIDNumer]
+	,NULL AS [PRCI!3]
+	,TwCTwrLp AS [PRC!4!ID], TwCWartoscNetto AS [PRC!4!CenaN], TwCWartoscBrutto AS [PRC!4!CenaB]
+	,NULL AS [VATI!5]
+	,NULL AS [VAT!6!KrajID], NULL AS [VAT!6!VAT]
+	FROM #tmpRecordSet
+
+UNION ALL 
+
+SELECT  DISTINCT 5 AS Tag, 2 AS Parent
+	,NULL AS [PRCLI!1]
+	,TwrGIDNumer AS [TWR!2!GIDNumer]
+	,NULL AS [PRCI!3]
+	,NULL AS [PRC!4!ID], NULL AS [PRC!4!CenaN], NULL AS [PRC!4!CenaB]
+	,NULL AS [VATI!5]
+	,NULL AS [VAT!6!KrajID], NULL AS [VAT!6!VAT]
+	FROM #tmpTwrVAT
+
+UNION ALL 
+
+SELECT  DISTINCT 6 AS Tag, 5 AS Parent
+	,NULL AS [PRCLI!1]
+	,TwrGIDNumer AS [TWR!2!GIDNumer]
+	,NULL AS [PRCI!3]
+	,NULL AS [PRC!4!ID], NULL AS [PRC!4!CenaN], NULL AS [PRC!4!CenaB]
+	,NULL AS [VATI!5]
+	,KrajID AS [VAT!6!KrajID], VAT AS [VAT!6!VAT]
+
+FROM #tmpTwrVAT
+ORDER BY [TWR!2!GIDNumer], Tag
+FOR XML EXPLICIT
+
+-- po wyslaniu towaru ustawiamy flage Twr_Oddzialowy (informacja o wysłaniu do e-sklepu jest zapisywana na drugim bicie Twr_Oddzialowy)
+/*
+UPDATE CDN.TwrKarty SET Twr_Oddzialowy = (Twr_Oddzialowy&amp;1) + 2
+WHERE Twr_Oddzialowy &amp; 2 = 0 AND Twr_GIDNumer IN (SELECT DISTINCT TwrGIDNumer FROM  #tmpRecordSet )
+
+INSERT INTO CDN.PicoLog (PcL_PcKID, PcL_ObiTyp, PcL_ObiNumer, PcL_ObiektID, PcL_Komentarz, PcL_Info, PcL_TStamp)
+                        SELECT @ID, 16, Twr_GIDNumer, 1, 'Towar - '+ Twr_Kod, '', DATEDIFF(s,CONVERT(DATETIME,'19900101',121),GETDATE())
+                        FROM CDN.TwrKarty
+                        LEFT OUTER JOIN CDN.PicoLog ON PcL_PcKID = @ID AND PcL_ObiTyp = Twr_GIDTyp AND PcL_ObiNumer = Twr_GIDNumer
+                        WHERE Twr_GIDNumer IN (SELECT DISTINCT TwrGIDNumer FROM  #tmpRecordSet ) AND PcL_ID IS NULL
+*/
+DECLARE @CennikiTmp TABLE(TWCID INT)
+INSERT INTO @CennikiTmp
+		SELECT A.TwC_ID
+		FROM CDN.TwrKarty
+		JOIN CDN.TwrCeny A ON Twr_GIDNumer = A.TwC_TwrNumer
+		JOIN (select PwL_SymbolM, PwL_KursM, PwL_KursL,PwL_KursTS from cdn.PicoWaluty where PwL_PckID = @ID AND PwL_TSArchiwizacji = 0 
+			UNION ALL select @idwalutydomyslnej, 1, 1, (2^31-1)) WalutyiSklep on A.TwC_Waluta = WalutyiSklep.PwL_SymbolM /* tylko dla walut uzywanych w iSklepie */
+		JOIN CDN.PicoKonfig ON Pck_PicoId = @ID
+		JOIN CDN.TwrGrupy PCKTWG (NOLOCK) ON PCKTWG.TwG_SyncId = PcK_TwGNumer
+		LEFT OUTER JOIN CDN.PicoCenniki ON PcC_PcKID=@ID and PcC_TwCTwrTyp=64 AND PcC_TwCTwrNumer=A.TwC_ID and PcC_TwCTwrLp = 0
+		LEFT OUTER JOIN CDN.PicoLog ON PcL_PcKID = Pck_PicoId AND PcL_ObiTyp = Twr_GIDTyp AND PcL_ObiNumer = Twr_GIDNumer
+		WHERE A.TwC_TwrLp IN (SELECT ID FROM CDN.ESKLEP_CenyEksportowane(@ID)) and A.TwC_TwrLp&lt;&gt;0 AND Twr_GIDNumer &gt; 0 AND Twr_eSklep = 1 AND Twr_Archiwalny = 0 AND Twr_LastModC &lt;&gt; 0
+		AND EXISTS(SELECT * FROM CDN.TwrCeny WHERE Twr_GIDNumer = TwC_TwrNumer AND TwC_TwrLp = PcK_NrCeny)
+		AND (EXISTS(select * from cdn.TwrCeny where A.TwC_TwrNumer = Twr_GIDNumer and A.twc_czasmodyfikacji &gt; CASE WHEN @TypExp=0 AND ISNULL(PcC_TS,0) &gt; 0 THEN PcK_TSSynchrTwrPtw ELSE 0 END OR ISNULL(PcL_TStamp,PcK_TSSynchrTwrPtw + 1) &gt; PcK_TSSynchrTwrPtw OR (PwL_KursTS &gt; CASE WHEN @TypExp=0 THEN PcK_TSSynchrPtw ELSE 0 END)))
+		AND A.TwC_ID = (
+						SELECT TOP 1 B.TwC_ID FROM CDN.TwrCeny B 
+						WHERE B.TwC_TwrNumer = Twr_GIDNumer AND B.TwC_TwrLp = A.TwC_TwrLp AND B.TwC_DataOd &lt;= DATEDIFF(s,CONVERT(DATETIME,'1990-01-01',120),GETDATE())
+						ORDER BY B.TwC_TwrLp,B.TwC_DataOd DESC
+						) 
+		AND EXISTS(SELECT TwL_GrONumer FROM CDN.TwrLinki WHERE Twr_GIDTyp = TwL_GIDTyp AND Twr_GIDNumer = TwL_GIDNumer AND TwL_GrONumer = PCKTWG.TwG_GIDNumer )
+
+		DELETE A FROM cdn.PicoCenniki A
+		JOIN @CennikiTmp ON TWCID = A.PcC_TwCTwrNumer
+	    WHERE PcC_PcKID = @ID AND PcC_TwCTwrTyp = 64 AND PcC_TwCTwrLp = 0
+
+		INSERT INTO cdn.PicoCenniki (PcC_TwCTwrTyp, PcC_TwCTwrNumer, PcC_TwCTwrLp, PcC_PcKID, PcC_TS)
+		SELECT 64, TWCID, 0, @ID, DATEDIFF(s,CONVERT(DATETIME,'1990-01-01',120),GETDATE()) FROM @CennikiTmp
+
+DROP TABLE #tmpRecordSet
+SET NOCOUNT OFF
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury ESKLEP_EksportCeny"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury ESKLEP_EksportCeny */</I><BR>
+GRANT EXECUTE ON CDN.ESKLEP_EksportCeny TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,66 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[POS_EksportTowaryZGrupy]"></A><PRE>
+          <FONT SIZE="2"><I>/* [POS_EksportTowaryZGrupy] */</I><BR>
+CREATE PROCEDURE [CDN].[POS_EksportTowaryZGrupy]
+	@rowVersion bigint,
+	@PointOfSaleId int
+AS
+BEGIN
+SET NOCOUNT ON;	
+
+	DECLARE @GRP TABLE(GidNumer INT ,Gidtyp INT,GrONumer INT)
+	INSERT INTO @GRP  
+	select DISTINCT
+		GidNumer,Gidtyp,GrONumer
+	from cdn.PicoKonfig 
+	join cdn.PicoStanowiska on pck_picoid = psa_pckid
+	outer apply cdn.PobierzDrzewoGrupTowarowych(PcK_TwGENumer,DEFAULT,DEFAULT,1,DEFAULT,DEFAULT)
+	where (@PointOfSaleId is not null and PSa_ID = @PointOfSaleId) or (@PointOfSaleId is null and PSa_TypAplikacji = 2)
+
+	DECLARE @twr table (TWRGIDNUMER int, TwrBylWyslany int, PsaDataDodania int)
+	insert INTO @twr
+	SELECT TwrGidNumer, max(oddzialBylWyslany), max(PSaDataDodania) FROM cdn.POS_OddzialyDoEksportu(@PointOfSaleId, @rowVersion) cross apply cdn.POS_TwrDoEksportu(PSaID,0) group by TwrGidNumer
+
+	declare @eksport table(id int, groupId int, productId int, rw int)
+	insert into @eksport 
+	select 
+				TwL_Id,
+				min(gr.TwG_SyncId),
+				TwrGidNumer,
+				case when @PointOfSaleId is null and max(TwrBylWyslany) = 0 and max(PsaDataDodania) &gt; twr.TwG_CzasModyfikacji then max(PsaDataDodania) else twr.TwG_CzasModyfikacji end
+		from @GRP
+		join cdn.TwrGrupy gr on gr.TwG_GIDNumer = GidNumer AND gr.TwG_GIDTyp = Gidtyp AND gr.TwG_GrONumer = GrONumer
+		join cdn.twrlinki on TwL_GrOTyp = Gidtyp and Twl_GroNumer = GidNumer and TwL_Lisc = 1		
+		join @twr on TwL_GIDNumer = TwrGIDNumer and Twl_Gidtyp = 16
+		join cdn.TwrGrupy twr on TwrGidNumer = twr.TwG_GIDNumer and twr.TwG_GrONumer = TwL_GrONumer and twr.TwG_GrOTyp = TwL_GrOTyp
+		where twr.TwG_CzasModyfikacji &gt; @rowVersion or (@PointOfSaleId is null and TwrBylWyslany = 0)
+		group by TwL_Id,TwrGidNumer, twr.TwG_CzasModyfikacji
+
+	
+
+	SELECT ISNULL(NULLIF((select max(rw) from @eksport),0),@rowVersion) AS [@RowVersion]
+		,(select distinct
+				id as [@Id],
+				groupId as [@GroupId],
+				productId as [@ProductId]
+		from @eksport
+		for xml path('ProductGroupMember'), type)
+	for xml path('ProductGroupMembers')
+	SET NOCOUNT OFF;	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

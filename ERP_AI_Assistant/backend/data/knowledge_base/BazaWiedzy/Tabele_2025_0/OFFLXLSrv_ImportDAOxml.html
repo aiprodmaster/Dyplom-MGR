@@ -1,0 +1,73 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="OFFLXLSrv_ImportDAOXML"></A><PRE>
+          <FONT SIZE="2"><I>/* OFFLXLSrv_ImportDAOXML */</I><BR>
+CREATE PROCEDURE CDN.OFFLXLSrv_ImportDAOXML
+   @DAO_ObiTyp SMALLINT = NULL
+  ,@DAO_ObiNumer INT = NULL
+  ,@xml XML
+  ,@LogID INT = -1
+  ,@DAO_ObiLp	SMALLINT = NULL  
+  ,@ZewTyp INT
+  ,@FRSID INT
+AS
+SET NOCOUNT ON
+SET ARITHABORT ON
+
+DECLARE @DAO_ZEWID INT
+DECLARE @DAO_DABID INT
+
+DECLARE @index			INT,
+		@max_index		INT,
+		@buffer_size	INT,
+		@xml_buffer		XML,
+		@xml_tmp		XML,
+		@Opis			VARCHAR(255)
+
+SET @xml = @xml.query('/DABI/DAB')
+SELECT  @index = 0, 
+		@max_index = CAST(CAST(@xml.query ('count(DAB)') AS VARCHAR(20)) AS INT), 
+		@buffer_size = 200
+
+WHILE @index &lt; @max_index
+BEGIN
+	SET XACT_ABORT ON;
+
+	BEGIN TRY
+		BEGIN TRANSACTION;
+
+		IF @index % @buffer_size = 0 	
+			SET @xml_buffer = ( SELECT @xml.query('DAB[position()&gt; sql:variable("@index") and position() &lt;= sql:variable("@index") + sql:variable("@buffer_size") ] ')  )
+		SET @xml_tmp = ( SELECT @xml_buffer.query('DAB[position()= (sql:variable("@index") mod sql:variable("@buffer_size")) + 1 ] ')  )	
+			
+		SELECT @DAO_ZEWID = DAB.Attribute.value('@ZewnetrznyId','INT'),		
+		@DAO_DABID = DAB.Attribute.value('@DAB_Id','INT')				
+		FROM @xml_tmp.nodes('DAB') AS DAB(Attribute)
+		
+		IF @DAO_ZEWID IS NOT NULL
+			EXEC CDN.OFFLXLSrv_ImportDAO @DAO_ObiTyp,@DAO_ObiNumer,@DAO_ObiLp,@DAO_ZEWID,@DAO_DABID,@ZewTyp,@FRSID
+	
+		COMMIT TRANSACTION;
+	END TRY
+	BEGIN CATCH
+		IF XACT_STATE() &lt;&gt; 0 ROLLBACK TRANSACTION;
+		SELECT @Opis = 'Błąd podczas dodawania załącznika o ZewnetrznyID='+ CAST(@DAO_ZEWID AS VARCHAR(20)) + '(ZewnetrznyTyp = '+CAST(@ZewTyp AS VARCHAR(10))+'): ' + CDN.Log_SzczegolyBledu(ERROR_NUMBER(),ERROR_PROCEDURE(),ERROR_LINE(),ERROR_MESSAGE()) 
+		EXEC CDN.Log_Dopisz @LogID, @Opis, 2
+	END CATCH
+	SET @index = @index + 1
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

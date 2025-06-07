@@ -1,0 +1,121 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[POS_PaczkaTowary]"></A><PRE>
+          <FONT SIZE="2"><I>/* [POS_PaczkaTowary] */</I><BR>
+CREATE PROCEDURE [CDN].[POS_PaczkaTowary]
+	@rowVersion bigint,
+	@PointOfSaleId int,
+	@packageSize int,
+	@packageNumber int
+AS
+BEGIN
+SET NOCOUNT ON;
+
+	declare @maskaDostawca INT = 8,
+			@maskaOdbiorca INT = 16
+
+	
+	   DECLARE @Twr TABLE(TwrGidNumer int, TwrLp int, PsaId int)
+	   insert into @Twr select TwrGidNumer,min(TwrLp), min(PSaID) FROM cdn.POS_OddzialyDoEksportu(@PointOfSaleId, @rowVersion) cross apply cdn.POS_TwrDoEksportu(PSaID, case when @PointOfSaleId is null and oddzialBylWyslany = 0 then 0 else @rowVersion end)	 group by TwrGidNumer	
+
+	   insert into cdn.PicoLog( PcL_PcKID, PcL_ObiTyp, PcL_ObiNumer, PcL_ObiektID, PcL_ObiektTyp) 
+	   select distinct PckPicoID, 16, TwrGidNumer, TwrGidNumer, 16 FROM @Twr cross join cdn.POS_OddzialyDoEksportu(@PointOfSaleId, @rowVersion)
+	   WHERE not exists((select* from cdn.PicoLog where PcL_ObiektTyp=16 AND PcL_ObiNumer=Twrgidnumer and PcL_PcKID=PckPicoID))
+
+		select
+		    Twr_GIDNumer as [@Id],
+			REPLACE(REPLACE (twr_kod,CHAR(0x0001),''),CHAR(0x001F),'') as [@Code],
+			REPLACE(REPLACE (twr_nazwa,CHAR(0x0001),''),CHAR(0x001F),'') as [@Name],
+			1 as [@NameVersion], 
+			isnull(TwO_Opis,'') as [@Description],
+			case when Twr_Typ=4 then 2 when Twr_Typ=2 then 1 else Twr_Typ end as [@Type],
+			'true' as [@DiscountOnPrice], --Co tutaj?
+			isnull(Naz_GIDLp,0) as [@VATRateId],
+			(select naz_gidlp from cdn.Nazwy where Naz_Nazwa = Twr_Jm AND naz_gidtyp=144) as [@BasicUnitId],
+			case when Twr_Waga &lt;&gt; 0 then 'true' else 'false' end as [@IsWeighedProduct],
+			-- as [@RetrieveSetElements],
+			-- as [@CategoryId],
+			case when Twr_Archiwalny = 1 THEN 'false' else 'true' end as [@IsActive],
+			-- as [@VoucherSortId], 
+			'false' as [@CollectVATOnASI],
+			'false' as [@IsRepurchase],
+			CASE WHEN twr_bezrabatu=0 THEN 'true' ELSE 'false' END as [@DiscountAllowed],
+			-- as [@AllowSetModification],
+			'false' as [@CanEditName],
+			'false' as [@CanUseReverseCharge],
+			REPLACE(REPLACE (twr_kod,CHAR(0x0001),''),CHAR(0x001F),'') as [@FiscalName],
+			case when twr_mpp=0 then 'false' else 'true' end as [@IsSplitPayment],
+			RBo_Id AS [@VoucherSortId],
+				(SELECT (select Twr_GIDNumer as [@ProductId], 1 as [@NameVersion], REPLACE(REPLACE (twr_nazwa,CHAR(0x0001),''),CHAR(0x001F),'') as [@Name] for xml path('Name'),type) for xml path('Names'),type),	
+				(SELECT 
+					(		
+					select * from (select
+						 -twr_gidnumer as [@Id],	
+						jedn.naz_gidlp as [@UnitId], 
+						case when Twr_JMCalkowita = 1 then 0 else Twr_JmFormat end as [@Precision],
+						1 as [@Numerator],
+						1 as [@Denominator],
+						'false' as [@DecimalRepresentation],
+						Twr_ObjetoscL as [@Volume],
+						/*WymJm*/isnull(jednMiary.naz_gidlp,jedn.naz_gidlp) as [@VolumeUnitId],
+						COALESCE(Twr_WagaBrutto,0) as [@GrossWeight],
+						Twr_Waga as [@NetWeight],
+						/*isnull(WJm,2147483641)*/isnull(jednWagi.naz_gidlp,jedn.naz_gidlp) as [@WeightUnitId],
+						'true' as [@IsActive]
+					from 
+					cdn.Nazwy jedn
+					left join cdn.Nazwy jednWagi on jednWagi.Naz_Nazwa = Twr_WJm and jednWagi.Naz_GIDTyp = 144
+					left join cdn.Nazwy jednMiary on jednMiary.Naz_Nazwa = (Twr_WymJm +'3') and jednMiary.Naz_GIDTyp = 144
+					where jedn.Naz_Nazwa = Twr_Jm and jedn.naz_gidtyp=144 and not exists(select * from CDN.TwrJm where TwJ_JmZ=Twr_Jm AND twj_twrnumer=twr_gidnumer)
+					union all
+
+					select distinct
+						Twj_Id as [@Id],
+						jedn.naz_gidlp as [@UnitId], 
+						case when TwJ_Calkowita = 1 then 0 else coalesce(TwJ_JmFormat,0) end as [@Precision],
+						ISNULL(TwJ_PrzeliczL,1) as [@Numerator],
+						ISNULL(TwJ_PrzeliczM,1) as [@Denominator],
+						'false' as [@DecimalRepresentation],
+						TwJ_ObjetoscL as [@Volume],
+						/*WymJm.Id*/isnull(jednMiary.naz_gidlp,jedn.naz_gidlp) as [@VolumeUnitId],
+						COALESCE(TwJ_WagaBrutto,Twr_WagaBrutto,0) as [@GrossWeight],
+						COALESCE(TwJ_Waga,Twr_Waga,0) as [@NetWeight],
+						/*isnull(wjm.Id,2147483641)*/isnull(jednWagi.naz_gidlp,jedn.naz_gidlp) as [@WeightUnitId],
+						'true' as [@IsActive]
+					from 
+					cdn.TwrJm
+					right join cdn.Nazwy jedn on jedn.Naz_Nazwa = TwJ_JmZ
+					left join cdn.Nazwy jednWagi on jednWagi.Naz_Nazwa = TwJ_WJm and jednWagi.Naz_GIDTyp = 144
+					left join cdn.Nazwy jednMiary on jednMiary.Naz_Nazwa = (TwJ_WymJm +'3') and jednMiary.Naz_GIDTyp = 144
+					where jedn.naz_gidtyp=144 AND(TwJ_TwrNumer = Twr_GIDNumer)				
+					) c
+
+					for xml path('Unit'),type)
+				for xml path('Units'),type)						
+		from @Twr
+		join cdn.twrkarty on Twr_GIDNumer = TwrGidNumer
+		left join cdn.TwrOpisy on Twr_GIDNumer=TwO_TwrNumer AND TwO_Jezyk = 0
+		left join cdn.Nazwy on naz_gidtyp=624 and REPLACE (Naz_Nazwa , ',', '.') = Twr_GrupaPodSpr+' '+cast(Twr_StawkaPodSpr as nvarchar)
+		left JOIN CDN.PicoStanowiska on PSa_ID = PsaId
+		left JOIN CDN.PicoKonfig ON PcK_PicoID = PSa_PcKID
+		left join CDN.FrmObiekty ON FRO_GidTyp=14551 AND FRO_FRMID = PCK_CentrumID AND Twr_Bon = 1
+		left join cdn.RodzajeBonow on RBo_TwrNumer = Twr_GIDNumer and RBo_TwrTyp = 16 and Rbo_ID = FRO_GIDNumer
+		where TwrLP between (@packageNumber-1)*@packageSize+1 and @packageNumber*@packageSize and (Twr_Bon = 0 OR Rbo_ID IS NOT NULL)
+		for xml path('Product')
+	SET NOCOUNT OFF;	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

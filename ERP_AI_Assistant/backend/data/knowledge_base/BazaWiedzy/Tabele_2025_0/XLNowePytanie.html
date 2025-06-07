@@ -1,0 +1,105 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="XLNowePytanie"></A><PRE>
+          <FONT SIZE="2"><I>/* XLNowePytanie */</I><BR>
+CREATE PROCEDURE CDN.XLNowePytanie
+(
+/* ==========================================================================================
+	SQL API: Procedura serwerowa do dodawania pytania
+
+	Dla uproszczenia założono, że jeżeli w systemie zewnętrznym zostanie dodane pytanie,
+	to w trakcie dodawania go przez API nie ma potrzeby kontrolowania uprawnień do obiektów, z których on korzysta	
+
+	Parametry wejściowe: 
+   ========================================================================================== */
+	@Tresc VARCHAR(512),				-- Treść pytania
+	@GrupaId INT = NULL,				-- Identyfikator grupy pytań
+	@Otwarte TINYINT = NULL,			-- Czy pytanie otwarte
+	@Aktywne TINYINT = NULL,			-- Czy pytanie aktywne
+	@WielokrotnyWybor TINYINT = NULL,	-- Czy pytenie wielokrotnego wyboru
+	@RodzajOdpId INT = NULL				-- Identyfikator kategorii rodzaju odpowiedzi 		
+
+/* ==========================================================================================
+	Return:
+	&gt;0 : Operacja zakończona sukcesem (zwrócono ID pytania)
+	-1 : Nie powiodło się dodawanie wpisu do tabeli CDN.Pytania
+	-2 : Wystąpił błąd podczas dodawania pytania. Brak treści pytania.
+	-3 : Wystąpił błąd podczas dodawania pytania. Nie powiodło sie ustalenie grupy pytań.
+	-4 : Wystąpił błąd podczas dodawania pytania. Pytanie nie może być jednocześnie otwarte i wielokrotnego wyboru.
+	-5 : Wystąpił błąd podczas dodawania pytania. Nie powiodło się ustalenie rodzaju odpowiedzi dla pytania zamkniętego.
+   ========================================================================================== */
+)
+AS
+BEGIN
+	declare @TypPytanie INT = 14461,
+			@Id INT = NULL,
+			@GrpId INT = 0,
+			@AktywnaGrpId INT = 0,
+			@RodzOdpId INT = 0,
+			@BladId INT = 0,
+			@BladOpis VARCHAR(2048) = 'Wystąpił błąd podczas dodawania pytania. '
+
+	select @GrpId = max(case when p.SLS_Predefiniowany = 81 and SLW_Id = isnull(@GrupaId,0) and SLW_Aktywny = 1 then SLW_Id else 0 end), 
+			@AktywnaGrpId = max(case when p.SLS_Predefiniowany = 81 and SLW_Aktywny = 1 then SLW_Id else 0 end),
+			@RodzOdpId = max(case when n.SLS_Predefiniowany = 59 and p.SLS_Id = isnull(@RodzajOdpId,0) and isnull(@Otwarte,0) = 0 then p.SLS_Id else 0 end) 
+	from cdn.SlownikiStruktura p
+	join cdn.Slowniki on p.SLS_Id = SLW_SLSId
+	left join cdn.SlownikiStruktura n on p.SLS_OId = n.SLS_Id
+	where p.SLS_Predefiniowany = 81 or n.SLS_Predefiniowany = 59 
+
+	select @BladId = case when isnull(@Tresc, '') = '' then -2
+						when @GrpId = 0 and @AktywnaGrpId = 0 then -3
+						when isnull(@Otwarte, 0) = 1 and isnull(@WielokrotnyWybor,0) = 1 then -4
+						when isnull(@Otwarte,0) = 0 and @RodzOdpId = 0 then -5
+						else 0
+					end
+
+	if @BladId &lt; 0
+	begin
+		select @BladOpis = case @BladId 
+							when -2 then @BladOpis + 'Brak treści pytania.'
+							when -3 then @BladOpis + 'Nie powiodło sie ustalenie grupy pytań.'
+							when -4 then @BladOpis + 'Pytanie nie może być jednocześnie otwarte i wielokrotnego wyboru.'
+							when -5 then @BladOpis + 'Nie powiodło się ustalenie rodzaju odpowiedzi dla pytania zamkniętego.'
+							end
+		raiserror(@BladOpis, 16, 1)
+		return @BladId
+	end
+
+	select @Id = isnull(max(PYT_Id),0)+1 from cdn.Pytania
+
+	insert into cdn.Pytania(PYT_Id, PYT_GrupaId, PYT_Tresc, PYT_Otwarte, PYT_Aktywne, PYT_RodpId, PYT_WielokrotnyWybor)
+	values (@Id, case @GrpId when 0 then @AktywnaGrpId else @GrpId end, @Tresc, isnull(@Otwarte,0), isnull(@Aktywne,0), @RodzOdpId, isnull(@WielokrotnyWybor,0));
+
+	if @@ROWCOUNT = 0
+	begin		
+		raiserror ('Nie powiodło się dodawanie wpisu do tabeli CDN.Pytania.', 16, 1);
+		return -1
+	end
+
+	--Atrybuty automatyczne:
+	INSERT INTO CDN.Atrybuty(Atr_ObiTyp,Atr_ObiFirma,Atr_ObiNumer,Atr_ObiLp,Atr_ObiSubLp
+							,Atr_AtkId,Atr_Wartosc,Atr_AtrTyp,Atr_AtrFirma,Atr_AtrNumer,Atr_AtrLp,Atr_AtrSubLp,Atr_OptimaId)
+	SELECT @TypPytanie,CDN.GIDFirma(),@Id,0,0,Atk_Id,'',0,0,0,0,0,0
+	FROM CDN.AtrybutyKlasy
+	JOIN CDN.AtrybutyObiekty ON AtO_AtKId=AtK_ID
+	WHERE AtK_Automat=1 AND AtO_GIDTyp=@TypPytanie AND AtO_Element=0
+
+	RETURN @Id
+	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

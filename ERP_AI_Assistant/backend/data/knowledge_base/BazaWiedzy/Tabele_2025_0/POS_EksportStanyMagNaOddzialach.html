@@ -1,0 +1,62 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="POS_EksportStanyMagNaOddzialach"></A><PRE>
+          <FONT SIZE="2"><I>/* POS_EksportStanyMagNaOddzialach */</I><BR>
+CREATE PROCEDURE CDN.POS_EksportStanyMagNaOddzialach
+	@lotId INT,
+	@PSaGUID VARCHAR(38)
+AS
+BEGIN
+SET NOCOUNT ON;
+	DECLARE @TPA TABLE(TwrNumer INT,DataW INT,Cecha VARCHAR(256),Ean VARCHAR(256),CCKNumer INT)		
+	INSERT INTO @TPA SELECT TPa_TwrNumer,TPa_DataW,TPa_Cecha,TPa_Ean,TpA_CCKNumer FROM CDN.TwrPartie WHERE TpA_ID = @lotId
+	DECLARE @PCK TABLE(PicoID INT,CentrumID INT)		
+	INSERT INTO @PCK SELECT DISTINCT PcK_PicoId,PcK_CentrumID FROM CDN.PicoKonfig
+	WHERE PCK_Typ = 8 AND NOT EXISTS(SELECT * FROM CDN.PicoStanowiska WHERE PsA_GUID = @PSaGUID AND PSa_PcKID = PcK_PicoID)
+
+	SELECT
+	(
+		SELECT MAG_GIDNumer AS [@ID],WarehouseSymbol AS [@WarehouseSymbol], WarehouseName AS [@WarehouseName],
+		CASE WHEN MaG_WMS = 0 AND Handlowa &gt; Magazynowa AND Twr_Bon = 0 THEN Magazynowa ELSE Handlowa END - Rezerwacje AS [@Quantity],
+		Twr_Jm AS [@BasicUnitSymbol],CASE WHEN Twr_JMCalkowita = 1 THEN 0 ELSE Twr_JmFormat END AS [@BasicUnitPrecision]
+		FROM 
+		(
+			SELECT DISTINCT MAG_Kod AS WarehouseSymbol,MAG_Nazwa AS WarehouseName,Twr_Bon,Mag_WMS,
+				SUM(CAST(SUBSTRING(Ilosc,1,CHARINDEX(':',Ilosc,1)-1) AS DECIMAL(15,4))) AS Handlowa,
+				SUM(CAST(SUBSTRING(Ilosc,CHARINDEX(':',Ilosc,1)+1,CHARINDEX(':',SUBSTRING(Ilosc,CHARINDEX(':',Ilosc,1)+1,LEN(Ilosc)),1)-1) AS DECIMAL(15,4))) AS Magazynowa,
+				SUM(CAST(SUBSTRING(ilosc,charindex(':', ilosc,CHARINDEX(':', ilosc,1)+1) + 1,CHARINDEX(':', ilosc,CHARINDEX(':', ilosc,CHARINDEX(':', ilosc,1)+1)+1) - CHARINDEX(':', ilosc,CHARINDEX(':', ilosc,1)+1) - 1) AS DECIMAL(15,4))) AS Rezerwacje
+				,Twr_Jm,Twr_JmFormat,Twr_JMCalkowita,MAG_GIDNumer
+			FROM 
+			(
+				SELECT MAG_Kod,MAG_Nazwa,Twr_Bon,Mag_WMS,Twr_Jm,Twr_JmFormat,Twr_JMCalkowita,MAG_GIDNumer,
+				COALESCE(CDN.DokSumaStanowTowaru(Twr_GidTyp,Twr_GidFirma,Twr_GidNumer,Twr_Typ,0,0,1,Mag_GidFirma,Mag_GidNumer,2,0,Dst_GIDNumer,DATEDIFF(d,CONVERT(DATETIME,'28-12-1800',105),GETDATE()),0,1,CentrumID,0,0,0,0,0,0,-1),'0:0:0:0') AS Ilosc,
+				TPa_TwrNumer,TPa_DataW,TPa_Cecha,TPa_Ean,TpA_CCKNumer,TPa_ID
+				FROM @TPA
+				JOIN @PCK ON 1=1
+				JOIN CDN.Magazyny ON MAG_PcKId = PicoID
+				JOIN CDN.TwrPartie ON TPa_TwrNumer = TwrNumer AND TPa_DataW = DataW AND TPa_Cecha = Cecha AND TPa_Ean = Ean AND TpA_CCKNumer = CCKNumer
+				JOIN cdn.Dostawy on Dst_TpAId = TPa_Id
+				JOIN CDN.TwrKarty ON Twr_GIDNumer = Dst_TwrNumer
+			) B 			
+			GROUP BY MAG_Kod,MAG_Nazwa,Twr_Bon,Mag_WMS,Twr_Jm,Twr_JmFormat,Twr_JMCalkowita,MAG_GIDNumer
+		) A
+		FOR XML PATH('LotStockLevelRow'), TYPE
+	)
+	FOR XML PATH('LotStockLevel')
+	SET NOCOUNT OFF;	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

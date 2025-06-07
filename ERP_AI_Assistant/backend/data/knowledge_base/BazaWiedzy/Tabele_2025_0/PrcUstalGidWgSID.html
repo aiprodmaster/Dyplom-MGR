@@ -1,0 +1,82 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Sid2SidString"></A><PRE>
+          <FONT SIZE="2"><I>/* Sid2SidString */</I><BR>
+create procedure CDN.Sid2SidString(@SID varbinary(85), @SIDString varchar(100) output) as
+  -- Returns a binary SID in the string format ex.
+  -- Ex 0x01020000000000052000000020020000 will be
+  -- S-1-5-32-544 (Administrators)
+begin
+set nocount on
+    SET @SIDString = ''
+
+    --jeśli nie jest to użytkownik NT wychodzimy
+    if len(@SID)&lt;&gt;28
+      return
+
+    DECLARE @subAut int, @i int, @S varchar(100)
+    --Revision (first byte)
+    SELECT @S = 'S-' + CAST(CAST(SUBSTRING(@SID, 1, 1) AS int)AS varchar(3))
+    --Sub-authority count (second byte)
+    SELECT @subAut = CAST(SUBSTRING(@SID, 2, 1)AS int)
+    --Authority (6 bytes)
+    SELECT @S = @S + '-' + CAST(CAST(SUBSTRING(@SID, 3, 6)AS bigint)AS varchar(10))
+   --Sub-authorities (a series of 4 byte integers)
+    SELECT @i=0
+    WHILE @i &lt; @subAut
+      BEGIN
+        DECLARE @bin binary(4)
+       --Get the sub-authority no @i
+        SELECT @bin = SUBSTRING(@SID, 9 + (4 * @i), 4)
+       --completely bit-shift the sub-authority since they are ordered in reverse order.
+       SELECT @S = @S + '-' + CAST(CAST(SUBSTRING(@bin, 4, 1) as bigint) * POWER(2, 24) |
+                CAST(SUBSTRING(@bin, 3, 1) as bigint) * POWER(2, 16) |
+                CAST(SUBSTRING(@bin, 2, 1) as bigint) * POWER(2, 8) |
+                CAST(SUBSTRING(@bin, 1, 1) as bigint) * POWER(2, 0)
+               AS varchar(10))
+       SELECT @i = @i + 1
+    END
+    SET @SIDString = @S
+set nocount off
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="PrcUstalGidWgSID"></A><PRE>
+          <FONT SIZE="2"><I>/* PrcUstalGidWgSID */</I><BR>
+create procedure CDN.PrcUstalGidWgSID( @PRC_GIDNumer int output, @SIDString varchar(100))  as
+begin
+set nocount on
+
+set @PRC_GIDNumer = 0
+
+if ltrim(@SIDString)=''
+begin
+  declare @SID varbinary(85)
+  set @SID=cast (suser_sid(suser_sname()) as varbinary(85))
+  execute CDN.Sid2SidString @SID, @SIDString output
+end
+
+select @PRC_GIDNumer=isnull(max(Prc_GIDNumer),0) from cdn.PrcKarty
+where Prc_NtSid = @SIDString
+
+set nocount off
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

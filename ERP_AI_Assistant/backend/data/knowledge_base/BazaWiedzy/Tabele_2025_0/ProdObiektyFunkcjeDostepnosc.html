@@ -1,0 +1,171 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="ProdObiektyFunkcjeDostepnosc"></A><PRE>
+          <FONT SIZE="2"><I>/* ProdObiektyFunkcjeDostepnosc */</I><BR>
+CREATE PROCEDURE CDN.ProdObiektyFunkcjeDostepnosc @Funkcja int, @Czynnosc int, @TerminOd int, @TerminDo int, 
+												  @DataDzis int, @CzyKonflikty tinyint,@ListaKonfliktow int,@PlanowacOdJakoPriorytet TINYINT
+AS
+BEGIN
+	SET NOCOUNT ON
+
+	if object_id('tempdb..#okresy') is not null
+		DROP TABLE #okresy
+
+	CREATE TABLE #okresy  (Id int identity(1,1), Obiekt int, Kod varchar(40), Nazwa varchar(100), Od int, Do int, Dostepny tinyint,
+						   Czynnosc int, Funkcja int, Zrd int)
+
+	--insert okresów dostępności wynikających z kalendarza
+	insert into #okresy (Obiekt, Kod, Nazwa, Od, Do, Dostepny, Czynnosc, Funkcja, Zrd)
+	select pob_id, pob_kod, pob_nazwa, Od, Do, 1, 0, 0, 0
+	from cdn.prodfunkcje
+	join cdn.prodobiektyfunkcje on pof_funkcja = pfu_id AND POF_Widocznosc IN (2,3)
+	join cdn.prodobiekty on pob_id = pof_obiekt and pof_obityp = 14337
+	cross apply cdn.prodokresyoddo(POF_ObiTyp,POF_Obiekt,'',@TerminOd,@TerminDo,8,-1,1)
+	where dostepny = 1 and pfu_id = @Funkcja
+
+	--insert okresów zajętości, przypadek gdy obiekt przypięty jest do jakiejś czynności
+	insert into #okresy (Obiekt, Kod, Nazwa, Od, Do, Dostepny, Czynnosc, Funkcja, Zrd)
+	select pob_id, pob_kod, pob_nazwa, Od, Do, Dostepny, Czynnosc, Funkcja, 0
+	from
+	(
+		Select PO.pob_id, PO.pob_kod, PO.pob_nazwa,
+			   case when PTF_Zmienna=0 then PCZ_TerminRozpoczecia else PCT_TerminOd end as Od,
+			   case when PTF_Zmienna=0 then PCZ_TerminZakonczenia else PCT_TerminDo end as Do,
+			   0 Dostepny,
+			   PCZ_Id Czynnosc,
+			   PTF_Funkcja Funkcja
+		from CDN.ProdCzynnosciObiekty
+		join
+		(
+			select pob_id,pob_kod,pob_nazwa			--wyciągnięcie obiektów mogących realizować żądaną funkcję
+			from cdn.prodfunkcje
+			join cdn.prodobiektyfunkcje on pof_funkcja = pfu_id AND POF_Widocznosc IN (2,3)
+			join cdn.prodobiekty on pob_id = pof_obiekt and pof_obityp = 14337
+			where pfu_id = @Funkcja
+		) PO
+		on PO.pob_id = pco_obiekt
+		join CDN.ProdCzynnosci on PCZ_Id=PCO_Czynnosc
+		join CDN.ProdTechnologiaFunkcje on PTF_TechnologiaCzynnosc=PCZ_TechnologiaCzynnosc and PTF_Funkcja=PCO_Funkcja
+		left join CDN.ProdCzynnosciTerminy on PTF_Zmienna&gt;0 and PCT_Czynnosc=PCO_Czynnosc and (PCT_Id=PCO_Termin Or PCO_Termin=0)
+		where pcz_realizuje = 0
+	) A
+	where Od &lt; @TerminDo and @TerminOd &lt; Do
+
+	--konfrontacja okresów dostępności i zajętości, w efekcie chcemy otrzymać listę okresów dostępności i zajętości obiektów
+	--Przykład dla pojedynczego obiektu: 
+	-- 1. Obiekt jest dostępny wg kalendarza od 9:00 do 17:00
+	-- 2. Obiekt wykonuje jakieś czynności w terminie od 11:00 do 12:00 oraz od 15:00 do 16:00
+	-- 3. W efekcie powinniśmy otrzymać poniższe rekordy:
+	--		Dostępny	9:00 - 11:00
+	--		Niedostępny 11:00 - 12:00
+	--		Dostępny    12:00 - 15:00
+	--		Niedostępny 15:00 - 16:00
+	--		Dostępny	16:00 - 17:00
+
+	DECLARE @rows int, @cycle int
+	SET @rows = 1 
+	SET @cycle=0
+	WHILE @rows&gt;0 and @cycle&lt;10000
+	BEGIN
+		set @cycle = @cycle+1
+
+		--dzielenie wg min
+		insert into #okresy (Obiekt, Kod, Nazwa, Od, Do, Dostepny, Czynnosc, Funkcja, Zrd)
+		select A.Obiekt,A.Kod,A.Nazwa,A.Od,min(B.Od),A.Dostepny,A.Czynnosc,A.Funkcja,A.Id
+		from #okresy A
+		join #okresy B on A.Obiekt=B.Obiekt and A.Od &lt; B.Od and B.Od &lt; A.Do
+							   and A.Dostepny = 1 and A.Id &lt;&gt; B.Id
+		group by A.Id,A.Obiekt,A.Kod,A.Nazwa,A.Od,A.Dostepny,A.Czynnosc,A.Funkcja
+		set @rows = @@rowcount
+
+		--dzielenie wg max
+		insert into #okresy (Obiekt, Kod, Nazwa, Od, Do, Dostepny, Czynnosc, Funkcja, Zrd)
+		select A.Obiekt,A.Kod,A.Nazwa,max(B.Do),A.Do,A.Dostepny,A.Czynnosc,A.Funkcja, A.Id
+		from #okresy A
+		join #okresy B on A.Obiekt=B.Obiekt and A.Od &lt; B.Do and B.Do &lt; A.Do
+							   and A.Dostepny = 1 and A.Id &lt;&gt; B.Id
+		group by A.Id,A.Obiekt,A.Kod,A.Nazwa,A.Do,A.Dostepny,A.Czynnosc,A.Funkcja
+		set @rows = @rows + @@rowcount
+
+		--skracanie końców tego co zostało po dzieleniu wg min i max
+		update U set U.Od = isnull(C.NOd,U.Od), U.Do = isnull(C.NDo,U.Do)
+		from
+		(
+			select A.Id,NOd,max(B.Do) NDo from
+			(
+				select A.Id,A.Obiekt,dateadd(s,A.Od,'19900101') DataOdA,
+					   dateadd(s,min(B.Od),'19900101') DataOdB, 
+					   min(B.Od) NOd, A.Od, A.Do from #okresy A
+				left join #okresy B on A.Obiekt = B.Obiekt and B.Od &gt; A.Od and B.Do &lt; A.Do 
+				where A.Dostepny = 1 and B.Dostepny = 0
+				group by A.Id,A.Obiekt,A.Od, A.Do
+			) A
+			left join #okresy B on A.Obiekt = B.Obiekt and B.Do &gt; A.Od and B.Do &lt; A.Do and B.Id &gt; A.Id
+			where B.Dostepny = 0
+			group by A.Id,NOd
+		) C
+		join #okresy U on U.Id = C.Id and (U.Od &lt;&gt; C.NOd or U.Do &lt;&gt; C.NDo)
+		set @rows = @rows + @@rowcount
+
+		--usuwanie nadmiarowych rekordów, tych które zostały podzielone lub są w okresie zajętości
+		delete A from #okresy A
+		left join #okresy B on B.Obiekt = A.Obiekt and B.Dostepny = 0 and A.Dostepny = 1 and A.Od &gt;= B.Od and A.Do &lt;= B.Do
+		left join #okresy Z on A.Id=Z.Zrd and Z.Od &gt;= A.Od and Z.Do &lt;= A.Do
+		where (Z.Zrd is not null or B.Id is not null) and A.Dostepny = 1
+	END
+
+	SET NOCOUNT OFF
+	
+	select Zasob, Funkcja, FunkcjaKod, Czynnosc, CzynnoscKod,
+		   DataOd, DataDo, CzasRealizacjiTS, Ilosc, 
+		   NumerZlecenia, Konflikt, Obiekt, Dostepny, NiePrzepinac, Poziom
+	from
+	(
+		select Kod Zasob, Funkcja, PFU_Kod FunkcjaKod, Czynnosc, PTC_Kod CzynnoscKod, 
+			   DataOd, DataDo, DataDo-DataOd CzasRealizacjiTS, Ilosc, NumerZlecenia, 
+			   case when @CzyKonflikty = 1 then CDN.ProdCzynnosciKonflikty(Czynnosc,@DataDzis,@ListaKonfliktow,@PlanowacOdJakoPriorytet) else '' end Konflikt, 
+			   Obiekt, Dostepny, NiePrzepinac, 1 Poziom
+			   --, dateadd(s,OdTs,'19900101') Od, dateadd(s,DoTs,'19900101') Do,*
+		from
+		(
+			select Obiekt, Kod, Nazwa, Od DataOd, Do DataDo,
+				   Dostepny, Czynnosc, Funkcja, isnull(FunZajety.PFU_Kod,F.PFU_Kod) PFU_Kod,
+				   isnull(PTC_Kod,'&lt;DOSTĘPNY&gt;') PTC_Kod, isnull(PTC_Nazwa,'') PTC_Nazwa, isnull(PC.PCZ_Ilosc,0) Ilosc,
+				   isnull(CDN.NumerDokumentu(case when PZL_PrjID = 0 then 14343 else 14350 end,0,
+											 case when PZL_PrjID = 0 then 14343 else 14350 end,PZL_Numer,PZL_Rok,PZL_Seria, PZL_Miesiac),'') NumerZlecenia,
+				   case when pzl_datazamkniecia &gt; 0 or isnull(R.pcz_id,0) &gt; 0 then 1 else 0 end NiePrzepinac
+			from #okresy
+			left join cdn.prodfunkcje FunZajety on FunZajety.pfu_id = Funkcja
+			left join cdn.prodfunkcje F on F.pfu_id = @Funkcja
+			left join cdn.prodczynnosci PC on PC.pcz_id = Czynnosc
+			left join cdn.prodtechnologiaczynnosci on ptc_id = PC.pcz_technologiaczynnosc
+			left join cdn.prodzlecenia on pzl_id = pc.PCZ_PZLId
+			left join cdn.prodczynnosci R on R.pcz_realizuje = PC.pcz_id
+		) Wew		
+		union all	--doklejamy poziom 0
+		select distinct Kod Zasob,0,'',0,'',0,0,0,0,'','',Obiekt,0,0,0
+		from #okresy
+	) OkrWszystkie
+	left join	--odfiltrowanie obiektów, które już są przypięte do bieżącej czynności
+	(
+		select pco_obiekt from cdn.prodczynnosciobiekty
+		where pco_czynnosc = @Czynnosc
+	) BC on BC.pco_obiekt = OkrWszystkie.Obiekt
+	where BC.pco_obiekt is null
+	order by Zasob,Poziom,DataOd
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,1283 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="JPKFA_Faktura_SPR"></A><PRE>
+          <FONT SIZE="2"><I>/* JPKFA_Faktura_SPR */</I><BR>
+create PROCEDURE CDN.JPKFA_Faktura_SPR
+(
+	@arg_okres_od		int,			--początek okresu za jaki dane mają być zaczytane. 
+	@arg_okres_do		int,			--koniec okresu za jaki dane mają być zaczytane.
+	@arg_okres_rodzaj	tinyint,		--Przy czym użytkownik może określić, która data będzie wykorzystana (data wystawienia, data sprzedaży, data wpływu itd.).
+										--1 Data wystawienia (sprzedaż, zakup)
+										--2 Data sprzedaży (sprzedaż)
+										--3 Data wpływu (zakup)
+										--4 Data ujęcia w deklaracji VAT / Dla FAI data wpływu
+										--5 Data księgowania
+										--6 Data księgowania + Bufor
+	@arg_okres_rodzaj_Nazwa	varchar(30), --jesli @arg_okres_rodzaj=0 to można wprowadzać po nazwie
+	@arg_waluta			varchar(3),		--Waluta nagłówka dokumentu
+	@ZwracajWiersze		tinyint,		-- zwracaj/nie zwracaj wierszy faktury 1/0
+	@PONNumer			int=0,			--gidNumer JPK
+	@BezTabeliTymczasowej tinyint=0		--zwroc dane bez zakladania tabeli tymczasowej
+	)
+AS
+BEGIN
+set nocount on
+
+declare @typFaktury	varchar(3)
+set @typFaktury = 'SPR'
+
+CREATE TABLE #Dane(	
+	jpk_P_1			int,
+	jpk_P_2A		nvarchar(256),
+	jpk_P_3A		nvarchar(256),
+	jpk_P_3B		nvarchar(256),
+	jpk_P_3C		nvarchar(256),
+	jpk_P_3D		nvarchar(256),
+	jpk_P_4A		nvarchar(256),	
+	jpk_P_4B		nvarchar(20),
+	jpk_P_5A		nvarchar(256),
+	jpk_P_5B		nvarchar(20),
+	jpk_P_6			int,
+	jpk_P_13_1		DECIMAL(18,2),
+	jpk_P_14_1		DECIMAL(18,2),
+	jpk_P_13_2		DECIMAL(18,2),
+	jpk_P_14_2		DECIMAL(18,2),
+	jpk_P_13_3		DECIMAL(18,2),
+	jpk_P_14_3		DECIMAL(18,2),	
+	jpk_P_13_4		DECIMAL(18,2),
+	jpk_P_14_4		DECIMAL(18,2),
+	jpk_P_13_5		DECIMAL(18,2), 	
+	jpk_P_14_5		DECIMAL(18,2),
+	jpk_P_13_6		DECIMAL(18,2),
+	jpk_P_13_7		DECIMAL(18,2),
+	jpk_P_15		DECIMAL(18,2),
+	jpk_P_16		NVARCHAR(5),--zawsze false
+	jpk_P_17		NVARCHAR(5),--zawsze false
+	jpk_P_18		NVARCHAR(5),
+	jpk_P_19		NVARCHAR(5),
+	jpk_P_19A		nvarchar(256),
+	jpk_P_19B		nvarchar(256),
+	jpk_P_19C		nvarchar(256),
+	jpk_P_20		NVARCHAR(5),
+	jpk_P_20A		NVARCHAR(256),
+	jpk_P_20B		NVARCHAR(256),
+	jpk_P_21		NVARCHAR(5),
+	jpk_P_21A		NVARCHAR(256),
+	jpk_P_21B		NVARCHAR(256),
+	jpk_P_21C		NVARCHAR(256),
+	jpk_P_22A		INT,
+	jpk_P_22B		NVARCHAR(256),
+	jpk_P_22C		NVARCHAR(256),
+	jpk_P_23		NVARCHAR(5),
+	jpk_P_106E_2	NVARCHAR(5),
+	jpk_P_106E_3	NVARCHAR(5),
+	jpk_P_106E_3A	NVARCHAR(256),
+	jpk_RodzajFaktury		nvarchar(7),
+	jpk_PrzyczynaKorekty	nvarchar(256),
+	jpk_NrFaKorygowanej		nvarchar(256),
+	jpk_OkresFaKorygowanej	nvarchar(256),
+	jpk_ZALZaplata			DECIMAL(18,2),
+	jpk_ZALPodatek			DECIMAL(18,2),
+	jpk_gidnumer			int,
+	jpk_gidtyp				int,
+	jpk_typFaktury			varchar(3),
+	jpk_SpiNumer			int
+	)
+create clustered index DanePrimary on #Dane (jpk_gidnumer,jpk_gidtyp)
+
+CREATE TABLE #StawkiVatZ (
+	TRV_numer					int,
+	TRV_typ						int,
+	TRV_NettoP_stawka_5			decimal(18,2),
+	TRV_VatP_stawka_5			decimal(18,2),
+	TRV_NettoR_stawka_5			decimal(18,2),
+	TRV_VatR_stawka_5			decimal(18,2),
+	TrV_WartoscWal_stawka_5		decimal(25,6),
+	TRV_NettoP_stawka_7_8		decimal(18,2),
+	TRV_VatP_stawka_7_8			decimal(18,2),
+	TRV_NettoR_stawka_7_8		decimal(18,2),
+	TRV_VatR_stawka_7_8			decimal(18,2),
+	TrV_WartoscWal_stawka_7_8	decimal(25,6),
+	TRV_NettoP_stawka_22_23		decimal(18,2),
+	TRV_VatP_stawka_22_23		decimal(18,2),
+	TRV_NettoR_stawka_22_23		decimal(18,2),
+	TRV_VatR_stawka_22_23		decimal(18,2),
+	TrV_WartoscWal_stawka_22_23	decimal(25,6),
+	TrV_ExpoNorm				smallint,
+	TRV_NettoR_flaga2_oo		decimal(18,2),
+	TRV_NettoR_flaga2			decimal(18,2),
+	TRV_NettoR_stawka_0_flaga1	decimal(18,2),
+	TrV_WartoscWal_stawka_0_flaga1 decimal(18,2),
+	TRV_NettoR_flaga0			decimal(18,2),
+	TrV_WartoscWal_flaga0		decimal(18,2),
+	TRV_NettoP_stawka_0_flaga1	decimal(18,2),
+	TrV_NettoP_flaga0			decimal(18,2),
+	trv_deklRok					smallint,
+	trv_deklMiesiac				tinyint,
+	TRV_WartoscWal_flaga2_oo	decimal(18,2),
+	TRV_WartoscWal_flaga2		decimal(18,2),
+	TrV_RodzajZakupu			tinyint
+	)
+create clustered index StawkiVatZPrimary on #StawkiVatZ (TRV_numer,TRV_typ)
+
+CREATE TABLE #Atrybuty_JPK (
+	ATR_GIDNUMER		INT,
+	ATR_GIDTYP			INT,	
+	ATR_P_20_KnaNumer	INT,
+	ATR_P_21_KnaNumer	INT,
+	ATR_P_20			NVARCHAR(5),
+	ATR_P_20A			NVARCHAR(256),
+	ATR_P_20B			NVARCHAR(256),
+	ATR_P_21			NVARCHAR(5),
+	ATR_P_21A			NVARCHAR(256),
+	ATR_P_21B			NVARCHAR(256),
+	ATR_P_21C			NVARCHAR(256),
+	ATR_P_22A			INT,
+	ATR_P_22B			NVARCHAR(256),
+	ATR_P_22C			NVARCHAR(256),
+	ATR_P_23			NVARCHAR(5),
+	ATR_P_106E_2		NVARCHAR(5),
+	ATR_P_106E_3		NVARCHAR(5),
+	ATR_P_106E_3A		NVARCHAR(256),
+	ATR_P_16			NVARCHAR(5),
+	ATR_P_17			NVARCHAR(5)
+	)
+create clustered index Atrybuty_JPKPrimary on #Atrybuty_JPK (ATR_GIDNUMER,ATR_GIDTYP)
+
+
+
+		
+if @arg_okres_rodzaj = 0
+begin
+	set @arg_okres_rodzaj = 
+		Case @arg_okres_rodzaj_nazwa
+		when 'Data wystawienia' Then 1
+		when 'Data sprzedaży' Then 2
+		when 'Data dekl. VAT' Then 4
+		when 'Data księgowania' Then 5
+		when 'Data księgowania + Bufor' Then 6
+		Else 4 End
+end		
+	
+DECLARE @TYPY TABLE(GIDTYP INT,Korekta INT)
+INSERT INTO @TYPY(GIDTYP,Korekta) VALUES(2033,0),(1824,0),(2037,0),(1828,0),(2041,1),(1832,1),(2045,1),(1836,1),(2034,0),(2042,1),(2035,0),(2043,1)	--SPR
+
+declare @sSQL nvarchar(max)
+
+declare @arg_okres_odTS int,
+		@arg_okres_doTS int,
+		@miesiac_Od		TINYINT,
+		@miesiac_Do		TINYINT,
+		@rok_Od			smallint,
+		@rok_Do			smallint,
+		@walutaSys		nvarchar(3)
+
+	SELECT @walutaSys = Kon_Wartosc FROM CDN.Konfig WHERE Kon_Numer=211
+	if @arg_okres_rodzaj in (3,5,6)
+	begin
+		set  @arg_okres_odTS =	DATEDIFF(second, convert(datetime,'01-01-1990',105),convert(datetime,DateAdd(d,@arg_okres_od,convert(datetime,'28-12-1800',105)) ,105))
+		set  @arg_okres_doTS =	DATEDIFF(second, convert(datetime,'01-01-1990',105),convert(datetime,DateAdd(d,@arg_okres_do,convert(datetime,'28-12-1800',105)) ,105))
+	end
+	else if @arg_okres_rodzaj = 4
+	begin
+		set  @miesiac_Od =		month(DATEADD(dd,@arg_okres_od,'18001228'))
+		set  @miesiac_Do =		month(DATEADD(dd,@arg_okres_do,'18001228'))
+		set  @rok_Od =			year(DATEADD(dd,@arg_okres_od,'18001228'))
+		set  @rok_Do =			year(DATEADD(dd,@arg_okres_do,'18001228'))
+	end
+
+if @arg_okres_rodzaj = 1 or @arg_okres_rodzaj = 2
+BEGIN
+	INSERT INTO #StawkiVatZ(TRV_numer,TRV_typ,TrV_ExpoNorm,trv_deklRok,trv_deklMiesiac,TrV_RodzajZakupu) SELECT distinct trn_gidnumer,trn_gidtyp,TrV_ExpoNorm,trv_deklRok,trv_deklMiesiac,TrV_RodzajZakupu 
+		FROM CDN.TRANAG JOIN CDN.TRAVAT ON TrN_GIDTyp=TRV_GIDTyp AND TrN_GIDNumer=TRV_GIDNumer 
+		where 
+		TrN_Stan in (3,4,5)	
+		and (select case when @walutaSys = @arg_waluta then case when trn_Waluta = @arg_waluta then 1 else case when not(trn_GIDTyp in (1828,1836,2037,2045,3344,3352)) then 1 else 0 end end else case when trn_GIDTyp in (1828,1836,2037,2045,3344,3352) then case when trn_Waluta = @arg_waluta then 1 else 0 end else 0 end end) = 1 
+		and (case when @arg_okres_rodzaj = 1 then trn_data2 else trn_data3 end) &gt;= @arg_okres_od and (case when @arg_okres_rodzaj = 1 then trn_data2 else trn_data3 end) &lt;= @arg_okres_do
+		and TrN_JPKFA = 1 AND TRN_GIDTYP IN (SELECT GIDTYP FROM @TYPY)
+
+		--nie import 
+		INSERT INTO  #Atrybuty_JPK select
+		trn_gidnumer,
+		trn_gidtyp,
+		(SELECT top 1 case when ATK_TYP = 12 THEN KnA_GIDNumer else 0 end FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId  left join cdn.kntadresy on atr_atrnumer=kna_kntNumer and atr_atrTyp = kna_knttyp WHERE ATK_NAZWA = 'JPK_P_20' AND Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0 order by KnA_GIDNumer desc),
+		(SELECT top 1 case when ATK_TYP = 12 THEN KnA_GIDNumer else 0 end FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId  left join cdn.kntadresy on atr_atrnumer=kna_kntNumer and atr_atrTyp = kna_knttyp WHERE ATK_NAZWA = 'JPK_P_21' AND Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0 order by KnA_GIDNumer desc),			
+		(SELECT top 1 case when ATK_TYP = 12 THEN  case when atr_wartosc &lt;&gt; '' then 'true' else 'false' end ELSE case when Atr_Wartosc ='TAK' OR Atr_Wartosc ='YES'  then 'true' else 'false' end END FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId WHERE ATK_NAZWA = 'JPK_P_20' AND Atr_ObiNumer = TRN_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0),
+		(SELECT top 1 case when ATK_TYP = 12 THEN case when atr_wartosc &lt;&gt; '' then KnA_Nazwa1 +' '+ KnA_Nazwa2   else null end else Atr_Wartosc end FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId  left join cdn.kntadresy on atr_atrnumer=kna_kntNumer and atr_atrTyp = kna_knttyp WHERE ATK_NAZWA = 'JPK_P_20A' AND Atr_ObiNumer = trn_GIDNUMER  and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0 order by kna_gidnumer desc),
+		(SELECT top 1 case when ATK_TYP = 12 THEN case when atr_wartosc &lt;&gt; '' then KnA_Ulica +' '+ CASE WHEN KnA_KodP = '00000' or KnA_KodP = '00-000' THEN '' ELSE KnA_KodP END +' '+ KnA_Miasto else null end else Atr_Wartosc end FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId  left join cdn.kntadresy on atr_atrnumer=kna_kntNumer and atr_atrTyp = kna_knttyp WHERE ATK_NAZWA = 'JPK_P_20B' AND Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0 order by kna_gidnumer desc),
+		(SELECT top 1 case when ATK_TYP = 12 THEN  case when atr_wartosc &lt;&gt; '' then 'true' else 'false' end ELSE case when Atr_Wartosc ='TAK' OR Atr_Wartosc ='YES'  then 'true' else 'false' end END FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId WHERE ATK_NAZWA = 'JPK_P_21' AND Atr_ObiNumer = TRN_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0),
+		(SELECT top 1 case when ATK_TYP = 12 THEN case when atr_wartosc &lt;&gt; '' then KnA_Nazwa1 +' '+ KnA_Nazwa2   else null end else Atr_Wartosc end FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId  left join cdn.kntadresy on atr_atrnumer=kna_kntNumer and atr_atrTyp = kna_knttyp WHERE ATK_NAZWA = 'JPK_P_21A' AND Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0 order by kna_gidnumer desc),
+		(SELECT top 1 case when ATK_TYP = 12 THEN case when atr_wartosc &lt;&gt; '' then KnA_Ulica +' '+ CASE WHEN KnA_KodP = '00000' or KnA_KodP = '00-000' THEN '' ELSE KnA_KodP END +' '+ KnA_Miasto else null end else Atr_Wartosc end FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId  left join cdn.kntadresy on atr_atrnumer=kna_kntNumer and atr_atrTyp = kna_knttyp WHERE ATK_NAZWA = 'JPK_P_21B' AND Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0 order by kna_gidnumer desc),
+		(SELECT top 1 case when ATK_TYP = 12 THEN case when atr_wartosc &lt;&gt; '' THEN REPLACE(kna_nip ,'-','') ELSE null end else Atr_Wartosc end FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId  left join cdn.kntadresy on atr_atrnumer=kna_kntNumer and atr_atrTyp = kna_knttyp WHERE ATK_NAZWA = 'JPK_P_21C' AND Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0 order by kna_gidnumer desc),
+		(SELECT TOP 1 Atr_Wartosc FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId WHERE ATK_NAZWA = 'JPK_P_22A' AND Atr_ObiNumer = TRN_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0),
+		(SELECT TOP 1 Atr_Wartosc FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId WHERE ATK_NAZWA = 'JPK_P_22B' AND Atr_ObiNumer = TRN_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0),
+		(SELECT TOP 1 Atr_Wartosc FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId WHERE ATK_NAZWA = 'JPK_P_22C' AND Atr_ObiNumer = TRN_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0),
+		(SELECT TOP 1 case when Atr_Wartosc ='TAK' OR Atr_Wartosc ='YES'  then 'true' else 'false' end  FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId WHERE ATK_NAZWA = 'JPK_P_23' AND Atr_ObiNumer = TRN_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0),
+		(SELECT TOP 1 case when Atr_Wartosc ='TAK' OR Atr_Wartosc ='YES'  then 'true' else 'false' end  FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId WHERE ATK_NAZWA = 'JPK_P_106E_2' AND Atr_ObiNumer = TRN_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0),
+		(SELECT top 1 case when ATK_TYP = 12 THEN  case when atr_wartosc &lt;&gt; '' then 'true' else 'false' end else case when Atr_Wartosc ='TAK' OR Atr_Wartosc ='YES'  then 'true' else 'false' end  end FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId WHERE ATK_NAZWA = 'JPK_P_106E_3' AND Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0),
+		(SELECT case when exists(select * from CDN.Atrybuty a JOIN CDN.AtrybutyKlasy ak ON ak.AtK_ID=a.Atr_AtkId WHERE ak.ATK_NAZWA = 'JPK_P_106E_3' AND a.Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0 and ak.ATK_TYP = 12) then (SELECT TOP 1 Atr_Wartosc FROM CDN.Atrybuty a JOIN CDN.AtrybutyKlasy ak ON ak.AtK_ID=a.Atr_AtkId WHERE ak.ATK_NAZWA = 'JPK_P_106E_3' AND a.Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0 and ak.ATK_TYP = 12) else (SELECT TOP 1 Atr_Wartosc FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId WHERE ATK_NAZWA = 'JPK_P_106E_3A' AND Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0)end),
+		(SELECT TOP 1 case when Atr_Wartosc ='TAK' OR Atr_Wartosc ='YES'  then 'true' else 'false' end  FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId WHERE ATK_NAZWA = 'JPK_P_16' AND Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0),
+		(SELECT TOP 1 case when Atr_Wartosc ='TAK' OR Atr_Wartosc ='YES'  then 'true' else 'false' end  FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId WHERE ATK_NAZWA = 'JPK_P_17' AND Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0)
+		from  CDN.TraNag 
+		where 
+		TrN_Stan in (3,4,5)	and (select case when @walutaSys = @arg_waluta then case when trn_Waluta = @arg_waluta then 1 else case when not(trn_GIDTyp in (1828,1836,2037,2045,3344,3352)) then 1 else 0 end end else case when trn_GIDTyp in (1828,1836,2037,2045,3344,3352) then case when trn_Waluta = @arg_waluta then 1 else 0 end else 0 end end) = 1
+		and (case when @arg_okres_rodzaj = 1 then trn_data2 else trn_data3 end) &gt;= @arg_okres_od and (case when @arg_okres_rodzaj = 1 then trn_data2 else trn_data3 end) &lt;= @arg_okres_do
+		and TrN_JPKFA = 1 AND TRN_GIDTYP IN (SELECT GIDTYP FROM @TYPY)
+END
+else if @arg_okres_rodzaj = 3
+BEGIN
+	INSERT INTO #StawkiVatZ(TRV_numer,TRV_typ,TrV_ExpoNorm,trv_deklRok,trv_deklMiesiac,TrV_RodzajZakupu) SELECT distinct trn_gidnumer,trn_gidtyp,TrV_ExpoNorm,trv_deklRok,trv_deklMiesiac,TrV_RodzajZakupu
+		FROM CDN.TRANAG JOIN CDN.TRAVAT tv ON TrN_GIDTyp=TRV_GIDTyp AND TrN_GIDNumer=TRV_GIDNumer 
+		where 
+		TrN_Stan in (3,4,5)	and (select case when @walutaSys = @arg_waluta then case when trn_Waluta = @arg_waluta then 1 else case when not(trn_GIDTyp in (1828,1836,2037,2045,3344,3352)) then 1 else 0 end end else case when trn_GIDTyp in (1828,1836,2037,2045,3344,3352) then case when trn_Waluta = @arg_waluta then 1 else 0 end else 0 end end) = 1 		
+		and (select DATEDIFF(second, convert(datetime,'01-01-1990',105),convert(datetime,(SELECT CAST(CAST(TrN_VatRok AS VARCHAR(4))+RIGHT('0'+CAST(TrN_VatMiesiac AS VARCHAR(2)),2)+RIGHT('0'+CAST(TrN_VatDzien AS VARCHAR(2)),2) AS DATETIME)),105))) &gt;= @arg_okres_odTS
+		and (select DATEDIFF(second, convert(datetime,'01-01-1990',105),convert(datetime,(SELECT CAST(CAST(TrN_VatRok AS VARCHAR(4))+RIGHT('0'+CAST(TrN_VatMiesiac AS VARCHAR(2)),2)+RIGHT('0'+CAST(TrN_VatDzien AS VARCHAR(2)),2) AS DATETIME)),105))) &lt;= @arg_okres_doTS	
+		and TrN_JPKFA = 1 AND TRN_GIDTYP IN (SELECT GIDTYP FROM @TYPY)
+
+		--nie import 
+		INSERT INTO  #Atrybuty_JPK select
+		trn_gidnumer,
+		trn_gidtyp,
+		(SELECT top 1 case when ATK_TYP = 12 THEN KnA_GIDNumer else 0 end FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId  left join cdn.kntadresy on atr_atrnumer=kna_kntNumer and atr_atrTyp = kna_knttyp WHERE ATK_NAZWA = 'JPK_P_20' AND Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0 order by KnA_GIDNumer desc),
+		(SELECT top 1 case when ATK_TYP = 12 THEN KnA_GIDNumer else 0 end FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId  left join cdn.kntadresy on atr_atrnumer=kna_kntNumer and atr_atrTyp = kna_knttyp WHERE ATK_NAZWA = 'JPK_P_21' AND Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0 order by KnA_GIDNumer desc),			
+		(SELECT top 1 case when ATK_TYP = 12 THEN  case when atr_wartosc &lt;&gt; '' then 'true' else 'false' end ELSE case when Atr_Wartosc ='TAK' OR Atr_Wartosc ='YES'  then 'true' else 'false' end END FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId WHERE ATK_NAZWA = 'JPK_P_20' AND Atr_ObiNumer = TRN_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0),
+		(SELECT top 1 case when ATK_TYP = 12 THEN case when atr_wartosc &lt;&gt; '' then KnA_Nazwa1 +' '+ KnA_Nazwa2   else null end else Atr_Wartosc end FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId  left join cdn.kntadresy on atr_atrnumer=kna_kntNumer and atr_atrTyp = kna_knttyp WHERE ATK_NAZWA = 'JPK_P_20A' AND Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0 order by kna_gidnumer desc),
+		(SELECT top 1 case when ATK_TYP = 12 THEN case when atr_wartosc &lt;&gt; '' then KnA_Ulica +' '+ CASE WHEN KnA_KodP = '00000' or KnA_KodP = '00-000' THEN '' ELSE KnA_KodP END +' '+ KnA_Miasto else null end else Atr_Wartosc end FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId  left join cdn.kntadresy on atr_atrnumer=kna_kntNumer and atr_atrTyp = kna_knttyp WHERE ATK_NAZWA = 'JPK_P_20B' AND Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0 order by kna_gidnumer desc),
+		(SELECT top 1 case when ATK_TYP = 12 THEN  case when atr_wartosc &lt;&gt; '' then 'true' else 'false' end ELSE case when Atr_Wartosc ='TAK' OR Atr_Wartosc ='YES'  then 'true' else 'false' end END FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId WHERE ATK_NAZWA = 'JPK_P_21' AND Atr_ObiNumer = TRN_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0),
+		(SELECT top 1 case when ATK_TYP = 12 THEN case when atr_wartosc &lt;&gt; '' then KnA_Nazwa1 +' '+ KnA_Nazwa2   else null end else Atr_Wartosc end FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId  left join cdn.kntadresy on atr_atrnumer=kna_kntNumer and atr_atrTyp = kna_knttyp WHERE ATK_NAZWA = 'JPK_P_21A' AND Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0 order by kna_gidnumer desc),
+		(SELECT top 1 case when ATK_TYP = 12 THEN case when atr_wartosc &lt;&gt; '' then KnA_Ulica +' '+ CASE WHEN KnA_KodP = '00000' or KnA_KodP = '00-000' THEN '' ELSE KnA_KodP END +' '+ KnA_Miasto else null end else Atr_Wartosc end FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId  left join cdn.kntadresy on atr_atrnumer=kna_kntNumer and atr_atrTyp = kna_knttyp WHERE ATK_NAZWA = 'JPK_P_21B' AND Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0 order by kna_gidnumer desc),
+		(SELECT top 1 case when ATK_TYP = 12 THEN case when atr_wartosc &lt;&gt; '' THEN REPLACE(kna_nip ,'-','') ELSE null end else Atr_Wartosc end FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId  left join cdn.kntadresy on atr_atrnumer=kna_kntNumer and atr_atrTyp = kna_knttyp WHERE ATK_NAZWA = 'JPK_P_21C' AND Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0 order by kna_gidnumer desc),
+		(SELECT TOP 1 Atr_Wartosc FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId WHERE ATK_NAZWA = 'JPK_P_22A' AND Atr_ObiNumer = TRN_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0),
+		(SELECT TOP 1 Atr_Wartosc FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId WHERE ATK_NAZWA = 'JPK_P_22B' AND Atr_ObiNumer = TRN_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0),
+		(SELECT TOP 1 Atr_Wartosc FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId WHERE ATK_NAZWA = 'JPK_P_22C' AND Atr_ObiNumer = TRN_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0),
+		(SELECT TOP 1 case when Atr_Wartosc ='TAK' OR Atr_Wartosc ='YES'  then 'true' else 'false' end  FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId WHERE ATK_NAZWA = 'JPK_P_23' AND Atr_ObiNumer = TRN_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0),
+		(SELECT TOP 1 case when Atr_Wartosc ='TAK' OR Atr_Wartosc ='YES'  then 'true' else 'false' end  FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId WHERE ATK_NAZWA = 'JPK_P_106E_2' AND Atr_ObiNumer = TRN_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0),
+		(SELECT top 1 case when ATK_TYP = 12 THEN  case when atr_wartosc &lt;&gt; '' then 'true' else 'false' end else case when Atr_Wartosc ='TAK' OR Atr_Wartosc ='YES'  then 'true' else 'false' end  end FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId WHERE ATK_NAZWA = 'JPK_P_106E_3' AND Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0),
+		(SELECT case when exists(select * from CDN.Atrybuty a JOIN CDN.AtrybutyKlasy ak ON ak.AtK_ID=a.Atr_AtkId WHERE ak.ATK_NAZWA = 'JPK_P_106E_3' AND a.Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0 and ak.ATK_TYP = 12) then (SELECT TOP 1 Atr_Wartosc FROM CDN.Atrybuty a JOIN CDN.AtrybutyKlasy ak ON ak.AtK_ID=a.Atr_AtkId WHERE ak.ATK_NAZWA = 'JPK_P_106E_3' AND a.Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0 and ak.ATK_TYP = 12) else (SELECT TOP 1 Atr_Wartosc FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId WHERE ATK_NAZWA = 'JPK_P_106E_3A' AND Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0)end),
+		(SELECT TOP 1 case when Atr_Wartosc ='TAK' OR Atr_Wartosc ='YES'  then 'true' else 'false' end  FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId WHERE ATK_NAZWA = 'JPK_P_16' AND Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0),
+		(SELECT TOP 1 case when Atr_Wartosc ='TAK' OR Atr_Wartosc ='YES'  then 'true' else 'false' end  FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId WHERE ATK_NAZWA = 'JPK_P_17' AND Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0)
+		from  CDN.TraNag 
+		where 
+		TrN_Stan in (3,4,5)	and (select case when @walutaSys = @arg_waluta then case when trn_Waluta = @arg_waluta then 1 else case when not(trn_GIDTyp in (1828,1836,2037,2045,3344,3352)) then 1 else 0 end end else case when trn_GIDTyp in (1828,1836,2037,2045,3344,3352) then case when trn_Waluta = @arg_waluta then 1 else 0 end else 0 end end) = 1
+		and (select DATEDIFF(second, convert(datetime,'01-01-1990',105),convert(datetime,(SELECT CAST(CAST(TrN_VatRok AS VARCHAR(4))+RIGHT('0'+CAST(TrN_VatMiesiac AS VARCHAR(2)),2)+RIGHT('0'+CAST(TrN_VatDzien AS VARCHAR(2)),2) AS DATETIME)),105))) &gt;= @arg_okres_odTS
+		and (select DATEDIFF(second, convert(datetime,'01-01-1990',105),convert(datetime,(SELECT CAST(CAST(TrN_VatRok AS VARCHAR(4))+RIGHT('0'+CAST(TrN_VatMiesiac AS VARCHAR(2)),2)+RIGHT('0'+CAST(TrN_VatDzien AS VARCHAR(2)),2) AS DATETIME)),105))) &lt;= @arg_okres_doTS	
+		and TrN_JPKFA = 1 AND TRN_GIDTYP IN (SELECT GIDTYP FROM @TYPY)
+END
+else if @arg_okres_rodzaj = 4
+BEGIN
+	INSERT INTO #StawkiVatZ(TRV_numer,TRV_typ,TrV_ExpoNorm,trv_deklRok,trv_deklMiesiac,TrV_RodzajZakupu) SELECT DISTINCT trn_gidnumer,trn_gidtyp,TrV_ExpoNorm,trv_deklRok,trv_deklMiesiac,TrV_RodzajZakupu
+		FROM CDN.TRANAG JOIN CDN.TRAVAT ON TrN_GIDTyp=TRV_GIDTyp AND TrN_GIDNumer=TRV_GIDNumer 
+		where 
+		TrN_Stan in (3,4,5)	and (select case when @walutaSys = @arg_waluta then case when trn_Waluta = @arg_waluta then 1 else case when not(trn_GIDTyp in (1828,1836,2037,2045,3344,3352)) then 1 else 0 end end else case when trn_GIDTyp in (1828,1836,2037,2045,3344,3352) then case when trn_Waluta = @arg_waluta then 1 else 0 end else 0 end end) = 1 
+		and (select cast(trv_deklRok as nvarchar(4)) +'/'+(select case when trv_deklMiesiac &lt;10 then '0' else '' end)+cast(trv_deklMiesiac as nvarchar(2))) &gt;= (select cast(@rok_Od as nvarchar(4))+'/'+(select case when @miesiac_Od &lt;10 then '0' else '' end)+cast(@miesiac_Od as nvarchar(2)))
+		and (select cast(trv_deklRok as nvarchar(4)) +'/'+(select case when trv_deklMiesiac &lt;10 then '0' else '' end)+cast(trv_deklMiesiac as nvarchar(2))) &lt;= (select cast(@rok_Do as nvarchar(4))+'/'+(select case when @miesiac_Do &lt;10 then '0' else '' end)+cast(@miesiac_Do as nvarchar(2)))
+		and	trn_rozliczac = 1 and TrN_JPKFA = 1	AND TRN_GIDTYP IN (SELECT GIDTYP FROM @TYPY)
+
+		--nie import
+		INSERT INTO  #Atrybuty_JPK select
+		trn_gidnumer,
+		trn_gidtyp,
+		(SELECT top 1 case when ATK_TYP = 12 THEN KnA_GIDNumer else 0 end FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId  left join cdn.kntadresy on atr_atrnumer=kna_kntNumer and atr_atrTyp = kna_knttyp WHERE ATK_NAZWA = 'JPK_P_20' AND Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0 order by KnA_GIDNumer desc),
+		(SELECT top 1 case when ATK_TYP = 12 THEN KnA_GIDNumer else 0 end FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId  left join cdn.kntadresy on atr_atrnumer=kna_kntNumer and atr_atrTyp = kna_knttyp WHERE ATK_NAZWA = 'JPK_P_21' AND Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0 order by KnA_GIDNumer desc),			
+		(SELECT top 1 case when ATK_TYP = 12 THEN  case when atr_wartosc &lt;&gt; '' then 'true' else 'false' end ELSE case when Atr_Wartosc ='TAK' OR Atr_Wartosc ='YES'  then 'true' else 'false' end END FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId WHERE ATK_NAZWA = 'JPK_P_20' AND Atr_ObiNumer = TRN_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0),
+		(SELECT top 1 case when ATK_TYP = 12 THEN case when atr_wartosc &lt;&gt; '' then KnA_Nazwa1 +' '+ KnA_Nazwa2   else null end else Atr_Wartosc end FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId  left join cdn.kntadresy on atr_atrnumer=kna_kntNumer and atr_atrTyp = kna_knttyp WHERE ATK_NAZWA = 'JPK_P_20A' AND Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0 order by kna_gidnumer desc),
+		(SELECT top 1 case when ATK_TYP = 12 THEN case when atr_wartosc &lt;&gt; '' then KnA_Ulica +' '+ CASE WHEN KnA_KodP = '00000' or KnA_KodP = '00-000' THEN '' ELSE KnA_KodP END +' '+ KnA_Miasto else null end else Atr_Wartosc end FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId  left join cdn.kntadresy on atr_atrnumer=kna_kntNumer and atr_atrTyp = kna_knttyp WHERE ATK_NAZWA = 'JPK_P_20B' AND Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0 order by kna_gidnumer desc),
+		(SELECT top 1 case when ATK_TYP = 12 THEN  case when atr_wartosc &lt;&gt; '' then 'true' else 'false' end ELSE case when Atr_Wartosc ='TAK' OR Atr_Wartosc ='YES'  then 'true' else 'false' end END FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId WHERE ATK_NAZWA = 'JPK_P_21' AND Atr_ObiNumer = TRN_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0),
+		(SELECT top 1 case when ATK_TYP = 12 THEN case when atr_wartosc &lt;&gt; '' then KnA_Nazwa1 +' '+ KnA_Nazwa2   else null end else Atr_Wartosc end FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId  left join cdn.kntadresy on atr_atrnumer=kna_kntNumer and atr_atrTyp = kna_knttyp WHERE ATK_NAZWA = 'JPK_P_21A' AND Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0 order by kna_gidnumer desc),
+		(SELECT top 1 case when ATK_TYP = 12 THEN case when atr_wartosc &lt;&gt; '' then KnA_Ulica +' '+ CASE WHEN KnA_KodP = '00000' or KnA_KodP = '00-000' THEN '' ELSE KnA_KodP END +' '+ KnA_Miasto else null end else Atr_Wartosc end FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId  left join cdn.kntadresy on atr_atrnumer=kna_kntNumer and atr_atrTyp = kna_knttyp WHERE ATK_NAZWA = 'JPK_P_21B' AND Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0 order by kna_gidnumer desc),
+		(SELECT top 1 case when ATK_TYP = 12 THEN case when atr_wartosc &lt;&gt; '' THEN REPLACE(kna_nip ,'-','') ELSE null end else Atr_Wartosc end FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId  left join cdn.kntadresy on atr_atrnumer=kna_kntNumer and atr_atrTyp = kna_knttyp WHERE ATK_NAZWA = 'JPK_P_21C' AND Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0 order by kna_gidnumer desc),
+		(SELECT TOP 1 Atr_Wartosc FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId WHERE ATK_NAZWA = 'JPK_P_22A' AND Atr_ObiNumer = TRN_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0),
+		(SELECT TOP 1 Atr_Wartosc FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId WHERE ATK_NAZWA = 'JPK_P_22B' AND Atr_ObiNumer = TRN_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0),
+		(SELECT TOP 1 Atr_Wartosc FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId WHERE ATK_NAZWA = 'JPK_P_22C' AND Atr_ObiNumer = TRN_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0),
+		(SELECT TOP 1 case when Atr_Wartosc ='TAK' OR Atr_Wartosc ='YES'  then 'true' else 'false' end  FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId WHERE ATK_NAZWA = 'JPK_P_23' AND Atr_ObiNumer = TRN_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0),
+		(SELECT TOP 1 case when Atr_Wartosc ='TAK' OR Atr_Wartosc ='YES'  then 'true' else 'false' end  FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId WHERE ATK_NAZWA = 'JPK_P_106E_2' AND Atr_ObiNumer = TRN_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0),
+		(SELECT top 1 case when ATK_TYP = 12 THEN  case when atr_wartosc &lt;&gt; '' then 'true' else 'false' end else case when Atr_Wartosc ='TAK' OR Atr_Wartosc ='YES'  then 'true' else 'false' end  end FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId WHERE ATK_NAZWA = 'JPK_P_106E_3' AND Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0),
+		(SELECT case when exists(select * from CDN.Atrybuty a JOIN CDN.AtrybutyKlasy ak ON ak.AtK_ID=a.Atr_AtkId WHERE ak.ATK_NAZWA = 'JPK_P_106E_3' AND a.Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0 and ak.ATK_TYP = 12) then (SELECT TOP 1 Atr_Wartosc FROM CDN.Atrybuty a JOIN CDN.AtrybutyKlasy ak ON ak.AtK_ID=a.Atr_AtkId WHERE ak.ATK_NAZWA = 'JPK_P_106E_3' AND a.Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0 and ak.ATK_TYP = 12) else (SELECT TOP 1 Atr_Wartosc FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId WHERE ATK_NAZWA = 'JPK_P_106E_3A' AND Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0)end),
+		(SELECT TOP 1 case when Atr_Wartosc ='TAK' OR Atr_Wartosc ='YES'  then 'true' else 'false' end  FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId WHERE ATK_NAZWA = 'JPK_P_16' AND Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0),
+		(SELECT TOP 1 case when Atr_Wartosc ='TAK' OR Atr_Wartosc ='YES'  then 'true' else 'false' end  FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId WHERE ATK_NAZWA = 'JPK_P_17' AND Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0)
+		from  CDN.TraNag
+		JOIN CDN.TRAVAT ON TrN_GIDTyp=TRV_GIDTyp AND TrN_GIDNumer=TRV_GIDNumer  
+		where 
+		TrN_Stan in (3,4,5)	and (select case when @walutaSys = @arg_waluta then case when trn_Waluta = @arg_waluta then 1 else case when not(trn_GIDTyp in (1828,1836,2037,2045,3344,3352)) then 1 else 0 end end else case when trn_GIDTyp in (1828,1836,2037,2045,3344,3352) then case when trn_Waluta = @arg_waluta then 1 else 0 end else 0 end end) = 1
+		and (select cast(trv_deklRok as nvarchar(4)) +'/'+(select case when trv_deklMiesiac &lt;10 then '0' else '' end)+cast(trv_deklMiesiac as nvarchar(2))) &gt;= (select cast(@rok_Od as nvarchar(4))+'/'+(select case when @miesiac_Od &lt;10 then '0' else '' end)+cast(@miesiac_Od as nvarchar(2)))
+		and (select cast(trv_deklRok as nvarchar(4)) +'/'+(select case when trv_deklMiesiac &lt;10 then '0' else '' end)+cast(trv_deklMiesiac as nvarchar(2))) &lt;= (select cast(@rok_Do as nvarchar(4))+'/'+(select case when @miesiac_Do &lt;10 then '0' else '' end)+cast(@miesiac_Do as nvarchar(2)))
+		and	trn_rozliczac = 1 and TrN_JPKFA = 1	AND TRN_GIDTYP IN (SELECT GIDTYP FROM @TYPY)
+END
+else if @arg_okres_rodzaj = 5 or @arg_okres_rodzaj = 6
+BEGIN
+	INSERT INTO #StawkiVatZ(TRV_numer,TRV_typ,TrV_ExpoNorm,trv_deklRok,trv_deklMiesiac,TrV_RodzajZakupu) SELECT DISTINCT trn_gidnumer,trn_gidtyp,TrV_ExpoNorm,trv_deklRok,trv_deklMiesiac,TrV_RodzajZakupu
+		FROM CDN.TRANAG JOIN CDN.TRAVAT ON TrN_GIDTyp=TRV_GIDTyp AND TrN_GIDNumer=TRV_GIDNumer 
+		join cdn.Zrodla on TrN_GIDTyp=ZRO_TRNTyp and TrN_GIDNumer=ZRO_TRNNumer and ZRO_TRNLp=0 
+		Join cdn.Dziennik on ZRO_DTTyp=dzk_gidtyp and ZRO_DTNumer=DZK_GIDNumer and zro_dtlp=0
+		where 
+		TrN_Stan in (3,4,5)	and (select case when @walutaSys = @arg_waluta then case when trn_Waluta = @arg_waluta then 1 else case when not(trn_GIDTyp in (1828,1836,2037,2045,3344,3352)) then 1 else 0 end end else case when trn_GIDTyp in (1828,1836,2037,2045,3344,3352) then case when trn_Waluta = @arg_waluta then 1 else 0 end else 0 end end) = 1 
+		and (DATEDIFF(second, convert(datetime,'01-01-1990',105),convert(datetime,(SELECT CAST(CAST(Dzk_Rok AS VARCHAR(4))+RIGHT('0'+CAST(Dzk_Miesiac AS VARCHAR(2)),2)+RIGHT('0'+CAST(Dzk_Dzien AS VARCHAR(2)),2) AS DATETIME)),105))) &gt;= @arg_okres_odTS
+		and (DATEDIFF(second, convert(datetime,'01-01-1990',105),convert(datetime,(SELECT CAST(CAST(Dzk_Rok AS VARCHAR(4))+RIGHT('0'+CAST(Dzk_Miesiac AS VARCHAR(2)),2)+RIGHT('0'+CAST(Dzk_Dzien AS VARCHAR(2)),2) AS DATETIME)),105))) &lt;= @arg_okres_doTS
+		and TrN_JPKFA = 1 AND TRN_GIDTYP IN (SELECT GIDTYP FROM @TYPY)	AND (Dzk_Bufor='' and @arg_okres_rodzaj = 5 or @arg_okres_rodzaj = 6)
+
+		--nie import
+		INSERT INTO  #Atrybuty_JPK select
+		trn_gidnumer,
+		trn_gidtyp,
+		(SELECT top 1 case when ATK_TYP = 12 THEN KnA_GIDNumer else 0 end FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId  left join cdn.kntadresy on atr_atrnumer=kna_kntNumer and atr_atrTyp = kna_knttyp WHERE ATK_NAZWA = 'JPK_P_20' AND Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0 order by KnA_GIDNumer desc),
+		(SELECT top 1 case when ATK_TYP = 12 THEN KnA_GIDNumer else 0 end FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId  left join cdn.kntadresy on atr_atrnumer=kna_kntNumer and atr_atrTyp = kna_knttyp WHERE ATK_NAZWA = 'JPK_P_21' AND Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0 order by KnA_GIDNumer desc),			
+		(SELECT top 1 case when ATK_TYP = 12 THEN  case when atr_wartosc &lt;&gt; '' then 'true' else 'false' end ELSE case when Atr_Wartosc ='TAK' OR Atr_Wartosc ='YES'  then 'true' else 'false' end END FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId WHERE ATK_NAZWA = 'JPK_P_20' AND Atr_ObiNumer = TRN_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0),
+		(SELECT top 1 case when ATK_TYP = 12 THEN case when atr_wartosc &lt;&gt; '' then KnA_Nazwa1 +' '+ KnA_Nazwa2   else null end else Atr_Wartosc end FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId  left join cdn.kntadresy on atr_atrnumer=kna_kntNumer and atr_atrTyp = kna_knttyp WHERE ATK_NAZWA = 'JPK_P_20A' AND Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0 order by kna_gidnumer desc),
+		(SELECT top 1 case when ATK_TYP = 12 THEN case when atr_wartosc &lt;&gt; '' then KnA_Ulica +' '+ CASE WHEN KnA_KodP = '00000' or KnA_KodP = '00-000' THEN '' ELSE KnA_KodP END +' '+ KnA_Miasto else null end else Atr_Wartosc end FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId  left join cdn.kntadresy on atr_atrnumer=kna_kntNumer and atr_atrTyp = kna_knttyp WHERE ATK_NAZWA = 'JPK_P_20B' AND Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0 order by kna_gidnumer desc),
+		(SELECT top 1 case when ATK_TYP = 12 THEN  case when atr_wartosc &lt;&gt; '' then 'true' else 'false' end ELSE case when Atr_Wartosc ='TAK' OR Atr_Wartosc ='YES'  then 'true' else 'false' end END FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId WHERE ATK_NAZWA = 'JPK_P_21' AND Atr_ObiNumer = TRN_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0),
+		(SELECT top 1 case when ATK_TYP = 12 THEN case when atr_wartosc &lt;&gt; '' then KnA_Nazwa1 +' '+ KnA_Nazwa2   else null end else Atr_Wartosc end FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId  left join cdn.kntadresy on atr_atrnumer=kna_kntNumer and atr_atrTyp = kna_knttyp WHERE ATK_NAZWA = 'JPK_P_21A' AND Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0 order by kna_gidnumer desc),
+		(SELECT top 1 case when ATK_TYP = 12 THEN case when atr_wartosc &lt;&gt; '' then KnA_Ulica +' '+ CASE WHEN KnA_KodP = '00000' or KnA_KodP = '00-000' THEN '' ELSE KnA_KodP END +' '+ KnA_Miasto else null end else Atr_Wartosc end FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId  left join cdn.kntadresy on atr_atrnumer=kna_kntNumer and atr_atrTyp = kna_knttyp WHERE ATK_NAZWA = 'JPK_P_21B' AND Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0 order by kna_gidnumer desc),
+		(SELECT top 1 case when ATK_TYP = 12 THEN case when atr_wartosc &lt;&gt; '' THEN REPLACE(kna_nip ,'-','') ELSE null end else Atr_Wartosc end FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId  left join cdn.kntadresy on atr_atrnumer=kna_kntNumer and atr_atrTyp = kna_knttyp WHERE ATK_NAZWA = 'JPK_P_21C' AND Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0 order by kna_gidnumer desc),
+		(SELECT TOP 1 Atr_Wartosc FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId WHERE ATK_NAZWA = 'JPK_P_22A' AND Atr_ObiNumer = TRN_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0),
+		(SELECT TOP 1 Atr_Wartosc FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId WHERE ATK_NAZWA = 'JPK_P_22B' AND Atr_ObiNumer = TRN_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0),
+		(SELECT TOP 1 Atr_Wartosc FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId WHERE ATK_NAZWA = 'JPK_P_22C' AND Atr_ObiNumer = TRN_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0),
+		(SELECT TOP 1 case when Atr_Wartosc ='TAK' OR Atr_Wartosc ='YES'  then 'true' else 'false' end  FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId WHERE ATK_NAZWA = 'JPK_P_23' AND Atr_ObiNumer = TRN_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0),
+		(SELECT TOP 1 case when Atr_Wartosc ='TAK' OR Atr_Wartosc ='YES'  then 'true' else 'false' end  FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId WHERE ATK_NAZWA = 'JPK_P_106E_2' AND Atr_ObiNumer = TRN_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0),
+		(SELECT top 1 case when ATK_TYP = 12 THEN  case when atr_wartosc &lt;&gt; '' then 'true' else 'false' end else case when Atr_Wartosc ='TAK' OR Atr_Wartosc ='YES'  then 'true' else 'false' end  end FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId WHERE ATK_NAZWA = 'JPK_P_106E_3' AND Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0),
+		(SELECT case when exists(select * from CDN.Atrybuty a JOIN CDN.AtrybutyKlasy ak ON ak.AtK_ID=a.Atr_AtkId WHERE ak.ATK_NAZWA = 'JPK_P_106E_3' AND a.Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0 and ak.ATK_TYP = 12) then (SELECT TOP 1 Atr_Wartosc FROM CDN.Atrybuty a JOIN CDN.AtrybutyKlasy ak ON ak.AtK_ID=a.Atr_AtkId WHERE ak.ATK_NAZWA = 'JPK_P_106E_3' AND a.Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0 and ak.ATK_TYP = 12) else (SELECT TOP 1 Atr_Wartosc FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId WHERE ATK_NAZWA = 'JPK_P_106E_3A' AND Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0)end),
+		(SELECT TOP 1 case when Atr_Wartosc ='TAK' OR Atr_Wartosc ='YES'  then 'true' else 'false' end  FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId WHERE ATK_NAZWA = 'JPK_P_16' AND Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0),
+		(SELECT TOP 1 case when Atr_Wartosc ='TAK' OR Atr_Wartosc ='YES'  then 'true' else 'false' end  FROM CDN.Atrybuty JOIN CDN.AtrybutyKlasy ON AtK_ID=Atr_AtkId WHERE ATK_NAZWA = 'JPK_P_17' AND Atr_ObiNumer = trn_GIDNUMER and Atr_ObiTyp = TrN_GIDTyp and Atr_ObiLp = 0 and Atr_ObiSubLp = 0)
+		from  CDN.TraNag
+		JOIN CDN.TRAVAT ON TrN_GIDTyp=TRV_GIDTyp AND TrN_GIDNumer=TRV_GIDNumer  
+		join cdn.Zrodla on TrN_GIDTyp=ZRO_TRNTyp and TrN_GIDNumer=ZRO_TRNNumer and ZRO_TRNLp=0 
+		Join cdn.Dziennik on ZRO_DTTyp=dzk_gidtyp and ZRO_DTNumer=DZK_GIDNumer and zro_dtlp=0
+		where 
+		TrN_Stan in (3,4,5)	and (select case when @walutaSys = @arg_waluta then case when trn_Waluta = @arg_waluta then 1 else case when not(trn_GIDTyp in (1828,1836,2037,2045,3344,3352)) then 1 else 0 end end else case when trn_GIDTyp in (1828,1836,2037,2045,3344,3352) then case when trn_Waluta = @arg_waluta then 1 else 0 end else 0 end end) = 1
+		and (DATEDIFF(second, convert(datetime,'01-01-1990',105),convert(datetime,(SELECT CAST(CAST(Dzk_Rok AS VARCHAR(4))+RIGHT('0'+CAST(Dzk_Miesiac AS VARCHAR(2)),2)+RIGHT('0'+CAST(Dzk_Dzien AS VARCHAR(2)),2) AS DATETIME)),105))) &gt;= @arg_okres_odTS
+			and (DATEDIFF(second, convert(datetime,'01-01-1990',105),convert(datetime,(SELECT CAST(CAST(Dzk_Rok AS VARCHAR(4))+RIGHT('0'+CAST(Dzk_Miesiac AS VARCHAR(2)),2)+RIGHT('0'+CAST(Dzk_Dzien AS VARCHAR(2)),2) AS DATETIME)),105))) &lt;= @arg_okres_doTS
+		and TrN_JPKFA = 1 AND TRN_GIDTYP IN (SELECT GIDTYP FROM @TYPY) AND (Dzk_Bufor='' and @arg_okres_rodzaj = 5 or @arg_okres_rodzaj = 6)
+END
+
+UPDATE sv
+	SET TRV_VatP_stawka_5 = tv.sumaVat,
+		TRV_NettoP_stawka_5 = sumaNetto,
+		TRV_NettoR_stawka_5 = TRV_NettoR,
+		TRV_VatR_stawka_5 = TRV_VatR,
+		TrV_WartoscWal_stawka_5 = trv_wartoscWal
+	FROM #StawkiVatZ AS sv
+	INNER JOIN (
+        SELECT trv_GidTyp,TRV_GIDNUMER, SUM(TRV_VatP) sumaVat, SUM(TrV_NettoP) as sumaNetto,SUM(TRV_NettoR) as TRV_NettoR,SUM(TRV_VatR) as TRV_VatR,case when (select trn.TrN_FlagaNB from CDN.TraNag trn where TrN_GIDNumer =TrV_GIDNumer) = 'N' then sum(TrV_WartoscWal) else sum(TrV_WartoscWal*100/(100+TrV_StawkaPod)) end as trv_wartoscWal
+        FROM CDN.TRAVAT			
+        WHERE TRV_STAWKAPOD IN (5)
+        GROUP BY trv_GidTyp,TrV_GIDNumer,TrV_StawkaPod) tv
+    ON tv.TRV_GIDNUMER = sv.TRV_numer AND tv.trv_GidTyp = sv.TRV_typ
+
+UPDATE sv
+	SET TRV_VatP_stawka_7_8 = tv.sumaVat,
+		TRV_NettoP_stawka_7_8 = sumaNetto,
+		TRV_NettoR_stawka_7_8 = TRV_NettoR,
+		TRV_VatR_stawka_7_8 = TRV_VatR,
+		TrV_WartoscWal_stawka_7_8 = trv_wartoscWal
+	FROM #StawkiVatZ AS sv
+	INNER JOIN (
+        SELECT trv_GidTyp,TRV_GIDNUMER, SUM(TRV_VatP) sumaVat, SUM(TrV_NettoP) as sumaNetto,SUM(TRV_NettoR) as TRV_NettoR,SUM(TRV_VatR) as TRV_VatR,case when (select trn.TrN_FlagaNB from CDN.TraNag trn where TrN_GIDNumer =TrV_GIDNumer) = 'N' then sum(TrV_WartoscWal) else sum(TrV_WartoscWal*100/(100+TrV_StawkaPod)) end as trv_wartoscWal
+        FROM CDN.TRAVAT
+        WHERE TRV_STAWKAPOD IN (7,8)
+        GROUP BY trv_GidTyp,TrV_GIDNumer,TrV_StawkaPod) tv
+    ON tv.TRV_GIDNUMER = sv.TRV_numer AND tv.trv_GidTyp = sv.TRV_typ
+
+UPDATE sv
+	SET TRV_VatP_stawka_22_23 = tv.sumaVat,
+		TRV_NettoP_stawka_22_23 = sumaNetto,
+		TRV_NettoR_stawka_22_23 = TRV_NettoR,
+		TRV_VatR_stawka_22_23 = TRV_VatR,
+		TrV_WartoscWal_stawka_22_23 = trv_wartoscWal
+	FROM #StawkiVatZ AS sv
+	INNER JOIN(
+        SELECT trv_GidTyp,TRV_GIDNUMER, SUM(TRV_VatP) sumaVat, SUM(TrV_NettoP) as sumaNetto,SUM(TRV_NettoR) as TRV_NettoR,SUM(TRV_VatR) as TRV_VatR,
+		case when (select trn.TrN_FlagaNB from CDN.TraNag trn where TrN_GIDNumer =TrV_GIDNumer) = 'N' then sum(TrV_WartoscWal) else sum(TrV_WartoscWal*100/(100+TrV_StawkaPod)) end as trv_wartoscWal
+        FROM CDN.TRAVAT
+        WHERE TRV_STAWKAPOD IN (22,23)
+        GROUP BY trv_GidTyp,TrV_GIDNumer,TrV_StawkaPod) tv
+    ON tv.TRV_GIDNUMER = sv.TRV_numer AND tv.trv_GidTyp = sv.TRV_Typ
+
+UPDATE sv SET TRV_NettoR_flaga2_oo = TRV_NettoR 
+	FROM #StawkiVatZ as sv inner join CDN.TRAVAT as tv on tv.TRV_GIDNUMER = sv.TRV_numer AND tv.TRV_GIDTYP = sv.TRV_typ 
+	where tv.TrV_FlagaVat = 2 and (tv.TrV_ExpoNorm in (20,24,25) or (tv.TrV_Exponorm in (6,7,21) and tv.TrV_RodzajZakupu = 8))
+UPDATE sv SET TRV_NettoR_flaga2 = TRV_NettoR 
+	FROM #StawkiVatZ as sv inner join CDN.TRAVAT as tv on tv.TRV_GIDNUMER = sv.TRV_numer AND tv.TRV_GIDTYP = sv.TRV_typ
+	where tv.TrV_FlagaVat = 2 and tv.TrV_ExpoNorm not in (20,24,25) and tv.TrV_RodzajZakupu &lt;&gt; 8
+
+UPDATE sv SET TRV_WartoscWal_flaga2_oo = TRV_WartoscWal 
+	FROM #StawkiVatZ as sv inner join CDN.TRAVAT as tv on tv.TRV_GIDNUMER = sv.TRV_numer AND tv.TRV_GIDTYP = sv.TRV_typ 
+	where tv.TrV_FlagaVat = 2 and (tv.TrV_ExpoNorm in (20,24,25)  or (tv.TrV_Exponorm in (6,7,21) and tv.TrV_RodzajZakupu = 8))
+UPDATE sv SET TRV_WartoscWal_flaga2 = TRV_WartoscWal 
+	FROM #StawkiVatZ as sv inner join CDN.TRAVAT as tv on tv.TRV_GIDNUMER = sv.TRV_numer AND tv.TRV_GIDTYP = sv.TRV_typ 
+	where tv.TrV_FlagaVat = 2 and tv.TrV_ExpoNorm not in (20,24,25) and tv.TrV_RodzajZakupu &lt;&gt; 8
+
+UPDATE sv
+	SET TrV_WartoscWal_stawka_0_flaga1 = tv.TrV_WartoscWal,
+		TRV_NettoR_stawka_0_flaga1 = tv.TRV_NettoR,
+		TRV_NettoP_stawka_0_flaga1 = tv.TRV_NettoP
+	FROM #StawkiVatZ AS sv
+	INNER JOIN(
+        SELECT TRV_GIDNUMER,TRV_GIDTYP,SUM(TrV_WartoscWal) AS TrV_WartoscWal,SUM(TRV_NettoR) AS TRV_NettoR,SUM(TRV_NettoP) AS TRV_NettoP
+        FROM CDN.TRAVAT
+        WHERE TrV_FlagaVat = 1 and TrV_StawkaPod =  0
+        GROUP BY TRV_GIDTYP,TrV_GIDNumer) tv
+    ON tv.TRV_GIDNUMER = sv.TRV_numer AND tv.TRV_GIDTYP = sv.TRV_typ
+
+UPDATE sv
+	SET TrV_NettoP_flaga0 = tv.TrV_NettoP,
+		TrV_WartoscWal_flaga0 = tv.TrV_WartoscWal,
+		TRV_NettoR_flaga0 = tv.TRV_NettoR
+	FROM #StawkiVatZ AS sv
+	INNER JOIN(
+        SELECT TRV_GIDNUMER,TRV_GIDTYP,SUM(TrV_NettoP) AS TrV_NettoP,SUM(TrV_WartoscWal) AS TrV_WartoscWal,SUM(TRV_NettoR) AS TRV_NettoR
+        FROM CDN.TRAVAT
+        WHERE TrV_FlagaVat = 0
+        GROUP BY TRV_GIDTYP,TrV_GIDNumer) tv
+    ON tv.TRV_GIDNUMER = sv.TRV_numer AND tv.TRV_GIDTYP = sv.TRV_typ
+
+update #StawkiVatZ set 
+	TRV_NettoP_stawka_5 = case when TRV_NettoP_stawka_5 is null then 0 else TRV_NettoP_stawka_5 end,
+	TRV_VatP_stawka_5  = case when TRV_VatP_stawka_5 is null then 0 else TRV_VatP_stawka_5 end,
+	TRV_NettoR_stawka_5  = case when TRV_NettoR_stawka_5 is null then 0 else TRV_NettoR_stawka_5 end,
+	TRV_VatR_stawka_5  = case when TRV_VatR_stawka_5 is null then 0 else TRV_VatR_stawka_5 end,
+	TRV_NettoP_stawka_7_8 = case when TRV_NettoP_stawka_7_8 is null then 0 else TRV_NettoP_stawka_7_8 end,
+	TRV_VatP_stawka_7_8  = case when TRV_VatP_stawka_7_8 is null then 0 else TRV_VatP_stawka_7_8 end,
+	TRV_NettoR_stawka_7_8  = case when TRV_NettoR_stawka_7_8 is null then 0 else TRV_NettoR_stawka_7_8 end,
+	TRV_VatR_stawka_7_8  = case when TRV_VatR_stawka_7_8 is null then 0 else TRV_VatR_stawka_7_8 end,
+	TRV_NettoP_stawka_22_23 = case when TRV_NettoP_stawka_22_23 is null then 0 else  TRV_NettoP_stawka_22_23 end,
+	TRV_VatP_stawka_22_23  = case when TRV_VatP_stawka_22_23 is null then 0 else TRV_VatP_stawka_22_23 end,
+	TRV_NettoR_stawka_22_23  = case when TRV_NettoR_stawka_22_23 is null then 0 else TRV_NettoR_stawka_22_23 end,
+	TRV_VatR_stawka_22_23  = case when TRV_VatR_stawka_22_23 is null then 0 else TRV_VatR_stawka_22_23 end,
+	TRV_NettoR_flaga2_oo  = case when TRV_NettoR_flaga2_oo is null then 0 else TRV_NettoR_flaga2_oo end,
+	TRV_NettoR_flaga2  = case when TRV_NettoR_flaga2 is null then 0 else TRV_NettoR_flaga2 end,
+	TrV_WartoscWal_stawka_5  = case when TrV_WartoscWal_stawka_5 is null then 0 else TrV_WartoscWal_stawka_5 end,
+	TrV_WartoscWal_stawka_7_8  = case when TrV_WartoscWal_stawka_7_8 is null then 0 else TrV_WartoscWal_stawka_7_8 end,
+	TrV_WartoscWal_stawka_22_23  = case when TrV_WartoscWal_stawka_22_23 is null then 0 else TrV_WartoscWal_stawka_22_23 end,
+	TRV_NettoR_stawka_0_flaga1  = case when TRV_NettoR_stawka_0_flaga1 is null then 0 else TRV_NettoR_stawka_0_flaga1 end,
+	TrV_WartoscWal_stawka_0_flaga1  = case when TrV_WartoscWal_stawka_0_flaga1 is null then 0 else TrV_WartoscWal_stawka_0_flaga1 end,
+	TRV_NettoR_flaga0  = case when TRV_NettoR_flaga0 is null then 0 else TRV_NettoR_flaga0 end,
+	TrV_WartoscWal_flaga0  = case when TrV_WartoscWal_flaga0 is null then 0 else TrV_WartoscWal_flaga0 end,
+	TRV_NettoP_stawka_0_flaga1 = case when TRV_NettoP_stawka_0_flaga1 is null then 0 else TRV_NettoP_stawka_0_flaga1 end,
+	TrV_NettoP_flaga0 = case when TrV_NettoP_flaga0 is null then 0 else TrV_NettoP_flaga0 end,
+	TRV_WartoscWal_flaga2_oo = case when TRV_WartoscWal_flaga2_oo is null then 0 else TRV_WartoscWal_flaga2_oo end,
+	TRV_WartoscWal_flaga2 = case when TRV_WartoscWal_flaga2 is null then 0 else TRV_WartoscWal_flaga2 end
+
+UPDATE Atrybuty
+SET
+	ATR_P_20	= case when ATR_P_20 IS null then 'false' else ATR_P_20 end,
+	ATR_P_20A	= case when ATR_P_20A IS null then 	case when ATR_P_20_KnaNumer &lt;&gt; 0 then adresy1.KnA_Nazwa1 +' '+ adresy1.KnA_Nazwa2 +' '+ adresy1.KnA_Nazwa3 else '' end else ATR_P_20A end,	
+	ATR_P_20B	= case when ATR_P_20B IS null then 	case when ATR_P_20_KnaNumer &lt;&gt; 0 then REPLACE (adresy1.KnA_Ulica +' '+ CASE WHEN adresy1.KnA_KodP = '00000' or adresy1.KnA_KodP = '00-000' THEN '' ELSE adresy1.KnA_KodP END +' '+ adresy1.KnA_Miasto, '  ', ' ') else '' end else ATR_P_20B end,
+	ATR_P_21	= case when ATR_P_21 IS null then 'false' else ATR_P_21 end,	
+	ATR_P_21A	= case when ATR_P_21A IS null then 	case when ATR_P_21_KnaNumer &lt;&gt; 0 then adresy2.KnA_Nazwa1 +' '+ adresy2.KnA_Nazwa2 +' '+ adresy2.KnA_Nazwa3 else '' end else ATR_P_21A end,	
+	ATR_P_21B	= case when ATR_P_21B IS null then 	case when ATR_P_21_KnaNumer &lt;&gt; 0 then REPLACE (adresy2.KnA_Ulica +' '+ CASE WHEN adresy2.KnA_KodP = '00000' or adresy2.KnA_KodP = '00-000' THEN '' ELSE adresy2.KnA_KodP END +' '+ adresy2.KnA_Miasto, '  ', ' ') else '' end else ATR_P_21B end,	
+	ATR_P_21C	= case when ATR_P_21C IS null then 	case when ATR_P_21_KnaNumer &lt;&gt; 0 then adresy2.KnA_Nip  else '' end else ATR_P_21C end,	
+	ATR_P_22A	= case when ATR_P_22A IS null then 0 else ATR_P_22A end,
+	ATR_P_22B	= case when ATR_P_22B IS null then '' else ATR_P_22B end,	
+	ATR_P_22C	= case when ATR_P_22C IS null then '' else ATR_P_22C end,	
+	ATR_P_23	= case when ATR_P_23 IS null then 'false' else ATR_P_23 end,	
+	ATR_P_106E_2	= case when ATR_P_106E_2 IS null then 'false' else ATR_P_106E_2 end,
+	ATR_P_106E_3	= case when ATR_P_106E_3 IS null then 'false'  else ATR_P_106E_3 end,
+	ATR_P_106E_3A	= case when ATR_P_106E_3A IS null or ATR_P_106E_3 = 'false' or ATR_P_106E_3 IS null then ''  else ATR_P_106E_3A end,
+	ATR_P_16	= case when ATR_P_16 IS null then 'false'  else ATR_P_16 end,
+	ATR_P_17	= case when ATR_P_17 IS null then 'false'  else ATR_P_17 end
+FROM #Atrybuty_JPK AS Atrybuty
+left JOIN cdn.kntadresy AS adresy1  ON adresy1.KnA_GIDNumer = ATR_P_20_KnaNumer
+left JOIN cdn.kntadresy AS adresy2  ON adresy2.KnA_GIDNumer = ATR_P_21_KnaNumer
+	
+if @arg_okres_rodzaj = 1 OR @arg_okres_rodzaj = 2
+BEGIN
+  IF @typFaktury = 'SPR'
+  BEGIN
+	insert into #Dane
+		select distinct  --FAKTURA SPRZEDAŻ
+		t1.TrN_Data2,
+		--CASE WHEN (select korekta from @Typy where GidTyp=t1.Trn_ZwrTyp)=1 THEN ISNULL((select kor.TrN_DokumentObcy from cdn.tranag kor where kor.trn_korektadanych = 1 AND kor.trn_gidnumer=t1.trn_zwrnumer and kor.trn_gidtyp=t1.trn_zwrtyp),t1.TrN_DokumentObcy) else t1.TrN_DokumentObcy end,
+		case when (select korekta from @TYPY where gidtyp=t1.trn_gidtyp)=0 AND exists(select * from cdn.tranag kor where kor.trn_zwrnumer=t1.trn_gidnumer and kor.trn_stan &gt; 2 and kor.trn_korektadanych=1) then '&lt;&lt;korekta_danych&gt;&gt;' else t1.trn_dokumentobcy end,
+		KnA_Nazwa1+' '+KnA_Nazwa2,
+		KnA_Ulica+' '+(case when KnA_KodP = '00-000' or KnA_KodP='00000' then '' else KnA_KodP end)+' '+KnA_Miasto,
+		Frm_DNazwa,
+		Frm_DUlica+' '+Frm_DNrDomu+' '+Frm_DNrLokalu+' '+Frm_DMiasto+' '+(case when Frm_DKodP = '00-000'  then '' else Frm_DKodP end)+' '+Frm_DPoczta,
+		case when t1.TrN_ExpoNorm in (6,7,8,9,10,11,12,13,16,17,18,19,21) then Frm_NipPrefiks else '' end,
+		(case when REPLACE(Frm_NIP,'-','') like '[1-9][1-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' or REPLACE(Frm_NIP,'-','') like'[1-9][0-9][1-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN REPLACE(Frm_NIP ,'-','') ELSE '' end),
+		case when t1.TrN_ExpoNorm in (6,7,8,9,10,11,12,13,16,17,18,19,21) then KnA_NipPrefiks else '' end,
+		(case when REPLACE(kna_nip,'-','') like '[1-9][1-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' or REPLACE(kna_nip,'-','') like'[1-9][0-9][1-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN REPLACE(kna_nip ,'-','') ELSE '' end),
+		case when t1.trn_gidnumer &lt;&gt; t1.trn_zwrnumer and (t1.trn_gidtyp in (2042,1836,1832) or (t1.trn_gidtyp in (2041,2045,2043) and (t1.trn_spinumer &lt;&gt;0  or t1.trn_spinumer=t1.trn_gidnumer))) then
+			isnull((select top 1 case when t2.trn_data3&lt;&gt;t1.trn_data2 then t2.trn_data3 else 0 end from CDN.TraNag t2 join cdn.traselem tras1 on tras1.trs_orgnumer = t2.trn_gidnumer where tras1.Trs_gidnumer = t1.trn_gidnumer),isnull((select case when t1.trn_zwrtyp in (2033,2034,1827,1823,2032,2036,1824) then (select case when t2.trn_data3&lt;&gt;t1.trn_data2 then t2.trn_data3 else 0 end from cdn.tranag t2 where t2.trn_gidnumer = t1.trn_zwrnumer) else -1 end),-1))  
+			else (case when t1.TrN_Data3&lt;&gt; t1.TrN_Data2 then t1.TrN_Data3 else 0 end) end,		
+		case when  t1.TrN_GidTyp in (1828,1836,2037,2045) then isnull(TrV_WartoscWal_stawka_22_23,0) else isnull(TRV_NettoR_stawka_22_23,0) end,
+		isnull(TRV_VatR_stawka_22_23,0),
+		case when  t1.TrN_GidTyp in (1828,1836,2037,2045) then isnull(TrV_WartoscWal_stawka_7_8,0) else isnull(TRV_NettoR_stawka_7_8,0) end,
+		isnull(TRV_VatR_stawka_7_8,0),
+		case when t1.TrN_Gidtyp in (1828,1836,2037,2045) then isnull(TrV_WartoscWal_stawka_5,0) else isnull(TRV_NettoR_stawka_5,0) end,
+		isnull(TRV_VatR_stawka_5,0),
+		case when t1.TrN_GidTyp in (1828,1836,2037,2045) then isnull(TRV_WartoscWal_flaga2_oo,0) else isnull(TRV_NettoR_flaga2_oo,0) end,
+		0,
+		case when t1.TrN_GidTyp in (1828,1836,2037,2045) then isnull(TRV_WartoscWal_flaga2,0) else isnull(TRV_NettoR_flaga2,0) end,
+		0,
+		case when t1.TrN_Gidtyp in (1828,1836,2037,2045) then isnull(TrV_WartoscWal_stawka_0_flaga1,0) else isnull(TRV_NettoR_stawka_0_flaga1,0) end,
+		case when T1.TRN_gidtyp in (1828,1836,2037,2045) then isnull(TrV_WartoscWal_flaga0,0) else isnull(TRV_NettoR_flaga0,0) end,
+		case when T1.TRN_Gidtyp in (1828,1836,2037,2045) then isnull((select case when T1.TRN_FlagaNB = 'B' then T1.TRN_WartoscWal else (select SUM(tv2.trv_wartoscwal*(100+tv2.TrV_StawkaPod)/100) from CDN.TraVat tv2 where tv2.TrV_GIDTyp = T1.TRN_gidtyp and trv_gidnumer = T1.TRN_gidnumer) end),0) else T1.TRN_VatR + T1.TRN_NettoR end,
+		ATR_P_16,
+		ATR_P_17,
+		--case when (TrV_ExpoNorm in (20,24,25) or (TrV_ExpoNorm = 6 and TrV_RodzajZakupu = 8)) then 'true' else 'false' end,
+		case 
+			when case when t1.TrN_GidTyp in (1828,1836,2037,2045) then isnull(TRV_WartoscWal_flaga2_oo,0) else isnull(TRV_NettoR_flaga2_oo,0) end &lt;&gt; 0 THEN 'true'
+			when (TrV_ExpoNorm in (20,24,25) or (TrV_ExpoNorm = 6 and TrV_RodzajZakupu = 8)) then 'true' 
+			else 'false' end, --zmiana
+		case when exists(select * from CDN.TraVat tv2 where tv2.TrV_GIDTyp = T1.TRN_gidtyp and trv_gidnumer = T1.TRN_gidnumer and TrV_FlagaVat = 0) then 'true' else 'false' end, 
+		case when T1.TRN_PodstawaZW = 1 then T1.TRN_przyczynazw else '' end,
+		case when T1.TRN_PodstawaZW = 2 then T1.TRN_przyczynazw else '' end,
+		case when T1.TRN_PodstawaZW = 3 then T1.TRN_przyczynazw else '' end,
+		ATR_P_20,	
+		ATR_P_20A,	
+		ATR_P_20B,	
+		ATR_P_21,	
+		ATR_P_21A,	
+		ATR_P_21B,	
+		ATR_P_21C,	
+		ATR_P_22A,	
+		ATR_P_22B,	
+		ATR_P_22C,	
+		ATR_P_23,	
+		ATR_P_106E_2,
+		ATR_P_106E_3,
+		ATR_P_106E_3A,
+		case when t1.TrN_Gidtyp in (2033,2037,2035) then 'VAT' when t1.TrN_Gidtyp in (2041,1832,1836,2045,2043) then 'KOREKTA' WHEN t1.TrN_Gidtyp in (1824,1828) THEN 'ZAL' END,
+		case when t1.TrN_GIDTyp &amp; 8  = 8 then t1.TrN_PrzyczynaKorekty else '' end,
+		case when tz.TrN_GIDNumer IS NOT NULL then tz.TrN_DokumentObcy 
+			else case when t1.trn_gidtyp in (2041,1832,2045,1836,2043) then case when t1.TrN_NrKorekty = '' then T1.TrN_DokumentObcy else T1.TrN_NrKorekty end end end,
+
+		case 
+		when T1.TRN_DataOdKor=0 then 
+			case 
+			when t1.TrN_Gidtyp in (2041,1832,1836,2045,2043) then (select 'Od: '+cast(DateAdd(d,trn_data2,convert(date,'28-12-1800',105)) as nvarchar(10))+' Do: '+cast(DateAdd(d,trn_data2,convert(date,'28-12-1800',105)) as nvarchar(10)) from CDN.TraNag t2 where t1.trn_zwrtyp = t2.trn_gidtyp and t1.TrN_Zwrnumer = t2.trn_gidnumer) 
+			else ''
+			end 
+		else 'Od: '+CONVERT(nvarchar(50), cast(cast(DateAdd(d,T1.TrN_DataOdKor,convert(datetime,'28-12-1800',105)) as date) as nvarchar(60)))+char(10)+' Do: '+CONVERT(nvarchar(50), cast(cast(DateAdd(d,T1.TrN_DataDoKor,convert(datetime,'28-12-1800',105)) as date) as nvarchar(60))) 
+		end,
+
+		case when t1.TrN_GidTyp in (1824,1832) then t1.TrN_NettoR+t1.TrN_VatR when t1.TrN_GidTyp in (1828,1836) then (select case when t1.TrN_FlagaNB = 'B' then T1.TRN_WartoscWal else (select SUM(tv2.trv_wartoscwal*(100+tv2.TrV_StawkaPod)/100) from CDN.TraVat tv2 where tv2.TrV_GIDTyp = T1.TRN_gidtyp and trv_gidnumer = T1.TRN_gidnumer) end) else 0 end,
+		case when t1.TrN_GidTyp in (1824,1832,1828,1836) then T1.TRN_VatR else 0 end,		
+		T1.TrN_GIDNumer,
+		T1.TrN_GIDTyp,
+		'SPR',
+		CASE WHEN t1.TRN_SPITYP &lt; 0 THEN t1.TRN_GIDNUMER ELSE t1.TrN_SpiNumer END AS TrN_SpiNumer
+	from cdn.TraNag t1
+	left join cdn.KntAdresy on (case when t1.trn_gidtyp in (2000,2001,2005,2033,2037,1824,1828,2035) then t1.TrN_KAGNumer else t1.trn_knanumer end) = KnA_GidNumer
+	join cdn.firma on T1.TRN_frmnumer = frm_gidnumer
+	left join #StawkiVatZ ON T1.TRN_GIDNumer = TRV_numer AND T1.TRN_GIDTyp = TRV_typ
+	left join #Atrybuty_JPK on T1.TRN_GIDNumer = ATR_GIDNUMER and T1.TRN_GIDTyp = ATR_GIDTYP
+	LEFT JOIN cdn.tranag tz ON tz.trn_dokumentobcy &lt;&gt; t1.trn_dokumentobcy and tz.TrN_GIDNumer = t1.trn_zwrnumer and tz.TrN_GIDTyp = t1.trn_zwrTyp and t1.trn_gidtyp in (2041,1832,2045,1836,2043)
+	where 
+		t1.TrN_Stan in (3,4,5)
+		and (select case when @walutaSys = @arg_waluta then case when t1.trn_Waluta = @arg_waluta then 1 else case when not(t1.trn_GIDTyp in (1828,1836,2037,2045,3344,3352)) then 1 else 0 end end else case when t1.trn_GIDTyp in (1828,1836,2037,2045,3344,3352) then case when t1.trn_Waluta = @arg_waluta then 1 else 0 end else 0 end end) = 1
+		and t1.TrN_GidTyp in (2033,1824,2037,1828,2041,1832,2045,1836,2034,2042,2035,2043)
+		and (case when @arg_okres_rodzaj = 1 then T1.TRN_data2 else T1.TRN_data3 end) &gt;= @arg_okres_od and (case when @arg_okres_rodzaj = 1 then T1.TRN_data2 else T1.TRN_data3 end) &lt;= @arg_okres_do
+		and T1.TRN_JPKFA = 1
+		and t1.TrN_Korektadanych = 0
+  END
+END
+else if @arg_okres_rodzaj = 3
+begin
+  IF @typFaktury = 'SPR'
+  BEGIN
+	insert into #Dane
+		select distinct  --FAKTURA SPRZEDAŻ
+		t1.TrN_Data2,
+		--CASE WHEN (select korekta from @Typy where GidTyp=t1.Trn_ZwrTyp)=1 THEN ISNULL((select kor.TrN_DokumentObcy from cdn.tranag kor where kor.trn_korektadanych = 1 AND kor.trn_gidnumer=t1.trn_zwrnumer and kor.trn_gidtyp=t1.trn_zwrtyp),t1.TrN_DokumentObcy) else t1.TrN_DokumentObcy end,
+		case when (select korekta from @TYPY where gidtyp=t1.trn_gidtyp)=0 AND exists(select * from cdn.tranag kor where kor.trn_zwrnumer=t1.trn_gidnumer and kor.trn_stan &gt; 2 and kor.trn_korektadanych=1) then '&lt;&lt;korekta_danych&gt;&gt;' else t1.trn_dokumentobcy end,
+		KnA_Nazwa1+' '+KnA_Nazwa2,
+		KnA_Ulica+' '+(case when KnA_KodP = '00-000' or KnA_KodP='00000' then '' else KnA_KodP end)+' '+KnA_Miasto,
+		Frm_DNazwa,
+		Frm_DUlica+' '+Frm_DNrDomu+' '+Frm_DNrLokalu+' '+Frm_DMiasto+' '+(case when Frm_DKodP = '00-000'  then '' else Frm_DKodP end)+' '+Frm_DPoczta,
+		case when t1.TrN_ExpoNorm in (6,7,8,9,10,11,12,13,16,17,18,19,21) then Frm_NipPrefiks else '' end,
+		(case when REPLACE(Frm_NIP,'-','') like '[1-9][1-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' or REPLACE(Frm_NIP,'-','') like'[1-9][0-9][1-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN REPLACE(Frm_NIP ,'-','') ELSE '' end),
+		case when t1.TrN_ExpoNorm in (6,7,8,9,10,11,12,13,16,17,18,19,21) then KnA_NipPrefiks else '' end,
+		(case when REPLACE(kna_nip,'-','') like '[1-9][1-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' or REPLACE(kna_nip,'-','') like'[1-9][0-9][1-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN REPLACE(kna_nip ,'-','') ELSE '' end),
+		case when t1.trn_gidnumer &lt;&gt; t1.trn_zwrnumer and (t1.trn_gidtyp in (2042,1836,1832) or (t1.trn_gidtyp in (2041,2045,2043) and (t1.trn_spinumer &lt;&gt;0  or t1.trn_spinumer=t1.trn_gidnumer))) then
+			isnull((select top 1 case when t2.trn_data3&lt;&gt;t1.trn_data2 then t2.trn_data3 else 0 end from CDN.TraNag t2 join cdn.traselem tras1 on tras1.trs_orgnumer = t2.trn_gidnumer where tras1.Trs_gidnumer = t1.trn_gidnumer),isnull((select case when t1.trn_zwrtyp in (2033,2034,1827,1823,2032,2036,1824) then (select case when t2.trn_data3&lt;&gt;t1.trn_data2 then t2.trn_data3 else 0 end from cdn.tranag t2 where t2.trn_gidnumer = t1.trn_zwrnumer) else -1 end),-1))  
+			else (case when t1.TrN_Data3&lt;&gt; t1.TrN_Data2 then t1.TrN_Data3 else 0 end) end,		
+		case when  t1.TrN_GidTyp in (1828,1836,2037,2045) then isnull(TrV_WartoscWal_stawka_22_23,0) else isnull(TRV_NettoR_stawka_22_23,0) end,
+		isnull(TRV_VatR_stawka_22_23,0),
+		case when  t1.TrN_GidTyp in (1828,1836,2037,2045) then isnull(TrV_WartoscWal_stawka_7_8,0) else isnull(TRV_NettoR_stawka_7_8,0) end,
+		isnull(TRV_VatR_stawka_7_8,0),
+		case when t1.TrN_Gidtyp in (1828,1836,2037,2045) then isnull(TrV_WartoscWal_stawka_5,0) else isnull(TRV_NettoR_stawka_5,0) end,
+		isnull(TRV_VatR_stawka_5,0),
+		case when t1.TrN_GidTyp in (1828,1836,2037,2045) then isnull(TRV_WartoscWal_flaga2_oo,0) else isnull(TRV_NettoR_flaga2_oo,0) end,
+		0,
+		case when t1.TrN_GidTyp in (1828,1836,2037,2045) then isnull(TRV_WartoscWal_flaga2,0) else isnull(TRV_NettoR_flaga2,0) end,
+		0,
+		case when t1.TrN_Gidtyp in (1828,1836,2037,2045) then isnull(TrV_WartoscWal_stawka_0_flaga1,0) else isnull(TRV_NettoR_stawka_0_flaga1,0) end,
+		case when T1.TRN_gidtyp in (1828,1836,2037,2045) then isnull(TrV_WartoscWal_flaga0,0) else isnull(TRV_NettoR_flaga0,0) end,
+		case when T1.TRN_Gidtyp in (1828,1836,2037,2045) then isnull((select case when T1.TRN_FlagaNB = 'B' then T1.TRN_WartoscWal else (select SUM(tv2.trv_wartoscwal*(100+tv2.TrV_StawkaPod)/100) from CDN.TraVat tv2 where tv2.TrV_GIDTyp = T1.TRN_gidtyp and trv_gidnumer = T1.TRN_gidnumer) end),0) else T1.TRN_VatR + T1.TRN_NettoR end,
+		ATR_P_16,
+		ATR_P_17,
+		case 
+			when case when t1.TrN_GidTyp in (1828,1836,2037,2045) then isnull(TRV_WartoscWal_flaga2_oo,0) else isnull(TRV_NettoR_flaga2_oo,0) end &lt;&gt; 0 THEN 'true'
+			when (TrV_ExpoNorm in (20,24,25) or (TrV_ExpoNorm = 6 and TrV_RodzajZakupu = 8)) then 'true' 
+			else 'false' end, --zmiana
+		case when exists(select * from CDN.TraVat tv2 where tv2.TrV_GIDTyp = T1.TRN_gidtyp and trv_gidnumer = T1.TRN_gidnumer and TrV_FlagaVat = 0) then 'true' else 'false' end, 
+		case when T1.TRN_PodstawaZW = 1 then T1.TRN_przyczynazw else '' end,
+		case when T1.TRN_PodstawaZW = 2 then T1.TRN_przyczynazw else '' end,
+		case when T1.TRN_PodstawaZW = 3 then T1.TRN_przyczynazw else '' end,
+		ATR_P_20,	
+		ATR_P_20A,	
+		ATR_P_20B,	
+		ATR_P_21,	
+		ATR_P_21A,	
+		ATR_P_21B,	
+		ATR_P_21C,	
+		ATR_P_22A,	
+		ATR_P_22B,	
+		ATR_P_22C,	
+		ATR_P_23,	
+		ATR_P_106E_2,
+		ATR_P_106E_3,
+		ATR_P_106E_3A,
+		case when t1.TrN_Gidtyp in (2033,2037,2035) then 'VAT' when t1.TrN_Gidtyp in (2041,1832,1836,2045,2043) then 'KOREKTA' WHEN t1.TrN_Gidtyp in (1824,1828) THEN 'ZAL' END,
+		case when t1.TrN_GIDTyp &amp; 8  = 8 then t1.TrN_PrzyczynaKorekty else '' end,
+		case when tz.TrN_GIDNumer IS NOT NULL then tz.TrN_DokumentObcy 
+			else case when t1.trn_gidtyp in (2041,1832,2045,1836,2043) then case when t1.TrN_NrKorekty = '' then T1.TrN_DokumentObcy else T1.TrN_NrKorekty end end end,
+		case when T1.TRN_DataOdKor=0 then case when t1.TrN_Gidtyp in (2041,1832,1836,2045,2043) then (select 'Od: '+cast(DateAdd(d,trn_data2,convert(date,'28-12-1800',105)) as nvarchar(10))+' Do: '+cast(DateAdd(d,trn_data2,convert(date,'28-12-1800',105)) as nvarchar(10)) from CDN.TraNag t2 where t1.trn_zwrtyp = t2.trn_gidtyp and t1.TrN_Zwrnumer = t2.trn_gidnumer) else '' end else 'Od: '+CONVERT(nvarchar(50), cast(cast(DateAdd(d,T1.TrN_DataOdKor,convert(datetime,'28-12-1800',105)) as date) as nvarchar(60)))+char(10)+' Do: '+CONVERT(nvarchar(50), cast(cast(DateAdd(d,T1.TrN_DataDoKor,convert(datetime,'28-12-1800',105)) as date) as nvarchar(60))) end,
+		case when t1.TrN_GidTyp in (1824,1832) then t1.TrN_NettoR+t1.TrN_VatR when t1.TrN_GidTyp in (1828,1836) then (select case when t1.TrN_FlagaNB = 'B' then T1.TRN_WartoscWal else (select SUM(tv2.trv_wartoscwal*(100+tv2.TrV_StawkaPod)/100) from CDN.TraVat tv2 where tv2.TrV_GIDTyp = T1.TRN_gidtyp and trv_gidnumer = T1.TRN_gidnumer) end) else 0 end,
+		case when t1.TrN_GidTyp in (1824,1832,1828,1836) then T1.TRN_VatR else 0 end,		
+		T1.TrN_GIDNumer,
+		T1.TrN_GIDTyp,
+		'SPR',
+		CASE WHEN t1.TRN_SPITYP &lt; 0 THEN t1.TRN_GIDNUMER ELSE t1.TrN_SpiNumer END AS TrN_SpiNumer
+	from cdn.TraNag t1
+	left join cdn.KntAdresy on (case when t1.trn_gidtyp in (2000,2001,2005,2033,2037,1824,1828,2035) then t1.TrN_KAGNumer else t1.trn_knanumer end) = KnA_GidNumer	
+	join cdn.firma on T1.TRN_frmnumer = frm_gidnumer
+	left join #StawkiVatZ ON T1.TRN_GIDNumer = TRV_numer AND T1.TRN_GIDTyp = TRV_typ
+	left join #Atrybuty_JPK on T1.TRN_GIDNumer = ATR_GIDNUMER and T1.TRN_GIDTyp = ATR_GIDTYP
+	LEFT JOIN cdn.tranag tz ON tz.trn_dokumentobcy &lt;&gt; t1.trn_dokumentobcy and tz.TrN_GIDNumer = t1.trn_zwrnumer and tz.TrN_GIDTyp = t1.trn_zwrTyp and t1.trn_gidtyp in (2041,1832,2045,1836,2043)
+	where
+		t1.TrN_Stan in (3,4,5)
+		and (select case when @walutaSys = @arg_waluta then case when t1.trn_Waluta = @arg_waluta then 1 else case when not(t1.trn_GIDTyp in (1828,1836,2037,2045,3344,3352)) then 1 else 0 end end else case when t1.trn_GIDTyp in (1828,1836,2037,2045,3344,3352) then case when t1.trn_Waluta = @arg_waluta then 1 else 0 end else 0 end end) = 1		
+		and t1.TrN_GidTyp in (2033,1824,2037,1828,2041,1832,2045,1836,2034,2042,2035,2043)
+		and (select DATEDIFF(second, convert(datetime,'01-01-1990',105),convert(datetime,(SELECT CAST(CAST(t1.TrN_VatRok AS VARCHAR(4))+RIGHT('0'+CAST(t1.TrN_VatMiesiac AS VARCHAR(2)),2)+RIGHT('0'+CAST(t1.TrN_VatDzien AS VARCHAR(2)),2) AS DATETIME)),105))) &gt;= @arg_okres_odTS
+		and (select DATEDIFF(second, convert(datetime,'01-01-1990',105),convert(datetime,(SELECT CAST(CAST(t1.TrN_VatRok AS VARCHAR(4))+RIGHT('0'+CAST(t1.TrN_VatMiesiac AS VARCHAR(2)),2)+RIGHT('0'+CAST(t1.TrN_VatDzien AS VARCHAR(2)),2) AS DATETIME)),105))) &lt;= @arg_okres_doTS	
+		and t1.TrN_JPKFA = 1		
+		and t1.TrN_Korektadanych = 0
+  END
+END
+else if @arg_okres_rodzaj = 4
+begin
+  IF @typFaktury = 'SPR'
+  BEGIN	
+	insert into #Dane
+		select distinct  --FAKTURA SPRZEDAŻ
+		t1.TrN_Data2,
+		--CASE WHEN (select korekta from @Typy where GidTyp=t1.Trn_ZwrTyp)=1 THEN ISNULL((select kor.TrN_DokumentObcy from cdn.tranag kor where kor.trn_korektadanych = 1 AND kor.trn_gidnumer=t1.trn_zwrnumer and kor.trn_gidtyp=t1.trn_zwrtyp),t1.TrN_DokumentObcy) else t1.TrN_DokumentObcy end,
+		case when (select korekta from @TYPY where gidtyp=t1.trn_gidtyp)=0 AND exists(select * from cdn.tranag kor where kor.trn_zwrnumer=t1.trn_gidnumer and kor.trn_stan &gt; 2 and kor.trn_korektadanych=1) then '&lt;&lt;korekta_danych&gt;&gt;' else t1.trn_dokumentobcy end,
+		KnA_Nazwa1+' '+KnA_Nazwa2,
+		KnA_Ulica+' '+(case when KnA_KodP = '00-000' or KnA_KodP='00000' then '' else KnA_KodP end)+' '+KnA_Miasto,
+		Frm_DNazwa,
+		Frm_DUlica+' '+Frm_DNrDomu+' '+Frm_DNrLokalu+' '+Frm_DMiasto+' '+(case when Frm_DKodP = '00-000'  then '' else Frm_DKodP end)+' '+Frm_DPoczta,
+		case when t1.TrN_ExpoNorm in (6,7,8,9,10,11,12,13,16,17,18,19,21) then Frm_NipPrefiks else '' end,
+		(case when REPLACE(Frm_NIP,'-','') like '[1-9][1-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' or REPLACE(Frm_NIP,'-','') like'[1-9][0-9][1-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN REPLACE(Frm_NIP ,'-','') ELSE '' end),
+		case when t1.TrN_ExpoNorm in (6,7,8,9,10,11,12,13,16,17,18,19,21) then KnA_NipPrefiks else '' end,
+		(case when REPLACE(kna_nip,'-','') like '[1-9][1-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' or REPLACE(kna_nip,'-','') like'[1-9][0-9][1-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN REPLACE(kna_nip ,'-','') ELSE '' end),
+		case when t1.trn_gidnumer &lt;&gt; t1.trn_zwrnumer and (t1.trn_gidtyp in (2042,1836,1832) or (t1.trn_gidtyp in (2041,2045,2043) and (t1.trn_spinumer &lt;&gt;0  or t1.trn_spinumer=t1.trn_gidnumer))) then
+			isnull((select top 1 case when t2.trn_data3&lt;&gt;t1.trn_data2 then t2.trn_data3 else 0 end from CDN.TraNag t2 join cdn.traselem tras1 on tras1.trs_orgnumer = t2.trn_gidnumer where tras1.Trs_gidnumer = t1.trn_gidnumer),isnull((select case when t1.trn_zwrtyp in (2033,2034,1827,1823,2032,2036,1824) then (select case when t2.trn_data3&lt;&gt;t1.trn_data2 then t2.trn_data3 else 0 end from cdn.tranag t2 where t2.trn_gidnumer = t1.trn_zwrnumer) else -1 end),-1))  
+			else (case when t1.TrN_Data3&lt;&gt; t1.TrN_Data2 then t1.TrN_Data3 else 0 end) end,		
+		case when  t1.TrN_GidTyp in (1828,1836,2037,2045) then isnull(TrV_WartoscWal_stawka_22_23,0) else isnull(TRV_NettoR_stawka_22_23,0) end,
+		isnull(TRV_VatR_stawka_22_23,0),
+		case when  t1.TrN_GidTyp in (1828,1836,2037,2045) then isnull(TrV_WartoscWal_stawka_7_8,0) else isnull(TRV_NettoR_stawka_7_8,0) end,
+		isnull(TRV_VatR_stawka_7_8,0),
+		case when t1.TrN_Gidtyp in (1828,1836,2037,2045) then isnull(TrV_WartoscWal_stawka_5,0) else isnull(TRV_NettoR_stawka_5,0) end,
+		isnull(TRV_VatR_stawka_5,0),
+		case when t1.TrN_GidTyp in (1828,1836,2037,2045) then isnull(TRV_WartoscWal_flaga2_oo,0) else isnull(TRV_NettoR_flaga2_oo,0) end,
+		0,
+		case when t1.TrN_GidTyp in (1828,1836,2037,2045) then isnull(TRV_WartoscWal_flaga2,0) else isnull(TRV_NettoR_flaga2,0) end,
+		0,
+		case when t1.TrN_Gidtyp in (1828,1836,2037,2045) then isnull(TrV_WartoscWal_stawka_0_flaga1,0) else isnull(TRV_NettoR_stawka_0_flaga1,0) end,
+		case when T1.TRN_gidtyp in (1828,1836,2037,2045) then isnull(TrV_WartoscWal_flaga0,0) else isnull(TRV_NettoR_flaga0,0) end,
+		case when T1.TRN_Gidtyp in (1828,1836,2037,2045) then isnull((select case when T1.TRN_FlagaNB = 'B' then T1.TRN_WartoscWal else (select SUM(tv2.trv_wartoscwal*(100+tv2.TrV_StawkaPod)/100) from CDN.TraVat tv2 where tv2.TrV_GIDTyp = T1.TRN_gidtyp and trv_gidnumer = T1.TRN_gidnumer) end),0) else T1.TRN_VatR + T1.TRN_NettoR end,
+		ATR_P_16,
+		ATR_P_17,
+		--case when (TrV_ExpoNorm in (20,24,25) or (TrV_ExpoNorm = 6 and TrV_RodzajZakupu = 8)) then 'true' else 'false' end,
+		case 
+			when case when t1.TrN_GidTyp in (1828,1836,2037,2045) then isnull(TRV_WartoscWal_flaga2_oo,0) else isnull(TRV_NettoR_flaga2_oo,0) end &lt;&gt; 0 THEN 'true'
+			when (TrV_ExpoNorm in (20,24,25) or (TrV_ExpoNorm = 6 and TrV_RodzajZakupu = 8)) then 'true' 
+			else 'false' end, --zmiana
+		case when exists(select * from CDN.TraVat tv2 where tv2.TrV_GIDTyp = T1.TRN_gidtyp and trv_gidnumer = T1.TRN_gidnumer and TrV_FlagaVat = 0) then 'true' else 'false' end, 
+		case when T1.TRN_PodstawaZW = 1 then T1.TRN_przyczynazw else '' end,
+		case when T1.TRN_PodstawaZW = 2 then T1.TRN_przyczynazw else '' end,
+		case when T1.TRN_PodstawaZW = 3 then T1.TRN_przyczynazw else '' end,
+		ATR_P_20,	
+		ATR_P_20A,	
+		ATR_P_20B,	
+		ATR_P_21,	
+		ATR_P_21A,	
+		ATR_P_21B,	
+		ATR_P_21C,	
+		ATR_P_22A,	
+		ATR_P_22B,	
+		ATR_P_22C,	
+		ATR_P_23,	
+		ATR_P_106E_2,
+		ATR_P_106E_3,
+		ATR_P_106E_3A,
+		case when t1.TrN_Gidtyp in (2033,2037,2035) then 'VAT' when t1.TrN_Gidtyp in (2041,1832,1836,2045,2043) then 'KOREKTA' WHEN t1.TrN_Gidtyp in (1824,1828) THEN 'ZAL' END,
+		case when t1.TrN_GIDTyp &amp; 8  = 8 then t1.TrN_PrzyczynaKorekty else '' end,
+		case when tz.TrN_GIDNumer IS NOT NULL then tz.TrN_DokumentObcy 
+			else case when t1.trn_gidtyp in (2041,1832,2045,1836,2043) then case when t1.TrN_NrKorekty = '' then T1.TrN_DokumentObcy else T1.TrN_NrKorekty end end end,
+		case when T1.TRN_DataOdKor=0 then case when t1.TrN_Gidtyp in (2041,1832,1836,2045,2043) then (select 'Od: '+cast(DateAdd(d,trn_data2,convert(date,'28-12-1800',105)) as nvarchar(10))+' Do: '+cast(DateAdd(d,trn_data2,convert(date,'28-12-1800',105)) as nvarchar(10)) from CDN.TraNag t2 where t1.trn_zwrtyp = t2.trn_gidtyp and t1.TrN_Zwrnumer = t2.trn_gidnumer) else '' end else 'Od: '+CONVERT(nvarchar(50), cast(cast(DateAdd(d,T1.TrN_DataOdKor,convert(datetime,'28-12-1800',105)) as date) as nvarchar(60)))+char(10)+' Do: '+CONVERT(nvarchar(50), cast(cast(DateAdd(d,T1.TrN_DataDoKor,convert(datetime,'28-12-1800',105)) as date) as nvarchar(60))) end,
+		case when t1.TrN_GidTyp in (1824,1832) then t1.TrN_NettoR+t1.TrN_VatR when t1.TrN_GidTyp in (1828,1836) then (select case when t1.TrN_FlagaNB = 'B' then T1.TRN_WartoscWal else (select SUM(tv2.trv_wartoscwal*(100+tv2.TrV_StawkaPod)/100) from CDN.TraVat tv2 where tv2.TrV_GIDTyp = T1.TRN_gidtyp and trv_gidnumer = T1.TRN_gidnumer) end) else 0 end,
+		case when t1.TrN_GidTyp in (1824,1832,1828,1836) then T1.TRN_VatR else 0 end,		
+		T1.TrN_GIDNumer,
+		T1.TrN_GIDTyp,
+		'SPR',
+		CASE WHEN t1.TRN_SPITYP &lt; 0 THEN t1.TRN_GIDNUMER ELSE t1.TrN_SpiNumer END AS TrN_SpiNumer
+	from cdn.TraNag t1
+	left join cdn.KntAdresy on (case when t1.trn_gidtyp in (2000,2001,2005,2033,2037,1824,1828,2035) then t1.TrN_KAGNumer else t1.trn_knanumer end) = KnA_GidNumer	
+	join cdn.firma on T1.TRN_frmnumer = frm_gidnumer
+	left join #StawkiVatZ ON T1.TRN_GIDNumer = TRV_numer AND T1.TRN_GIDTyp = TRV_typ
+	left join #Atrybuty_JPK on T1.TRN_GIDNumer = ATR_GIDNUMER and T1.TRN_GIDTyp = ATR_GIDTYP
+	LEFT JOIN cdn.tranag tz ON tz.trn_dokumentobcy &lt;&gt; t1.trn_dokumentobcy and tz.TrN_GIDNumer = t1.trn_zwrnumer and tz.TrN_GIDTyp = t1.trn_zwrTyp and t1.trn_gidtyp in (2041,1832,2045,1836,2043)
+	where 
+		t1.TrN_Stan in (3,4,5)
+		and (select case when @walutaSys = @arg_waluta then case when t1.trn_Waluta = @arg_waluta then 1 else case when not(t1.trn_GIDTyp in (1828,1836,2037,2045,3344,3352)) then 1 else 0 end end else case when t1.trn_GIDTyp in (1828,1836,2037,2045,3344,3352) then case when t1.trn_Waluta = @arg_waluta then 1 else 0 end else 0 end end) = 1		
+		and t1.TrN_GidTyp in (2033,1824,2037,1828,2041,1832,2045,1836,2034,2042,2035,2043)
+		and (select cast(trv_deklRok as nvarchar(4)) +'/'+(select case when trv_deklMiesiac &lt;10 then '0' else '' end)+cast(trv_deklMiesiac as nvarchar(2))) &gt;= (select cast(@rok_Od as nvarchar(4))+'/'+(select case when @miesiac_Od &lt;10 then '0' else '' end)+cast(@miesiac_Od as nvarchar(2)))
+		and (select cast(trv_deklRok as nvarchar(4)) +'/'+(select case when trv_deklMiesiac &lt;10 then '0' else '' end)+cast(trv_deklMiesiac as nvarchar(2))) &lt;= (select cast(@rok_Do as nvarchar(4))+'/'+(select case when @miesiac_Do &lt;10 then '0' else '' end)+cast(@miesiac_Do as nvarchar(2)))
+		and	t1.trn_rozliczac = 1
+		and t1.TrN_JPKFA = 1	
+		and t1.TrN_Korektadanych = 0	
+  END
+END
+else if @arg_okres_rodzaj = 5 OR @arg_okres_rodzaj = 6
+BEGIN
+  IF @typFaktury = 'SPR'
+  BEGIN	
+	insert into #Dane
+		select distinct  --FAKTURA SPRZEDAŻ
+		t1.TrN_Data2,
+		--CASE WHEN (select korekta from @Typy where GidTyp=t1.Trn_ZwrTyp)=1 THEN ISNULL((select kor.TrN_DokumentObcy from cdn.tranag kor where kor.trn_korektadanych = 1 AND kor.trn_gidnumer=t1.trn_zwrnumer and kor.trn_gidtyp=t1.trn_zwrtyp),t1.TrN_DokumentObcy) else t1.TrN_DokumentObcy end,
+		case when (select korekta from @TYPY where gidtyp=t1.trn_gidtyp)=0 AND exists(select * from cdn.tranag kor where kor.trn_zwrnumer=t1.trn_gidnumer and kor.trn_stan &gt; 2 and kor.trn_korektadanych=1) then '&lt;&lt;korekta_danych&gt;&gt;' else t1.trn_dokumentobcy end,
+		KnA_Nazwa1+' '+KnA_Nazwa2,
+		KnA_Ulica+' '+(case when KnA_KodP = '00-000' or KnA_KodP='00000' then '' else KnA_KodP end)+' '+KnA_Miasto,
+		Frm_DNazwa,
+		Frm_DUlica+' '+Frm_DNrDomu+' '+Frm_DNrLokalu+' '+Frm_DMiasto+' '+(case when Frm_DKodP = '00-000'  then '' else Frm_DKodP end)+' '+Frm_DPoczta,
+		case when t1.TrN_ExpoNorm in (6,7,8,9,10,11,12,13,16,17,18,19,21) then Frm_NipPrefiks else '' end,
+		(case when REPLACE(Frm_NIP,'-','') like '[1-9][1-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' or REPLACE(Frm_NIP,'-','') like'[1-9][0-9][1-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN REPLACE(Frm_NIP ,'-','') ELSE '' end),
+		case when t1.TrN_ExpoNorm in (6,7,8,9,10,11,12,13,16,17,18,19,21) then KnA_NipPrefiks else '' end,
+		(case when REPLACE(kna_nip,'-','') like '[1-9][1-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' or REPLACE(kna_nip,'-','') like'[1-9][0-9][1-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' THEN REPLACE(kna_nip ,'-','') ELSE '' end),
+		case when t1.trn_gidnumer &lt;&gt; t1.trn_zwrnumer and (t1.trn_gidtyp in (2042,1836,1832) or (t1.trn_gidtyp in (2041,2045,2043) and (t1.trn_spinumer &lt;&gt;0  or t1.trn_spinumer=t1.trn_gidnumer))) then
+			isnull((select top 1 case when t2.trn_data3&lt;&gt;t1.trn_data2 then t2.trn_data3 else 0 end from CDN.TraNag t2 join cdn.traselem tras1 on tras1.trs_orgnumer = t2.trn_gidnumer where tras1.Trs_gidnumer = t1.trn_gidnumer),isnull((select case when t1.trn_zwrtyp in (2033,2034,1827,1823,2032,2036,1824) then (select case when t2.trn_data3&lt;&gt;t1.trn_data2 then t2.trn_data3 else 0 end from cdn.tranag t2 where t2.trn_gidnumer = t1.trn_zwrnumer) else -1 end),-1))  
+			else (case when t1.TrN_Data3&lt;&gt; t1.TrN_Data2 then t1.TrN_Data3 else 0 end) end,		
+		case when  t1.TrN_GidTyp in (1828,1836,2037,2045) then isnull(TrV_WartoscWal_stawka_22_23,0) else isnull(TRV_NettoR_stawka_22_23,0) end,
+		isnull(TRV_VatR_stawka_22_23,0),
+		case when  t1.TrN_GidTyp in (1828,1836,2037,2045) then isnull(TrV_WartoscWal_stawka_7_8,0) else isnull(TRV_NettoR_stawka_7_8,0) end,
+		isnull(TRV_VatR_stawka_7_8,0),
+		case when t1.TrN_Gidtyp in (1828,1836,2037,2045) then isnull(TrV_WartoscWal_stawka_5,0) else isnull(TRV_NettoR_stawka_5,0) end,
+		isnull(TRV_VatR_stawka_5,0),
+		case when t1.TrN_GidTyp in (1828,1836,2037,2045) then isnull(TRV_WartoscWal_flaga2_oo,0) else isnull(TRV_NettoR_flaga2_oo,0) end,
+		0,
+		case when t1.TrN_GidTyp in (1828,1836,2037,2045) then isnull(TRV_WartoscWal_flaga2,0) else isnull(TRV_NettoR_flaga2,0) end,
+		0,
+		case when t1.TrN_Gidtyp in (1828,1836,2037,2045) then isnull(TrV_WartoscWal_stawka_0_flaga1,0) else isnull(TRV_NettoR_stawka_0_flaga1,0) end,
+		case when T1.TRN_gidtyp in (1828,1836,2037,2045) then isnull(TrV_WartoscWal_flaga0,0) else isnull(TRV_NettoR_flaga0,0) end,
+		case when T1.TRN_Gidtyp in (1828,1836,2037,2045) then isnull((select case when T1.TRN_FlagaNB = 'B' then T1.TRN_WartoscWal else (select SUM(tv2.trv_wartoscwal*(100+tv2.TrV_StawkaPod)/100) from CDN.TraVat tv2 where tv2.TrV_GIDTyp = T1.TRN_gidtyp and trv_gidnumer = T1.TRN_gidnumer) end),0) else T1.TRN_VatR + T1.TRN_NettoR end,
+		ATR_P_16,
+		ATR_P_17,
+		--case when (TrV_ExpoNorm in (20,24,25) or (TrV_ExpoNorm = 6 and TrV_RodzajZakupu = 8)) then 'true' else 'false' end,
+		case 
+			when case when t1.TrN_GidTyp in (1828,1836,2037,2045) then isnull(TRV_WartoscWal_flaga2_oo,0) else isnull(TRV_NettoR_flaga2_oo,0) end &lt;&gt; 0 THEN 'true'
+			when (TrV_ExpoNorm in (20,24,25) or (TrV_ExpoNorm = 6 and TrV_RodzajZakupu = 8)) then 'true' 
+			else 'false' end, --zmiana
+		case when exists(select * from CDN.TraVat tv2 where tv2.TrV_GIDTyp = T1.TRN_gidtyp and trv_gidnumer = T1.TRN_gidnumer and TrV_FlagaVat = 0) then 'true' else 'false' end, 
+		case when T1.TRN_PodstawaZW = 1 then T1.TRN_przyczynazw else '' end,
+		case when T1.TRN_PodstawaZW = 2 then T1.TRN_przyczynazw else '' end,
+		case when T1.TRN_PodstawaZW = 3 then T1.TRN_przyczynazw else '' end,
+		ATR_P_20,	
+		ATR_P_20A,	
+		ATR_P_20B,	
+		ATR_P_21,	
+		ATR_P_21A,	
+		ATR_P_21B,	
+		ATR_P_21C,	
+		ATR_P_22A,	
+		ATR_P_22B,	
+		ATR_P_22C,	
+		ATR_P_23,	
+		ATR_P_106E_2,
+		ATR_P_106E_3,
+		ATR_P_106E_3A,
+		case when t1.TrN_Gidtyp in (2033,2037,2035) then 'VAT' when t1.TrN_Gidtyp in (2041,1832,1836,2045,2043) then 'KOREKTA' WHEN t1.TrN_Gidtyp in (1824,1828) THEN 'ZAL' END,
+		case when t1.TrN_GIDTyp &amp; 8  = 8 then t1.TrN_PrzyczynaKorekty else '' end,
+		case when tz.TrN_GIDNumer IS NOT NULL then tz.TrN_DokumentObcy 
+			else case when t1.trn_gidtyp in (2041,1832,2045,1836,2043) then case when t1.TrN_NrKorekty = '' then T1.TrN_DokumentObcy else T1.TrN_NrKorekty end end end,
+		case when T1.TRN_DataOdKor=0 then case when t1.TrN_Gidtyp in (2041,1832,1836,2045,2043) then (select 'Od: '+cast(DateAdd(d,trn_data2,convert(date,'28-12-1800',105)) as nvarchar(10))+' Do: '+cast(DateAdd(d,trn_data2,convert(date,'28-12-1800',105)) as nvarchar(10)) from CDN.TraNag t2 where t1.trn_zwrtyp = t2.trn_gidtyp and t1.TrN_Zwrnumer = t2.trn_gidnumer) else '' end else 'Od: '+CONVERT(nvarchar(50), cast(cast(DateAdd(d,T1.TrN_DataOdKor,convert(datetime,'28-12-1800',105)) as date) as nvarchar(60)))+char(10)+' Do: '+CONVERT(nvarchar(50), cast(cast(DateAdd(d,T1.TrN_DataDoKor,convert(datetime,'28-12-1800',105)) as date) as nvarchar(60))) end,
+		case when t1.TrN_GidTyp in (1824,1832) then t1.TrN_NettoR+t1.TrN_VatR when t1.TrN_GidTyp in (1828,1836) then (select case when t1.TrN_FlagaNB = 'B' then T1.TRN_WartoscWal else (select SUM(tv2.trv_wartoscwal*(100+tv2.TrV_StawkaPod)/100) from CDN.TraVat tv2 where tv2.TrV_GIDTyp = T1.TRN_gidtyp and trv_gidnumer = T1.TRN_gidnumer) end) else 0 end,
+		case when t1.TrN_GidTyp in (1824,1832,1828,1836) then T1.TRN_VatR else 0 end,		
+		T1.TrN_GIDNumer,
+		T1.TrN_GIDTyp,
+		'SPR',
+		CASE WHEN t1.TRN_SPITYP &lt; 0 THEN t1.TRN_GIDNUMER ELSE t1.TrN_SpiNumer END AS TrN_SpiNumer
+	from cdn.TraNag t1
+	left join cdn.KntAdresy on (case when t1.trn_gidtyp in (2000,2001,2005,2033,2037,1824,1828,2035) then t1.TrN_KAGNumer else t1.trn_knanumer end) = KnA_GidNumer	
+	join cdn.firma on T1.TRN_frmnumer = frm_gidnumer
+	left join #StawkiVatZ ON T1.TRN_GIDNumer = TRV_numer AND T1.TRN_GIDTyp = TRV_typ
+	left join #Atrybuty_JPK on T1.TRN_GIDNumer = ATR_GIDNUMER and T1.TRN_GIDTyp = ATR_GIDTYP
+	LEFT JOIN cdn.tranag tz ON tz.trn_dokumentobcy &lt;&gt; t1.trn_dokumentobcy and tz.TrN_GIDNumer = t1.trn_zwrnumer and tz.TrN_GIDTyp = t1.trn_zwrTyp and t1.trn_gidtyp in (2041,1832,2045,1836,2043)
+	join cdn.Zrodla on t1.TrN_GIDTyp=ZRO_TRNTyp and t1.TrN_GIDNumer=ZRO_TRNNumer and ZRO_TRNLp=0 
+	join cdn.Dziennik on ZRO_DTTyp=dzk_gidtyp and ZRO_DTNumer=DZK_GIDNumer and zro_dtlp=0
+	where 
+		t1.TrN_Stan in (3,4,5)
+		and (select case when @walutaSys = @arg_waluta then case when t1.trn_Waluta = @arg_waluta then 1 else case when not(t1.trn_GIDTyp in (1828,1836,2037,2045,3344,3352)) then 1 else 0 end end else case when t1.trn_GIDTyp in (1828,1836,2037,2045,3344,3352) then case when t1.trn_Waluta = @arg_waluta then 1 else 0 end else 0 end end) = 1		
+		and t1.TrN_GidTyp in (2033,1824,2037,1828,2041,1832,2045,1836,2034,2042,2035,2043)
+		and (DATEDIFF(second, convert(datetime,'01-01-1990',105),convert(datetime,(SELECT CAST(CAST(Dzk_Rok AS VARCHAR(4))+RIGHT('0'+CAST(Dzk_Miesiac AS VARCHAR(2)),2)+RIGHT('0'+CAST(Dzk_Dzien AS VARCHAR(2)),2) AS DATETIME)),105))) &gt;= @arg_okres_odTS
+		and (DATEDIFF(second, convert(datetime,'01-01-1990',105),convert(datetime,(SELECT CAST(CAST(Dzk_Rok AS VARCHAR(4))+RIGHT('0'+CAST(Dzk_Miesiac AS VARCHAR(2)),2)+RIGHT('0'+CAST(Dzk_Dzien AS VARCHAR(2)),2) AS DATETIME)),105))) &lt;= @arg_okres_doTS
+		and t1.TrN_JPKFA = 1		
+		AND (Dzk_Bufor='' and @arg_okres_rodzaj = 5 or @arg_okres_rodzaj = 6)
+		and t1.TrN_Korektadanych = 0
+  END
+END
+	
+delete d1 from #Dane d1 
+	where d1.jpk_p_18='false' AND d1.jpk_gidnumer in(select d2.jpk_gidnumer from #Dane d2 group by d2.jpk_gidnumer,d2.jpk_gidtyp,d2.jpk_spinumer having count(*) &gt; 1) 
+	AND EXISTS(select * from #Dane d3 where d3.jpk_gidnumer=d1.jpk_gidnumer and d3.jpk_p_18='true')
+
+update #Dane set jpk_NrFaKorygowanej ='' where jpk_NrFaKorygowanej  is null
+
+
+declare @num int,
+		@num2 int,
+		@numORG int,
+		@p_6 int,
+		@data2 int,
+		@dokObcy nvarchar(41),
+		@dokObcyTMP nvarchar(41)
+		
+
+while exists(select * from #Dane where jpk_p_6 &lt;0)
+begin
+	set @num = 0
+	set @p_6 = 0
+	set @data2 = 0
+	select top 1 @num = jpk_gidnumer from #Dane where jpk_p_6 &lt;0
+	select @data2 = trn_data2 from cdn.tranag where trn_gidnumer = @num
+
+	;with lancuszekCTE AS 
+	(
+		select trn_data3,trn_gidnumer,trn_zwrnumer from cdn.tranag where trn_gidnumer = @num
+		union all
+		select org.trn_data3,org.trn_gidnumer,org.trn_zwrnumer from lancuszekCTE as kor
+		inner join cdn.tranag as org on kor.trn_zwrnumer = org.trn_gidnumer
+		where org.trn_gidtyp not in (1828,2033,2034,1827,1823,2032,2036,1824,2035,2037)
+	)
+	select  top 1  @p_6 = tn.Trn_data3 from lancuszekCTE join cdn.tranag tn on tn.trn_gidnumer = lancuszekCTE.trn_zwrnumer where (select top 1 min(z.trn_zwrnumer) from lancuszekCTE z)=lancuszekCTE.TrN_zwrnumer
+	if @data2 &lt;&gt; @p_6
+	update #Dane set jpk_p_6 = @p_6 where jpk_gidnumer = @num
+	else
+	update #Dane set jpk_p_6 = 0 where jpk_gidnumer = @num
+end
+
+
+if @ZwracajWiersze = 1
+	begin
+		create table #DaneWiersz (
+			jpk_P_2B	nvarchar(256),
+			jpk_P_7		nvarchar(256),
+			jpk_P_8A	nvarchar(256),
+			jpk_P_8B	decimal(18,2),
+			jpk_P_9A	decimal(18,2),
+			jpk_P_9B	decimal(18,2),
+			jpk_P_11	decimal(18,2),
+			jpk_P_11A	decimal(18,2),
+			jpk_P_12	nvarchar(2),
+			jpk_Wiersz_gidnumer	int,
+			jpk_Wiersz_gidtyp		int,
+			jpk_Wiersz_gidlp		int,
+			Wiersz_spityp			int,
+			Wiersz_spinumer		int,
+			CzySpinacz			tinyint
+			)
+		create clustered index DaneWierszPrimary on #DaneWiersz (jpk_Wiersz_gidnumer,jpk_Wiersz_gidtyp,jpk_Wiersz_gidlp)
+
+		declare	@licznik		int
+
+		IF @typFaktury = 'SPR'
+		begin
+		--DOKUMENT NIE SPIĘTY SPRZEDAŻOWY/SPINACZ ELEMENTÓW
+			insert into #DaneWiersz 
+			select distinct 
+					TrN_DokumentObcy,
+					case when A.TrE_GIDNumer is null then  (case when A.trn_gidtyp in (1824,1828,1832,1836) then 'Zaliczka na poczet zamówienia – '+ ISNULL(CDN.NumerDokumentu( CDN.DokMapTypDokumentu (ZaN_GIDTyp,ZaN_ZamTyp, ZaN_Rodzaj),0,0,ZaN_ZamNumer,ZaN_ZamRok,ZaN_ZamSeria,ZaN_ZamMiesiac),'') when A.TrN_TrNTyp in (12,13) then 'Koszt' else '' end) else isnull(A.tre_TwrNazwa,'') end,
+					case when A.tre_gidnumer is null  then (select Twr_Jm from cdn.twrkarty where twr_gidnumer = 0) else Twr_Jm end Twr_Jm,--Twr_Jm,
+					SumTreIlosc,
+					CenaNetto,
+					CenaBrutto,
+					KsiegowaNetto,
+					KsiegowaBrutto,
+					StawkaPod,				
+					TrN_GIDNumer,
+					TrN_GIDTyp,
+					GIDLp,
+					TrN_SpiTyp,
+					TrN_SpiNumer,
+					CzySpinacz
+			from
+			(
+			select distinct
+				TrN_DokumentObcy,
+				case when t1.tre_gidnumer is null  then 1 else (select sum(t27.tre_ilosc) from cdn.traelem t27 where t27.tre_gidnumer = t1.tre_gidnumer and abs(t27.tre_gidlp) = abs(t1.tre_gidlp)) end SumTreIlosc,
+				isnull(
+					case when t1.tre_gidnumer is null then 
+						case when trn_gidtyp in (1828,1836,2037,2045) then
+							(Trv_wartoscwal/(100+TRV_StawkaPod))*100
+						else
+							TrV_NettoR
+						end
+					else
+						case when t1.tre_gidtyp in (2041,1832,2045,1836) then
+							case when t2.tre_gidnumer is not null then
+								case when trn_flagaNB = 'N' then
+									(t1.TrE_Cena-t1.TrE_CenaPoRabacie)+(t2.TrE_Cena-t2.TrE_CenaPoRabacie)
+								else
+									((t1.TrE_Cena-t1.TrE_CenaPoRabacie)*100/(100+t1.tre_stawkapod))+((t2.TrE_Cena-t2.TrE_CenaPoRabacie)*100/(100+t2.tre_stawkapod))
+								end
+							else
+								case when trn_flagaNB = 'N' then
+									case when TrN_GIDTyp in (2041,2045) and TrN_Zwrnumer=TrN_GIDNumer and TrN_SpiNumer &lt;&gt; 0 and TrN_TrNTyp = 3 then t1.tre_cena-t1.TrE_CenaPrzedKorekta else
+										t1.TrE_Cena-t1.TrE_CenaPoRabacie end
+								else
+									case when TrN_GIDTyp in (2041,2045) and TrN_Zwrnumer=TrN_GIDNumer and TrN_SpiNumer &lt;&gt; 0 and TrN_TrNTyp = 3 then (t1.tre_cena-t1.TrE_CenaPrzedKorekta)*100/(100+t1.tre_stawkapod) else
+										(t1.TrE_Cena-t1.TrE_CenaPoRabacie)*100/(100+t1.tre_stawkapod) end
+								end
+							end
+						else
+							case when trn_flagaNB = 'N' then
+								t1.TrE_Cena
+							else 
+								t1.TrE_Cena*100/(100+t1.tre_stawkapod)
+							end
+						end
+					end,0) CenaNetto,			
+				isnull(
+					case when t1.tre_gidnumer is null then 
+						case when trn_gidtyp in (1828,1836,2037,2045) then
+							TrV_WartoscWal
+						else
+							TrV_NettoR+TrV_VatR
+						end
+					else
+						case when t1.tre_gidtyp in (2041,1832,2045,1836) then
+							case when t2.tre_gidnumer is not null then
+								case when trn_flagaNB = 'B' then
+									(t1.TrE_Cena-t1.TrE_CenaPoRabacie)+(t2.TrE_Cena-t2.TrE_CenaPoRabacie)
+								else
+									((t1.TrE_Cena-t1.TrE_CenaPoRabacie)*(100+t1.tre_stawkapod)/100)+((t2.TrE_Cena-t2.TrE_CenaPoRabacie)*(100+t2.tre_stawkapod)/100)
+								end
+							else
+								case when trn_flagaNB = 'B' then
+									case when TrN_GIDTyp in (2041,2045) and TrN_Zwrnumer=TrN_GIDNumer and TrN_SpiNumer &lt;&gt; 0 and TrN_TrNTyp = 3 then t1.tre_cena-t1.TrE_CenaPrzedKorekta else
+										t1.TrE_Cena-t1.TrE_CenaPoRabacie end
+								else
+									case when TrN_GIDTyp in (2041,2045) and TrN_Zwrnumer=TrN_GIDNumer and TrN_SpiNumer &lt;&gt; 0 and TrN_TrNTyp = 3 then (t1.tre_cena-t1.TrE_CenaPrzedKorekta)*(100+t1.tre_stawkapod)/100 else
+									(t1.TrE_Cena-t1.TrE_CenaPoRabacie)*(100+t1.tre_stawkapod)/100 end
+								end
+							end
+						else
+							case when trn_flagaNB = 'B' then
+								t1.TrE_Cena
+							else 
+								t1.TrE_Cena*(100+t1.tre_stawkapod)/100
+							end
+						end
+					end,0) CenaBrutto,
+				isnull(case when t1.tre_gidnumer is null then 
+					case when trn_gidtyp in (1828,1836,2037,2045) then
+						(TrV_WartoscWal/(100+TrV_StawkaPod))*100
+					else
+						TrV_NettoR
+					end
+				else	
+					case when trn_gidtyp in (2041,1832,2045,1836) and t2.tre_gidnumer is not null then
+						(select top 1 tr1.TRE_KSIEGOWANETTO + tr2.TrE_KsiegowaNetto
+						from CDN.TraElem tr1 inner join CDN.TraElem tr2 on tr1.TrE_GIDLp = -tr2.tre_gidlp and tr1.tre_gidnumer  = tr2.tre_gidnumer
+						where tr1.TrE_GIDLp &lt;0 and tr2.tre_gidlp &gt;0 and tr1.TrE_GIDNumer  =TrN_GIDNumer and tr1.TrE_GIDTyp = trn_gidtyp and abs(tr1.TrE_GIDLp)= abs(t1.tre_gidlp)) 
+						* case when trn_gidtyp in (2045) then t1.tre_kursm/t1.tre_kursl else 1 end
+					when  t1.tre_gidtyp in (1828,1836,2037,2045) then
+						case when trn_flagaNB = 'N' then
+							t1.TrE_WartoscPoRabacie
+						else
+							t1.TrE_WartoscPoRabacie*100/(100+t1.tre_stawkapod)
+						end					
+					else
+						t1.TrE_KsiegowaNetto
+					end
+				end,0) KsiegowaNetto,
+				isnull(case when t1.tre_gidnumer is null then 
+					case when trn_gidtyp in (1828,1836,2037,2045) then
+						TrV_WartoscWal
+					else
+						TrV_NettoR+TrV_VatR
+					end
+				else
+					case when trn_gidtyp in (2041,1832,2045,1836) and t2.tre_gidnumer is not null then
+						(select top 1 tr1.TRE_KSIEGOWABrutto + tr2.TrE_KsiegowaBrutto
+						from CDN.TraElem tr1 inner join CDN.TraElem tr2 on tr1.TrE_GIDLp = -tr2.tre_gidlp and tr1.tre_gidnumer  = tr2.tre_gidnumer
+						where tr1.TrE_GIDLp &lt;0 and tr2.tre_gidlp &gt;0 and tr1.TrE_GIDNumer  =TrN_GIDNumer and tr1.TrE_GIDTyp = trn_gidtyp and abs(tr1.TrE_GIDLp)= abs(t1.tre_gidlp)) 
+						* case when trn_gidtyp in (2045) then t1.tre_kursm/t1.tre_kursl else 1 end
+					when t1.tre_gidtyp in (1828,1836,2037,2045) then
+						case when trn_flagaNB = 'B' then
+							t1.TrE_WartoscPoRabacie
+						else
+							t1.TrE_WartoscPoRabacie*(100+t1.tre_stawkapod)/100
+						end 
+					else
+						t1.TrE_KsiegowaBrutto
+					end
+				end,0) KsiegowaBrutto,
+				isnull(case when t1.TRE_gidnumer is NOT null then 
+					case when t1.tre_flagavat=2 then '' when t1.tre_flagavat=0 then 'zw' else 
+							case when t1.TrE_StawkaPod&gt;9 then left(convert(nvarchar(256),t1.TrE_StawkaPod),2) else left(convert(nvarchar(256),t1.TrE_StawkaPod),1) end end
+					else 
+					case when TRV_flagavat=2 then '' when TRV_flagavat=0 then 'zw' else 
+						case when TrV_StawkaPod&gt;9 then left(convert(nvarchar(256),TRV_StawkaPod),2) else left(convert(nvarchar(256),TRV_StawkaPod),1) end
+				end end,0) StawkaPod,
+				TrN_GIDNumer,
+				TrN_GIDTyp,
+				CASE WHEN t1.TrE_GIDLp IS NULL THEN TRN_GIDLP ELSE t1.TrE_GIDLp END GIDLp,
+				ABS(TrN_SpiTyp) AS TrN_SpiTyp,
+				CASE WHEN TRN_SPITYP &lt; 0 THEN TRN_GIDNUMER ELSE TrN_SpiNumer END AS TrN_SpiNumer,
+				0 CzySpinacz,
+				TrN_ZaNNumer,
+				TrN_TrNTyp,
+				t1.TrE_GIDNumer,
+				t1.TrE_TwrNazwa,
+				t1.TrE_TwrNumer
+			from CDN.TraNag
+			join #Dane on  TrN_GidTyp = #Dane.jpk_gidtyp and TrN_GIDNumer = #Dane.jpk_gidnumer
+			left join CDN.TraElem t1 on t1.tre_GIDNumer = TrN_GIDNumer and TrN_GIDTyp = t1.tre_GIDTyp
+			left join cdn.TraElem t2 on 
+					t1.tre_GIDNumer = t2.tre_GIDNumer 
+					and t1.tre_GIDlp + t2.tre_GIDlp = 0
+					and t1.TrE_TwrNumer = t2.TrE_TwrNumer
+			left join cdn.travat on  TrN_GIDTyp=TRV_GIDTyp AND TrN_GIDNumer=TRV_GIDNumer 
+			where 
+			(t1.tre_gidlp&gt;0 and (t2.tre_gidlp&lt;0 or t2.tre_gidlp is null) OR t1.TRE_GIDLP IS NULL)
+			and  TrN_GIDTyp in (2033,1824,2037,1828,2041,1832,2045,1836,2034,2042)
+			and not(TrN_Spinumer = 0 and TrN_GIDTyp in (2033,2041,2037,2045,2035,2043)  and trn_spityp &gt;=0)
+			) A
+			left join cdn.zamnag on A.TrN_ZaNNumer = zan_gidnumer
+			left join cdn.twrkarty on Twr_GIDNumer=A.tre_TwrNumer
+		
+		--SPINACZ SPRZEDAŻOWY
+			insert into #DaneWiersz
+			select distinct 
+					TrN_DokumentObcy,
+					case when A.TrE_GIDNumer is null then  (case when A.trn_gidtyp in (1824,1828,1832,1836) then 'Zaliczka na poczet zamówienia – '+ ISNULL(CDN.NumerDokumentu( CDN.DokMapTypDokumentu (ZaN_GIDTyp,ZaN_ZamTyp, ZaN_Rodzaj),0,0,ZaN_ZamNumer,ZaN_ZamRok,ZaN_ZamSeria,ZaN_ZamMiesiac),'') when A.TrN_TrNTyp in (12,13) then 'Koszt' else '' end) else isnull(A.tre_TwrNazwa,'') end,
+					case when A.tre_gidnumer is null  then (select Twr_Jm from cdn.twrkarty where twr_gidnumer = 0) else Twr_Jm end Twr_Jm,--Twr_Jm,
+					SumTreIlosc,
+					CenaNetto,
+					CenaBrutto,
+					KsiegowaNetto,
+					KsiegowaBrutto,
+					StawkaPod,				
+					TrN_GIDNumer,
+					TrN_GIDTyp,
+					GIDLp,
+					TrN_SpiTyp,
+					TrN_SpiNumer,
+					CzySpinacz
+			from
+			(
+			select distinct
+				spinacz.TrN_DokumentObcy,
+				case when t1.tre_gidnumer is null  then 1 else (select top 1 sum(t2.tre_ilosc) from cdn.traelem t2 where t2.tre_gidnumer = t1.tre_gidnumer and abs(t2.tre_gidlp) = abs(t1.tre_gidlp)) end SumTreIlosc,
+				isnull(case when t1.tre_gidnumer is null then 
+					case when spiety.trn_gidtyp in (1828,1836,2037,2045) then
+						(Trv_wartoscwal/(100+TRV_StawkaPod))*100
+					else
+						TrV_NettoR
+					end
+				else
+					case when t1.tre_gidtyp in (2041,1832,2045,1836) then
+						case when t2.tre_gidnumer is not null then
+							case when spiety.trn_flagaNB = 'N' then
+								(t1.TrE_Cena-t1.TrE_CenaPoRabacie)+(t2.TrE_Cena-t2.TrE_CenaPoRabacie)
+							else
+								((t1.TrE_Cena-t1.TrE_CenaPoRabacie)*100/(100+t1.tre_stawkapod))+((t2.TrE_Cena-t2.TrE_CenaPoRabacie)*100/(100+t2.tre_stawkapod))
+							end
+						else
+							case when spiety.trn_flagaNB = 'N' then
+								case when spiety.TrN_GIDTyp in (2041,2045) and spiety.TrN_Zwrnumer=spiety.TrN_GIDNumer and spiety.TrN_SpiNumer &lt;&gt; 0 and spiety.TrN_TrNTyp = 3 then t1.tre_cena-t1.TrE_CenaPrzedKorekta else
+									t1.TrE_Cena-t1.TrE_CenaPoRabacie end
+							else
+								case when spiety.TrN_GIDTyp in (2041,2045) and spiety.TrN_Zwrnumer=spiety.TrN_GIDNumer and spiety.TrN_SpiNumer &lt;&gt; 0 and spiety.TrN_TrNTyp = 3 then (t1.tre_cena-t1.TrE_CenaPrzedKorekta)*100/(100+t1.tre_stawkapod) else
+									(t1.TrE_Cena-t1.TrE_CenaPoRabacie)*100/(100+t1.tre_stawkapod) end
+							end
+						end
+					else
+						case when spiety.trn_flagaNB = 'N' then
+							t1.TrE_Cena
+						else 
+							t1.TrE_Cena*100/(100+t1.tre_stawkapod)
+						end
+					end
+				end,0) CenaNetto,
+				isnull(case when t1.tre_gidnumer is null then 
+					case when spiety.trn_gidtyp in (1828,1836,2037,2045) then
+						TrV_WartoscWal
+					else
+						TrV_NettoR+TrV_VatR
+					end
+				else
+					case when t1.tre_gidtyp in (2041,1832,2045,1836) then
+						case when t2.tre_gidnumer is not null then
+							case when spiety.trn_flagaNB = 'B' then
+								(t1.TrE_Cena-t1.TrE_CenaPoRabacie)+(t2.TrE_Cena-t2.TrE_CenaPoRabacie)
+							else
+								((t1.TrE_Cena-t1.TrE_CenaPoRabacie)*(100+t1.tre_stawkapod)/100)+((t2.TrE_Cena-t2.TrE_CenaPoRabacie)*(100+t2.tre_stawkapod)/100)
+							end
+						else
+							case when spiety.trn_flagaNB = 'B' then
+								case when spiety.TrN_GIDTyp in (2041,2045) and spiety.TrN_Zwrnumer=spiety.TrN_GIDNumer and spiety.TrN_SpiNumer &lt;&gt; 0 and spiety.TrN_TrNTyp = 3 then t1.tre_cena-t1.TrE_CenaPrzedKorekta else
+									t1.TrE_Cena-t1.TrE_CenaPoRabacie end
+							else
+								case when spiety.TrN_GIDTyp in (2041,2045) and spiety.TrN_Zwrnumer=spiety.TrN_GIDNumer and spiety.TrN_SpiNumer &lt;&gt; 0 and spiety.TrN_TrNTyp = 3 then (t1.tre_cena-t1.TrE_CenaPrzedKorekta)*(100+t1.tre_stawkapod)/100 else
+									(t1.TrE_Cena-t1.TrE_CenaPoRabacie)*(100+t1.tre_stawkapod)/100 end
+							end
+						end
+					else
+						case when spiety.trn_flagaNB = 'B' then
+							t1.TrE_Cena
+						else 
+							t1.TrE_Cena*(100+t1.tre_stawkapod)/100
+						end
+					end
+				end,0) CenaBrutto,
+				isnull(case when t1.tre_gidnumer is null then 
+					case when spiety.trn_gidtyp in (1828,1836,2037,2045) then
+						TrV_WartoscWal
+					else
+						TrV_NettoR
+					end
+				else
+					case when spiety.trn_gidtyp in (2041,1832,2045,1836,2009,2013,2042) and t2.tre_gidnumer is not null then						
+						(select top 1 tr1.TRE_KSIEGOWANETTO + tr2.TrE_KsiegowaNetto
+						from CDN.TraElem tr1 inner join CDN.TraElem tr2 on tr1.TrE_GIDLp = -tr2.tre_gidlp and tr1.tre_gidnumer  = tr2.tre_gidnumer
+						where tr1.TrE_GIDLp &lt;0 and tr2.tre_gidlp &gt;0 and tr1.TrE_GIDNumer  =spiety.trn_GIDNumer and tr1.TrE_GIDTyp = spiety.trn_gidtyp and abs(tr1.TrE_GIDLp)= abs(t1.tre_gidlp)) 
+						* case when spiety.trn_gidtyp in (2013) then t1.tre_kursm/t1.tre_kursl else 1 end
+					when t1.tre_gidtyp in (1828,1836,2037,2045,2005,2013) then
+						case when spiety.trn_flagaNB = 'N' then
+							t1.TrE_WartoscPoRabacie
+						else
+							t1.TrE_WartoscPoRabacie*100/(100+t1.tre_stawkapod)
+						end
+					else
+						t1.TrE_KsiegowaNetto
+					end
+				end,0) KsiegowaNetto,
+				isnull(case when t1.tre_gidnumer is null then 
+					case when spiety.trn_gidtyp in (1828,1836,2037,2045) then
+						TrV_WartoscWal
+					else
+						TrV_NettoR+TrV_VatR
+					end
+				else
+					case when spiety.trn_gidtyp in (2041,1832,2045,1836,2009,2013,2042) and t2.tre_gidnumer is not null then
+						(select top 1 tr1.TRE_KSIEGOWABrutto + tr2.TrE_KsiegowaBrutto
+						from CDN.TraElem tr1 inner join CDN.TraElem tr2 on tr1.TrE_GIDLp = -tr2.tre_gidlp and tr1.tre_gidnumer  = tr2.tre_gidnumer
+						where tr1.TrE_GIDLp &lt;0 and tr2.tre_gidlp &gt;0 and tr1.TrE_GIDNumer  =spiety.trn_GIDNumer and tr1.TrE_GIDTyp = spiety.trn_gidtyp and abs(tr1.TrE_GIDLp)= abs(t1.tre_gidlp)) 
+						* case when spiety.trn_gidtyp in (2013) then t1.tre_kursm/t1.tre_kursl else 1 end
+					when t1.tre_gidtyp in (1828,1836,2037,2045,2005,2013) then
+						case when spiety.trn_flagaNB = 'B' then
+							t1.TrE_WartoscPoRabacie
+						else
+							t1.TrE_WartoscPoRabacie*(100+t1.tre_stawkapod)/100
+						end
+					else
+						t1.TrE_KsiegowaBrutto
+					end
+				end,0) KsiegowaBrutto,
+				isnull(case when t1.TRE_gidnumer is NOT null then 
+					case when t1.tre_flagavat=2 then '' when t1.tre_flagavat=0 then 'zw' else 
+							case when t1.TrE_StawkaPod&gt;9 then left(convert(nvarchar(256),t1.TrE_StawkaPod),2) else left(convert(nvarchar(256),t1.TrE_StawkaPod),1) end end
+					else 
+					case when TRV_flagavat=2 then '' when TRV_flagavat=0 then 'zw' else 
+						case when TrV_StawkaPod&gt;9 then left(convert(nvarchar(256),TRV_StawkaPod),2) else left(convert(nvarchar(256),TRV_StawkaPod),1) end
+					end end,0) StawkaPod,
+				spiety.TrN_GIDNumer,
+				spiety.TrN_GIDTyp,
+				CASE WHEN t1.TrE_GIDLp IS NULL THEN SPINACZ.TRN_GIDLP ELSE t1.TrE_GIDLp END GIDLp,
+				spiety.TrN_SpiTyp,
+				spiety.TrN_SpiNumer,
+				1 CzySpinacz,
+				spiety.TrN_ZaNNumer,
+				spiety.TrN_TrNTyp,
+				t1.TrE_GIDNumer,
+				t1.TrE_TwrNazwa,
+				t1.TrE_TwrNumer
+				from CDN.TraNag spinacz
+				join #Dane on  spinacz.TrN_GidTyp = #Dane.jpk_gidtyp and spinacz.TrN_GIDNumer = #Dane.jpk_gidnumer
+				join CDN.TraNag spiety on spiety.TrN_SpiNumer = spinacz.TrN_GIDNumer and spiety.TrN_SpiTyp = spinacz.trn_gidtyp and spiety.TrN_KorektaDanych = 0
+				left join CDN.TraElem t1 on t1.tre_GIDNumer = spiety.trn_GIDNumer and spiety.trn_GIDTyp = t1.tre_GIDTyp
+				left join cdn.TraElem t2 on 
+					t1.tre_GIDNumer = t2.tre_GIDNumer 
+					and t1.tre_GIDlp + t2.tre_GIDlp = 0
+					and t1.TrE_TwrNumer = t2.TrE_TwrNumer
+				left join cdn.travat on  spiety.trn_GIDTyp=TRV_GIDTyp AND spiety.trn_GIDNumer=TRV_GIDNumer 
+				where 
+				(t1.tre_gidlp&gt;0 and (t2.tre_gidlp&lt;0 or t2.tre_gidlp is null) OR t1.TRE_GIDLP IS NULL)
+				and spinacz.TrN_Spinumer = 0 and spinacz.trn_gidtyp in (2033,2041,2037,2045,2035,2043)
+			) A
+			left join cdn.zamnag on A.TrN_ZaNNumer = zan_gidnumer
+			left join cdn.twrkarty on Twr_GIDNumer=A.tre_TwrNumer
+
+		end
+
+		DECLARE @id INT 
+		SET @id = 0 
+		UPDATE #DaneWiersz SET @id = jpk_Wiersz_gidlp = @id + 1 where jpk_Wiersz_gidlp = 0
+    end
+	
+	select top 1 @num = jpk_gidnumer from #Dane where jpk_P_2A='&lt;&lt;korekta_danych&gt;&gt;'
+	WHILE @num is not null
+	BEGIN	
+		select @dokObcy = trn_dokumentobcy from cdn.tranag where trn_gidnumer=@num
+		set @dokObcyTMP= @dokObcy
+		set @numORG = @num
+		set @num2=@num		
+		WHILE 1 = 1
+		BEGIN	
+			set @num = @num2
+			set @dokObcy = coalesce(@dokObcyTMP,@dokObcy)
+			set @num2 = null
+			
+			select top 1 @dokObcyTMP = case when trn_stan &gt; 2 AND TrN_KorektaDanych=1 AND tsv_gidnumer is not null then trn_dokumentobcy else @dokObcy end, @num2=trn_gidnumer 
+				from cdn.tranag 
+				left join cdn.trasvat on tsv_gidtyp=trn_gidTyp and tsv_gidnumer=trn_gidnumer 
+				where trn_zwrnumer=@num
+				order by TrN_KorektaDanych desc 
+
+			IF @num2 = @numORG OR @num2 IS NULL
+				BREAK
+		END	
+		UPDATE #Dane set jpk_P_2A = @dokObcy where jpk_gidnumer = @numORG
+		if @ZwracajWiersze = 1
+			UPDATE #DaneWiersz set jpk_P_2B = @dokObcy where wiersz_spinumer = @numORG
+		set @num = null
+		select top 1 @num = jpk_gidnumer from #Dane where jpk_P_2A='&lt;&lt;korekta_danych&gt;&gt;'
+	END
+	
+	if @ZwracajWiersze = 1
+		set @sSQL = N'select * ' + case when @BezTabeliTymczasowej=0 then N'into ##tmpJPKFA_'+convert(nvarchar,@typFaktury)+N'_' + convert(nvarchar,@PONNumer) else N'' end + ' from #Dane inner join #DaneWiersz on (#Dane.jpk_gidnumer = #DaneWiersz.jpk_Wiersz_gidnumer and #Dane.jpk_gidTyp = #DaneWiersz.jpk_Wiersz_gidTyp and #DaneWiersz.CzySpinacz = 0) or (#Dane.jpk_SpiNumer = 0 and #Dane.jpk_gidnumer = #DaneWiersz.Wiersz_spinumer and #Dane.jpk_gidtyp =  #DaneWiersz.Wiersz_spityp and #DaneWiersz.CzySpinacz = 1) order by jpk_gidnumer'
+	else 
+		set @sSQL = N'SELECT * ' + case when @BezTabeliTymczasowej=0 then N'into ##tmpJPKFA_'+convert(nvarchar,@typFaktury)+N'_' + convert(nvarchar,@PONNumer) else N'' end + N' FROM #Dane  order by jpk_gidnumer'
+	
+	exec sp_executeSQL @sSQL
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

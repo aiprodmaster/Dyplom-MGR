@@ -1,0 +1,52 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[ESKLEP_EksportTwrDoCechy]"></A><PRE>
+          <FONT SIZE="2"><I>/* [ESKLEP_EksportTwrDoCechy] */</I><BR>
+CREATE PROCEDURE [CDN].[ESKLEP_EksportTwrDoCechy]
+  @ID INT      -- ID e-sklepu
+ ,@TypExp INT  -- Typ eksportu stanów towaru (0 - różnicowy, 1 - pełny)
+AS
+
+DECLARE  @TypIlosci AS SMALLINT	-- Typ zwracanej ilości: 0 - ilość do sprzedaży, 1 - ilość magazynowa, 2 - ilość dostępna do sprzedaży, 3 - ilość dostępna magazynowa
+		,@UwzgledniajRezerwacje AS SMALLINT -- Sposób uwzględniania rezerwacji z zasobami 0 - uwzględniaj wszystkie rezerwacje (działanie domyślne)
+																		 --               1 - uwzgędniaj tylko rezerwacje z zasobami
+																		 --               2 - uwzględniaj tylko rezerwacje bez zasobów
+		,@PcK_CentrumID INT
+		,@PcK_TwGNumer INT
+		,@PcK_TSSynchrPtw INT
+
+SELECT  @PcK_CentrumID = PcK_CentrumID, @PcK_TwGNumer = TwG_GIDNumer, @PcK_TSSynchrPtw = PcK_TSSynchrPtw FROM CDN.PicoKonfig JOIN CDN.TwrGrupy (NOLOCK) ON TwG_SyncID = PCK_TwGNumer AND TwG_GIDTyp = -16 WHERE PcK_PicoID = @ID
+SELECT  @TypIlosci = 0  , @UwzgledniajRezerwacje = 0
+
+SELECT distinct 1 AS TAG, NULL AS Parent
+	,Twr_GIDNumer AS [CET!1!TwrID], TrS_CChNumer AS [CET!1!CechaID], 1 AS [CET!1!Lp]
+FROM CDN.TwrKarty
+INNER JOIN CDN.TwrZasoby ON Twr_GIDNumer=TwZ_TwrNumer
+INNER JOIN CDN.Dostawy ON TwZ_DstTyp=Dst_GIDTyp	AND TwZ_DstNumer=Dst_GIDNumer AND TwZ_DstLp=Dst_GIDLp
+LEFT OUTER JOIN CDN.TraSElem ON Dst_TrnTyp=TrS_GIDTyp AND Dst_TrnNumer=TrS_GIDNumer AND Dst_TrnLp=TrS_GIDLp AND Dst_SubTrnLp=TrS_SubGIDLp
+JOIN CDN.CechyKlasy ON TrS_CChNumer=CCK_GIDNumer
+JOIN CDN.Cechy on CCK_GIDNumer=CCh_GIDNumer AND TrS_Cecha = CCh_Cecha
+WHERE Twr_GIDNumer &gt; 0 AND Twr_eSklep = 1 AND Twr_Archiwalny = 0 and CCh_iSklep = 1 AND Twr_LastModC &lt;&gt; 0
+	  AND EXISTS(SELECT TwL_GrONumer FROM CDN.TwrLinki WHERE Twr_GIDTyp = TwL_GIDTyp AND Twr_GIDNumer = TwL_GIDNumer AND TwL_GrONumer = @PcK_TwGNumer )
+	  AND (@TypExp = 1 OR EXISTS(SELECT TrE_TwrNumer FROM CDN.TraElem JOIN CDN.TraSElem ON TrE_GIDNumer = TrS_GIDNumer AND TrE_GIDLp = TrS_GIDLp WHERE TrE_TwrNumer = Twr_GIDNumer AND TrE_TrNTStamp &gt; @PcK_TSSynchrPtw)	
+					   OR EXISTS(SELECT ReZ_TwrNumer FROM CDN.Rezerwacje WHERE ReZ_TwrNumer = Twr_GIDNumer AND ReZ_TStamp &gt; @PcK_TSSynchrPtw)
+					   OR EXISTS(SELECT MaE_GIDNumer FROM CDN.MagElem JOIN CDN.MagSElem ON MaE_GIDNumer = MaS_GIDNumer AND MaE_GIDLp = MaS_GIDLp WHERE MaE_TwrNumer = Twr_GIDNumer AND MaS_TrNTStamp &gt; @PcK_TSSynchrPtw)
+		   )	
+ORDER BY [CET!1!TwrID], [CET!1!Lp]
+FOR XML EXPLICIT, ROOT('CETC')
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

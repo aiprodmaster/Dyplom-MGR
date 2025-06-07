@@ -1,0 +1,170 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="POGDodajPozycje"></A><PRE>
+          <FONT SIZE="2"><I>/* POGDodajPozycje */</I><BR>
+CREATE PROCEDURE CDN.POGDodajPozycje
+(
+	@p_POGId				int,				-- Identyfikator planu obciążenia
+	@p_Lp					smallint=null,		-- Lp. pozycji planu na liście
+	@p_TwrTyp				smallint=null,		-- Towaru
+	@p_TwrNumer				int=null,			-- 
+	@p_DokZrdTyp			smallint,			-- Dokument źródłowy (pola wymagane: typ i numer, opcjonalnie lp.)
+	@p_DokZrdFirma			int=null,			--
+	@p_DokZrdNumer			int,				-- 
+	@p_DokZrdLp				smallint=null,		--
+	@p_IloscMPS				decimal(11,4)=null,	-- Ilość elementu z dokumentu źródłowego
+	@p_IloscDoProdukcji		decimal(11,4)=null,	-- Ilość do produkcji, na którą planować obciążenie gniazda
+	@p_TerminMPS			int=null,			-- Termin realizacji z pozycji dokumentu źródłowego
+	@p_TerminWgObciazenia	int=null,			-- Termin wynikający z planowanego obciążenia dla gniazda
+	@p_TerminWgZP			int=null,			-- Termin realizacji rezerwacji zakupowej, wygenerowanej do pozycji planu
+
+	@p_PlanujPozycje		tinyint=0,			-- Czy dla pozycji należy przeliczyć obciazenie gniazd roboczych
+	@p_PokazBledy			TINYINT=1,			-- Czy pokazywać błędy 
+	@Wynik					INTEGER OUTPUT		-- Wynik:
+												/*
+												 0  : Operacja zakończona sukcesem
+												-10 : Nie powiodło się dodawanie wpisu do tabeli CDN.PlanyObciazeniaPozycje
+												-11 : Pozycja nie została dodana do planu obciążenia gniazd. Element znajduje się już na planie.
+												*/			
+)
+AS
+BEGIN
+
+	--Sprawdzamy czy taka pozycja już istnieje
+	if exists(SELECT * FROM CDN.PlanyObciazeniaPozycje WHERE PPO_POGId=@p_POGId AND PPO_DokZrdTyp=IsNull(@p_DokZrdTyp, 14348) AND PPO_DokZrdFirma=IsNull(@p_DokZrdFirma, CDN.GIDFirma()) AND PPO_DokZrdNumer=@p_DokZrdNumer AND PPO_DokZrdLp=IsNull(@p_DokZrdLp,0) and @p_DokZrdNumer is not null and @p_DokZrdNumer&lt;&gt;0)
+	begin
+		if @p_PokazBledy=1
+			raiserror('Pozycja nie została dodana do planu obciążenia gniazd. Element znajduje się już na planie.', 16, 1)
+		set @Wynik = -11
+		return @Wynik
+	end
+
+	declare @PPOId int
+	declare @WynikProc		int
+
+	if (@p_Lp is null)
+		select @p_Lp = IsNull((select max(PPO_Lp) from CDN.PlanyObciazeniaPozycje where PPO_POGId=@p_POGId),0)+1
+
+	IF (@p_TwrTyp is null) or (@p_TwrNumer is null) or (@p_IloscMPS is null) or (@p_IloscDoProdukcji is null) or (@p_TerminMPS is null) or (@p_TerminWgObciazenia is null) or (@p_TerminWgZP is null)
+	BEGIN
+		if (@p_DokZrdTyp = 14348) -- 'PZE'
+		begin
+			if EXISTS(SELECT * FROM CDN.ZamZamLinki WHERE ZZL_ZZGidTyp=14343 AND ZZL_ZZGidFirma=IsNull(@p_DokZrdFirma, CDN.GIDFirma())  AND ZZL_ZZGidNumer=@p_DokZrdNumer AND ZZL_Kierunek=512)
+			begin
+				SELECT @p_DokZrdTyp=ZZL_ZSGidTyp, @p_DokZrdFirma=ZZL_ZSGidFirma, @p_DokZrdNumer=ZZL_ZSGidNumer, @p_DokZrdLp=ZZL_ZSGidLp 
+				FROM CDN.ZamZamLinki 
+				WHERE ZZL_ZZGidTyp=14343 AND ZZL_ZZGidFirma=IsNull(@p_DokZrdFirma, CDN.GIDFirma()) AND ZZL_ZZGidNumer=@p_DokZrdNumer AND ZZL_Kierunek=512
+
+					if exists(SELECT * FROM CDN.PlanyObciazeniaPozycje WHERE PPO_POGId=@p_POGId AND PPO_DokZrdTyp=@p_DokZrdTyp AND PPO_DokZrdFirma=IsNull(@p_DokZrdFirma, CDN.GIDFirma()) AND PPO_DokZrdNumer=@p_DokZrdNumer AND PPO_DokZrdLp=@p_DokZrdLp)
+					begin -- taki ZS jest już dodany
+						set @Wynik = 0
+						return @Wynik
+					end
+			end
+			else
+			begin				
+				select @p_TwrTyp=IsNull(@p_TwrTyp,PZE_TwrTyp), @p_TwrNumer=IsNull(@p_TwrNumer,PZE_TwrNumer),
+						@p_IloscMPS=IsNull(@p_IloscMPS,P.PZE_Ilosc), @p_IloscDoProdukcji=IsNull(@p_IloscDoProdukcji,P.PZE_Ilosc), 
+						@p_TerminMPS=IsNull(@p_TerminMPS,F.DataRealizacji), @p_TerminWgZP=IsNull(@p_TerminWgZP,F.DataRealizacji) 
+				from cdn.ProdZlecElem P
+				cross apply CDN.ProdProduktyDlaZlecenia(P.PZE_Zlecenie) F 
+				where P.PZE_Id=@p_DokZrdNumer and P.PZE_Id = F.PZE_Id
+			end
+
+		end
+		--else if 
+		-- tutaj bez else bo mogło sie zmienic na gid zamówienia dla pierwotnego PZE
+		if (@p_DokZrdTyp = 960) -- 'ZAM'
+		begin
+			select	@p_TwrTyp=IsNull(@p_TwrTyp,ZaE_TwrTyp), @p_TwrNumer=IsNull(@p_TwrNumer,ZaE_TwrNumer),
+					@p_IloscMPS=IsNull(@p_IloscMPS,ZaE_Ilosc), @p_IloscDoProdukcji=IsNull(@p_IloscDoProdukcji,ZaE_Ilosc),
+					@p_TerminMPS=IsNull(@p_TerminMPS,ZaE_DataWaznosciRez) 
+			from cdn.ZamElem
+			where ZaE_GIDTyp=@p_DokZrdTyp and ZaE_GIDNumer=@p_DokZrdNumer and ZaE_GIDLp=@p_DokZrdLp
+
+			select @p_TerminWgZP=max(IsNull(@p_TerminWgZP,F.DataRealizacji))
+			from CDN.ZamZamLinki
+			join cdn.ProdZlecElem P on ZZL_ZZGidTyp=14343 AND ZZL_ZZGidNumer=PZE_Id AND ZZL_Kierunek=512
+			cross apply CDN.ProdProduktyDlaZlecenia(P.PZE_Zlecenie) F 
+			where @p_DokZrdTyp=ZZL_ZSGidTyp AND @p_DokZrdFirma=ZZL_ZSGidFirma AND @p_DokZrdNumer=ZZL_ZSGidNumer AND @p_DokZrdLp=ZZL_ZSGidLp 
+		end
+		else if (@p_DokZrdTyp = 14347) -- 'PLZ'
+		begin
+			select @p_TwrTyp=IsNull(@p_TwrTyp,PLE_TwrTyp), @p_TwrNumer=IsNull(@p_TwrNumer,PLE_TwrNumer),
+					@p_IloscMPS=IsNull(@p_IloscMPS,PLE_Ilosc), @p_IloscDoProdukcji=IsNull(@p_IloscDoProdukcji,PLE_Ilosc)
+			from cdn.PlanElem
+			where Ple_Id=@p_DokZrdNumer
+		end
+	END
+
+	INSERT INTO CDN.PlanyObciazeniaPozycje
+           (PPO_Lp
+           ,PPO_POGId
+           ,PPO_TwrTyp
+           ,PPO_TwrNumer
+           ,PPO_DokZrdTyp
+		   ,PPO_DokZrdFirma
+           ,PPO_DokZrdNumer
+		   ,PPO_DokZrdLp
+           ,PPO_IloscMPS
+           ,PPO_IloscDoProdukcji
+           ,PPO_TerminMPS
+           ,PPO_TerminWgObciazenia
+           ,PPO_TerminWgZP)
+	SELECT 	@p_Lp as PPO_Lp
+           ,@p_POGId as PPO_POGId
+           ,IsNull(@p_TwrTyp,0) as PPO_TwrTyp
+           ,IsNull(@p_TwrNumer,0) as PPO_TwrNumer
+           ,IsNull(@p_DokZrdTyp, 0) as PPO_DokZrdTyp
+           ,IsNull(@p_DokZrdFirma, CDN.GIDFirma())  as PPO_DokZrdFirma
+           ,IsNull(@p_DokZrdNumer,0) as PPO_DokZrdNumer
+           ,IsNull(@p_DokZrdLp,0) as PPO_DokZrdLp
+		   ,IsNull(@p_IloscMPS,0) as PPO_IloscMPS
+		   ,IsNull(@p_IloscDoProdukcji,0) as PPO_IloscDoProdukcji
+		   ,IsNull(@p_TerminMPS,0) as PPO_TerminMPS
+           ,IsNull(@p_TerminWgObciazenia,0) as PPO_TerminWgObciazenia
+           ,IsNull(@p_TerminWgZP,0) as PPO_TerminWgZP
+
+	if @@error &lt;&gt; 0  
+	begin
+		if @p_PokazBledy=1
+			raiserror('Nie powiodło się dodawanie wpisu do tabeli CDN.PlanyObciazeniaPozycje.', 16, 1)
+		set @Wynik = -10
+		return @Wynik	
+	end
+	else 		
+	begin
+		set @PPOId = scope_identity()
+		if @p_PlanujPozycje=1
+		begin
+			set @WynikProc = 0
+			EXEC CDN.POGPlanujPozycje @p_POGId=@p_POGId, @p_PPOId=@PPOId, @p_PokazBledy=@p_PokazBledy, @Wynik=@WynikProc OUTPUT
+
+			if @WynikProc&lt;0 
+			begin
+				set @Wynik = @WynikProc
+				return @Wynik
+			end
+		end
+	end
+
+	-- OK:
+	set @Wynik = 0
+    return @Wynik
+
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

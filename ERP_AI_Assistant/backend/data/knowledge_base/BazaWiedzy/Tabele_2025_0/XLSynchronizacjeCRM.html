@@ -1,0 +1,220 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="XLDodajSynchronizacjeCRM"></A><PRE>
+          <FONT SIZE="2"><I>/* XLDodajSynchronizacjeCRM */</I><BR>
+CREATE PROCEDURE CDN.XLDodajSynchronizacjeCRM
+	--parametry
+	@SyncNumer INT
+	, @SyncTyp SMALLINT
+	, @ObiNumer INT = NULL
+	, @ObiTyp SMALLINT = NULL
+	, @OutlookId VARCHAR(160) = NULL
+	, @GoogleId VARCHAR(160) = NULL
+	, @IgnorujBledy TINYINT = NULL --by nie robiło raiserror przy błędzie
+AS
+
+IF isnull(@OutlookId, '') = ''
+	AND isnull(@GoogleId, '') = ''
+BEGIN
+	IF @IgnorujBledy IS NULL
+		RAISERROR (
+				'XLDodajSynchronizacjeCRM: Identyfikator obiektu z Outlooka lub Googla jest wymagany. (-1)'
+				, 16
+				, 1
+				)
+
+	RETURN - 1
+END
+
+IF @SyncTyp = 12305 --zadanie terminarza
+BEGIN
+	IF NOT EXISTS (
+			SELECT *
+			FROM cdn.Zadania
+			WHERE Zad_Id = @SyncNumer
+			)
+	BEGIN
+		IF @IgnorujBledy IS NULL
+			RAISERROR (
+					'XLDodajSynchronizacjeCRM: Nie odnaleziono zadania terminarza. (-2)'
+					, 16
+					, 1
+					)
+
+		RETURN - 2
+	END
+
+	IF @ObiTyp = 944 --pracownik
+	BEGIN
+		IF NOT EXISTS (
+				SELECT *
+				FROM cdn.PrcKarty
+				WHERE Prc_GIDNumer = @ObiNumer
+				)
+		BEGIN
+			IF @IgnorujBledy IS NULL
+				RAISERROR (
+						'XLDodajSynchronizacjeCRM: Nie odnaleziono pracowika. (-3)'
+						, 16
+						, 1
+						)
+
+			RETURN - 3
+		END
+	END
+	ELSE IF isnull(@ObiTyp, 0) &gt; 0
+	BEGIN
+		IF @IgnorujBledy IS NULL
+			RAISERROR (
+					'XLDodajSynchronizacjeCRM: Nieobslugiwany typ obiektu powiązanego. (-4)'
+					, 16
+					, 1
+					)
+
+		RETURN - 4
+	END
+END
+ELSE IF isnull(@SyncTyp, 0) &gt; 0
+BEGIN
+	IF @IgnorujBledy IS NULL
+		RAISERROR (
+				'XLDodajSynchronizacjeCRM: Nieobslugiwany typ obiektu do synchronizacji. (-5)'
+				, 16
+				, 1
+				)
+
+	RETURN - 5
+END
+
+INSERT INTO CDN.CRMKalendarzSync (
+	CKS_SyncNumer
+	, CKS_SyncTyp
+	, CKS_ObiNumer
+	, CKS_ObiTyp
+	, CKS_OutlookId
+	, CKS_GoogleId
+	, CKS_CzasUsuniecia
+	)
+VALUES (
+	@SyncNumer
+	, @SyncTyp
+	, isnull(@ObiNumer, 0)
+	, isnull(@ObiTyp, 0)
+	, isnull(@OutlookId, '')
+	, isnull(@GoogleId, '')
+	, 0
+	)
+
+IF @@ROWCOUNT = 0
+BEGIN
+	IF @IgnorujBledy IS NULL
+		RAISERROR (
+				'XLDodajSynchronizacjeCRM: Nie powiodło się dodawanie wpisu do tabeli CDN.CRMKalendarzSync.'
+				, 16
+				, 1
+				)
+
+	RETURN 0
+END
+
+RETURN SCOPE_IDENTITY()
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="XLUsunSynchronizacjeCRM"></A><PRE>
+          <FONT SIZE="2"><I>/* XLUsunSynchronizacjeCRM */</I><BR>
+CREATE PROCEDURE CDN.XLUsunSynchronizacjeCRM
+	--parametry
+	@SyncNumer INT = NULL
+	, @SyncTyp SMALLINT = NULL
+	, @ObiNumer INT = NULL
+	, @ObiTyp SMALLINT = NULL
+	, @OutlookId VARCHAR(160) = NULL
+	, @GoogleId VARCHAR(160) = NULL
+	, @IgnorujBledy TINYINT = NULL --by nie robiło raiserror przy błędzie
+AS
+DECLARE @Id INT
+
+IF isnull(@OutlookId, '') = ''
+	AND isnull(@GoogleId, '') = ''
+BEGIN
+	IF @IgnorujBledy IS NULL
+		RAISERROR (
+				'XLUsunSynchronizacjeCRM: Identyfikator obiektu z Outlooka lub Googla jest wymagany. (-1)'
+				, 16
+				, 1
+				)
+
+	RETURN - 1
+END
+
+DELETE
+FROM cdn.CRMKalendarzSync
+WHERE CKS_OutlookId = isnull(@OutlookId, CKS_OutlookId)
+	AND CKS_GoogleId = isnull(@GoogleId, CKS_GoogleId)
+	AND CKS_SyncNumer = isnull(@SyncNumer, CKS_SyncNumer)
+	AND CKS_SyncTyp = isnull(@SyncTyp, CKS_SyncTyp)
+	AND CKS_ObiNumer = isnull(@ObiNumer, CKS_ObiNumer)
+	AND CKS_ObiTyp = isnull(@ObiTyp, CKS_ObiTyp)
+
+RETURN @@ROWCOUNT
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="XLZmienSynchronizacjeCRM"></A><PRE>
+          <FONT SIZE="2"><I>/* XLZmienSynchronizacjeCRM */</I><BR>
+CREATE PROCEDURE CDN.XLZmienSynchronizacjeCRM
+	--parametry
+	@SyncNumer INT
+	, @SyncTyp SMALLINT
+	, @ObiNumer INT = NULL
+	, @ObiTyp SMALLINT = NULL
+	, @OutlookId VARCHAR(160) = NULL
+	, @GoogleId VARCHAR(160) = NULL
+	, @IgnorujBledy TINYINT = NULL --by nie robiło raiserror przy błędzie
+AS
+DECLARE @Id INT
+
+IF @OutlookId IS NULL
+	AND @GoogleId IS NULL
+BEGIN
+	IF @IgnorujBledy IS NULL
+		RAISERROR (
+				'XLZmienSynchronizacjeCRM: Identyfikator obiektu z Outlooka lub Googla jest wymagany. (-1)'
+				, 16
+				, 1
+				)
+
+	RETURN - 1
+END
+
+UPDATE cdn.CRMKalendarzSync
+SET CKS_OutlookId = isnull(@OutlookId, CKS_OutlookId)
+	, CKS_GoogleId = isnull(@GoogleId, CKS_GoogleId)
+WHERE CKS_SyncNumer = @SyncNumer
+	AND CKS_SyncTyp = @SyncTyp
+	AND CKS_ObiNumer = isnull(@ObiNumer, CKS_ObiNumer)
+	AND CKS_ObiTyp = isnull(@ObiTyp, CKS_ObiTyp)
+
+RETURN @@ROWCOUNT
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

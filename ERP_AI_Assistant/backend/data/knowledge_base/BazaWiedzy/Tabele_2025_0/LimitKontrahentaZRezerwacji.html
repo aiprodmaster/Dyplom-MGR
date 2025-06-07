@@ -1,0 +1,122 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="LimitKontrahentaZRezerwacji"></A><PRE>
+          <FONT SIZE="2"><I>/* LimitKontrahentaZRezerwacji */</I><BR>
+CREATE FUNCTION CDN.LimitKontrahentaZRezerwacji (
+	@RezTyp SMALLINT
+	, @KursData INT
+	, @KntTyp SMALLINT
+	, @KntNumer INT
+	, @ZamTyp SMALLINT
+	, @LimitAkw TINYINT
+	, @FrSID INT
+	, @p_TrnNumer INT = 0
+	, @jestLimitCelowy TINYINT = NULL
+	)
+RETURNS DECIMAL(21, 4)
+AS
+BEGIN
+	DECLARE @WartoscKredytu DECIMAL(21, 4)
+
+	SET @jestLimitCelowy = ISNULL(@jestLimitCelowy, cdn.CzyJestLimitCelowy(@p_TrnNumer, 0, 0))
+	--sprawdzenie czy liczyć kredyt dla limitu celowego czy normalnie
+	--SELECT @jestLimitCelowy = cdn.CzyJestLimitCelowy(@p_TrnNumer, 0, 0)
+
+	IF (@LimitAkw = 0)
+		SELECT @WartoscKredytu = SUM(Wartosc)
+		FROM (
+			SELECT (
+					SELECT CASE 
+							WHEN Rez_GIDTyp = @RezTyp
+								THEN 1
+							ELSE - 1
+							END
+					) * (Rez_Ilosc - Rez_IloscMag - Rez_Zrealizowano - Rez_IloscImp - Rez_IloscSAD - Rez_IloscSSC) * ZaE_CenaUzgodniona * ISNULL((
+						SELECT TOP 1 WaE_KursL / WaE_KursM
+						FROM CDN.WalElem
+						WHERE WaE_Symbol = ZaE_Waluta
+							AND WaE_Lp = ZaE_NrKursu
+							AND WaE_KursTS &lt;= @KursData
+						ORDER BY - WaE_KursTS
+						), 1) * CASE 
+					WHEN ZaE_FlagaNB = 'N'
+						THEN 1 + (ZaE_StawkaPod / 100.00)
+					ELSE 1
+					END AS Wartosc
+			FROM CDN.Rezerwacje
+			INNER JOIN CDN.ZamElem ON ZaE_GIDNumer = Rez_ZrdNumer
+				AND ZaE_GIDLp = Rez_ZrdLp
+			INNER JOIN CDN.ZamNag ON ZaN_GIDNumer = ZaE_GIDNumer
+			INNER JOIN CDN.KntKarty ON Knt_GIDNumer = ZaN_KntNumer
+			WHERE Rez_KntTyp = @KntTyp
+				AND Rez_KntNumer = @KntNumer
+				AND 1 = (
+					CASE 
+						WHEN Knt_KnPParam = 0
+							THEN 1
+						ELSE (
+								SELECT CASE 
+										WHEN ZaN_KnPNumer = @KntNumer
+											AND ZaN_KnPTyp = @KntTyp
+											THEN 1
+										ELSE 0
+										END
+								)
+						END
+					)
+				AND Rez_ZrdTyp = @ZamTyp
+				AND Rez_ZrdNumer &gt; 0
+				AND Rez_ZrdLp &gt; 0
+				AND ZaN_LimitKredytowy = @jestLimitCelowy --2017.0.0 Limit kredytu przypisany do zamówienia			
+			) AS Wartosc
+	ELSE
+		SELECT @WartoscKredytu = SUM(Wartosc)
+		FROM (
+			SELECT (
+					SELECT CASE 
+							WHEN Rez_GIDTyp = @RezTyp
+								THEN 1
+							ELSE - 1
+							END
+					) * (Rez_Ilosc - Rez_IloscMag - Rez_Zrealizowano - Rez_IloscImp - Rez_IloscSAD - Rez_IloscSSC) * ZaE_CenaUzgodniona * ISNULL((
+						SELECT TOP 1 WaE_KursL / WaE_KursM
+						FROM CDN.WalElem
+						WHERE WaE_Symbol = ZaE_Waluta
+							AND WaE_Lp = ZaE_NrKursu
+							AND WaE_KursTS &lt;= @KursData
+						ORDER BY - WaE_KursTS
+						), 1) * CASE 
+					WHEN ZaE_FlagaNB = 'N'
+						THEN 1 + (ZaE_StawkaPod / 100.00)
+					ELSE 1
+					END AS Wartosc
+			FROM CDN.Rezerwacje
+			INNER JOIN CDN.ZamElem ON ZaE_GIDNumer = Rez_ZrdNumer
+				AND ZaE_GIDLp = Rez_ZrdLp
+			INNER JOIN CDN.ZamNag ON ZaE_GIDNumer = ZaN_GIDNumer
+			WHERE ZaN_AkwTyp = @KntTyp
+				AND ZaN_AkwNumer = @KntNumer
+				AND Rez_ZrdTyp = @ZamTyp
+				AND Rez_ZrdNumer &gt; 0
+				AND Rez_ZrdLp &gt; 0
+				AND ZaN_FrSID = @FrSID
+				AND ZaN_LimitKredytowy = @jestLimitCelowy --2017.0.0 Limit kredytu przypisany do zamówienia
+			) AS Wartosc
+
+	RETURN ISNULL(@WartoscKredytu, 0)
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

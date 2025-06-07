@@ -1,0 +1,88 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="XLUsunElementWzorca"></A><PRE>
+          <FONT SIZE="2"><I>/* XLUsunElementWzorca */</I><BR>
+CREATE PROCEDURE CDN.XLUsunElementWzorca
+(
+/* ==========================================================================================
+	SQL API: Procedura serwerowa do usuwania elementów wzorca wizyty handlowej
+
+	Dla uproszczenia założono, że jeżeli w systemie zewnętrznym zostanie usunięty element wzorca wizyty handlowa,
+	to w trakcie usuwania jej przez API nie ma potrzeby kontrolowania uprawnień do obiektów, z których ona korzysta.
+	
+	Parametry wejściowe: 
+   ========================================================================================== */
+	@CWETyp					SMALLINT,			-- GidTyp elementu
+	@CWENumer				INTEGER,			-- GidNumer
+	@CWELp					SMALLINT,			-- GidLp
+	@OpeNumer				INT					-- GidNumer operatora, który wykonuje tą operacje
+		
+/* ==========================================================================================
+	Return:
+	 0 : Operacja zakończona sukcesem (zwrócono ID nowej wizyty)
+	-1 : Nie powiodło się dodawanie wpisu do tabeli CDN.CRMWizytyElem
+	-2 : Wystąpił błąd podczas usuwania elementu wzorca wizyty handlowej. Wystąpił błąd podczas usuwania powiązań z przejazdami samochodów.
+	-3 : Wystąpił błąd podczas usuwania elementu wzorca wizyty handlowej. Wystąpił błąd podczas usuwania powiązań z ankietami.
+   ========================================================================================== */   	
+)
+AS
+BEGIN
+
+	DECLARE @TRANCOUNT int;
+	SELECT @TRANCOUNT=@@TRANCOUNT; 
+
+	IF @TRANCOUNT&gt;0 SAVE TRANSACTION XLUsunElementWzorca_TRANSACTION;
+	ELSE BEGIN TRANSACTION XLUsunElementWzorca_TRANSACTION;
+
+	UPDATE CDN.SamPrzejazdy SET SaP_ZrdTyp=0, SaP_ZrdNumer=0, SaP_ZrdLp=0 WHERE SaP_ZrdTyp=@CWETyp AND SaP_ZrdNumer=@CWENumer AND SaP_ZrdLp=@CWELp
+	IF @@ERROR&lt;&gt;0 BEGIN
+		IF XACT_STATE()&lt;&gt;0 ROLLBACK TRANSACTION XLUsunElementWzorca_TRANSACTION
+		RAISERROR ('Wystąpił błąd podczas usuwania powiązań z przejazdami samochodów.', 16, 1)
+		RETURN -2
+	END
+
+	DELETE CDN.CRMWizytyAnkiety WHERE CWA_CWETyp=@CWETyp AND CWA_CWENumer=@CWENumer AND CWA_CWELp=@CWELp
+	IF @@ERROR&lt;&gt;0 BEGIN
+		IF XACT_STATE()&lt;&gt;0 ROLLBACK TRANSACTION XLUsunElementWzorca_TRANSACTION
+		RAISERROR ('Wystąpił błąd podczas usuwania powiązań z ankietami.', 16, 1)
+		RETURN -3
+	END
+
+	DELETE FROM CDN.CRMWizytyElem
+	WHERE CWE_GidTyp=@CWETyp and CWE_GidNumer=@CWENumer and CWE_GidLp=@CWELp
+			
+	IF @@ERROR&lt;&gt;0 OR @@ROWCOUNT=0 BEGIN
+
+		IF XACT_STATE()&lt;&gt;0 ROLLBACK TRANSACTION XLUsunElementWzorca_TRANSACTION
+
+	  	IF NOT EXISTS(SELECT * FROM CDN.CRMWizytyElem WHERE CWE_GidTyp=@CWETyp and CWE_GidNumer=@CWENumer and CWE_GidLp=@CWELp) BEGIN
+			RAISERROR ('Nie istnieje wpis w tabeli CDN.CRMWizytyElem o podanym identyfikatorze.', 16, 1)
+			RETURN -2
+		END
+
+		-- inny powód błędu:						
+		RAISERROR ('Nie powiodło się usuwanie wpisu do tabeli CDN.CRMWizytyElem.', 16, 1)
+		RETURN -1
+	END
+	
+	IF @TRANCOUNT=0 COMMIT TRANSACTION XLUsunElementWzorca_TRANSACTION;	
+
+	--OK:
+	RETURN 0
+	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

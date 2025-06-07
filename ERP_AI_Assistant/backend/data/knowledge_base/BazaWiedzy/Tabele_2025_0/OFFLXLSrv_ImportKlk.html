@@ -1,0 +1,258 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="OFFLXLSrv_ImportKLK"></A><PRE>
+          <FONT SIZE="2"><I>/* OFFLXLSrv_ImportKLK */</I><BR>
+CREATE PROCEDURE CDN.OFFLXLSrv_ImportKLK
+ @ID			INT			-- ID oddziału
+,@KnS_KntNumer	INT			-- GIDNumer Kontrahenta
+,@xml			TEXT
+,@LogID			INT = -1	-- ID loga synchronizacji
+AS
+	RAISERROR('Procedura OFFLXLSrv_ImportKLK nie jest obługiwana na MSSQL 2000',16,1)
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="OFFLXLSrv_ImportKLK"></A><PRE>
+          <FONT SIZE="2"><I>/* OFFLXLSrv_ImportKLK */</I><BR>
+CREATE PROCEDURE CDN.OFFLXLSrv_ImportKLK
+ @ID			INT			-- ID oddziału
+,@KLK_KntNumer	INT			-- GIDNumer Kontrahenta
+,@xml			XML
+,@LogID			INT = -1	-- ID loga synchronizacji
+AS
+SET NOCOUNT ON
+
+	DECLARE @KLK_ID					INT
+			,@KLK_IDO				INT
+			,@KLK_KntTyp			SMALLINT
+			,@KLK_MaxLimitWart		DECIMAL(15,2)
+			,@KLK_DataOd			INT
+			,@KLK_DataDo			INT
+			,@KLK_LimitPoTerminie	DECIMAL(15,2)
+			,@KLK_Waluta			VARCHAR(3)
+			,@KLK_NrKursu			SMALLINT
+			,@KLK_KursM				DECIMAL(5,0)
+			,@KLK_KursL				DECIMAL(7,2)
+			,@KLK_PrzeliczajWg		VARCHAR(20)
+			,@KLK_CzasUtworzenia	INT
+			,@KLK_OpeUtworzyl		INT
+			,@KLK_CzasModyfikacji	INT
+			,@KLK_OpeModyfikowal	INT
+
+	DECLARE	@index					INT,
+			@max_index				INT,
+			@buffer_size			INT,
+			@xml_buffer				XML,
+			@xml_tmp				XML,
+			@xml_child				XML
+
+	DECLARE @Tryb					BIT	-- 0-dodawanie, 1-aktualizacja
+
+	DECLARE	@OpisLog				VARCHAR(128)
+			,@Opis					VARCHAR(512)
+			,@OpisIdentyfikator		VARCHAR(128)
+
+	SET @xml = @xml.query('/KLKI/KLK')
+
+	SELECT  @index = -1, 
+			@max_index = CAST(CAST(@xml.query ('count(KLK)') AS VARCHAR(20)) AS INT), 
+			@buffer_size = 200
+	
+	WHILE @index &lt; @max_index - 1
+	BEGIN
+		SET @index = @index + 1
+		-- Ustawienie ogólnych zmiennych
+		SELECT 
+			@KLK_LimitPoTerminie	= 0
+			,@KLK_Waluta			= RTRIM(LTRIM(Kon_Wartosc))
+			,@KLK_NrKursu			= 1
+			,@KLK_KursM				= 1
+			,@KLK_KursL				= 1
+			,@KLK_PrzeliczajWg		= 'Daty bieżącej' 
+			,@KLK_CzasModyfikacji	= 0
+			,@KLK_OpeModyfikowal	= 0
+		FROM CDN.Konfig WHERE Kon_Numer = 211
+	
+		-- Ustawienie operatora synchronizującego na podstawie ostatniej sesji
+		IF ISNULL(@KLK_OpeUtworzyl,0) = 0
+	    BEGIN
+			SELECT TOP 1 @KLK_OpeUtworzyl = Ope_GIDNumer
+	        FROM CDN.Sesje 
+				JOIN CDN.OpeKarty ON SES_OpeIdent = Ope_Ident
+			WHERE SES_Modul = 'Administrator oddziałów' ORDER BY SES_SesjaID DESC
+		END
+	
+		BEGIN TRY
+			IF @index % @buffer_size = 0 	
+			BEGIN
+				SET @xml_buffer = ( SELECT @xml.query('KLK[position()&gt; sql:variable("@index") and position() &lt;= sql:variable("@index") + sql:variable("@buffer_size") ] ')  )
+			END
+			SET @xml_tmp = ( SELECT @xml_buffer.query('KLK[position()= (sql:variable("@index") mod sql:variable("@buffer_size")) + 1 ] ')  )
+			SELECT
+				@KLK_ID					= ISNULL(KNL.Attribute.value('@Id','INT'),0)
+				,@KLK_IDO				= ISNULL(KNL.Attribute.value('@IdO','INT'),0)
+				,@KLK_KntTyp			= 32
+				,@KLK_MaxLimitWart		= ISNULL(KNL.Attribute.value('@Limit','DECIMAL(15,2)'),0)
+				,@KLK_DataOd			= ISNULL(KNL.Attribute.value('@DataOd','INT'),0)
+				,@KLK_DataDo			= ISNULL(KNL.Attribute.value('@DataDo','INT'),0)
+				,@KLK_CzasUtworzenia	= DATEDIFF(dd,CONVERT(DATETIME,'1800-12-28',120),CONVERT(DATETIME,GETDATE(),120))
+				,@KLK_OpeUtworzyl		= ISNULL(KNL.Attribute.value('@OpeUtworzyl','INT'),@KLK_OpeUtworzyl)
+			FROM @xml_tmp.nodes('KLK') AS KNL(Attribute)
+
+			-- Jeżel nie przesłano id oraz nie przesłano id z oddziału to błąd
+			IF @KLK_ID = 0 AND @KLK_IDO = 0
+			BEGIN
+				SELECT @Opis = 'Brak przesłanego identyfikatora limitu kredytowego.'
+				EXEC CDN.Log_Dopisz @LogID, @Opis, 2
+				CONTINUE
+			END
+			
+			-- Jeżeli nie przesłano id oraz przesłano id z oddziału to szukamy po id z oddziału
+			IF @KLK_ID = 0 AND @KLK_IDO &gt; 0
+			BEGIN
+				SELECT @KLK_ID = PcL_ObiNumer FROM CDN.PicoLog WHERE PcL_PcKID = @ID AND PcL_ObiTyp = 33 AND PcL_ObiektID = @KLK_IDO
+			END
+			
+			-- Ustalenie trybu (0-dodawanie, 1-aktualizacja)
+			SELECT @Tryb = CASE @KLK_ID WHEN 0 THEN 0 ELSE 1 END
+			
+			-- Wykonujemy sprawdzenie okresów obowiązywania (wspólne dla dodawania i aktualizacji)
+			IF @Tryb = 0
+			BEGIN
+				-- Jeżeli dodajemy nowy to usuwamy wszystkie, które przeszkadzają			
+				DELETE FROM CDN.KntLimityK 
+				WHERE KLK_ID &lt;&gt; @KLK_ID AND KLK_KntTyp = @KLK_KntTyp AND KLK_KntNumer = @KLK_KntNumer AND
+				(
+					((KLK_DataOd BETWEEN @KLK_DataOd AND @KLK_DataDo) AND KLK_DataDo &lt; @KLK_DataOd) OR
+					((@KLK_DataOd BETWEEN KLK_DataOd AND KLK_DataDo) AND (@KLK_DataDo BETWEEN KLK_DataOd AND KLK_DataDo)) OR
+					((KLK_DataDo BETWEEN @KLK_DataOd AND @KLK_DataDo) AND KLK_DataOd &lt; @KLK_DataOd)
+				)										
+			END
+			ELSE
+			BEGIN
+				IF EXISTS
+				(
+					SELECT * FROM CDN.KntLimityK 
+					WHERE KLK_ID &lt;&gt; @KLK_ID AND KLK_KntTyp = @KLK_KntTyp AND KLK_KntNumer = @KLK_KntNumer AND
+					(
+						((KLK_DataOd BETWEEN @KLK_DataOd AND @KLK_DataDo) AND KLK_DataDo &lt; @KLK_DataOd) OR
+						((@KLK_DataOd BETWEEN KLK_DataOd AND KLK_DataDo) AND (@KLK_DataDo BETWEEN KLK_DataOd AND KLK_DataDo)) OR
+						((KLK_DataDo BETWEEN @KLK_DataOd AND @KLK_DataDo) AND KLK_DataOd &lt; @KLK_DataOd)
+					)										
+				)
+				BEGIN
+					SELECT @Opis = 'Nie można zaktualizować limitu kredytowego.'
+					SELECT @Opis = @Opis + 'Istnieje już inny limit kolidujący z okresem importowanego limitu.'
+					EXEC CDN.Log_Dopisz @LogID, @Opis, 1
+					CONTINUE
+				END
+			END
+			
+			IF @Tryb = 0
+			BEGIN 				
+				INSERT INTO CDN.KntLimityK
+				(
+					[KLK_KntTyp]
+				   ,[KLK_KntNumer]
+				   ,[KLK_MaxLimitWart]
+				   ,[KLK_LimitPoTerminie]
+				   ,[KLK_DataOd]
+				   ,[KLK_DataDo]
+				   ,[KLK_Waluta]
+				   ,[KLK_NrKursu]
+				   ,[KLK_KursM]
+				   ,[KLK_KursL]
+				   ,[KLK_PrzeliczajWg]
+				   ,[KLK_CzasUtworzenia]
+				   ,[KLK_OpeUtworzyl]
+				   ,[KLK_CzasModyfikacji]
+				   ,[KLK_OpeModyfikowal]
+				)
+				VALUES
+				(
+					@KLK_KntTyp
+					,@KLK_KntNumer
+					,@KLK_MaxLimitWart
+					,@KLK_LimitPoTerminie
+					,@KLK_DataOd
+					,@KLK_DataDo
+					,@KLK_Waluta
+					,@KLK_NrKursu
+					,@KLK_KursM
+					,@KLK_KursL
+					,@KLK_PrzeliczajWg
+					,@KLK_CzasUtworzenia
+					,@KLK_OpeUtworzyl
+					,@KLK_CzasModyfikacji
+					,@KLK_OpeModyfikowal
+				)
+				SElECT @KLK_ID = SCOPE_IDENTITY()
+				-- Dodajemy mapowanie do tabeli CDN.PicoLog
+				INSERT INTO CDN.PicoLog 
+				(	
+					PcL_PcKID
+					,PcL_ObiTyp
+					,PcL_ObiNumer
+					,PcL_ObiektID
+					,PcL_Komentarz
+					,PcL_Info
+					,PcL_TStamp
+				)
+				VALUES 
+				(
+					@ID
+					,33
+					,@KLK_ID
+					,@KLK_IDO
+					,''
+					,''
+					,DATEDIFF(s,CONVERT(DATETIME,'19900101',121),GETDATE()) 
+				)
+			END -- IF @KLK_ID = 0
+			ELSE
+			BEGIN
+				IF EXISTS(SELECT * FROM CDN.KntLimityK WHERE KLK_Id = @KLK_ID)
+				BEGIN
+					UPDATE CDN.KntLimityK
+					SET KLK_MaxLimitWart	= @KLK_MaxLimitWart
+						,KLK_DataOd			= @KLK_DataOd
+						,KLK_DataDo			= @KLK_DataDo
+					WHERE KLK_Id = @KLK_ID
+				END
+				ELSE
+				BEGIN
+					-- Jeżeli nie ma co aktualizować to znaczy, że ktoś usunął limit więc usuwamy mapowanie
+					DELETE FROM CDN.PicoLog WHERE PcL_PckID = @ID AND PcL_ObiTyp = 33 AND PcL_ObiektID = @KLK_IDO
+				END				
+			END
+			
+		END TRY
+
+		BEGIN CATCH
+			SELECT @OpisIdentyfikator = 'Knt_Numer: ' + CAST(@KLK_KntNumer AS VARCHAR(10)) 
+			SELECT @OpisIdentyfikator = @OpisIdentyfikator + '; KLK_DataOd: ' + CAST(@KLK_DataOd AS VARCHAR(10)) 
+			SELECT @OpisIdentyfikator = @OpisIdentyfikator + '; KLK_DataDo: ' + CAST(@KLK_DataOd AS VARCHAR(10))
+			SELECT @OpisIdentyfikator = @OpisIdentyfikator + '; KLK_LimitPoTerminie:' + CAST(@KLK_LimitPoTerminie AS VARCHAR(10))
+		
+			SELECT @Opis = 'Błąd podczas importu limitu kredytowego kontrahenta [' + @OpisIdentyfikator + ']: ' + CDN.Log_SzczegolyBledu(ERROR_NUMBER(),ERROR_PROCEDURE(),ERROR_LINE(),ERROR_MESSAGE()) 
+			EXEC CDN.Log_Dopisz @LogID, @Opis, 2
+		END CATCH
+	END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

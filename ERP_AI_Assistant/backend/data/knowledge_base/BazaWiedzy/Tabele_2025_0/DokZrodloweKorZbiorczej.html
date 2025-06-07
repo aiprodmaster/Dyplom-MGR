@@ -1,0 +1,81 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="DokZrodloweKorZbiorczej"></A><PRE>
+          <FONT SIZE="2"><I>/* DokZrodloweKorZbiorczej */</I><BR>
+CREATE FUNCTION CDN.DokZrodloweKorZbiorczej (
+@p_GIDTyp    SMALLINT, 
+@p_GIDNumer    INT
+)
+RETURNS @Wynik TABLE (
+  GIDTyp      SMALLINT,
+  GIDNumer    INT,
+  Numer VARCHAR(50),
+  DataWystawienia VARCHAR(10),
+  DataDostawy VARCHAR(10)
+)
+
+BEGIN
+	DECLARE @Dokumenty Table (
+	  DokGIDTyp      SMALLINT,
+	  DokGIDNumer    INT
+	);
+	  
+	DECLARE @TMPTYP smallint
+	DECLARE @TMPNUMER int
+
+	DECLARE kursorElementy CURSOR FOR 
+	select TrN_GIDTyp, TrN_GIDNumer from cdn.tranag where TrN_SpiTyp=@p_GIDTyp AND TrN_SpiNumer=@p_GIDNumer
+
+	OPEN kursorElementy
+	FETCH NEXT FROM kursorElementy INTO @TMPTYP, @TMPNUMER
+
+	WHILE @@Fetch_Status = 0
+	BEGIN
+		WHILE 1=1
+		BEGIN
+			SELECT @TMPTYP=TrN_ZwrTyp, @TMPNUMER=TrN_ZwrNumer FROM CDN.TraNag WHERE TrN_GIDTyp=@TMPTYP AND TrN_GIDNumer=@TMPNUMER
+			IF @TMPTYP in (2033,1521,2037,2001,1489,2005) -- ('FS','FZ','FSE','WZ','PZ','WZE')
+			BEGIN 
+				-- Jesli istnieje wpis w TrN_spigid to byl spinacz i zapisujemy spinacz
+				if exists(select * from cdn.TraNag A 
+						join cdn.tranag B on A.TrN_SpiTyp=B.TrN_GIDTyp and A.TrN_SpiNumer=B.TrN_GIDNumer
+						where (A.TrN_GIDTyp=@TMPTYP AND A.TrN_GIDNumer=@TMPNUMER))
+				BEGIN
+					SELECT @TMPTYP=TrN_SpiTyp, @TMPNUMER=TrN_SpiNumer FROM CDN.TraNag WHERE TrN_GIDTyp=@TMPTYP AND TrN_GIDNumer=@TMPNUMER
+				END		
+				
+				INSERT INTO @Dokumenty(DokGIDTyp, DokGIDNumer) VALUES(@TMPTYP,@TMPNUMER)
+				BREAK
+			END
+		END
+	 FETCH NEXT FROM kursorElementy INTO @TMPTYP, @TMPNUMER
+	END
+
+	CLOSE kursorElementy
+	DEALLOCATE kursorElementy
+	
+	INSERT INTO @Wynik 
+		SELECT DISTINCT DokGIDTyp, DokGIDNumer
+		, CDN.NumerDokumentu(TrN_GIDTyp, TrN_SpiTyp, TrN_TrNTyp, TrN_TrNNumer, TrN_TrNRok, TrN_TrNSeria, TrN_TrNMiesiac)
+		, CONVERT(varchar(10), DATEADD(day,trn_Data2,CONVERT(DATETIME,'1800-12-28',120)), 120)
+		, CONVERT(varchar(10), DATEADD(day,trn_Data3,CONVERT(DATETIME,'1800-12-28',120)), 120)
+		from @Dokumenty join CDN.TraNag on TrN_GIDTyp = DokGIDTyp and TrN_GIDNumer = DokGIDNumer
+	
+	RETURN
+
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

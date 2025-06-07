@@ -1,0 +1,127 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="AI_ChatERP_PodajPozostalyLimitKredytowyDlaKnt"></A><PRE>
+          <FONT SIZE="2"><I>/* AI_ChatERP_PodajPozostalyLimitKredytowyDlaKnt */</I><BR>
+CREATE PROCEDURE CDN.AI_ChatERP_PodajPozostalyLimitKredytowyDlaKnt @Akronim VARCHAR(20)
+AS
+DECLARE @KlkID INT;
+DECLARE @WalutaSys VARCHAR(3);
+DECLARE @Waluta VARCHAR(3);
+DECLARE @PrzeliczajWgTyp TINYINT;
+DECLARE @DataDo INT;
+DECLARE @KursL DECIMAL(7, 2);
+DECLARE @KursM DECIMAL(5);
+DECLARE @KntLimitTerminowy SMALLINT;
+DECLARE @MaxLimitWart DECIMAL(15, 2);
+DECLARE @LimitPozostajeDoWykorzystania DECIMAL(15, 2);
+DECLARE @KwotaLimitu DECIMAL(15, 2);
+
+DECLARE @MAX_DATA INT = 93890;
+
+IF NOT EXISTS (SELECT 1 FROM CDN.KntKarty WHERE Knt_Akronim = @Akronim)
+BEGIN
+	SELECT '' Akronim
+		,'' NazwaKnt
+		,'' NIP
+		,'' PozostalyLimit
+		,'' DataDo
+		,'Podany kontrahent nie istnieje w bazie danych.' Uwaga
+
+	RETURN;
+END
+
+SELECT @KlkID = KLK_Id
+	,@Waluta = KLK_Waluta
+	,@PrzeliczajWgTyp = KLK_PrzeliczajWgTyp
+	,@DataDo = KLK_DataDo
+	,@KursL = KLK_KursL
+	,@KursM = KLK_KursM
+	,@MaxLimitWart = KLK_MaxLimitWart
+	,@KntLimitTerminowy = Knt_LimitTerminowy
+	,@WalutaSys = (
+		SELECT Kon_Wartosc
+		FROM CDN.Konfig
+		WHERE Kon_Numer = 211
+		)
+FROM CDN.KntKarty
+LEFT JOIN CDN.KntLimityK ON Knt_GIDNumer = KLK_KntNumer
+	AND Knt_GIDTyp = KLK_KntTyp
+	AND KLK_DataDo &gt;= DATEDIFF(d,'18001228',GETDATE())
+	AND KLK_DataOd &lt;= DATEDIFF(d,'18001228',GETDATE())
+WHERE Knt_Akronim = @Akronim
+
+IF @KntLimitTerminowy &lt;&gt; 0
+BEGIN
+	IF NOT @KlkID IS NULL
+		AND @KlkID &lt;&gt; 0
+	BEGIN
+		-- ustalenie kursu
+		IF Upper(@Waluta) &lt;&gt; UPPER(@WalutaSys)
+			IF @PrzeliczajWgTyp IN (0,1,2)
+			BEGIN
+				SELECT @KursL = 1
+					,@KursM = 1;
+
+				SELECT TOP 1 @KursL = WaE_KursL
+					,@KursM = WaE_KursM
+				FROM CDN.WalElem
+				JOIN CDN.KntLimityK ON WaE_Symbol = KLK_Waluta
+					AND WaE_Lp = KLK_NrKursu
+					AND WaE_KursTS &lt;= CASE 
+						WHEN KLK_PrzeliczajWgTyp = 1
+							THEN DATEDIFF(S, '19900101', DateAdd(day, KLK_DataOd, '18001228'))
+						WHEN KLK_PrzeliczajWgTyp = 0
+							THEN DATEDIFF(S, '19900101', CAST( GETDATE() AS Date ))
+						WHEN KLK_PrzeliczajWgTyp = 2
+							THEN DATEDIFF(S, '19900101', CAST( GETDATE() - 1 AS Date ))
+						END
+				WHERE KLK_Id = @KlkID
+				ORDER BY WaE_KursTS DESC
+			END
+			ELSE IF @PrzeliczajWgTyp &lt;&gt; 3
+				SELECT @KursL = 1
+					,@KursM = 1;
+
+		SELECT @KwotaLimitu = round(@MaxLimitWart * @KursL / @KursM, 2);
+	END
+	ELSE
+	BEGIN
+		SELECT @KwotaLimitu = 0;
+	END;
+
+	WITH LimitKredytuDlaKnt
+	AS (
+		SELECT CDN.SumaWartosciKredytuKontrahenta(DATEDIFF(S, '19900101', CURRENT_TIMESTAMP), (SELECT Knt_GIDNumer FROM cdn.KntKarty WHERE Knt_Akronim = @Akronim), Dok_LimitUwzglDokBezPlat, Dok_LimitUwzglZam, Dok_LimitUwzglSaldoKntGlownego, 0, 0) KwotaWykorzystana
+		FROM CDN.DokDefinicje
+		WHERE Dok_Symbol = 'FS'
+			AND Dok_FrsId = 1
+
+		)
+	SELECT @LimitPozostajeDoWykorzystania = @KwotaLimitu - LimitKredytuDlaKnt.KwotaWykorzystana
+	FROM LimitKredytuDlaKnt
+END
+
+
+SELECT @Akronim Akronim
+	,'' NazwaKnt
+	,'' NIP
+	,IIF(@KntLimitTerminowy &lt;&gt; 0, CAST(@LimitPozostajeDoWykorzystania AS VARcHAR), '') PozostalyLimit
+	,IIF(@KntLimitTerminowy &lt;&gt; 0
+		AND @DataDo &lt;&gt; @MAX_DATA, CONVERT(VARCHAR, DateAdd(day, @DataDo, '18001228'), 102), '') DataDo
+	,'' Uwaga
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

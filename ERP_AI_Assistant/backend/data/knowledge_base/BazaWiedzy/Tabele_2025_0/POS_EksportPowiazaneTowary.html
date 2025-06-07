@@ -1,0 +1,148 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[POS_EksportPowiazaneTowary]"></A><PRE>
+          <FONT SIZE="2"><I>/* [POS_EksportPowiazaneTowary] */</I><BR>
+CREATE PROCEDURE [CDN].[POS_EksportPowiazaneTowary]
+    @RowVersion BIGINT,
+    @PointOfSaleId INT
+AS
+BEGIN
+SET NOCOUNT ON;
+
+declare @Oddzialy table(PckCentrumId int, oddzialBylWyslany int, DataDodaniaOstatniegoStanowiska int, Psaid int)
+insert into @Oddzialy
+select PckCentrumID, oddzialBylWyslany, PSaDataDodania, PSaID from cdn.POS_OddzialyDoEksportu(@PointOfSaleId,@RowVersion)
+
+Select distinct TwrGidNumer, TwrLp, TwrStawkaPodSpr, TwrLastMod, WJm, WymJm,  juzNieWysylany, TwrBon into #TwrZGrup
+from @Oddzialy cross apply CDN.POS_TwPDoEksportu(PSaID, @RowVersion)
+
+
+insert into #TwrZGrup
+Select distinct TwrGidNumer, TwrLp, TwrStawkaPodSpr, TwrLastMod, WJm, WymJm,  juzNieWysylany, TwrBon
+from @Oddzialy cross apply CDN.POS_TwPDoEksportu(PSaID, 0)
+where oddzialBylWyslany = 0 and @PointOfSaleId is null and not exists (select 1 from #TwrZGrup gr where TwrGidNumer = gr.TwrGidNumer)
+
+Select * into #ToEksport from(
+		
+		
+		--ZAMIENNIKI:
+
+		SELECT --Select służący do wysyłania zamienników do POS z oddziału, w którym odbywa się synnchronizacja
+			FRZ_Id						AS	[@Id],
+			TwP_TwrNumer				AS	[@ProductId],
+			TwP_ZamNumer				AS	[@RelatedProductId],
+			5							AS	[@RelationTypeId],
+			TwP_Pozycja					AS	[@OrdinalNumber],
+			TwP_CzasModyfikacji
+			FROM CDN.TwrPodm
+			join			CDN.TwrKarty ON Twr_GIDNumer = TwP_TwrNumer
+			join			CDN.FrsZamienniki ON TwP_Id=FRZ_TwPId	
+			join			CDN.FrmStruktura ON FRS_ID=FRZ_FrsId
+			join			CDN.PicoKonfig ON FRS_ID=PcK_CentrumID
+			join			CDN.PicoStanowiska ON PcK_PicoID=PSa_PcKID
+			join			#TwrZGrup on twp_TwrNumer = TwrGidNumer
+			join			#TwrZGrup a on twp_ZamNumer = a.TwrGidNumer
+			join			@Oddzialy on PckCentrumId = PcK_CentrumID
+			WHERE TwP_Warstwa != 3 AND TwP_Warstwa != 1 AND TwP_PrzeliczM = 1 AND TwP_PrzeliczL = 1 
+			AND FRZ_TwPId = TwP_Id AND TwP_DokRodzaj != 2 AND TwP_RodzajPowiazania = 0 AND FRS_Oddzial = 8 
+			AND ((@PointOfSaleId is not null and PSa_ID =  @PointOfSaleId) or (@PointOfSaleId is null and PSa_TypAplikacji = 2)) AND (convert(BIGINT, TwP_CzasModyfikacji) &gt; @rowversion or (oddzialBylWyslany = 0 and @PointOfSaleId is null))
+
+		UNION
+
+		SELECT 	--Select służący do wysyłania zamienników do POS z centrów nadrzędnych oddziału, wraz z centrum głównym
+			FRZ_Id						AS	[@Id],
+			TwP_TwrNumer				AS	[@ProductId],
+			TwP_ZamNumer				AS	[@RelatedProductId],
+			5							AS	[@RelationTypeId],
+			TwP_Pozycja					AS	[@OrdinalNumber],
+			TwP_CzasModyfikacji
+			FROM CDN.FrmStruktura
+			join CDN.FrmLinki ON FRS_GIDNumer=FrL_GIDNumer and FRS_GIDTyp = FrL_GIDTyp					
+			join CDN.FrsZamienniki ON FrL_GrONumer = FRZ_FrsId
+			join CDN.TwrPodm ON TwP_Id=FRZ_TwPId
+			join CDN.PicoKonfig ON FRS_ID=PcK_CentrumID
+			join CDN.PicoStanowiska ON PcK_PicoID=PSa_PcKID
+			join #TwrZGrup on twp_TwrNumer = TwrGidNumer
+			join #TwrZGrup a on twp_ZamNumer = a.TwrGidNumer
+			join @Oddzialy on PckCentrumId = PcK_CentrumID
+			WHERE TwP_Warstwa != 3 AND TwP_Warstwa != 1 AND TwP_PrzeliczM = 1 AND TwP_PrzeliczL = 1 
+			AND FRZ_TwPId = TwP_Id AND TwP_DokRodzaj != 2 AND TwP_RodzajPowiazania = 0 AND FRS_GIDTyp = -4272
+			AND ((@PointOfSaleId is not null and PSa_ID =  @PointOfSaleId) or (@PointOfSaleId is null and PSa_TypAplikacji = 2)) AND (convert(BIGINT, TwP_CzasModyfikacji) &gt; @rowversion or (oddzialBylWyslany = 0 and @PointOfSaleId is null))
+
+
+		UNION
+
+
+		--TOWARY POWIĄZANE:
+
+		SELECT  --Select służący do wysyłania towarów powiązanych do POS z oddziału, w którym odbywa się synnchronizacja
+			FRZ_Id						AS	[@Id],
+			TwP_TwrNumer				AS	[@ProductId],
+			TwP_ZamNumer				AS	[@RelatedProductId],
+			TwP_RodzajPowiazania		AS	[@RelationTypeId],
+			TwP_Pozycja					AS	[@OrdinalNumber],
+			TwP_CzasModyfikacji
+			FROM CDN.TwrPodm
+			join CDN.Slowniki ON TwP_RodzajPowiazania = SLW_ID
+			join CDN.FrsZamienniki ON TwP_Id = FRZ_TwPId
+			join CDN.FrmStruktura ON FRS_ID=FRZ_FrsId
+			join CDN.PicoKonfig ON FRS_ID=PcK_CentrumID
+			join CDN.PicoStanowiska ON PcK_PicoID=PSa_PcKID
+			join #TwrZGrup on twp_TwrNumer = TwrGidNumer
+			join #TwrZGrup a on twp_ZamNumer = a.TwrGidNumer
+			join @Oddzialy on PckCentrumId = PcK_CentrumID
+			WHERE TwP_Warstwa!=1 and TwP_RodzajPowiazania &gt; 0 and SLW_Aktywny=1
+			AND ((@PointOfSaleId is not null and PSa_ID =  @PointOfSaleId) or (@PointOfSaleId is null and PSa_TypAplikacji = 2)) AND (convert(BIGINT, TwP_CzasModyfikacji) &gt; @rowversion or (oddzialBylWyslany = 0 and @PointOfSaleId is null))
+
+
+		UNION
+
+		SELECT  --Select służący do wysyłania towarów powiązanych do POS z centrów nadrzędnych oddziału, wraz z centrum głównym
+			FRZ_Id						AS	[@Id],
+			TwP_TwrNumer				AS	[@ProductId],
+			TwP_ZamNumer				AS	[@RelatedProductId],
+			TwP_RodzajPowiazania		AS	[@RelationTypeId],
+			TwP_Pozycja					AS	[@OrdinalNumber],
+			TwP_CzasModyfikacji
+			FROM			CDN.FrmStruktura
+			join			CDN.FrmLinki ON FRS_GIDNumer=FrL_GIDNumer and FRS_GIDTyp = FrL_GIDTyp
+			join			CDN.FrsZamienniki ON FrL_GrONumer = FRZ_FrsId
+			join			CDN.TwrPodm ON TwP_Id=FRZ_TwPId
+			join			CDN.Slowniki ON TwP_RodzajPowiazania = SLW_ID
+			join			CDN.PicoKonfig ON FRS_ID=PcK_CentrumID
+			join			CDN.PicoStanowiska ON PcK_PicoID=PSa_PcKID
+			join			#TwrZGrup on twp_TwrNumer = TwrGidNumer
+			join			#TwrZGrup a on twp_ZamNumer = a.TwrGidNumer
+			join			@Oddzialy on PckCentrumId = PcK_CentrumID
+			WHERE TwP_Warstwa!=1 and TwP_RodzajPowiazania &gt; 0 and SLW_Aktywny=1
+			AND ((@PointOfSaleId is not null and PSa_ID =  @PointOfSaleId) or (@PointOfSaleId is null and PSa_TypAplikacji = 2)) AND (convert(BIGINT, TwP_CzasModyfikacji) &gt; @rowversion or (oddzialBylWyslany = 0 and @PointOfSaleId is null))
+			
+			)a
+DECLARE @LastMod BIGINT = ISNULL((SELECT MAX(convert(BIGINT, TwP_CzasModyfikacji)) FROM #ToEksport),@rowVersion)
+
+if @PointOfSaleId is null and (select max(DataDodaniaOstatniegoStanowiska) from @Oddzialy where oddzialBylWyslany = 0) &gt; @LastMod and @LastMod &lt;&gt; @RowVersion
+	SET @LastMod = (select max(DataDodaniaOstatniegoStanowiska) from @Oddzialy where oddzialBylWyslany = 0)
+
+    select
+        @LastMod as [@RowVersion], ( Select distinct [@Id], [@ProductId], [@RelatedProductId], [@RelationTypeId], [@OrdinalNumber] from #ToEksport 
+			for xml path('RelatedProduct') , type)
+    for xml path('RelatedProducts')
+	Drop Table #ToEksport
+	Drop Table #TwrZGrup
+    SET NOCOUNT OFF; 
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

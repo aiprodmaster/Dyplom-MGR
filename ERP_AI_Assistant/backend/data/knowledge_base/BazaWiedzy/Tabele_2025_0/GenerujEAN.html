@@ -1,0 +1,138 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="GenerujEAN"></A><PRE>
+          <FONT SIZE="2"><I>/* GenerujEAN */</I><BR>
+CREATE PROCEDURE CDN.GenerujEAN(@Zakres int, @MinEAN varchar(40), @EAN varchar(40) OUTPUT)
+AS
+BEGIN
+	--procedura zwraca kolejny EAN z podanego zakresu, 
+	--jeśli w parametrze @MinEAN przekazany jest EAN to zwrócona wartośc powinna być od niego większa
+	--
+	--Parametry:
+	--@Zakres - zakres EAN'ów z konfiguracji, 1 - pierwszy zakres, 2 - drugi zakres
+	--@MinEAN - parametr oznacza, że wyliczony EAN powinien być większy od wartości przekazanej w tym parametrze
+	--@EAN - zwracany EAN
+
+	SET NOCOUNT ON
+
+	declare @EANL varchar(40), @EANH varchar(40), @EANL_Konfig varchar(40), @MaxEANdb varchar(40), @cEAN varchar(40)
+	declare @SQL nvarchar(2000)
+	
+	--sprawdzenie czy wartość przekazana w @MinEAN jest poprawna
+	if(LEN(@MinEAN)&gt;13 OR PATINDEX('%[^0-9]%',@MinEAN)&lt;&gt;0)
+		set @MinEAN = ''
+	
+	--określenie zakresu
+	if(@Zakres = 1)
+	begin
+		select @EANL = kon_wartosc from cdn.konfig where kon_numer = 9933
+		select @EANH = kon_wartosc from cdn.konfig where kon_numer = 9934
+	end
+	else
+	begin
+		select @EANL = kon_wartosc from cdn.konfig where kon_numer = 9935
+		select @EANH = kon_wartosc from cdn.konfig where kon_numer = 9936
+	end
+	set @EANL_Konfig = @EANL
+
+	if(@MinEAN &lt;&gt; '')
+	begin
+		if(RIGHT(REPLICATE(' ',40)+@EANL,40) &lt; RIGHT(REPLICATE(' ',40)+@MinEAN,40))
+			set @EANL = @MinEAN
+		if(RIGHT(REPLICATE(' ',40)+@EANL,40) &gt; RIGHT(REPLICATE(' ',40)+@EANH,40))
+		begin
+			set @MinEAN = ''
+			set @EANL = @EANL_Konfig
+		end
+	end
+	
+	--wyciągnięcie maksymalnego ean'u z bazy
+	set @SQL=N'SELECT MAX(Twr_EAN) as EAN FROM CDN.TwrKarty WHERE LEN(Twr_EAN) &lt;= 13 and PATINDEX(''%[^0-9]%'',Twr_EAN) = 0 and'+
+             ' (CASE Twr_EAN WHEN '''' THEN 0 ELSE CAST(Twr_EAN AS DECIMAL(20,0)) END)&gt;'''+@EANL+''''+
+             ' AND (CASE Twr_EAN WHEN '''' THEN 0 ELSE CAST(Twr_EAN AS DECIMAL(20,0)) END)&lt;'''+@EANH+''''+
+		     case when @MinEAN &lt;&gt; '' 
+					then ' AND (CASE Twr_EAN WHEN '''' THEN 0 ELSE CAST(Twr_EAN AS DECIMAL(20,0)) END) &gt; CAST('''+@MinEAN+''' AS DECIMAL(20,0))'
+				  else ''
+			 end +
+		     /*' union all '+
+			 'SELECT MAX(TwJ_EAN) FROM CDN.TwrJm WHERE LEN(TwJ_EAN) &lt;= 13 AND PATINDEX(''%[^0-9]%'',TwJ_EAN) = 0 AND'+
+             ' (CASE TwJ_EAN WHEN '''' THEN 0 ELSE CAST(TwJ_EAN AS DECIMAL(20,0)) END)&gt;'''+@EANL+''''+
+             ' AND (CASE TwJ_EAN WHEN '''' THEN 0 ELSE CAST(TwJ_EAN AS DECIMAL(20,0)) END)&lt;'''+@EANH+''''+
+		     case when @MinEAN &lt;&gt; '' 
+					then ' AND (CASE Twj_EAN WHEN '''' THEN 0 ELSE CAST(Twj_EAN AS DECIMAL(20,0)) END) &gt; CAST('''+@MinEAN+''' AS DECIMAL(20,0))'
+				  else ''
+			 end + */
+			 ' union all '+
+			 'SELECT MAX(TwK_Kod) FROM CDN.TwrKody WHERE TwK_TypKodu in (0,1) and LEN(TwK_Kod) &lt;= 13 AND PATINDEX(''%[^0-9]%'',TwK_Kod) = 0 AND'+
+             ' (CASE TwK_Kod WHEN '''' THEN 0 ELSE CAST(TwK_Kod AS DECIMAL(20,0)) END)&gt;'''+@EANL+''''+
+             ' AND (CASE TwK_Kod WHEN '''' THEN 0 ELSE CAST(TwK_Kod AS DECIMAL(20,0)) END)&lt;'''+@EANH+''''+
+		     case when @MinEAN &lt;&gt; '' 
+					then ' AND (CASE TwK_Kod WHEN '''' THEN 0 ELSE CAST(TwK_Kod AS DECIMAL(20,0)) END) &gt; CAST('''+@MinEAN+''' AS DECIMAL(20,0))'
+				  else ''
+			 end +
+			 ' union all '+
+			 'SELECT MAX(TwZ_EAN) FROM CDN.TwrZasoby WHERE LEN(TwZ_EAN) &lt;= 13 AND PATINDEX(''%[^0-9]%'',TwZ_EAN) = 0 AND'+
+             ' (CASE TwZ_EAN WHEN '''' THEN 0 ELSE CAST(TwZ_EAN AS DECIMAL(20,0)) END)&gt;'''+@EANL+''''+
+             ' AND (CASE TwZ_EAN WHEN '''' THEN 0 ELSE CAST(TwZ_EAN AS DECIMAL(20,0)) END)&lt;'''+@EANH+''''+
+		     case when @MinEAN &lt;&gt; '' 
+					then ' AND (CASE TwZ_EAN WHEN '''' THEN 0 ELSE CAST(TwZ_EAN AS DECIMAL(20,0)) END) &gt; CAST('''+@MinEAN+''' AS DECIMAL(20,0))'
+				  else ''
+			 end +
+			' union all '+
+		     case when @MinEAN &lt;&gt; '' 
+					then 'select isnull((SELECT MAX(Dst_EAN) FROM CDN.Dostawy WHERE LEN(Dst_EAN) &lt;= 13 AND PATINDEX(''%[^0-9]%'',Dst_EAN) = 0 AND'+
+					     ' (CASE Dst_EAN WHEN '''' THEN 0 ELSE CAST(Dst_EAN AS DECIMAL(20,0)) END)&gt;'''+@EANL+''''+
+						 ' AND (CASE Dst_EAN WHEN '''' THEN 0 ELSE CAST(Dst_EAN AS DECIMAL(20,0)) END)&lt;'''+@EANH+''''+
+						 ' AND (CASE Dst_EAN WHEN '''' THEN 0 ELSE CAST(Dst_EAN AS DECIMAL(20,0)) END) &gt; CAST('''+@MinEAN+''' AS DECIMAL(20,0))),'''')'
+				  else 'select isnull((SELECT MAX(Dst_EAN) FROM CDN.Dostawy WHERE LEN(Dst_EAN) &lt;= 13 AND PATINDEX(''%[^0-9]%'',Dst_EAN) = 0 AND'+
+					   ' (CASE Dst_EAN WHEN '''' THEN 0 ELSE CAST(Dst_EAN AS DECIMAL(20,0)) END)&gt;'''+@EANL+''' AND'+
+					   ' (CASE Dst_EAN WHEN '''' THEN 0 ELSE CAST(Dst_EAN AS DECIMAL(20,0)) END)&lt;'''+@EANH+'''),'''')'
+			 end
+
+	set @SQL = N'select @MaxEANdb = MAX(EAN) from ('+@SQL+') S'
+	
+	exec sp_executesql @SQL, N'@MaxEANdb varchar(40) OUTPUT', @MaxEANdb OUTPUT
+	
+	--weryfikacja ean'u pobranego z bazy
+	if(@MaxEANdb = '')
+		set @cEAN = CAST(CAST(@EANL as decimal(20,0))-(CAST(RIGHT(@EANL,1) as decimal(20,0)))+10 as varchar(40))
+	else
+		set @cEAN = CAST(CAST(@MaxEANdb as decimal(20,0))-(CAST(RIGHT(@MaxEANdb,1) as decimal(20,0)))+10 as varchar(40))
+
+	--obsługa kodów wagowych
+	if((select kon_wartosc from cdn.konfig where kon_numer = 9987)=1)
+	begin		   
+		if(RIGHT(REPLICATE(' ',40)+@cEAN,40) &gt;= RIGHT(REPLICATE(' ',40)+'2300000000000',40) AND 
+		   RIGHT(REPLICATE(' ',40)+@cEAN,40) &lt;= RIGHT(REPLICATE(' ',40)+'2399999999999',40))
+			set @cEAN = '2400000000000'
+		if(RIGHT(REPLICATE(' ',40)+@cEAN,40) &gt;= RIGHT(REPLICATE(' ',40)+'2700000000000',40) AND 
+		   RIGHT(REPLICATE(' ',40)+@cEAN,40) &lt;= RIGHT(REPLICATE(' ',40)+'2799999999999',40))
+			set @cEAN = '2800000000000'
+	end
+
+	--wyliczenie cyfry kontrolnej
+	select @EAN = CDN.CyfraKontrolnaEAN(@cEAN)
+
+	SET NOCOUNT OFF
+
+	if(@EAN &gt; @EANH)
+	begin		
+		set @EAN = ''
+		raiserror('Wygenerowany kod EAN przekracza zakres kodów EAN określony w konfiguracji.',16,1)
+	end
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

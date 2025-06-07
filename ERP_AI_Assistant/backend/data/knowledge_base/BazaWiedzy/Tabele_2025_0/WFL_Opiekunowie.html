@@ -1,0 +1,228 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="WFL_Opiekunowie"></A><PRE>
+          <FONT SIZE="2"><I>/* WFL_Opiekunowie */</I><BR>
+Create FUNCTION cdn.WFL_Opiekunowie (
+@Prc_GIDNumer int, --GIDNumer pracownika  
+@Ope_GIDNumer int, --GIDNumer operatora
+@Frs_GIDNumer int = 0, --GIDNumer centrum praw
+@InniOper smallint = 1, --w przypadku podania operatora czy zwracac zadania innych operatorow pracownika tego operatora
+@DataOd int, --data obowiazywania Od
+@DataDo int) --data obowiazywania Do
+RETURNS @Opiekunowie TABLE 
+(
+FRS_ID int,
+FRS_GIDTyp smallint,
+FRS_GIDNumer int,
+FRS_Poziom smallint,
+FRS_Opis varchar(255),
+FRS_GROTyp smallint,
+FRS_GRONumer int
+)
+AS
+BEGIN
+
+
+declare @PrcTyp smallint
+declare @OpeTyp smallint
+declare @FrsTyp smallint
+set @FrsTyp = -4272
+set @PrcTyp = 944
+set @OpeTyp = 128
+
+declare @tmpPrcNumer int
+declare @tmpOpeNumer int
+
+/*
+przypadki param wejsciowych (priorytet):
+1. ope (2) --operator
+2. prc (3) --pracownik
+3. Frs (1) --centrum
+struktura praw
+1. centra nadrzedne dla operatora (prz. 1)
+2. centra nadrzedne dla operatorow pracownika (prz. 2 - gdy param @InniOper dla prz. 1)
+3. centra nadrzedne dla centrum (prz. 3)
+4. operator (prz.1)
+5. operatorzy pracownika (prz.2 - gdy param @InniOper dla prz. 1)
+6. centrum (prz.3)
+
+struktura podl
+10. centra nadrzedne dla pracownika operatora (prz. 1)
+11. centra nadrzedne dla pracownika (prz. 2)
+12. centra nadrzedne dla centrum (prz.3 )
+13. pracownik operatora (prz.1 )
+14. pracownik (prz. 2)
+15. centrum (prz.3)
+*/
+
+	----**** str praw	
+
+	--1. centra nadrzedne dla operatora (prz. 1)
+	--4. operator (prz.1)
+	if (isnull(@Prc_GIDNumer,0) = 0 and isnull(@Ope_GIDNumer,0) &lt;&gt; 0 and @InniOper = 0)
+	begin
+		insert into @Opiekunowie
+		select 
+			FRS_ID,
+			FRS_GIDTyp,
+			FRS_GIDNumer,
+			FRS_Poziom,
+			FRS_Opis,
+			FrS_GROTyp,
+			FRS_GRONumer
+		from cdn.FrSCentra(1, @OpeTyp, @Ope_GIDNumer, @DataOd, @DataDo)
+	
+		if @@ROWCOUNT = 0
+			insert into @Opiekunowie		
+			select 
+				0,
+				@OpeTyp, 
+				@Ope_GIDNumer,
+				0,
+				'',
+				0,
+				0
+			from cdn.OpeKarty
+			where Ope_GIDNumer = @Ope_GIDNumer
+	end
+
+	if (isnull(@Prc_GIDNumer,0) = 0 and isnull(@Ope_GIDNumer,0) &lt;&gt; 0)
+	--pobierz pracownika od operatora
+		select @tmpPrcNumer = Ope_PrcNumer from cdn.OpeKarty where Ope_GIDTyp = @OpeTyp and Ope_GIDNumer = @Ope_GIDNumer
+	else
+		set @tmpPrcNumer = @Prc_GIDNumer	
+
+
+
+	--2. centra nadrzedne dla operatorow pracownika (prz. 2 - gdy param @InniOper dla prz. 1)
+	--5. operatorzy pracownika (prz.2 - gdy param @InniOper dla prz. 1)
+	if isnull(@Prc_GIDNumer,0) &lt;&gt; 0 or (isnull(@Prc_GIDNumer,0) = 0 and isnull(@Ope_GIDNumer,0) &lt;&gt; 0 and @InniOper &lt;&gt; 0)
+	begin
+		DECLARE cursOpe CURSOR
+		READ_ONLY
+		FOR 
+			select Ope_GIDNumer
+			from cdn.OpeKarty
+			where Ope_GIDNumer=@Ope_GIDNumer or (@tmpPrcNumer&lt;&gt;0 and Ope_PrcNumer=@tmpPrcNumer)		
+		
+		OPEN cursOpe
+		
+		FETCH NEXT FROM cursOpe INTO @tmpOpeNumer
+		WHILE (@@fetch_status &lt;&gt; -1)
+		BEGIN
+			IF (@@fetch_status &lt;&gt; -2)
+			BEGIN
+				insert into @Opiekunowie
+				select 
+					FRS_ID,
+					FRS_GIDTyp,
+					FRS_GIDNumer,
+					FRS_Poziom,
+					FRS_Opis,
+					FrS_GROTyp,
+					FrS_GRONumer
+				from cdn.FrSCentra(1, @OpeTyp, @tmpOpeNumer, @DataOd, @DataDo)
+
+
+				if @@ROWCOUNT = 0
+					insert into @Opiekunowie		
+					select 
+						0,
+						@OpeTyp, 
+						@tmpOpeNumer,
+						0,
+						'',
+						0,
+						0
+					from cdn.OpeKarty
+					where Ope_GIDNumer = @tmpOpeNumer
+			END
+			FETCH NEXT FROM cursOpe INTO @tmpOpeNumer
+		END
+		
+		CLOSE cursOpe
+		DEALLOCATE cursOpe
+	end
+
+	--3. centra nadrzedne dla centrum (prz. 3)		
+	--6. centrum (prz.3)
+	if (isnull(@Prc_GIDNumer,0) = 0 and isnull(@Ope_GIDNumer,0) = 0 and isnull(@Frs_GIDNumer,0) &lt;&gt; 0)	
+		insert into @Opiekunowie
+		select 
+			FRS_ID,
+			FRS_GIDTyp,
+			FRS_GIDNumer,
+			FRS_Poziom,
+			FRS_Opis,
+			FrS_GROTyp,
+			FRS_GRONumer
+		from cdn.FrSCentra(1, @FrsTyp, @Frs_GIDNumer, @DataOd, @DataDo)
+	
+
+	----**** str podleglosciowa
+
+	--10. centra nadrzedne dla pracownika operatora (prz. 1)
+	--13. pracownik operatora (prz.1 )
+	--11. centra nadrzedne dla pracownika (prz. 2)
+	--14. pracownik (prz. 2)
+	if (isnull(@Prc_GIDNumer,0) &lt;&gt; 0 or isnull(@Ope_GIDNumer,0) &lt;&gt; 0)	
+	begin	
+		insert into @Opiekunowie
+		select 
+			FRS_ID,
+			FRS_GIDTyp,
+			FRS_GIDNumer,
+			FRS_Poziom,
+			FRS_Opis,
+			FrS_GROTyp,
+			FrS_GRONumer
+		from cdn.FrSCentra(3, @PrcTyp, @tmpPrcNumer, @DataOd, @DataDo)
+
+		if @@ROWCOUNT = 0
+			insert into @Opiekunowie		
+			select 
+				0,
+				@PrcTyp, 
+				@tmpPrcNumer,
+				0,
+				'',
+				0,
+				0
+			from cdn.PrcKarty
+			where Prc_GIDNumer = @tmpPrcNumer
+	end
+	
+	
+
+
+	--12. centra nadrzedne dla centrum (prz.3 )
+	--15. centrum (prz.3)
+	if (isnull(@Prc_GIDNumer,0) = 0 and isnull(@Ope_GIDNumer,0) = 0 and isnull(@Frs_GIDNumer,0) &lt;&gt; 0)	
+		insert into @Opiekunowie
+		select 
+			FRS_ID,
+			FRS_GIDTyp,
+			FRS_GIDNumer,
+			FRS_Poziom,
+			FRS_Opis,
+			FrS_GROTyp,
+			FrS_GRONumer
+		from cdn.FrSCentra(3, @FrsTyp, @Frs_GIDNumer, @DataOd, @DataDo)
+	
+	return
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

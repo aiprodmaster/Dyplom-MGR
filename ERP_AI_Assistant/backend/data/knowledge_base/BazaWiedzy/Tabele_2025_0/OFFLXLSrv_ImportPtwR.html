@@ -1,0 +1,385 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="OFFLXLSrv_ImportPtwR"></A><PRE>
+          <FONT SIZE="2"><I>/* OFFLXLSrv_ImportPtwR */</I><BR>
+CREATE PROCEDURE CDN.OFFLXLSrv_ImportPtwR
+  @ID		INT		 -- ID oddziału
+ ,@Xml		TEXT 
+ ,@LogID	INT = -1 -- ID loga synchronizacji 
+AS
+	RAISERROR('Procedura OFFLXLSrv_ImportPtwR nie jest obługiwana na MSSQL 2000',16,1)
+	
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="OFFLXLSrv_ImportPtwR"></A><PRE>
+          <FONT SIZE="2"><I>/* OFFLXLSrv_ImportPtwR */</I><BR>
+CREATE PROCEDURE CDN.OFFLXLSrv_ImportPtwR
+  @ID		INT		  -- ID oddziału
+ ,@Xml		XML 
+ ,@LogID	INT = -1  -- ID loga synchronizacji 
+AS
+SET NOCOUNT ON
+
+DECLARE  @ObiTyp	INT
+		,@ObiNumer	INT
+		,@ObiNumerO INT
+		,@ObiTypO	INT
+
+CREATE TABLE #Ptw 
+( 
+	Licznik INT
+	,ObiTyp SMALLINT
+	,ObiNumer INT
+	,ObiNumerO INT
+	,ObiTypO	INT
+	PRIMARY KEY  CLUSTERED
+	( Licznik )  ON [PRIMARY] ,
+) ON [PRIMARY]
+
+DECLARE  @Licznik		INT
+		,@MaxLicznik	INT
+		,@OkLicznik		INT
+		,@Opis			VARCHAR(512)
+
+SELECT @Opis = 'Potwierdzenia'
+EXEC CDN.Log_OtworzPoziom @LogID, @Opis
+
+INSERT INTO #Ptw 
+	( Licznik
+	 ,ObiTyp
+	 ,ObiNumer
+	 ,ObiNumerO 
+	 ,ObiTypO)
+SELECT
+	 ROW_NUMBER() OVER (ORDER BY (SELECT 1))
+	,PTW.Attribute.value('@ObiTyp','INT')
+	,PTW.Attribute.value('@ObiNumer','INT')
+	,PTW.Attribute.value('@ObiektID','INT')
+	,PTW.Attribute.value('@ObiektTyp','INT')
+FROM @Xml.nodes('/PTWI/PTW') AS PTW(Attribute)
+
+SELECT @Licznik = 1
+	  ,@OkLicznik = 0
+	  ,@MaxLicznik = COUNT(Licznik) 
+FROM #Ptw
+
+WHILE @Licznik &lt;= @MaxLicznik
+BEGIN
+	BEGIN TRY
+		SELECT
+			@ObiTyp = ObiTyp
+			,@ObiNumer = ObiNumer
+			,@ObiNumerO = ObiNumerO
+			,@ObiTypO = ObiTypO
+		FROM #Ptw
+		WHERE Licznik = @Licznik
+
+		IF @ObiTyp = 1604 -- Dokumenty MMP
+		BEGIN
+			UPDATE CDN.TraNag SET TrN_OddDokID = @ObiNumerO WHERE TrN_GIDNumer = @ObiNumer
+		END
+		IF @ObiTyp = 433 -- Rozliczenia
+		BEGIN
+			UPDATE CDN.Rozliczenia 
+			SET R2_ZewnetrznyId = @ObiNumerO, R2_ZewnetrznySys = @ID, R2_ZewnetrznyTyp = 1
+			WHERE R2_ParID = (SELECT R2_ParID FROM CDN.Rozliczenia WHERE R2_ID = @ObiNumer)
+		END
+		IF @ObiTyp = -433 -- Usunięte rozliczenia
+		BEGIN
+			IF EXISTS
+			(
+				SELECT * FROM CDN.PicoUsuniete 
+				WHERE PcU_PcKID = @ID AND PcU_ObiTyp = @ObiTyp 
+					AND 1 = 
+						CASE 
+							-- Jeżeli przesłany ObiNumer to sprawdzamy PCL_ObiNumer
+							WHEN @ObiNumer &gt; 0 THEN (CASE WHEN PcU_ObiNumer = @ObiNumer THEN 1 ELSE 0 END)
+							-- Jeżeli nie przesłany ObiNumer to sprawdzamy po id z oddziału PCL_ObiektID
+							WHEN @ObiNumer = 0 AND @ObiNumerO &gt; 0 THEN (CASE WHEN PcU_ObiektID = @ObiNumerO THEN 1 ELSE 0 END)
+							ELSE 0
+						END
+					 --AND (PcU_ObiektTyp = 0 OR PcU_ObiektTyp = 784)
+			)
+			BEGIN
+				UPDATE CDN.PicoUsuniete 
+				SET PcU_Stan = 2
+				FROM CDN.PicoUsuniete 
+				WHERE PcU_PcKID = @ID AND PcU_ObiTyp = @ObiTyp 
+					AND 1 = 
+						CASE 
+							-- Jeżeli przesłany ObiNumer to sprawdzamy PCL_ObiNumer
+							WHEN @ObiNumer &gt; 0 THEN (CASE WHEN PcU_ObiNumer = @ObiNumer THEN 1 ELSE 0 END)
+							-- Jeżeli nie przesłany ObiNumer to sprawdzamy po id z oddziału PCL_ObiektID
+							WHEN @ObiNumer = 0 AND @ObiNumerO &gt; 0 THEN (CASE WHEN PcU_ObiektID = @ObiNumerO THEN 1 ELSE 0 END)
+							ELSE 0
+						END
+					 --AND (PcU_ObiektTyp = 0 OR PcU_ObiektTyp = 784)
+			END
+		END
+		IF @ObiTyp = 434 -- Kompensaty
+		BEGIN
+			UPDATE CDN.Rozliczenia 
+			SET R2_ZewnetrznyId = @ObiNumerO, 
+				R2_ZewnetrznySys = @ID
+			WHERE R2_ParID = (SELECT R2_ParID FROM CDN.Rozliczenia WHERE R2_ID = @ObiNumer)
+		END
+		IF @ObiTyp = -434 -- Usunięte kompensaty
+		BEGIN
+			IF EXISTS
+			(
+				SELECT * FROM CDN.PicoUsuniete
+				WHERE PcU_PcKID = @ID 
+				--AND PcU_ObiTyp = @ObiTyp 
+					AND PcU_ObiTyp IN (-434, 784, 1521, 2033, 2034)
+					AND 1 = 
+						CASE
+							-- Jeżeli przesłany ObiNumer to sprawdzamy PCL_ObiNumer 
+							WHEN @ObiNumer &gt; 0 THEN (CASE WHEN PcU_ObiNumer = @ObiNumer THEN 1 ELSE 0 END)
+							-- Jeżeli nie przesłany ObiNumer to sprawdzamy po id z oddziału PCL_ObiektID
+							WHEN @ObiNumer = 0 AND @ObiNumerO &gt; 0 THEN (CASE WHEN PcU_ObiektID = @ObiNumerO THEN 1 ELSE 0 END)
+							ELSE 0
+						END
+					AND (PcU_ObiektTyp = ISNULL(@ObiTypO,-1) --CASE @ObiTypO WHEN 7684 THEN 2 WHEN 784 THEN 3 ELSE -1 END
+						OR ABS(PcU_ObiektTyp) IN (784, 7684, 1521, 2033, 2034))
+			)
+			BEGIN
+				UPDATE CDN.PicoUsuniete
+				SET PcU_Stan = 2
+				FROM CDN.PicoUsuniete
+				WHERE PcU_PcKID = @ID 
+					--AND PcU_ObiTyp = @ObiTyp 
+					AND PcU_ObiTyp IN (-434, 784, 1521, 2033, 2034)
+					AND 1 = 
+						CASE
+							-- Jeżeli przesłany ObiNumer to sprawdzamy PCL_ObiNumer
+							WHEN @ObiNumer &gt; 0 THEN (CASE WHEN PcU_ObiNumer = @ObiNumer THEN 1 ELSE 0 END)
+							-- Jeżeli nie przesłany ObiNumer to sprawdzamy po id z oddziału PCL_ObiektID
+							WHEN @ObiNumer = 0 AND @ObiNumerO &gt; 0 THEN (CASE WHEN PcU_ObiektID = @ObiNumerO THEN 1 ELSE 0 END)
+							ELSE 0
+						END
+					AND (PcU_ObiektTyp = ISNULL(@ObiTypO,-1) --CASE @ObiTypO WHEN 7684 THEN 2 WHEN 784 THEN 3 ELSE -1 END
+						OR ABS(PcU_ObiektTyp) IN (784, 7684, 1521, 2033, 2034))
+			END
+		END
+
+		IF @ObiTyp = -64 -- Usunięte lub odpiete typy cen
+		BEGIN
+			IF EXISTS
+			(
+				SELECT * FROM CDN.PicoUsuniete
+				WHERE PcU_PcKID = @ID AND PcU_ObiTyp = @ObiTyp 
+					AND 1 = 
+						CASE
+							-- Jeżeli przesłany ObiNumer to sprawdzamy PCL_ObiNumer 
+							WHEN @ObiNumer &gt; 0 THEN (CASE WHEN PcU_ObiNumer = @ObiNumer THEN 1 ELSE 0 END)
+							-- Jeżeli nie przesłany ObiNumer to sprawdzamy po id z oddziału PCL_ObiektID
+							WHEN @ObiNumer = 0 AND @ObiNumerO &gt; 0 THEN (CASE WHEN PcU_ObiektID = @ObiNumerO THEN 1 ELSE 0 END)
+							ELSE 0
+						END
+					AND PcU_ObiektTyp = ISNULL(@ObiTypO,-1)
+			)
+			BEGIN
+				UPDATE CDN.PicoUsuniete
+				SET PcU_Stan = 2
+				FROM CDN.PicoUsuniete
+				WHERE PcU_PcKID = @ID AND PcU_ObiTyp = @ObiTyp 
+					AND 1 = 
+						CASE
+							-- Jeżeli przesłany ObiNumer to sprawdzamy PCL_ObiNumer
+							WHEN @ObiNumer &gt; 0 THEN (CASE WHEN PcU_ObiNumer = @ObiNumer THEN 1 ELSE 0 END)
+							-- Jeżeli nie przesłany ObiNumer to sprawdzamy po id z oddziału PCL_ObiektID
+							WHEN @ObiNumer = 0 AND @ObiNumerO &gt; 0 THEN (CASE WHEN PcU_ObiektID = @ObiNumerO THEN 1 ELSE 0 END)
+							ELSE 0
+						END
+						AND PcU_ObiektTyp = ISNULL(@ObiTypO,-1)
+			END
+		END
+		
+		IF @ObiTyp in (-16, -32) -- Usunięte grupy
+		BEGIN
+			IF EXISTS
+			(
+				SELECT * FROM CDN.PicoUsuniete
+				WHERE PcU_PcKID = @ID AND PcU_ObiTyp = @ObiTyp 
+					AND 1 = 
+						CASE
+							-- Jeżeli przesłany ObiNumer to sprawdzamy PCL_ObiNumer 
+							WHEN @ObiNumer &gt; 0 THEN (CASE WHEN PcU_ObiNumer = @ObiNumer THEN 1 ELSE 0 END)
+							-- Jeżeli nie przesłany ObiNumer to sprawdzamy po id z oddziału PCL_ObiektID
+							WHEN @ObiNumer = 0 AND @ObiNumerO &gt; 0 THEN (CASE WHEN PcU_ObiektID = @ObiNumerO THEN 1 ELSE 0 END)
+							ELSE 0
+						END
+					AND PcU_ObiektTyp = 0
+			)
+			BEGIN
+				UPDATE CDN.PicoUsuniete
+				SET PcU_Stan = 2
+				FROM CDN.PicoUsuniete
+				WHERE PcU_PcKID = @ID AND PcU_ObiTyp = @ObiTyp 
+					AND 1 = 
+						CASE
+							-- Jeżeli przesłany ObiNumer to sprawdzamy PCL_ObiNumer
+							WHEN @ObiNumer &gt; 0 THEN (CASE WHEN PcU_ObiNumer = @ObiNumer THEN 1 ELSE 0 END)
+							-- Jeżeli nie przesłany ObiNumer to sprawdzamy po id z oddziału PCL_ObiektID
+							WHEN @ObiNumer = 0 AND @ObiNumerO &gt; 0 THEN (CASE WHEN PcU_ObiektID = @ObiNumerO THEN 1 ELSE 0 END)
+							ELSE 0
+						END
+						AND PcU_ObiektTyp = 0
+			END
+		END
+		
+		IF @ObiTyp in (-896,-864) -- Usunięte adresy
+		BEGIN
+			IF EXISTS
+			(
+				SELECT * FROM CDN.PicoUsuniete
+				WHERE PcU_PcKID = @ID AND PcU_ObiTyp = 0-@ObiTyp 
+					AND 1 = 
+						CASE
+							-- Jeżeli przesłany ObiNumer to sprawdzamy PCL_ObiNumer 
+							WHEN @ObiNumer &gt; 0 THEN (CASE WHEN PcU_ObiNumer = @ObiNumer THEN 1 ELSE 0 END)
+							-- Jeżeli nie przesłany ObiNumer to sprawdzamy po id z oddziału PCL_ObiektID
+							WHEN @ObiNumer = 0 AND @ObiNumerO &gt; 0 THEN (CASE WHEN PcU_ObiektID = @ObiNumerO THEN 1 ELSE 0 END)
+							ELSE 0
+						END
+					AND PcU_ObiektTyp IN(0,0-@ObiTyp) --TFSID:256197
+			)
+			BEGIN
+				UPDATE CDN.PicoUsuniete
+				SET PcU_Stan = 2
+				FROM CDN.PicoUsuniete
+				WHERE PcU_PcKID = @ID AND PcU_ObiTyp = 0-@ObiTyp 
+					AND 1 = 
+						CASE
+							-- Jeżeli przesłany ObiNumer to sprawdzamy PCL_ObiNumer
+							WHEN @ObiNumer &gt; 0 THEN (CASE WHEN PcU_ObiNumer = @ObiNumer THEN 1 ELSE 0 END)
+							-- Jeżeli nie przesłany ObiNumer to sprawdzamy po id z oddziału PCL_ObiektID
+							WHEN @ObiNumer = 0 AND @ObiNumerO &gt; 0 THEN (CASE WHEN PcU_ObiektID = @ObiNumerO THEN 1 ELSE 0 END)
+							ELSE 0
+						END
+						AND PcU_ObiektTyp IN(0,0-@ObiTyp) --TFSID:256197
+			END
+		END
+		
+		IF @ObiTyp = -14400 -- Usunięte załączniki
+		BEGIN
+			IF EXISTS
+			(
+				SELECT * FROM CDN.PicoUsuniete
+				WHERE PcU_PcKID = @ID AND PcU_ObiTyp = 0-@ObiTyp 
+					AND 1 = 
+						CASE
+							-- Jeżeli przesłany ObiNumer to sprawdzamy PCL_ObiNumer 
+							WHEN @ObiNumer &gt; 0 THEN (CASE WHEN PcU_ObiNumer = @ObiNumer THEN 1 ELSE 0 END)
+							-- Jeżeli nie przesłany ObiNumer to sprawdzamy po id z oddziału PCL_ObiektID
+							WHEN @ObiNumer = 0 AND @ObiNumerO &gt; 0 THEN (CASE WHEN PcU_ObiektID = @ObiNumerO THEN 1 ELSE 0 END)
+							ELSE 0
+						END
+					AND PcU_ObiektTyp = 0
+			)
+			BEGIN
+				UPDATE CDN.PicoUsuniete
+				SET PcU_Stan = 2
+				FROM CDN.PicoUsuniete
+				WHERE PcU_PcKID = @ID AND PcU_ObiTyp = 0-@ObiTyp 
+					AND 1 = 
+						CASE
+							-- Jeżeli przesłany ObiNumer to sprawdzamy PCL_ObiNumer
+							WHEN @ObiNumer &gt; 0 THEN (CASE WHEN PcU_ObiNumer = @ObiNumer THEN 1 ELSE 0 END)
+							-- Jeżeli nie przesłany ObiNumer to sprawdzamy po id z oddziału PCL_ObiektID
+							WHEN @ObiNumer = 0 AND @ObiNumerO &gt; 0 THEN (CASE WHEN PcU_ObiektID = @ObiNumerO THEN 1 ELSE 0 END)
+							ELSE 0
+						END
+						AND PcU_ObiektTyp = 0
+			END
+		END		
+		
+		IF @ObiTyp = -14400 AND @ObiNumerO &gt; 0 -- TFSID:203909 Usunięte powiązania załaczników
+		BEGIN
+			IF EXISTS
+			(
+				SELECT * FROM CDN.PicoUsuniete
+				WHERE PcU_PcKID = @ID AND PcU_ObiTyp = @ObiTyp 
+					AND PcU_ObiNumer = @ObiNumer
+					AND PcU_ObiektID = @ObiNumerO
+					AND PcU_ObiektTyp = @ObiTypO
+			)
+			BEGIN
+				UPDATE CDN.PicoUsuniete
+				SET PcU_Stan = 2
+				FROM CDN.PicoUsuniete
+				WHERE PcU_PcKID = @ID AND PcU_ObiTyp = @ObiTyp 
+					AND PcU_ObiNumer = @ObiNumer
+					AND PcU_ObiektID = @ObiNumerO
+					AND PcU_ObiektTyp = @ObiTypO
+			END
+		END		
+
+		IF @ObiTyp in (624,144) -- Usunięte stawki VAT i jednostki miar
+		BEGIN
+			IF EXISTS
+			(
+				SELECT * FROM CDN.PicoUsuniete
+				WHERE PcU_PcKID = @ID AND PcU_ObiTyp = @ObiTyp 
+					AND 1 = 
+						CASE
+							-- Jeżeli przesłany ObiNumer to sprawdzamy PCL_ObiNumer 
+							WHEN @ObiNumer &gt; 0 THEN (CASE WHEN PcU_ObiNumer = @ObiNumer THEN 1 ELSE 0 END)
+							-- Jeżeli nie przesłany ObiNumer to sprawdzamy po id z oddziału PCL_ObiektID
+							WHEN @ObiNumer = 0 AND @ObiNumerO &gt; 0 THEN (CASE WHEN PcU_ObiektID = @ObiNumerO THEN 1 ELSE 0 END)
+							ELSE 0
+						END
+					AND PcU_ObiektTyp = ISNULL(@ObiTypO,-1)
+			)
+			BEGIN
+				UPDATE CDN.PicoUsuniete
+				SET PcU_Stan = 2
+				FROM CDN.PicoUsuniete
+				WHERE PcU_PcKID = @ID AND PcU_ObiTyp = @ObiTyp 
+					AND 1 = 
+						CASE
+							-- Jeżeli przesłany ObiNumer to sprawdzamy PCL_ObiNumer
+							WHEN @ObiNumer &gt; 0 THEN (CASE WHEN PcU_ObiNumer = @ObiNumer THEN 1 ELSE 0 END)
+							-- Jeżeli nie przesłany ObiNumer to sprawdzamy po id z oddziału PCL_ObiektID
+							WHEN @ObiNumer = 0 AND @ObiNumerO &gt; 0 THEN (CASE WHEN PcU_ObiektID = @ObiNumerO THEN 1 ELSE 0 END)
+							ELSE 0
+						END
+						AND PcU_ObiektTyp = ISNULL(@ObiTypO,-1)
+			END
+		END
+		
+		SET @OkLicznik = @OkLicznik + 1
+	END TRY
+		
+	BEGIN CATCH
+		SELECT @Opis = 'Błąd podczas dodawania potwierdzenia: ' + CDN.Log_SzczegolyBledu(ERROR_NUMBER(),ERROR_PROCEDURE(),ERROR_LINE(),ERROR_MESSAGE()) 
+		EXEC CDN.Log_Dopisz @LogID, @Opis, 2
+	END CATCH
+	SET @Licznik = @Licznik + 1
+END
+
+SELECT @Opis = 'Ilość zaimportowanych potwierdzeń: '  + CAST(@OkLicznik AS NVARCHAR(10)) + ' z ' + CAST(@MaxLicznik AS NVARCHAR(10))
+EXEC CDN.Log_Dopisz @LogID, @Opis, 0
+EXEC CDN.Log_ZamknijPoziom @LogID
+
+SET NOCOUNT OFF
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

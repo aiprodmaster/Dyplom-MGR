@@ -1,0 +1,148 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="XLRezerwacjeOnline_Usun"></A><PRE>
+          <FONT SIZE="2"><I>/* XLRezerwacjeOnline_Usun */</I><BR>
+CREATE PROCEDURE CDN.XLRezerwacjeOnline_Usun
+(
+	@p_ListaGUID CDN.tTablicaGuid READONLY,
+	@p_Tryb INT,
+	@p_PominTworzenieTblWynikowej BIT = 0,
+	@p_Status INT OUTPUT,
+	@p_OpisBladu NVARCHAR(MAX) OUTPUT
+	/*
+	@p_ListaGUID - Lista identyfikatorów rezerwacji
+
+	@p_Tryb - Tryb usuwania rezerwacji:
+		0 - zostaną usunięte wszystkie rezerwacje lub żadna (w przypadku niepowodzenia usuwania jednej z rezerwacji),
+		1 - problem z usunięciem pojedynczej rezerwacji nie powinien powodować przerwania całego procesu
+		2 - tryb wewnętrzny, z metody XLRezerwacjeOnline_Modyfikuj - podobnie jak tryb=0, dodatkowo nie sprawdza powiązań z magazynowymi oraz nie zwraca tabeli wynikowej
+
+	@p_PominTworzenieTblWynikowej:
+		0 - procedura sama tworzy tymczasową tabele wynikową i zwracą ja na koniec
+		1 - tabela tymczasowa jest dodana wcześniej poza procedurą
+
+	@p_Status - Status usuwania rezerwacji:
+		1 – wszystkie rezerwacje zostały usunięte
+		2 – część wskazanych rezerwacji została usunięta (dotyczy @Mode = 1), 
+		3 – żadna ze wskazanych rezerwacji nie została usunięta
+	*/
+)
+AS
+BEGIN
+	SET NOCOUNT ON;
+
+	SET @p_Status = 3;
+	DECLARE @_TRANCOUNT int;
+
+	IF @p_PominTworzenieTblWynikowej = 0 BEGIN		
+		CREATE TABLE #Wynik_CDN_XLRezerwacjeOnline_Usun
+		(
+			GUID UNIQUEIDENTIFIER,
+			Status	INT
+		);
+	END ELSE BEGIN
+		IF OBJECT_ID('tempdb..#Wynik_CDN_XLRezerwacjeOnline_Usun') IS NULL BEGIN
+			SET @p_OpisBladu = 'Brak tabeli #Wynik_CDN_XLRezerwacjeOnline_Usun.';
+			SET NOCOUNT OFF;
+			RETURN
+		END
+	END
+
+	INSERT INTO #Wynik_CDN_XLRezerwacjeOnline_Usun
+	SELECT DISTINCT GUID, CASE 
+							WHEN EXISTS(SELECT * FROM CDN.TraSElem NOLOCK WHERE TrS_RezTyp=Rez_GIDTyp AND TrS_RezNumer=Rez_GIDNumer) THEN 6 
+							WHEN EXISTS(SELECT * FROM CDN.MagSElem NOLOCK WHERE MaS_ZrdTyp=Rez_GIDTyp AND MaS_ZrdNumer=Rez_GIDNumer AND @p_Tryb&lt;&gt;2) THEN 7 
+							ELSE -1
+						 END as Status
+	FROM @p_ListaGUID 
+	JOIN CDN.Rezerwacje ON Rez_GUID=CAST(GUID as varchar(36));
+
+	INSERT INTO #Wynik_CDN_XLRezerwacjeOnline_Usun
+	SELECT DISTINCT GUID, -2 as Status
+	FROM @p_ListaGUID 
+	JOIN CDN.RezerwacjeWPrzyszlosc ON RezP_GUID=CAST(GUID as varchar(36));
+
+	INSERT INTO #Wynik_CDN_XLRezerwacjeOnline_Usun
+	SELECT DISTINCT L.GUID, 5 as Status
+	FROM @p_ListaGUID L
+	LEFT JOIN #Wynik_CDN_XLRezerwacjeOnline_Usun T ON L.GUID=T.GUID
+	WHERE T.GUID IS NULL
+
+	IF @p_Tryb &lt;&gt; 1  AND EXISTS(SELECT * FROM #Wynik_CDN_XLRezerwacjeOnline_Usun WHERE Status&gt;0) BEGIN
+		IF @p_Tryb &lt;&gt; 2 BEGIN
+			SELECT * FROM #Wynik_CDN_XLRezerwacjeOnline_Usun
+		END
+	END ELSE BEGIN
+		BEGIN TRY
+						
+			IF @p_Tryb &lt;&gt; 1 BEGIN
+				SELECT @_TRANCOUNT=@@TRANCOUNT; 
+				IF @_TRANCOUNT&gt;0 SAVE TRANSACTION TRAN_XLRezerwacjeOnline_Usun;
+				ELSE BEGIN TRANSACTION TRAN_XLRezerwacjeOnline_Usun;
+			END
+
+			-- Aktualizacja rezerwacji źródłowej
+			;WITH R AS (
+				SELECT zrd.Rez_GIDTyp as GidTyp, zrd.Rez_GIDNumer as GidNumer, MaS_RezerwacjaZasobu as Typ FROM 
+				#Wynik_CDN_XLRezerwacjeOnline_Usun W
+				JOIN CDN.Rezerwacje U ON U.Rez_GUID=CAST(W.GUID as varchar(36))
+				JOIN CDN.MagSElem ON U.Rez_ZrdTyp=Mas_GidTyp AND U.Rez_ZrdNumer=Mas_GidNumer AND U.Rez_ZrdLp=Mas_GidLp AND U.Rez_ZrdSubLp=Mas_SubGidLp
+				JOIN CDN.Rezerwacje zrd ON Mas_ZrdTyp=zrd.Rez_GidTyp AND Mas_ZrdNumer=zrd.Rez_GidNumer
+				WHERE zrd.Rez_Typ=0 and zrd.Rez_GIDTyp in (2576,2592) 
+			)
+			UPDATE CDN.Rezerwacje 
+			SET Rez_Typ=R.Typ  
+			FROM R
+			JOIN CDN.Rezerwacje ON Rez_GIDTyp=R.GidTyp AND Rez_GidNumer=R.GidNumer
+
+			-- Usuwanie właściwej rezerwacji
+			DELETE FROM CDN.Rezerwacje 			
+			WHERE Rez_Guid in (SELECT CAST(GUID as varchar(36)) FROM #Wynik_CDN_XLRezerwacjeOnline_Usun WHERE Status=-1)
+			UPDATE #Wynik_CDN_XLRezerwacjeOnline_Usun SET Status=1 WHERE Status=-1
+
+			DELETE FROM CDN.RezerwacjeWPrzyszlosc			
+			WHERE RezP_Guid in (SELECT CAST(GUID as varchar(36)) FROM #Wynik_CDN_XLRezerwacjeOnline_Usun WHERE Status=-2)
+			UPDATE #Wynik_CDN_XLRezerwacjeOnline_Usun SET Status=1 WHERE Status=-2
+			
+			IF @p_Tryb &lt;&gt; 1 BEGIN
+				IF @_TRANCOUNT=0 COMMIT TRANSACTION TRAN_XLRezerwacjeOnline_Usun
+			END
+		END TRY
+		BEGIN CATCH
+			SET @p_OpisBladu = CONCAT('ErrorProcedure: ',ERROR_PROCEDURE(),'; ErrorLine: ',ERROR_LINE(),'; ErrorMessage: ',ERROR_MESSAGE());
+			IF @p_Tryb &lt;&gt; 1 BEGIN
+				IF XACT_STATE()&lt;&gt;0 ROLLBACK TRANSACTION TRAN_XLRezerwacjeOnline_Usun
+				SET NOCOUNT OFF;
+				RETURN
+			END
+		END CATCH	
+	END
+
+	IF NOT EXISTS(SELECT * FROM #Wynik_CDN_XLRezerwacjeOnline_Usun WHERE Status&lt;&gt;1)
+		SET @p_Status = 1
+	ELSE IF EXISTS(SELECT * FROM #Wynik_CDN_XLRezerwacjeOnline_Usun WHERE Status=1)
+		SET @p_Status = 2
+
+	IF @p_Tryb &lt;&gt; 2 AND @p_PominTworzenieTblWynikowej = 0 BEGIN
+		SELECT * FROM #Wynik_CDN_XLRezerwacjeOnline_Usun
+	END
+
+	SET NOCOUNT OFF;
+	RETURN
+END
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

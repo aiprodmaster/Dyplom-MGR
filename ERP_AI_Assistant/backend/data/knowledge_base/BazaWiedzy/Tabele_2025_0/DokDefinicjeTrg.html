@@ -1,0 +1,1369 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="DokPotomne"></A><PRE>
+          <FONT SIZE="2"><I>/* DokPotomne */</I><BR>
+CREATE PROCEDURE CDN.DokPotomne(@ID INT,
+  @GIDTyp SMALLINT)
+AS
+BEGIN
+  DECLARE @c int
+  CREATE TABLE #potomne
+  (
+    FRS_ID INT UNIQUE
+  )
+  INSERT INTO #potomne
+  SELECT A.FRS_ID
+  FROM cdn.frmstruktura AS A join cdn.frmstruktura AS B ON B.FRS_GidTyp=A.FRS_GroTyp and B.FRS_GidFirma=A.FRS_GroFirma and B.FRS_GidNumer=A.FRS_GroNumer and B.FRS_GidLp=A.FRS_GroLp AND B.FRS_ID=@ID
+    JOIN cdn.dokdefinicje ON A.FRS_ID=DOK_FrsID AND DOK_GIDTyp=@GIDTyp
+  WHERE B.FRS_GIDTyp=-4272 AND B.FRS_Warstwa=1 AND DOK_DefZNadrzednego=1
+  SET @c=0
+  WHILE @c&lt;&gt;(SELECT COUNT(*)
+  FROM #potomne)
+  BEGIN
+    SET @c=(SELECT COUNT(*)
+    FROM #potomne)
+    INSERT INTO #potomne
+    SELECT A.frs_id
+    FROM cdn.frmstruktura AS A join cdn.frmstruktura AS B ON B.FRS_GidTyp=A.FRS_GroTyp and B.FRS_GidFirma=A.FRS_GroFirma and B.FRS_GidNumer=A.FRS_GroNumer and B.FRS_GidLp=A.FRS_GroLp JOIN #potomne ON  B.FRS_ID=#potomne.FRS_ID AND NOT EXISTS(SELECT *
+        FROM #potomne
+        WHERE #potomne.FRS_ID=A.FRS_ID)
+      JOIN cdn.dokdefinicje ON A.FRS_ID=DOK_FrsID AND DOK_GIDTyp=@GIDTyp
+    WHERE B.FRS_GIDTyp=-4272 AND B.FRS_Warstwa=1 AND DOK_DefZNadrzednego=1
+  END
+  SELECT FRS_ID
+  FROM #potomne
+  DROP TABLE #potomne
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="PrzepiszOpisAnalitycznyDlaDokDef"></A><PRE>
+          <FONT SIZE="2"><I>/* PrzepiszOpisAnalitycznyDlaDokDef */</I><BR>
+CREATE PROCEDURE CDN.PrzepiszOpisAnalitycznyDlaDokDef
+  @DokId /*Id dokumentu, z którego przepisywac*/ int 
+AS
+  DECLARE @DokFrsId INT
+  DECLARE @DokGidTyp INT
+ CREATE TABLE #WymiaryAktualizowane
+    (
+      FrsId INT UNIQUE
+    )
+
+
+select @DokId=CASE dokdefDziecko.Dok_WymiaryZRodzica WHEN 0 THEN dokdefDziecko.Dok_Id ELSE dokdefRodzic.Dok_Id END
+from cdn.DokDefinicje dokdefDziecko
+join cdn.FrmStruktura dziecko on dziecko.FRS_ID=dokdefDziecko.Dok_FrsId
+join cdn.FrmStruktura rodzic on rodzic.FRS_GIDNumer=dziecko.FRS_GRONumer
+join cdn.DokDefinicje dokdefRodzic on dokdefRodzic.Dok_FrsId=rodzic.FRS_ID and dokdefRodzic.Dok_GIDTyp=dokdefDziecko.Dok_GIDTyp
+where dokdefDziecko.Dok_Id=@DokId
+
+
+
+
+
+
+    select @DokFrsId=Dok_FrsId, @DokGIDTyp=Dok_GIDTyp from cdn.DokDefinicje where DOK_ID=@DokId
+
+ ;with RodzicWymiar as (
+    select @DokFrsId FrsId, 0 Poziom
+    UNION ALL
+    select dziecko.FRS_Id,Poziom+1
+    from cdn.FrmStruktura rodzic 
+    join cdn.frmstruktura dziecko on dziecko.FRS_GroNumer=rodzic.FrS_GIDNumer
+    join RodzicWymiar on RodzicWymiar.FrsId=rodzic.Frs_Id
+    join cdn.dokdefinicje dokDefDzieci on 
+       dokDefDzieci.Dok_WymiaryZRodzica=1
+      and dokDefDzieci.Dok_FrsId=dziecko.FRS_ID and dokDefDzieci.Dok_GIDTyp=@DokGIDTyp
+    WHERE dziecko.FRS_GIDTyp=-4272
+)insert into #WymiaryAktualizowane select distinct FRSID  from RodzicWymiar where Poziom&gt;0
+
+
+ UPDATE dziecko set 
+        dziecko.Dok_Centrum=rodzic.Dok_Centrum,
+        dziecko.Dok_Lokalizacja=rodzic.Dok_Lokalizacja,
+        dziecko.Dok_KategoriaFin=rodzic.Dok_KategoriaFin,
+        dziecko.Dok_KontrahentDoc=rodzic.Dok_KontrahentDoc,
+        dziecko.Dok_Projekt=rodzic.Dok_Projekt,
+        dziecko.Dok_RodzajKategorii=rodzic.Dok_RodzajKategorii,
+        dziecko.Dok_RodzajKategoriiKW=rodzic.Dok_RodzajKategoriiKW,
+        dziecko.Dok_EdycjaKategorii=rodzic.Dok_EdycjaKategorii,
+        dziecko.Dok_PustaLista=rodzic.Dok_PustaLista,
+        dziecko.Dok_DostepDoWzorcow=rodzic.Dok_DostepDoWzorcow,
+		dziecko.Dok_DostepDoWzorcowAnalitPodrz=rodzic.Dok_DostepDoWzorcowAnalitPodrz,
+        dziecko.Dok_UjecieJednoT=rodzic.Dok_UjecieJednoT,
+        dziecko.Dok_UjecieDwuT=rodzic.Dok_UjecieDwuT,
+        dziecko.Dok_DataKsiegowania=rodzic.Dok_DataKsiegowania,
+        dziecko.Dok_DozwolonyOpisDokWBuforze=rodzic.Dok_DozwolonyOpisDokWBuforze,
+        dziecko.Dok_DataControllingowa=rodzic.Dok_DataControllingowa
+        from cdn.DokDefinicje dziecko
+      join #WymiaryAktualizowane on FrsId=dziecko.Dok_FrsId
+      join cdn.DokDefinicje rodzic on dziecko.Dok_GIDTyp=rodzic.Dok_GIDTyp AND rodzic.Dok_Id=@DokId
+        where rodzic.Dok_GIDTyp=@DokGIDTyp
+
+  delete cdn.DokWymiary
+FROM cdn.DokWymiary
+JOIN cdn.DokDefinicje
+    ON Dok_Id=DoW_ID
+WHERE Dok_GIDTyp=@DokGIDTyp
+        AND Dok_FrsId IN 
+    (SELECT FRSID
+    FROM #WymiaryAktualizowane ) INSERT INTO cdn.DokWymiary (DoW_ID,DoW_WymID)
+SELECT dziecko.Dok_Id,
+         DoW_WymID
+FROM cdn.DokWymiary
+JOIN cdn.DokDefinicje rodzic
+    ON rodzic.Dok_Id=DoW_ID
+        AND rodzic.Dok_Id=@DokId
+JOIN #WymiaryAktualizowane wym
+    ON 1=1
+JOIN cdn.DokDefinicje dziecko on FrsId=dziecko.Dok_FrsId and dziecko.Dok_GIDTyp=@DokGIDTyp
+
+
+
+CREATE TABLE #OpisyZrobioneNaPodstawieWzorcow
+    (
+      OWWID INT UNIQUE
+    )
+	insert into #OpisyZrobioneNaPodstawieWzorcow
+	SELECT DISTINCT OWN_OWWID FROM CDN.OpisWymNag WITH (NOLOCK) WHERE OWN_OWWID IS NOT NULL AND OWN_OWWID&lt;&gt;0 AND OWN_GIDTYP NOT IN  (7941,4320)
+ 
+	delete cdn.OpisWzorce
+	WHERE OWW_OBTNumer in (SELECT Dok_Id from #WymiaryAktualizowane join cdn.DokDefinicje on #WymiaryAktualizowane.FRSID=dok_FRSID AND DOK_GIDTyp=@DokGIDTyp )
+	AND NOT  EXISTS (SELECT * FROM #OpisyZrobioneNaPodstawieWzorcow WHERE OWWID = OWW_ID)
+
+	drop table #OpisyZrobioneNaPodstawieWzorcow
+
+
+DECLARE @WstawioneOWW TABLE  
+(  
+    OWN_GIDNumer_Org int,
+    OWN_GIDNumer_Kopiowany int
+); 
+delete @WstawioneOWW
+
+MERGE INTO cdn.OpisWzorce
+USING (
+select OWW_ID,
+           --[OWW_Kod]
+           case when exists(select * from cdn.OpisWzorce oW where oW.OWW_Kod=opisWZ.OWW_Kod AND oW.OWW_FrsID=dokDefDzieci.DOK_FRSID)
+            THEN CASE WHEN 
+			(SELECT Max(NumberStartPos) FROM cdn.OpisWzorce  oW CROSS APPLY cdn.FindLastNumberInString(oW.OWW_Kod) licznik where oW.OWW_Kod like opisWZ.OWW_Kod+'%' AND oW.OWW_FrsID=dokDefDzieci.DOK_FRSID)=-1 THEN left(OWW_Kod,19)+'1'
+			 ELSE SUBSTRING(OWW_Kod,1,(SELECT Max(NumberStartPos) FROM cdn.OpisWzorce  oW CROSS APPLY cdn.FindLastNumberInString(oW.OWW_Kod) licznik where oW.OWW_Kod like opisWZ.OWW_Kod+'%' AND oW.OWW_FrsID=dokDefDzieci.DOK_FRSID))+
+			CAST((SELECT Max(Number) FROM cdn.OpisWzorce  oW CROSS APPLY cdn.FindLastNumberInString(oW.OWW_Kod) licznik where oW.OWW_Kod like opisWZ.OWW_Kod+'%' AND oW.OWW_FrsID=dokDefDzieci.DOK_FRSID)+1 AS VARCHAR)END ELSE OWW_Kod END OWW_Kod
+           ,[OWW_Nazwa]
+           ,[OWW_Archiwalny]
+           ,[OWW_Rodzaj]
+           ,[OWW_OpeWpr]
+           ,[OWW_DataWpr]
+           ,[OWW_OpeModyf]
+           ,[OWW_DataModyf]
+           ,[OWW_OBTTyp]
+           ,dokDefDzieci.Dok_Id OWW_OBTNumer
+           ,COALESCE((select max(OWW_Pozycja) from cdn.OpisWzorce join cdn.OpisWymNag ON OWN_GIDNumer = OWW_ID AND OWN_GIDTYP IN  (7941,4320) where OWW_OBTNumer=dokDefDzieci.Dok_id  ),0)+ ROW_NUMBER() OVER (PARTITION BY dokDefDzieci.DOK_FRSId ORDER BY (SELECT NULL)) OWW_Pozycja
+           ,dokDefDzieci.Dok_FrsId OWW_FrsID
+from cdn.OpisWzorce opisWZ
+cross apply (SELECT Dok_Id from #WymiaryAktualizowane join cdn.DokDefinicje on #WymiaryAktualizowane.FRSID=dok_FRSID AND DOK_GIDTyp=@DokGIDTyp ) as dokDzieci
+join cdn.DokDefinicje dokDefDzieci on dokDzieci.Dok_Id=dokDefDzieci.Dok_Id
+
+WHERE OWW_OBTNumer=@DokId
+) as base
+ON 1 = 0
+WHEN NOT MATCHED THEN
+ INSERT([OWW_Kod]
+           ,[OWW_Nazwa]
+           ,[OWW_Archiwalny]
+           ,[OWW_Rodzaj]
+           ,[OWW_OpeWpr]
+           ,[OWW_DataWpr]
+           ,[OWW_OpeModyf]
+           ,[OWW_DataModyf]
+           ,[OWW_OBTTyp]
+           ,[OWW_OBTNumer]
+           ,[OWW_Pozycja]
+           ,[OWW_FrsID])
+VALUES(OWW_Kod,
+            [OWW_Nazwa]
+           ,[OWW_Archiwalny]
+           ,[OWW_Rodzaj]
+           ,[OWW_OpeWpr]
+           ,[OWW_DataWpr]
+           ,[OWW_OpeModyf]
+           ,[OWW_DataModyf]
+           ,[OWW_OBTTyp]
+           ,[OWW_OBTNumer]
+           ,[OWW_Pozycja]
+           ,[OWW_FrsID])
+OUTPUT base.OWW_Id, INSERTED.OWW_Id INTO @WstawioneOWW;         
+
+
+INSERT INTO cdn.OpisWymNag([OWN_GIDTyp]
+           ,[OWN_GIDFirma]
+           ,[OWN_GIDNumer]
+           ,[OWN_GIDLp]
+           ,[OWN_Opis]
+           ,[OWN_Zatwierdzono]
+           ,[OWN_TStampAkt]
+           ,[OWN_OpeTypA]
+           ,[OWN_OpeFirmaA]
+           ,[OWN_OpeNumerA]
+           ,[OWN_OpeLpA]
+           ,[OWN_TStampZatw]
+           ,[OWN_OpeTypZ]
+           ,[OWN_OpeFirmaZ]
+           ,[OWN_OpeNumerZ]
+           ,[OWN_OpeLpZ]
+           ,[OWN_Kategoria]
+           ,[OWN_DataControllingowa]
+           ,[OWN_DataKsiegowania]
+           ,[OWN_IloscElementow]
+           ,[OWN_OwWID])
+select OWN_GIDTyp
+           ,[OWN_GIDFirma]
+           ,OWN_GIDNumer_Kopiowany
+           ,[OWN_GIDLp]
+           ,[OWN_Opis]
+           ,[OWN_Zatwierdzono]
+           ,[OWN_TStampAkt]
+           ,[OWN_OpeTypA]
+           ,[OWN_OpeFirmaA]
+           ,[OWN_OpeNumerA]
+           ,[OWN_OpeLpA]
+           ,[OWN_TStampZatw]
+           ,[OWN_OpeTypZ]
+           ,[OWN_OpeFirmaZ]
+           ,[OWN_OpeNumerZ]
+           ,[OWN_OpeLpZ]
+           ,[OWN_Kategoria]
+           ,[OWN_DataControllingowa]
+           ,[OWN_DataKsiegowania]
+           ,[OWN_IloscElementow]
+           ,[OWN_OwWID]
+from cdn.OpisWymNag
+join @WstawioneOWW own1 on OWN_GIDNumer_Org=[OWN_GIDNumer]
+where   OWN_GIDTYP  IN  (7941)
+
+
+INSERT INTO [CDN].[OpisWymElem]
+           ([OWE_GIDTyp]
+           ,[OWE_GIDFirma]
+           ,[OWE_GIDNumer]
+           ,[OWE_GIDLp]
+           ,[OWE_Pozycja]
+           ,[OWE_Wartosc]
+           ,[OWE_Procent]
+           ,[OWE_Kierunek]
+           ,[OWE_Typ])
+     select
+           [OWE_GIDTyp]
+           ,[OWE_GIDFirma]
+           ,[OWN_GIDNumer_Kopiowany]
+           ,[OWE_GIDLp]
+           ,[OWE_Pozycja]
+           ,[OWE_Wartosc]
+           ,[OWE_Procent]
+           ,[OWE_Kierunek]
+           ,[OWE_Typ]
+           from cdn.[OpisWymElem]
+join @WstawioneOWW own1 on OWN_GIDNumer_Org=OWE_GIDNumer
+
+where   OWE_GIDTYP  IN  (7941)
+
+
+INSERT INTO [CDN].[OpisWymSElem]
+           ([OWS_GIDTyp]
+           ,[OWS_GIDFirma]
+           ,[OWS_GIDNumer]
+           ,[OWS_GIDLp]
+           ,[OWS_WMRID]
+           ,[OWS_Element]
+           ,[OWS_TypWymiaru])
+select [OWS_GIDTyp]
+           ,[OWS_GIDFirma]
+           ,[OWN_GIDNumer_Kopiowany]
+           ,[OWS_GIDLp]
+           ,[OWS_WMRID]
+           ,[OWS_Element]
+           ,[OWS_TypWymiaru]
+           from cdn.[OpisWymSElem]
+join @WstawioneOWW own1 on OWN_GIDNumer_Org=OWS_GIDNumer
+where   OWS_GIDTYP  IN  (7941)
+
+
+
+delete cdn.OpisWymNag 
+WHERE OWN_GIDTYP = 4320 
+and OWN_GIDNumer in (SELECT Dok_Id from #WymiaryAktualizowane join cdn.DokDefinicje on #WymiaryAktualizowane.FRSID=dok_FRSID AND DOK_GIDTyp=@DokGIDTyp )
+
+
+
+INSERT INTO cdn.OpisWymNag([OWN_GIDTyp]
+           ,[OWN_GIDFirma]
+		   ,OWN_GIDNumer
+           ,[OWN_GIDLp]
+           ,[OWN_Opis]
+           ,[OWN_Zatwierdzono]
+           ,[OWN_TStampAkt]
+           ,[OWN_OpeTypA]
+           ,[OWN_OpeFirmaA]
+           ,[OWN_OpeNumerA]
+           ,[OWN_OpeLpA]
+           ,[OWN_TStampZatw]
+           ,[OWN_OpeTypZ]
+           ,[OWN_OpeFirmaZ]
+           ,[OWN_OpeNumerZ]
+           ,[OWN_OpeLpZ]
+           ,[OWN_Kategoria]
+           ,[OWN_DataControllingowa]
+           ,[OWN_DataKsiegowania]
+           ,[OWN_IloscElementow]
+           ,[OWN_OwWID])
+select OWN_GIDTyp
+           ,[OWN_GIDFirma]
+		   ,DokDzieci.Dok_Id
+           ,[OWN_GIDLp]
+           ,[OWN_Opis]
+           ,[OWN_Zatwierdzono]
+           ,[OWN_TStampAkt]
+           ,[OWN_OpeTypA]
+           ,[OWN_OpeFirmaA]
+           ,[OWN_OpeNumerA]
+           ,[OWN_OpeLpA]
+           ,[OWN_TStampZatw]
+           ,[OWN_OpeTypZ]
+           ,[OWN_OpeFirmaZ]
+           ,[OWN_OpeNumerZ]
+           ,[OWN_OpeLpZ]
+           ,[OWN_Kategoria]
+           ,[OWN_DataControllingowa]
+           ,[OWN_DataKsiegowania]
+           ,[OWN_IloscElementow]
+           ,[OWN_OwWID]
+from cdn.OpisWymNag
+cross apply (SELECT distinct Dok_Id from #WymiaryAktualizowane join cdn.DokDefinicje on #WymiaryAktualizowane.FRSID=dok_FRSID AND DOK_GIDTyp=@DokGIDTyp ) as dokDzieci
+join cdn.DokDefinicje dokDefDzieci on dokDzieci.Dok_Id=dokDefDzieci.Dok_Id
+WHERE OWN_GIDNumer=@DokId AND OWN_GIDTYP = 4320 
+
+
+INSERT INTO [CDN].[OpisWymElem]
+           ([OWE_GIDTyp]
+           ,[OWE_GIDFirma]
+           ,[OWE_GIDNumer]
+           ,[OWE_GIDLp]
+           ,[OWE_Pozycja]
+           ,[OWE_Wartosc]
+           ,[OWE_Procent]
+           ,[OWE_Kierunek]
+           ,[OWE_Typ])
+     select
+           [OWE_GIDTyp]
+           ,[OWE_GIDFirma]
+           ,Dok_Id
+           ,[OWE_GIDLp]
+           ,[OWE_Pozycja]
+           ,[OWE_Wartosc]
+           ,[OWE_Procent]
+           ,[OWE_Kierunek]
+           ,[OWE_Typ]
+           from cdn.[OpisWymElem]
+cross apply (SELECT distinct Dok_Id from #WymiaryAktualizowane join cdn.DokDefinicje on #WymiaryAktualizowane.FRSID=dok_FRSID AND DOK_GIDTyp=@DokGIDTyp ) as dokDzieci
+WHERE OWE_GIDNumer=@DokId  AND OWE_GIDTYP = 4320 
+
+INSERT INTO [CDN].[OpisWymSElem]
+           ([OWS_GIDTyp]
+           ,[OWS_GIDFirma]
+           ,[OWS_GIDNumer]
+           ,[OWS_GIDLp]
+           ,[OWS_WMRID]
+           ,[OWS_Element]
+           ,[OWS_TypWymiaru])
+select [OWS_GIDTyp]
+           ,[OWS_GIDFirma]
+           ,Dok_Id
+           ,[OWS_GIDLp]
+           ,[OWS_WMRID]
+           ,[OWS_Element]
+           ,[OWS_TypWymiaru]
+           from cdn.[OpisWymSElem]
+cross apply (SELECT distinct Dok_Id from #WymiaryAktualizowane join cdn.DokDefinicje on #WymiaryAktualizowane.FRSID=dok_FRSID AND DOK_GIDTyp=@DokGIDTyp ) as dokDzieci
+WHERE OWS_GIDNumer=@DokId  AND OWS_GIDTYP = 4320 
+
+DROP TABLE #WymiaryAktualizowane
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="DokDefinicje_PrzepiszParametry"></A><PRE>
+          <FONT SIZE="2"><I>/* DokDefinicje_PrzepiszParametry */</I><BR>
+CREATE TRIGGER CDN.DokDefinicje_PrzepiszParametry
+  ON CDN.DokDefinicje
+  FOR UPDATE
+AS
+BEGIN
+
+  --if @@NESTLEVEL&gt;1 return
+    if trigger_nestlevel( object_ID('CDN.DokDefinicje_PrzepiszParametry'))&gt;1 return
+
+DECLARE @DokId INT
+DECLARE @DokFrsId INT
+  DECLARE @DokGIDTyp SMALLINT
+  DECLARE @DokDefZNadrzednego SMALLINT
+  DECLARE @DokWymiaryZRodzica SMALLINT
+  DECLARE @DokOpisZRodzica SMALLINT
+
+  DECLARE	TriggerCursorInserted CURSOR FOR 
+SELECT Dok_Id, Dok_FrsId, Dok_GIDTyp, Dok_DefZNadrzednego, Dok_WymiaryZRodzica, Dok_OpisZRodzica
+  FROM INSERTED
+
+  OPEN TriggerCursorInserted
+
+  FETCH NEXT FROM	TriggerCursorInserted INTO @DokId,@DokFrsId,@DokGIDTyp,@DokDefZNadrzednego,@DokWymiaryZRodzica,@DokOpisZRodzica
+  WHILE @@FETCH_STATUS = 0
+BEGIN
+
+    DECLARE	@FrsIdRodzica INT
+    DECLARE       @SerieZCentrumFrsID INT;
+    CREATE TABLE #potomne
+    (
+      FRS_ID INT UNIQUE
+    )
+ 
+    CREATE TABLE #potomneOpisAnalit
+    (
+      FRS_ID INT UNIQUE
+    )--tylko Dok_OpisZRodzica(bez najwyzszego rozwiniecia Dok_DefZNadrzednego)
+    
+    CREATE TABLE #dokserie
+    (
+      Dok_SerTyp INT,
+      Dok_SerFirma INT,
+      Dok_SerNumer INT,
+      Dok_SerLp INT,
+      Dok_GIDTyp INT,
+      Dok_FrsID INT
+    )
+    CREATE TABLE #dokseriekorekty
+    (
+      Dok_SerTyp INT,
+      Dok_SerFirma INT,
+      Dok_SerNumer INT,
+      Dok_SerLp INT,
+      Dok_GIDTyp INT,
+      Dok_FrsID INT
+    )
+
+    IF UPDATE(Dok_DefZNadrzednego) AND @DokDefZNadrzednego = 1
+  BEGIN
+      SET @FrsIdRodzica = (select isnull(max(B.FRS_ID),0)
+      from cdn.frmstruktura as A join cdn.frmstruktura as B on B.FRS_GidTyp=A.FRS_GroTyp and B.FRS_GidFirma=A.FRS_GroFirma and B.FRS_GidNumer=A.FRS_GroNumer and B.FRS_GidLp=A.FRS_GroLp AND A.FRS_ID=@DokFrsId)
+      INSERT INTO #potomne
+      EXECUTE cdn.dokpotomne @FrsIdRodzica,@DokGIDTyp
+    END
+  ELSE
+  BEGIN
+      SET @FrsIdRodzica = @DokFrsId
+      INSERT INTO #potomne
+      EXECUTE cdn.dokpotomne @DokFrsId,@DokGIDTyp
+    END
+
+
+  
+
+
+    SET @SerieZCentrumFrsID = isnull((SELECT top 1
+      A.Frs_Id as FrsID
+    FROM cdn.FrmStruktura A
+      join cdn.FrsCentra(1,-4272,@DokFrsId,0,-1) B on A.FrS_GIDNumer=B.Frs_GIDNumer and A.FrS_GIDTyp=B.Frs_GIDTyp
+    where frs_seriezrodzica=0
+    order by B.Frs_Poziom desc),1);
+
+    IF @FrsIdRodzica &gt; 0 AND EXISTS ( SELECT Dok_Id
+      FROM CDN.DokDefinicje
+      where Dok_GIDTyp=@DokGIDTyp AND Dok_FrsId=@FrsIdRodzica)
+  BEGIN
+    IF 
+		UPDATE(Dok_DefZNadrzednego)	OR
+        UPDATE(Dok_OpeModTyp) OR
+        UPDATE(Dok_OpeModFirma) OR
+        UPDATE(Dok_OpeModNumer) OR
+        UPDATE(Dok_OpeModLp) OR
+        UPDATE(Dok_DataMod) OR
+        UPDATE(Dok_Symbol) OR
+        UPDATE(Dok_Nazwa) OR
+        UPDATE(Dok_Waluta) OR
+        UPDATE(Dok_KursLp) OR
+        UPDATE(Dok_RabatOdWartKsieg) OR
+        UPDATE(Dok_Platnosci) OR
+        UPDATE(Dok_PltWaluta) OR
+        UPDATE(Dok_NettoBrutto) OR
+        UPDATE(Dok_Rezerwacje) OR
+        UPDATE(Dok_RezerwujZasoby) OR
+        UPDATE(Dok_UwzgledniajRezerwacje) OR
+        UPDATE(Dok_ChronologiaRezerwacji) OR
+        UPDATE(Dok_JedenMagazyn) OR
+        UPDATE(Dok_MagZTyp) OR
+        UPDATE(Dok_MagZFirma) OR
+        UPDATE(Dok_MagZNumer) OR
+        UPDATE(Dok_MagZLp) OR
+        UPDATE(Dok_MagDTyp) OR
+        UPDATE(Dok_MagDFirma) OR
+        UPDATE(Dok_MagDNumer) OR
+        UPDATE(Dok_MagDLp) OR
+        UPDATE(Dok_MagKTyp) OR
+        UPDATE(Dok_MagKFirma) OR
+        UPDATE(Dok_MagKNumer) OR
+        UPDATE(Dok_MagKLp) OR
+        UPDATE(Dok_IloscXCena) OR
+        UPDATE(Dok_DataRealizacji) OR
+        UPDATE(Dok_PltData) OR
+        UPDATE(Dok_RezDataAkt) OR
+        UPDATE(Dok_RezDataWaznosci) OR
+        UPDATE(Dok_ZamPrzeliczWart) OR
+        UPDATE(Dok_RealizujWCalosci) OR
+        UPDATE(Dok_PrecyzjaCeny) OR
+        UPDATE(Dok_AktualizujCenyZak) OR
+        UPDATE(Dok_MagPreferowane) OR
+        UPDATE(Dok_AutoPotwierdzanie) OR
+        UPDATE(Dok_AutoMagazynowe) OR
+        UPDATE(Dok_WystPrawo) OR
+        UPDATE(Dok_ZatwPrawo) OR
+        UPDATE(Dok_AnulPrawo) OR
+        UPDATE(Dok_PoprzednieZaNPrawo) OR
+        UPDATE(Dok_PoprzednieTrNPrawo) OR
+        UPDATE(Dok_KntLimitPrawo) OR
+        UPDATE(Dok_CenyRabatyPrawo) OR
+        UPDATE(Dok_AutomatyczneKompensaty) OR
+        UPDATE(Dok_ProduktOdSkladnikow) OR
+        UPDATE(Dok_ProstaAVISTA) OR
+        UPDATE(Dok_ZlcCenaNaPW) OR
+        UPDATE(Dok_ZlcPrzezDokMag) OR
+        UPDATE(Dok_NieSprzedawajPonizejMarzy) OR
+        UPDATE(Dok_TylkoKraj) OR
+        UPDATE(Dok_KosztUslugi) OR
+        UPDATE(Dok_WyszukiwanieWlasciciela) OR
+        UPDATE(Dok_JedenSkladnikRobocizna) OR
+        UPDATE(Dok_PrzepisujOpisZlecenia) OR
+        UPDATE(Dok_AutoKaucje) OR
+        UPDATE(Dok_ObslugaSAD) OR
+        UPDATE(Dok_AutoWyposazenie) OR
+        UPDATE(Dok_AktualizujCenySpr) OR
+        UPDATE(Dok_LaczPozycjeMag) OR
+        UPDATE(Dok_MagDoRNumer) OR
+        UPDATE(Dok_MagRemNumer) OR
+        UPDATE(Dok_MagPoRNumer) OR
+        UPDATE(Dok_KosztUstalony) OR
+        UPDATE(Dok_CenaBazowa) OR
+        UPDATE(Dok_ZgodnaWaluta) OR
+        UPDATE(Dok_PowielaniePozycji) OR
+        UPDATE(Dok_ProwizjaTaxFree) OR
+        UPDATE(Dok_PrzeliczajAktualizowaneCeny) OR
+        UPDATE(Dok_GenerujZapisWTerminarzu) OR
+        UPDATE(Dok_PrzydzielDoRezerwacji) OR
+        UPDATE(Dok_StopkaWydruku) OR
+        UPDATE(Dok_AutomatyczneMMP) OR
+        UPDATE(Dok_PodzialPZI) OR
+        UPDATE(Dok_PominKosztZ) OR
+        UPDATE(Dok_PominKosztK) OR
+        UPDATE(Dok_PominClo) OR
+        UPDATE(Dok_PominAkcyze) OR
+        UPDATE(Dok_KursDlaDostawy) OR
+        UPDATE(Dok_TypRozbiciaKwot) OR
+        UPDATE(Dok_AutoWydruk) OR
+        UPDATE(Dok_AutoWydrukPytaj) OR
+        UPDATE(Dok_AutoWydrukPytajZapis) OR
+        UPDATE(Dok_PodglPrawo) OR
+        UPDATE(Dok_SCZTyp) OR
+        UPDATE(Dok_SCZFirma) OR
+        UPDATE(Dok_SCZNumer) OR
+        UPDATE(Dok_SCZLp) OR
+        UPDATE(Dok_ZrodloTowarow) OR
+        UPDATE(Dok_VatEksportowy) OR
+        UPDATE(Dok_ZeroweWartosci) OR
+        UPDATE(Dok_LimitUwzglDokBezPlat) OR
+        UPDATE(Dok_LimitUwzglZam) OR
+        UPDATE(Dok_KntNumer) OR
+        UPDATE(Dok_kntTyp) OR
+        UPDATE(Dok_AktualizujPoKnt) OR
+        UPDATE(Dok_AktualizujPoDaty) OR
+        UPDATE(Dok_AktualizujPoSpDost) OR
+        UPDATE(Dok_AktualizujPoWlascicielu) OR
+        UPDATE(Dok_AktualizujPoPlatnosc) OR
+        UPDATE(Dok_ReklUwzgledniajMag) OR
+        UPDATE(Dok_AutoPrzeplanujNizsze) OR
+        UPDATE(Dok_RodzajDatyKursu) OR
+        UPDATE(Dok_IleDniKurs) OR
+        UPDATE(Dok_KntOgolne) OR
+        UPDATE(Dok_ZmianaDatElem) OR
+        UPDATE(Dok_RezerwacjeNiepotw) OR
+        UPDATE(Dok_WiazanieZamowien) OR
+        UPDATE(Dok_PrzywracajRezerwacje) OR
+        UPDATE(Dok_KontrolujIlosciPrzyGenZam) OR
+        UPDATE(Dok_LaczPozycjeWProdukcji) OR
+        UPDATE(Dok_PrzeliczDomyslne) OR
+        UPDATE(Dok_GenerujZatwPrzyZamykaniuZP) OR
+        UPDATE(Dok_PrzydzialReczny) OR
+        UPDATE(Dok_AnulPrawoZPotwParam) OR
+        UPDATE(Dok_DokPrzyjeciaPoDokWydania) OR
+        UPDATE(Dok_GenerowanieDokFWS) OR
+        UPDATE(Dok_GenerowanieDokFWZ) OR
+        UPDATE(Dok_Realizacja) OR
+        UPDATE(Dok_PanelPomocniczy) OR
+        UPDATE(Dok_ZatwBezDanych) OR
+        UPDATE(Dok_EdycjaPoUruchProd) OR
+        UPDATE(Dok_DataZMagazynowego) OR
+        UPDATE(Dok_DataZMagazynowegoTyp) OR
+        UPDATE(Dok_DataNaSpinaczu) OR
+        UPDATE(Dok_PlanProdukcjiOkresPlanistycznyOd) OR
+        UPDATE(Dok_PlanProdukcjiOkresPlanistycznyCzasTrwania) OR
+        UPDATE(Dok_PlanProdukcjiOkresPlanistycznyCzasTrwJedn) OR
+        UPDATE(Dok_ProdPrzyOtwOknaZawijajDrzewoOperacji) OR
+        UPDATE(Dok_DataOperacjiKDZ) OR
+        UPDATE(Dok_TypCenyNabycia) OR
+        UPDATE(Dok_GenerowKDZPodczasKorygowania) OR
+        UPDATE(Dok_OkresPlanistycznyZPP) OR
+        UPDATE(Dok_OkresPlanistycznyIloscOkresow) OR
+        UPDATE(Dok_WymagajZgodnejJednostki) OR
+        UPDATE(Dok_adnotacjaNaNiezatwierdzonym) OR
+        UPDATE(Dok_modyfikacjaKwotVATaVista) OR
+        UPDATE(Dok_DataPromocji) OR
+        UPDATE(Dok_AutoRozliczZal) OR
+        UPDATE(dok_PlatnosciRozszerzone) OR
+        UPDATE(Dok_wsteczOdDatyRZ) OR
+        UPDATE(Dok_wsteczOdDatyUstalonej) OR
+        UPDATE(Dok_czasPomniejszeniaDaty) OR
+        UPDATE(Dok_czasPomniejszeniaDatyUstalonej) OR
+        UPDATE(Dok_RezZasTylkoAktywne) OR
+        UPDATE(Dok_PrzepnijZasoby) OR
+        UPDATE(Dok_PPLSkladnikiMPS) OR
+        UPDATE(Dok_PPLSposobPrzeliczenia) OR
+        UPDATE(Dok_PPLProduktyZdefTechnologia) OR
+        UPDATE(Dok_OdliczanieFaZal) OR
+        UPDATE(Dok_PPLDoProdukcjiPodst) OR
+        UPDATE(Dok_PPLDoZamowieniaPodst) OR
+        UPDATE(Dok_PPLOptymalizacjaDoProdukcji) OR
+        UPDATE(Dok_PPLOptymalizacjaDoZamowienia) OR
+        UPDATE(Dok_PPLUwzglednijBOM) OR
+		UPDATE(Dok_PPLIloscOgolnieDostepna) OR
+		UPDATE(Dok_PPLIloscWDrodze) OR
+        UPDATE(Dok_GenerowanieZamowienia) OR
+        UPDATE(Dok_PrzesunOperacjePoRealizacji) OR
+        UPDATE(Dok_PrzesunNaZwolnionych) OR
+        UPDATE(Dok_PPLPrzeliczajPotwierdzony) OR
+        UPDATE(Dok_UsunNiesparowane) OR
+        UPDATE(Dok_OsobneElementyDostawZDP) OR
+        UPDATE(Dok_RealizacjaRejestruj) OR
+        UPDATE(Dok_RealizacjaUruchamiaj) OR
+        UPDATE(Dok_SpiCenaWartosc) OR
+        UPDATE(Dok_SpiZgodnoscKnt) OR
+        UPDATE(Dok_SpiZgodnoscKursu) OR
+        UPDATE(Dok_SpiKoryguj) OR
+        UPDATE(Dok_SpiKontrolaMarzy) OR
+        UPDATE(Dok_SpiCenaMarza) OR
+        UPDATE(Dok_PodmianaMaterialow) OR
+        UPDATE(Dok_BSTPominPowiazane) OR
+        UPDATE(Dok_SerPTyp) OR
+        UPDATE(Dok_SerPFirma) OR
+        UPDATE(Dok_SerPNumer) OR
+        UPDATE(Dok_SerPLp) OR
+        UPDATE(Dok_StosujPromocjePakietowe) OR
+        UPDATE(Dok_NaliczajPunktyLojal) OR
+        UPDATE(Dok_RealizacjaWgPlanu) OR
+        UPDATE(Dok_PlanDostepneMetody) OR
+        UPDATE(Dok_PlanRozpocznijOd) OR
+        UPDATE(Dok_PlanCzasTrwania) OR
+        UPDATE(Dok_PlanCzasTrwaniaJedn) OR
+        UPDATE(Dok_PlanZgrubne) OR
+        UPDATE(Dok_BlokadaZatwZNiezgodnymNIP) OR
+        UPDATE(Dok_GenerujRWPodczasRealizacji) OR
+        UPDATE(Dok_GenerujPWPodczasRealizacji) OR
+        UPDATE(Dok_ElementyNaKorektach) OR
+        UPDATE(Dok_GenerujZleceniaPrzyPlanowaniu) OR
+        UPDATE(Dok_GenerujJednNaWieleMag) OR
+	    UPDATE(Dok_IloscElemKor) OR
+		UPDATE(Dok_ZerowaIloscRealizacji) OR
+		UPDATE(Dok_PolaczOperacjeTpZPolprod) OR
+		UPDATE(Dok_GenerujFaktAVistaEBC) OR
+		UPDATE(Dok_SpiNieKsiegujSpiete) OR
+		UPDATE(Dok_AutoGenerowaniePKJ) OR
+		UPDATE(Dok_ZakresRezerwacjiDlaProduktow) OR
+		UPDATE(Dok_DzielWZWM) OR
+		UPDATE(Dok_BstOptymalizacjaZam) OR
+		UPDATE(Dok_WymagajPodaniaStanuOperacji) OR
+		UPDATE(Dok_RodzajPaczki) OR
+		UPDATE(Dok_SposobLaczeniaDoPaczki) OR
+		UPDATE(Dok_UwzgJednLogProdukty) OR
+		UPDATE(Dok_UwzgJednLogMaterialy) OR
+		UPDATE(Dok_WyborMagazynuNaPozycji) OR 
+		UPDATE(Dok_ProdZakonczenieWgPlanu) OR
+		UPDATE(Dok_KSeFCzyWysylac) OR
+		UPDATE(Dok_KSeFAutomatycznie) OR
+		UPDATE(Dok_KSeFWeryfikuj) OR
+		UPDATE(Dok_KSeFPobierajUpo) OR
+		UPDATE(Dok_PlanWskazaneZasoby)
+    BEGIN
+
+      SELECT
+        Dok_OpeModTyp,
+        Dok_OpeModFirma,
+        Dok_OpeModNumer,
+        Dok_OpeModLp,
+        Dok_DataMod,
+        Dok_Symbol,
+        Dok_Nazwa,
+        Dok_Waluta,
+        Dok_KursLp,
+        Dok_RabatOdWartKsieg,
+        Dok_Platnosci,
+        Dok_PltWaluta,
+        Dok_NettoBrutto,
+        Dok_Rezerwacje,
+        Dok_RezerwujZasoby,
+        Dok_UwzgledniajRezerwacje,
+        Dok_ChronologiaRezerwacji,
+        Dok_JedenMagazyn,
+        Dok_MagZTyp,
+        Dok_MagZFirma,
+        Dok_MagZNumer,
+        Dok_MagZLp,
+        Dok_MagDTyp,
+        Dok_MagDFirma,
+        Dok_MagDNumer,
+        Dok_MagDLp,
+        Dok_MagKTyp,
+        Dok_MagKFirma,
+        Dok_MagKNumer,
+        Dok_MagKLp,
+        Dok_IloscXCena,
+        Dok_DataRealizacji,
+        Dok_PltData,
+        Dok_RezDataAkt,
+        Dok_RezDataWaznosci,
+        Dok_ZamPrzeliczWart,
+        Dok_RealizujWCalosci,
+        Dok_PrecyzjaCeny,
+        Dok_AktualizujCenyZak,
+        Dok_MagPreferowane,
+        Dok_AutoPotwierdzanie,
+        Dok_AutoMagazynowe,
+        Dok_WystPrawo,
+        Dok_ZatwPrawo,
+        Dok_AnulPrawo,
+        Dok_PoprzednieZaNPrawo,
+        Dok_PoprzednieTrNPrawo,
+        Dok_KntLimitPrawo,
+        Dok_CenyRabatyPrawo,
+        Dok_AutomatyczneKompensaty,
+        Dok_ProduktOdSkladnikow,
+        Dok_ProstaAVISTA,
+        Dok_ZlcCenaNaPW,
+        Dok_ZlcPrzezDokMag,
+        Dok_NieSprzedawajPonizejMarzy,
+        Dok_TylkoKraj,
+        Dok_KosztUslugi,
+        Dok_WyszukiwanieWlasciciela,
+        Dok_JedenSkladnikRobocizna,
+        Dok_PrzepisujOpisZlecenia,
+        Dok_AutoKaucje,
+        Dok_ObslugaSAD,
+        Dok_AutoWyposazenie,
+        Dok_AktualizujCenySpr,
+        Dok_LaczPozycjeMag,
+        Dok_MagDoRNumer,
+        Dok_MagRemNumer,
+        Dok_MagPoRNumer,
+        Dok_KosztUstalony,
+        Dok_CenaBazowa,
+        Dok_ZgodnaWaluta,
+        Dok_PowielaniePozycji,
+        Dok_ProwizjaTaxFree,
+        Dok_PrzeliczajAktualizowaneCeny,
+        Dok_GenerujZapisWTerminarzu,
+        Dok_PrzydzielDoRezerwacji,
+        Dok_StopkaWydruku,
+        Dok_AutomatyczneMMP,
+        Dok_PodzialPZI,
+        Dok_PominKosztZ,
+        Dok_PominKosztK,
+        Dok_PominClo,
+        Dok_PominAkcyze,
+        Dok_KursDlaDostawy,
+        Dok_TypRozbiciaKwot,
+        Dok_AutoWydruk,
+        Dok_AutoWydrukPytaj,
+        Dok_AutoWydrukPytajZapis,
+        Dok_PodglPrawo,
+        Dok_SCZTyp,
+        Dok_SCZFirma,
+        Dok_SCZNumer,
+        Dok_SCZLp,
+        Dok_ZrodloTowarow,
+        Dok_VatEksportowy,
+        Dok_ZeroweWartosci,
+        Dok_LimitUwzglDokBezPlat,
+        Dok_LimitUwzglZam,
+        Dok_KntNumer,
+        Dok_kntTyp,
+        Dok_AktualizujPoKnt,
+        Dok_AktualizujPoDaty,
+        Dok_AktualizujPoSpDost,
+        Dok_AktualizujPoWlascicielu,
+        Dok_AktualizujPoPlatnosc,
+        Dok_ReklUwzgledniajMag,
+        Dok_AutoPrzeplanujNizsze,
+        Dok_CzasModyfikacji,
+        Dok_RodzajDatyKursu,
+        Dok_IleDniKurs,
+        Dok_KntOgolne,
+        Dok_ZmianaDatElem,
+        Dok_RezerwacjeNiepotw,
+        Dok_WiazanieZamowien,
+        Dok_PrzywracajRezerwacje,
+        Dok_KontrolujIlosciPrzyGenZam,
+        Dok_LaczPozycjeWProdukcji,
+        Dok_PrzeliczDomyslne,
+        Dok_GenerujZatwPrzyZamykaniuZP,
+        Dok_PrzydzialReczny,
+        Dok_AnulPrawoZPotwParam,
+        Dok_DokPrzyjeciaPoDokWydania,
+        Dok_GenerowanieDokFWS,
+        Dok_GenerowanieDokFWZ,
+        Dok_Realizacja,
+        Dok_PanelPomocniczy,
+        Dok_ZatwBezDanych,
+        Dok_EdycjaPoUruchProd,
+        Dok_DataZMagazynowego,
+        Dok_DataZMagazynowegoTyp,
+        Dok_DataNaSpinaczu,
+        Dok_PlanProdukcjiOkresPlanistycznyOd,
+        Dok_PlanProdukcjiOkresPlanistycznyCzasTrwania,
+        Dok_PlanProdukcjiOkresPlanistycznyCzasTrwJedn,
+        Dok_ProdPrzyOtwOknaZawijajDrzewoOperacji,
+        Dok_DataOperacjiKDZ,
+        Dok_TypCenyNabycia,
+        Dok_GenerowKDZPodczasKorygowania,
+        Dok_OkresPlanistycznyZPP,
+        Dok_OkresPlanistycznyIloscOkresow,
+        Dok_WymagajZgodnejJednostki,
+        Dok_adnotacjaNaNiezatwierdzonym,
+        Dok_modyfikacjaKwotVATaVista,
+        Dok_DataPromocji,
+        Dok_AutoRozliczZal,
+        dok_PlatnosciRozszerzone,
+        Dok_wsteczOdDatyRZ,
+        Dok_wsteczOdDatyUstalonej,
+        Dok_czasPomniejszeniaDaty,
+        Dok_czasPomniejszeniaDatyUstalonej,
+        Dok_RezZasTylkoAktywne,
+        Dok_PrzepnijZasoby,
+        Dok_PPLSkladnikiMPS,
+        Dok_PPLSposobPrzeliczenia,
+        Dok_PPLProduktyZdefTechnologia,
+        Dok_OdliczanieFaZal,
+        Dok_PPLDoProdukcjiPodst,
+        Dok_PPLDoZamowieniaPodst,
+        Dok_PPLOptymalizacjaDoProdukcji,
+        Dok_PPLOptymalizacjaDoZamowienia,
+        Dok_PPLUwzglednijBOM,
+		Dok_PPLIloscOgolnieDostepna,
+		Dok_PPLIloscWDrodze,
+        Dok_GenerowanieZamowienia,
+        Dok_PrzesunOperacjePoRealizacji,
+        Dok_PrzesunNaZwolnionych,
+        Dok_PPLPrzeliczajPotwierdzony,
+        Dok_UsunNiesparowane,
+        Dok_OsobneElementyDostawZDP,
+        Dok_RealizacjaRejestruj,
+        Dok_RealizacjaUruchamiaj,
+        Dok_SpiCenaWartosc,
+        Dok_SpiZgodnoscKnt,
+        Dok_SpiZgodnoscKursu,
+        Dok_SpiKoryguj,
+        Dok_SpiKontrolaMarzy,
+        Dok_SpiCenaMarza,
+        Dok_PodmianaMaterialow,
+        Dok_BSTPominPowiazane,
+        Dok_SerPTyp,
+        Dok_SerPFirma,
+        Dok_SerPNumer,
+        Dok_SerPLp,
+        Dok_StosujPromocjePakietowe,
+        Dok_NaliczajPunktyLojal,
+        Dok_RealizacjaWgPlanu,
+        Dok_PlanDostepneMetody,
+        Dok_PlanRozpocznijOd,
+        Dok_PlanCzasTrwania,
+        Dok_PlanCzasTrwaniaJedn,
+        Dok_PlanZgrubne,
+        Dok_BlokadaZatwZNiezgodnymNIP,
+        Dok_GenerujRWPodczasRealizacji,
+        Dok_GenerujPWPodczasRealizacji,
+        Dok_ElementyNaKorektach,
+        Dok_GenerujZleceniaPrzyPlanowaniu,
+        Dok_GenerujJednNaWieleMag,
+		Dok_IloscElemKor,
+		Dok_ZerowaIloscRealizacji,
+		Dok_PolaczOperacjeTpZPolprod,
+		Dok_GenerujFaktAVistaEBC,
+		Dok_SpiNieKsiegujSpiete,
+		Dok_AutoGenerowaniePKJ,
+		Dok_ZakresRezerwacjiDlaProduktow,
+		Dok_DzielWZWM,
+		Dok_BstOptymalizacjaZam,
+		Dok_WymagajPodaniaStanuOperacji,
+		Dok_RodzajPaczki,
+		Dok_SposobLaczeniaDoPaczki,
+		Dok_UwzgJednLogProdukty,
+		Dok_UwzgJednLogMaterialy,
+		Dok_WyborMagazynuNaPozycji,
+		Dok_ProdZakonczenieWgPlanu,
+		Dok_KSeFCzyWysylac,
+		Dok_KSeFAutomatycznie,
+		Dok_KSeFWeryfikuj,
+		Dok_KSeFPobierajUpo, 
+		Dok_PlanWskazaneZasoby
+      INTO #dokdefinicje
+      FROM CDN.DokDefinicje
+      WHERE Dok_GIDTyp=@DokGIDTyp AND Dok_FrsId=@FrsIdRodzica
+
+      if @SerieZCentrumFrsID = 1 
+  begin
+        insert into #dokserie
+        select Dok_SerTyp, Dok_SerFirma, Dok_SerNumer, Dok_SerLp, @DokGIDTyp, @SerieZCentrumFrsID
+        from CDN.DokDefinicje
+        where Dok_FrsID = @FrsIdRodzica and Dok_GIDTyp=@DokGIDTyp
+        insert into #dokseriekorekty
+        select Dok_SerKTyp, Dok_SerKFirma, Dok_SerKNumer, Dok_SerKLp, @DokGIDTyp, @SerieZCentrumFrsID
+        from CDN.DokDefinicje
+        where Dok_FrsID = @FrsIdRodzica and Dok_GIDTyp=@DokGIDTyp
+      end
+  else
+  begin
+        insert into #dokserie
+        select B.Dok_SerTyp, B.Dok_SerFirma, B.Dok_SerNumer, B.Dok_SerLp, B.Dok_GIDTyp, B.Dok_FrsID
+        from CDN.FrmObiekty, CDN.DokDefinicje B
+        where B.Dok_FrsID = @FrsIdRodzica and B.Dok_GIDTyp=@DokGIDTyp and FrO_FrmID = @SerieZCentrumFrsID and
+          FrO_GIDTyp = B.Dok_SerTyp and FrO_GIDFirma = B.Dok_SerFirma and FrO_GIDNumer = B.Dok_SerNumer and FrO_GIDLp = B.Dok_SerLp
+        insert into #dokseriekorekty
+        select B.Dok_SerKTyp, B.Dok_SerKFirma, B.Dok_SerKNumer, B.Dok_SerKLp, B.Dok_GIDTyp, B.Dok_FrsID
+        from CDN.FrmObiekty, CDN.DokDefinicje B
+        where B.Dok_FrsID = @FrsIdRodzica and B.Dok_GIDTyp=@DokGIDTyp and FrO_FrmID = @SerieZCentrumFrsID and
+				FrO_GIDFirma = B.Dok_SerKFirma and FrO_GIDNumer = B.Dok_SerKNumer and FrO_GIDLp = B.Dok_SerKLp
+      end
+
+      UPDATE CDN.DokDefinicje SET 
+      Dok_OpeModTyp=#dokdefinicje.Dok_OpeModTyp,
+      Dok_OpeModFirma=#dokdefinicje.Dok_OpeModFirma,
+      Dok_OpeModNumer=#dokdefinicje.Dok_OpeModNumer,
+      Dok_OpeModLp=#dokdefinicje.Dok_OpeModLp,
+      Dok_DataMod=#dokdefinicje.Dok_DataMod,
+      Dok_Symbol=#dokdefinicje.Dok_Symbol,
+      Dok_Nazwa=#dokdefinicje.Dok_Nazwa,
+      Dok_Waluta=#dokdefinicje.Dok_Waluta,
+      Dok_KursLp=#dokdefinicje.Dok_KursLp,
+      Dok_RabatOdWartKsieg=#dokdefinicje.Dok_RabatOdWartKsieg,
+      Dok_Platnosci=#dokdefinicje.Dok_Platnosci,
+      Dok_PltWaluta=#dokdefinicje.Dok_PltWaluta,
+      Dok_NettoBrutto=#dokdefinicje.Dok_NettoBrutto,
+      Dok_Rezerwacje=#dokdefinicje.Dok_Rezerwacje,
+      Dok_RezerwujZasoby=#dokdefinicje.Dok_RezerwujZasoby,
+      Dok_UwzgledniajRezerwacje=#dokdefinicje.Dok_UwzgledniajRezerwacje,
+      Dok_ChronologiaRezerwacji=#dokdefinicje.Dok_ChronologiaRezerwacji,
+      Dok_JedenMagazyn=#dokdefinicje.Dok_JedenMagazyn,
+      Dok_MagZTyp=#dokdefinicje.Dok_MagZTyp,
+      Dok_MagZFirma=#dokdefinicje.Dok_MagZFirma,
+      Dok_MagZNumer=#dokdefinicje.Dok_MagZNumer,
+      Dok_MagZLp=#dokdefinicje.Dok_MagZLp,
+      Dok_MagDTyp=#dokdefinicje.Dok_MagDTyp,
+      Dok_MagDFirma=#dokdefinicje.Dok_MagDFirma,
+      Dok_MagDNumer=#dokdefinicje.Dok_MagDNumer,
+      Dok_MagDLp=#dokdefinicje.Dok_MagDLp,
+      Dok_MagKTyp=#dokdefinicje.Dok_MagKTyp,
+      Dok_MagKFirma=#dokdefinicje.Dok_MagKFirma,
+      Dok_MagKNumer=#dokdefinicje.Dok_MagKNumer,
+      Dok_MagKLp=#dokdefinicje.Dok_MagKLp,
+      Dok_IloscXCena=#dokdefinicje.Dok_IloscXCena,
+      Dok_DataRealizacji=#dokdefinicje.Dok_DataRealizacji,
+      Dok_PltData=#dokdefinicje.Dok_PltData,
+      Dok_RezDataAkt=#dokdefinicje.Dok_RezDataAkt,
+      Dok_RezDataWaznosci=#dokdefinicje.Dok_RezDataWaznosci,
+      Dok_ZamPrzeliczWart=#dokdefinicje.Dok_ZamPrzeliczWart,
+      Dok_RealizujWCalosci=#dokdefinicje.Dok_RealizujWCalosci,
+      Dok_PrecyzjaCeny=#dokdefinicje.Dok_PrecyzjaCeny,
+      Dok_AktualizujCenyZak=#dokdefinicje.Dok_AktualizujCenyZak,
+      Dok_MagPreferowane=#dokdefinicje.Dok_MagPreferowane,
+      Dok_AutoPotwierdzanie=#dokdefinicje.Dok_AutoPotwierdzanie,
+      Dok_AutoMagazynowe=#dokdefinicje.Dok_AutoMagazynowe,
+      Dok_WystPrawo=#dokdefinicje.Dok_WystPrawo,
+      Dok_ZatwPrawo=#dokdefinicje.Dok_ZatwPrawo,
+      Dok_AnulPrawo=#dokdefinicje.Dok_AnulPrawo,
+      Dok_PoprzednieZaNPrawo=#dokdefinicje.Dok_PoprzednieZaNPrawo,
+      Dok_PoprzednieTrNPrawo=#dokdefinicje.Dok_PoprzednieTrNPrawo,
+      Dok_KntLimitPrawo=#dokdefinicje.Dok_KntLimitPrawo,
+      Dok_CenyRabatyPrawo=#dokdefinicje.Dok_CenyRabatyPrawo,
+      Dok_AutomatyczneKompensaty=#dokdefinicje.Dok_AutomatyczneKompensaty,
+      Dok_ProduktOdSkladnikow=#dokdefinicje.Dok_ProduktOdSkladnikow,
+      Dok_ProstaAVISTA=#dokdefinicje.Dok_ProstaAVISTA,
+      Dok_ZlcCenaNaPW=#dokdefinicje.Dok_ZlcCenaNaPW,
+      Dok_ZlcPrzezDokMag=#dokdefinicje.Dok_ZlcPrzezDokMag,
+      Dok_NieSprzedawajPonizejMarzy=#dokdefinicje.Dok_NieSprzedawajPonizejMarzy,
+      Dok_TylkoKraj=#dokdefinicje.Dok_TylkoKraj,
+      Dok_KosztUslugi=#dokdefinicje.Dok_KosztUslugi,
+      Dok_WyszukiwanieWlasciciela=#dokdefinicje.Dok_WyszukiwanieWlasciciela,
+      Dok_JedenSkladnikRobocizna=#dokdefinicje.Dok_JedenSkladnikRobocizna,
+      Dok_PrzepisujOpisZlecenia=#dokdefinicje.Dok_PrzepisujOpisZlecenia,
+      Dok_AutoKaucje=#dokdefinicje.Dok_AutoKaucje,
+      Dok_ObslugaSAD=#dokdefinicje.Dok_ObslugaSAD,
+      Dok_AutoWyposazenie=#dokdefinicje.Dok_AutoWyposazenie,
+      Dok_AktualizujCenySpr=#dokdefinicje.Dok_AktualizujCenySpr,
+      Dok_LaczPozycjeMag=#dokdefinicje.Dok_LaczPozycjeMag,
+      Dok_MagDoRNumer=#dokdefinicje.Dok_MagDoRNumer,
+      Dok_MagRemNumer=#dokdefinicje.Dok_MagRemNumer,
+      Dok_MagPoRNumer=#dokdefinicje.Dok_MagPoRNumer,
+      Dok_KosztUstalony=#dokdefinicje.Dok_KosztUstalony,
+      Dok_CenaBazowa=#dokdefinicje.Dok_CenaBazowa,
+      Dok_ZgodnaWaluta=#dokdefinicje.Dok_ZgodnaWaluta,
+      Dok_PowielaniePozycji=#dokdefinicje.Dok_PowielaniePozycji,
+      Dok_ProwizjaTaxFree=#dokdefinicje.Dok_ProwizjaTaxFree,
+      Dok_PrzeliczajAktualizowaneCeny=#dokdefinicje.Dok_PrzeliczajAktualizowaneCeny,
+      Dok_GenerujZapisWTerminarzu=#dokdefinicje.Dok_GenerujZapisWTerminarzu,
+      Dok_PrzydzielDoRezerwacji=#dokdefinicje.Dok_PrzydzielDoRezerwacji,
+      Dok_StopkaWydruku=#dokdefinicje.Dok_StopkaWydruku,
+      Dok_AutomatyczneMMP=#dokdefinicje.Dok_AutomatyczneMMP,
+      Dok_PodzialPZI = #dokdefinicje.Dok_PodzialPZI,
+      Dok_PominKosztZ = #dokdefinicje.Dok_PominKosztZ,
+      Dok_PominKosztK = #dokdefinicje.Dok_PominKosztK,
+      Dok_PominClo = #dokdefinicje.Dok_PominClo,
+      Dok_PominAkcyze = #dokdefinicje.Dok_PominAkcyze,
+      Dok_KursDlaDostawy = #dokdefinicje.Dok_KursDlaDostawy,
+      Dok_TypRozbiciaKwot = #dokdefinicje.Dok_TypRozbiciaKwot,
+      Dok_AutoWydruk = #dokdefinicje.Dok_AutoWydruk,
+      Dok_AutoWydrukPytaj = #dokdefinicje.Dok_AutoWydrukPytaj,
+      Dok_AutoWydrukPytajZapis = #dokdefinicje.Dok_AutoWydrukPytajZapis,
+      Dok_PodglPrawo = #dokdefinicje.Dok_PodglPrawo,
+      Dok_SCZTyp = #dokdefinicje.Dok_SCZTyp,
+      Dok_SCZFirma = #dokdefinicje.Dok_SCZFirma,
+      Dok_SCZNumer = #dokdefinicje.Dok_SCZNumer,
+      Dok_SCZLp = #dokdefinicje.Dok_SCZLp,
+      Dok_ZrodloTowarow = #dokdefinicje.Dok_ZrodloTowarow,
+      Dok_VatEksportowy = #dokdefinicje.Dok_VatEksportowy,
+      Dok_ZeroweWartosci = #dokdefinicje.Dok_ZeroweWartosci,
+      Dok_LimitUwzglDokBezPlat = #dokdefinicje.Dok_LimitUwzglDokBezPlat,
+      Dok_LimitUwzglZam = #dokdefinicje.Dok_LimitUwzglZam,
+      Dok_KntNumer = #dokdefinicje.Dok_KntNumer,
+	  Dok_KntTyp = #dokdefinicje.Dok_KntTyp,
+      Dok_AktualizujPoKnt = #dokdefinicje.Dok_AktualizujPoKnt,
+      Dok_AktualizujPoDaty = #dokdefinicje.Dok_AktualizujPoDaty,
+      Dok_AktualizujPoSpDost = #dokdefinicje.Dok_AktualizujPoSpDost,
+      Dok_AktualizujPoWlascicielu = #dokdefinicje.Dok_AktualizujPoWlascicielu,
+      Dok_AktualizujPoPlatnosc = #dokdefinicje.Dok_AktualizujPoPlatnosc,
+      Dok_ReklUwzgledniajMag = #dokdefinicje.Dok_ReklUwzgledniajMag,
+      Dok_AutoPrzeplanujNizsze = #dokdefinicje.Dok_AutoPrzeplanujNizsze,
+      Dok_SerTyp=isnull(#dokserie.Dok_SerTyp,A.Dok_SerTyp),
+      Dok_SerFirma=isnull(#dokserie.Dok_SerFirma,A.Dok_SerFirma),
+      Dok_SerNumer=isnull(#dokserie.Dok_SerNumer,A.Dok_SerNumer),
+      Dok_SerLp=isnull(#dokserie.Dok_SerLp,A.Dok_SerLp),
+      Dok_SerKTyp=isnull(#dokseriekorekty.Dok_SerTyp,A.Dok_SerKTyp),
+      Dok_SerKFirma=isnull(#dokseriekorekty.Dok_SerFirma,A.Dok_SerKFirma),
+      Dok_SerKNumer=isnull(#dokseriekorekty.Dok_SerNumer,A.Dok_SerKNumer),
+      Dok_SerKLp=isnull(#dokseriekorekty.Dok_SerLp,A.Dok_SerKLp),
+	  Dok_CzasModyfikacji = #dokdefinicje.Dok_CzasModyfikacji,
+	  Dok_RodzajDatyKursu = #dokdefinicje.Dok_RodzajDatyKursu,
+	  Dok_IleDniKurs = #dokdefinicje.Dok_IleDniKurs,
+	  Dok_KntOgolne = #dokdefinicje.Dok_KntOgolne,
+	  Dok_ZmianaDatElem = #dokdefinicje.Dok_ZmianaDatElem,
+	  Dok_RezerwacjeNiepotw = #dokdefinicje.Dok_RezerwacjeNiepotw,
+	  Dok_WiazanieZamowien = #dokdefinicje.Dok_WiazanieZamowien,
+	  Dok_PrzywracajRezerwacje = #dokdefinicje.Dok_PrzywracajRezerwacje,
+	  Dok_KontrolujIlosciPrzyGenZam = #dokdefinicje.Dok_KontrolujIlosciPrzyGenZam,
+	  Dok_LaczPozycjeWProdukcji = #dokdefinicje.Dok_LaczPozycjeWProdukcji,
+	  Dok_PrzeliczDomyslne = #dokdefinicje.Dok_PrzeliczDomyslne,
+	  Dok_GenerujZatwPrzyZamykaniuZP = #dokdefinicje.Dok_GenerujZatwPrzyZamykaniuZP,
+	  Dok_PrzydzialReczny = #dokdefinicje.Dok_PrzydzialReczny,
+      Dok_AnulPrawoZPotwParam = #dokdefinicje.Dok_AnulPrawoZPotwParam,
+      Dok_DokPrzyjeciaPoDokWydania = #dokdefinicje.Dok_DokPrzyjeciaPoDokWydania,
+      Dok_GenerowanieDokFWS = #dokdefinicje.Dok_GenerowanieDokFWS,
+	  Dok_GenerowanieDokFWZ = #dokdefinicje.Dok_GenerowanieDokFWZ,
+	  Dok_Realizacja = #dokdefinicje.Dok_Realizacja,
+	  Dok_PanelPomocniczy = #dokdefinicje.Dok_PanelPomocniczy,
+	  Dok_ZatwBezDanych = #dokdefinicje.Dok_ZatwBezDanych,
+	  Dok_EdycjaPoUruchProd = #dokdefinicje.Dok_EdycjaPoUruchProd,
+	  Dok_DataZMagazynowego = #dokdefinicje.Dok_DataZMagazynowego,
+	  Dok_DataZMagazynowegoTyp = #dokdefinicje.Dok_DataZMagazynowegoTyp,
+	  Dok_DataNaSpinaczu = #dokdefinicje.Dok_DataNaSpinaczu,
+	  Dok_PlanProdukcjiOkresPlanistycznyOd = #dokdefinicje.Dok_PlanProdukcjiOkresPlanistycznyOd, 
+	  Dok_PlanProdukcjiOkresPlanistycznyCzasTrwania = #dokdefinicje.Dok_PlanProdukcjiOkresPlanistycznyCzasTrwania,
+	  Dok_PlanProdukcjiOkresPlanistycznyCzasTrwJedn = #dokdefinicje.Dok_PlanProdukcjiOkresPlanistycznyCzasTrwJedn,
+	  Dok_ProdPrzyOtwOknaZawijajDrzewoOperacji =      #dokdefinicje.Dok_ProdPrzyOtwOknaZawijajDrzewoOperacji,
+	  Dok_DataOperacjiKDZ =       #dokdefinicje.Dok_DataOperacjiKDZ,
+	  Dok_TypCenyNabycia =       #dokdefinicje.Dok_TypCenyNabycia,
+	  Dok_GenerowKDZPodczasKorygowania = #dokdefinicje.Dok_GenerowKDZPodczasKorygowania,
+	  Dok_OkresPlanistycznyZPP = #dokdefinicje.Dok_OkresPlanistycznyZPP,
+	  Dok_OkresPlanistycznyIloscOkresow = #dokdefinicje.Dok_OkresPlanistycznyIloscOkresow,
+	  Dok_WymagajZgodnejJednostki = #dokdefinicje.Dok_WymagajZgodnejJednostki,
+	  Dok_czasPomniejszeniaDaty = #dokdefinicje.Dok_czasPomniejszeniaDaty,
+	  Dok_czasPomniejszeniaDatyUstalonej = #dokdefinicje.Dok_czasPomniejszeniaDatyUstalonej,
+	  Dok_RezZasTylkoAktywne = #dokdefinicje.Dok_RezZasTylkoAktywne,
+	  Dok_PrzepnijZasoby = #dokdefinicje.Dok_PrzepnijZasoby,
+	  Dok_PPLSkladnikiMPS = #dokdefinicje.Dok_PPLSkladnikiMPS,
+	  Dok_PPLSposobPrzeliczenia = #dokdefinicje.Dok_PPLSposobPrzeliczenia,
+	  Dok_PPLProduktyZdefTechnologia = #dokdefinicje.Dok_PPLProduktyZdefTechnologia,
+	  Dok_wsteczOdDatyRZ = #dokdefinicje.Dok_wsteczOdDatyRZ,
+	  Dok_wsteczOdDatyUstalonej = #dokdefinicje.Dok_wsteczOdDatyUstalonej,
+	  dok_PlatnosciRozszerzone = #dokdefinicje.dok_PlatnosciRozszerzone,
+	  Dok_AutoRozliczZal = #dokdefinicje.Dok_AutoRozliczZal,
+	  Dok_DataPromocji = #dokdefinicje.Dok_DataPromocji,
+	  Dok_modyfikacjaKwotVATaVista= #dokdefinicje.Dok_modyfikacjaKwotVATaVista,
+	  Dok_adnotacjaNaNiezatwierdzonym= #dokdefinicje.Dok_adnotacjaNaNiezatwierdzonym,
+	  Dok_OdliczanieFaZal=#dokdefinicje.Dok_OdliczanieFaZal,
+    Dok_PPLDoProdukcjiPodst=#dokdefinicje.Dok_PPLDoProdukcjiPodst,
+    Dok_PPLDoZamowieniaPodst=#dokdefinicje.Dok_PPLDoZamowieniaPodst,
+    Dok_PPLOptymalizacjaDoProdukcji=#dokdefinicje.Dok_PPLOptymalizacjaDoProdukcji,
+    Dok_PPLOptymalizacjaDoZamowienia=#dokdefinicje.Dok_PPLOptymalizacjaDoZamowienia,
+    Dok_PPLUwzglednijBOM=#dokdefinicje.Dok_PPLUwzglednijBOM,
+	Dok_PPLIloscOgolnieDostepna=#dokdefinicje.Dok_PPLIloscOgolnieDostepna,
+	Dok_PPLIloscWDrodze=#dokdefinicje.Dok_PPLIloscWDrodze,
+    Dok_GenerowanieZamowienia=#dokdefinicje.Dok_GenerowanieZamowienia,
+    Dok_PrzesunOperacjePoRealizacji=#dokdefinicje.Dok_PrzesunOperacjePoRealizacji,
+    Dok_PrzesunNaZwolnionych=#dokdefinicje.Dok_PrzesunNaZwolnionych,
+    Dok_PPLPrzeliczajPotwierdzony=#dokdefinicje.Dok_PPLPrzeliczajPotwierdzony,
+    Dok_UsunNiesparowane=#dokdefinicje.Dok_UsunNiesparowane,
+    Dok_OsobneElementyDostawZDP=#dokdefinicje.Dok_OsobneElementyDostawZDP,
+    Dok_RealizacjaRejestruj=#dokdefinicje.Dok_RealizacjaRejestruj,
+    Dok_RealizacjaUruchamiaj=#dokdefinicje.Dok_RealizacjaUruchamiaj,
+    Dok_SpiCenaWartosc=#dokdefinicje.Dok_SpiCenaWartosc,
+    Dok_SpiZgodnoscKnt=#dokdefinicje.Dok_SpiZgodnoscKnt,
+    Dok_SpiZgodnoscKursu=#dokdefinicje.Dok_SpiZgodnoscKursu,
+    Dok_SpiKoryguj=#dokdefinicje.Dok_SpiKoryguj,
+    Dok_SpiKontrolaMarzy=#dokdefinicje.Dok_SpiKontrolaMarzy,
+    Dok_SpiCenaMarza=#dokdefinicje.Dok_SpiCenaMarza,
+    Dok_PodmianaMaterialow=#dokdefinicje.Dok_PodmianaMaterialow,
+    Dok_BSTPominPowiazane=#dokdefinicje.Dok_BSTPominPowiazane,
+    Dok_SerPTyp=#dokdefinicje.Dok_SerPTyp,
+    Dok_SerPFirma=#dokdefinicje.Dok_SerPFirma,
+    Dok_SerPNumer=#dokdefinicje.Dok_SerPNumer,
+    Dok_SerPLp=#dokdefinicje.Dok_SerPLp,
+		Dok_StosujPromocjePakietowe=#dokdefinicje.Dok_StosujPromocjePakietowe,
+    Dok_NaliczajPunktyLojal=#dokdefinicje.Dok_NaliczajPunktyLojal,
+    Dok_RealizacjaWgPlanu=#dokdefinicje.Dok_RealizacjaWgPlanu,
+    Dok_PlanDostepneMetody=#dokdefinicje.Dok_PlanDostepneMetody,
+    Dok_PlanRozpocznijOd=#dokdefinicje.Dok_PlanRozpocznijOd,
+    Dok_PlanCzasTrwania=#dokdefinicje.Dok_PlanCzasTrwania,
+    Dok_PlanCzasTrwaniaJedn=#dokdefinicje.Dok_PlanCzasTrwaniaJedn,
+    Dok_PlanZgrubne=#dokdefinicje.Dok_PlanZgrubne,
+    Dok_BlokadaZatwZNiezgodnymNIP=#dokdefinicje.Dok_BlokadaZatwZNiezgodnymNIP,
+    Dok_GenerujRWPodczasRealizacji=#dokdefinicje.Dok_GenerujRWPodczasRealizacji,
+    Dok_GenerujPWPodczasRealizacji=#dokdefinicje.Dok_GenerujPWPodczasRealizacji,
+    Dok_ElementyNaKorektach=#dokdefinicje.Dok_ElementyNaKorektach,
+    Dok_GenerujZleceniaPrzyPlanowaniu=#dokdefinicje.Dok_GenerujZleceniaPrzyPlanowaniu,
+    Dok_GenerujJednNaWieleMag=#dokdefinicje.Dok_GenerujJednNaWieleMag,
+	Dok_IloscElemKor=#dokdefinicje.Dok_IloscElemKor,
+	Dok_ZerowaIloscRealizacji=#dokdefinicje.Dok_ZerowaIloscRealizacji,
+	Dok_PolaczOperacjeTpZPolprod=#dokdefinicje.Dok_PolaczOperacjeTpZPolprod,
+	Dok_GenerujFaktAVistaEBC=#dokdefinicje.Dok_GenerujFaktAVistaEBC,
+	Dok_SpiNieKsiegujSpiete=#dokdefinicje.Dok_SpiNieKsiegujSpiete,
+	Dok_AutoGenerowaniePKJ=#dokdefinicje.Dok_AutoGenerowaniePKJ,
+	Dok_ZakresRezerwacjiDlaProduktow=#dokdefinicje.Dok_ZakresRezerwacjiDlaProduktow,
+	Dok_DzielWZWM=#dokdefinicje.Dok_DzielWZWM,
+	Dok_BstOptymalizacjaZam=#dokdefinicje.Dok_BstOptymalizacjaZam,
+	Dok_WymagajPodaniaStanuOperacji=#dokdefinicje.Dok_WymagajPodaniaStanuOperacji,
+	Dok_RodzajPaczki=#dokdefinicje.Dok_RodzajPaczki,
+	Dok_SposobLaczeniaDoPaczki=#dokdefinicje.Dok_SPosobLaczeniaDoPaczki,
+	Dok_UwzgJednLogProdukty=#dokdefinicje.Dok_UwzgJednLogProdukty,
+	Dok_UwzgJednLogMaterialy=#dokdefinicje.Dok_UwzgJednLogMaterialy,
+	Dok_WyborMagazynuNaPozycji = #dokdefinicje.Dok_WyborMagazynuNaPozycji,
+	Dok_ProdZakonczenieWgPlanu = #dokdefinicje.Dok_ProdZakonczenieWgPlanu,
+	Dok_KSeFCzyWysylac = #dokdefinicje.Dok_KSeFCzyWysylac,
+	Dok_KSeFAutomatycznie = #dokdefinicje.Dok_KSeFAutomatycznie,
+	Dok_KSeFWeryfikuj = #dokdefinicje.Dok_KSeFWeryfikuj,
+	Dok_KSeFPobierajUpo = #dokdefinicje.Dok_KSeFPobierajUpo,
+	Dok_PlanWskazaneZasoby = #dokdefinicje.Dok_PlanWskazaneZasoby
+    	
+     FROM CDN.DokDefinicje A left outer join #dokserie on A.Dok_GIDTyp=#dokserie.Dok_GIDTyp
+        left outer join #dokseriekorekty on A.Dok_GIDTyp=#dokseriekorekty.Dok_GIDTyp,
+        #dokdefinicje 
+     WHERE A.Dok_GIDTyp=@DokGIDTyp AND A.Dok_DefZNadrzednego=1 AND A.Dok_FrsId IN (SELECT FRS_ID
+        FROM #potomne)
+
+      --przepisanie kwot sad
+      DELETE FROM CDN.DokRelacje WHERE DoR_MsTyp = 14401 AND DoR_ID IN ( SELECT Dok_ID
+        FROM CDN.DokDefinicje
+        WHERE Dok_FrsId IN (SELECT FRS_ID
+          FROM #potomne) AND Dok_GIDTyp=@DokGIDTyp AND Dok_GIDTyp in (3379,3376,3377))-- Tylko dla FWS,SAD,SSC
+      INSERT INTO CDN.DokRelacje
+      SELECT PD.Dok_ID, NR.DoR_MSTyp, NR.DoR_MSFirma, NR.DoR_MSNumer, NR.DoR_MSLp
+      FROM CDN.DokRelacje NR INNER JOIN CDN.DokDefinicje ND ON NR.Dor_ID = ND.Dok_ID AND NR.Dor_MSTyp = 14401 AND
+          ND.Dok_GIDTyp IN (3379,3376,3377) AND
+          ND.Dok_GIDTyp = @DokGIDTyp AND ND.Dok_FrsID = @FrsIDRodzica
+        INNER JOIN CDN.DokDefinicje PD ON PD.Dok_GIDTyp = @DokGIDTyp AND PD.Dok_DefZNadrzednego=1 AND
+          PD.Dok_FrsId IN (SELECT FRS_ID
+          FROM #potomne
+          WHERE FRS_ID &lt;&gt; @FrsIDRodzica) AND
+          PD.Dok_GIDTyp in (3379,3376,3377)
+      -- Tylko dla FWS,SAD,SSC
+
+      --
+      --przepisanie skďż˝adnikďż˝w bst
+      DELETE FROM CDN.DokRelacje 
+     WHERE DoR_MsTyp = 14402
+        AND DoR_ID IN 
+		( 
+			SELECT Dok_ID
+        FROM CDN.DokDefinicje
+        WHERE Dok_FrsId IN (SELECT FRS_ID
+          FROM #potomne)
+          AND Dok_GIDTyp=@DokGIDTyp
+          AND Dok_GIDTyp = 14448
+		)-- Tylko dla BST
+      INSERT INTO CDN.DokRelacje
+      SELECT PD.Dok_ID, NR.DoR_MSTyp, NR.DoR_MSFirma, NR.DoR_MSNumer, NR.DoR_MSLp
+      FROM CDN.DokRelacje NR
+        INNER JOIN CDN.DokDefinicje ND ON NR.Dor_ID = ND.Dok_ID
+          AND NR.Dor_MSTyp = 14402
+          AND ND.Dok_GIDTyp = 14448
+          AND ND.Dok_GIDTyp = @DokGIDTyp
+          AND ND.Dok_FrsID = @FrsIDRodzica
+        INNER JOIN CDN.DokDefinicje PD ON PD.Dok_GIDTyp = @DokGIDTyp
+          AND PD.Dok_DefZNadrzednego=1
+          AND PD.Dok_FrsId IN (SELECT FRS_ID
+          FROM #potomne
+          WHERE FRS_ID &lt;&gt; @FrsIDRodzica)
+          AND PD.Dok_GIDTyp = 14448
+      -- Tylko dla BST
+      --
+
+      DROP TABLE #dokdefinicje
+  END
+  ELSE
+  BEGIN
+  DECLARE @DokCzasModyfikacji INT
+    SELECT @DokCzasModyfikacji=Dok_CzasModyfikacji 
+      FROM CDN.DokDefinicje
+      WHERE Dok_GIDTyp=@DokGIDTyp AND Dok_FrsId=@FrsIdRodzica
+
+      UPDATE CDN.DokDefinicje SET 
+		 Dok_CzasModyfikacji=@DokCzasModyfikacji
+      FROM CDN.DokDefinicje A 
+     WHERE A.Dok_GIDTyp=@DokGIDTyp AND A.Dok_DefZNadrzednego=1 AND A.Dok_FrsId IN (SELECT FRS_ID
+        FROM #potomne)
+  END
+
+	drop table #dokserie
+	drop table #dokseriekorekty
+END
+
+
+
+DECLARE @DokIdNadrzednegoAnalityczne INT
+DECLARE @DokFrsIdNadrzednegoOpis INT
+
+
+
+IF UPDATE(Dok_DefZNadrzednego)
+   OR UPDATE(Dok_WymiaryZRodzica)
+   OR UPDATE(Dok_Centrum)
+   OR UPDATE(Dok_Lokalizacja)
+   OR UPDATE(Dok_KategoriaFin)
+   OR UPDATE(Dok_KontrahentDoc)
+   OR UPDATE(Dok_Projekt)
+   OR UPDATE(Dok_RodzajKategorii)
+   OR UPDATE(Dok_RodzajKategoriiKW)
+   OR UPDATE(Dok_EdycjaKategorii)
+   OR UPDATE(Dok_PustaLista)
+   OR UPDATE(Dok_DostepDoWzorcow)
+   OR UPDATE(Dok_DostepDoWzorcowAnalitPodrz)
+   OR UPDATE(Dok_UjecieJednoT)
+   OR UPDATE(Dok_UjecieDwuT)
+   OR UPDATE(Dok_DataKsiegowania)
+   OR UPDATE(Dok_DozwolonyOpisDokWBuforze)
+   OR UPDATE(Dok_DataControllingowa)
+   OR UPDATE(Dok_CzasPodniesienia)
+   OR UPDATE(Dok_CzasPodniesienia)
+    BEGIN
+      ;with RodzicAnalityczny as (
+          select @FrsIDRodzica FrsId, 0 Poziom
+          UNION ALL
+          select rodzic.FRS_Id,Poziom+1
+          from cdn.FrmStruktura rodzic 
+          join cdn.frmstruktura dziecko on dziecko.FRS_GroNumer=rodzic.FrS_GIDNumer
+          join RodzicAnalityczny on RodzicAnalityczny.FrsId=dziecko.Frs_Id
+          join cdn.dokdefinicje dokDefDzieci on  dokDefDzieci.Dok_WymiaryZRodzica=1 and dokDefDzieci.Dok_FrsId=dziecko.FRS_ID and dokDefDzieci.Dok_GIDTyp=@DokGIDTyp
+          WHERE rodzic.FRS_GIDTyp=-4272
+      )
+      select TOP 1  @DokIdNadrzednegoAnalityczne=DOK_ID from RodzicAnalityczny
+      join cdn.DokDefinicje on Dok_FrsId=FrsId and Dok_GIDTyp=@DokGIDTyp
+       order by Poziom desc
+
+      exec CDN.PrzepiszOpisAnalitycznyDlaDokDef @DokIdNadrzednegoAnalityczne
+    END
+
+
+
+
+
+
+SET @DokFRSIdNadrzednegoOpis=@DokFrsId
+
+select @DokFRSIdNadrzednegoOpis=CASE dokdefDziecko.Dok_OpisZRodzica WHEN 0 THEN dokdefDziecko.Dok_FrsId ELSE dokdefRodzic.Dok_FrsId END
+from cdn.DokDefinicje dokdefDziecko
+join cdn.FrmStruktura dziecko on dziecko.FRS_ID=dokdefDziecko.Dok_FrsId
+join cdn.FrmStruktura rodzic on rodzic.FRS_GIDNumer=dziecko.FRS_GRONumer
+join cdn.DokDefinicje dokdefRodzic on dokdefRodzic.Dok_FrsId=rodzic.FRS_ID and dokdefRodzic.Dok_GIDTyp=dokdefDziecko.Dok_GIDTyp
+where dokdefDziecko.Dok_Id=@DokId
+
+
+ ;with RodzicOpis as (
+    select @DokFRSIdNadrzednegoOpis FrsId, 0 Poziom
+    UNION ALL
+    select dziecko.FRS_Id,Poziom+1
+    from cdn.FrmStruktura rodzic 
+    join cdn.frmstruktura dziecko on dziecko.FRS_GroNumer=rodzic.FrS_GIDNumer
+    join RodzicOpis on RodzicOpis.FrsId=rodzic.Frs_Id
+    join cdn.dokdefinicje dokDefDzieci on 
+       dokDefDzieci.Dok_OpisZRodzica=1
+      and dokDefDzieci.Dok_FrsId=dziecko.FRS_ID and dokDefDzieci.Dok_GIDTyp=@DokGIDTyp
+    WHERE dziecko.FRS_GIDTyp=-4272
+)insert into #potomneOpisAnalit select distinct FRSID  from RodzicOpis where Poziom&gt;0
+
+
+    UPDATE dziecko set 
+        dziecko.Dok_SchTyp=rodzic.Dok_SchTyp,
+        dziecko.Dok_SchNumer=rodzic.Dok_SchNumer,
+        dziecko.Dok_Dziennik=rodzic.Dok_Dziennik,
+        dziecko.Dok_DziennikOkreslonyWSchemacie=rodzic.Dok_DziennikOkreslonyWSchemacie,
+        dziecko.Dok_NieKsiegowac=rodzic.Dok_NieKsiegowac
+      from cdn.DokDefinicje dziecko
+      join #potomneOpisAnalit on Frs_Id=dziecko.Dok_FrsId
+      join cdn.DokDefinicje rodzic on dziecko.Dok_GIDTyp=rodzic.Dok_GIDTyp AND rodzic.Dok_FrsId=@DokFRSIdNadrzednegoOpis
+        where rodzic.Dok_GIDTyp=@DokGIDTyp
+
+      
+
+
+    DROP TABLE #potomne
+  
+    DROP TABLE #potomneOpisAnalit
+    FETCH NEXT FROM	TriggerCursorInserted INTO @DokId,@DokFrsId,@DokGIDTyp,@DokDefZNadrzednego,@DokWymiaryZRodzica,@DokOpisZRodzica
+  END
+  CLOSE TriggerCursorInserted
+  DEALLOCATE TriggerCursorInserted
+
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

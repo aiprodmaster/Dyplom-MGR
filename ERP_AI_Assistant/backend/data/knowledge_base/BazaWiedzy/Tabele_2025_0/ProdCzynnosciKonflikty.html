@@ -1,0 +1,468 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[ProdCzynnosciKonflikty]"></A><PRE>
+          <FONT SIZE="2"><I>/* [ProdCzynnosciKonflikty] */</I><BR>
+CREATE FUNCTION [CDN].[ProdCzynnosciKonflikty] (@Czynnosc int, @Data int,@ListaKonfliktow int,@PlanowacOdJakoPriorytet TINYINT)
+RETURNS varchar(1024)
+as
+begin
+	declare @PZLStan TINYINT
+  
+	declare @wynik varchar(1024)
+	set @wynik = ''
+	declare @wynikZZ varchar(1024)
+	set @wynikZZ = ''	
+	declare @wynikData varchar(1024)
+	set @wynikData = ''
+  
+	DECLARE @jestKonflikt11 TINYINT
+	SET @jestKonflikt11 = 0
+
+
+	declare @operPowiazane table(PCZId INT)
+	DECLARE @OperOpozn TABLE(PCZId INT)
+
+	DECLARE @PCZRealizuje INT, @PPCId INT, @PCZZgrubnie TINYINT, @PCZIlosc DECIMAL(11,4), @PCZZrealizowana DECIMAL(11,4), @PCZCzasR INT, @PTCId INT, @PCZPriorytetZlc INT, @PCZPlanowacOd INT, @PCZTerminR INT, @PCZTerminZ INT,
+	@RezerwujZas TINYINT, @PCZOddzial INT, @Uruchomiona TINYINT
+  
+	SELECT @PZLStan = PZL_Stan, @PCZRealizuje = PCZ_Realizuje, @PPCId = PCZ_Proces, @PCZZgrubnie = PCZ_PlanZgrubnie, @PCZIlosc = PCZ_Ilosc, @PCZZrealizowana = PCZ_IloscZrealizowana, @PCZCzasR = PCZ_CzasRealizacji ,
+	@PTCId = PCZ_TechnologiaCzynnosc, @PCZPriorytetZlc = PCZ_PriorytetZlc, @PCZPlanowacOd = PCZ_PlanowacOd, @PCZTerminR = PCZ_TerminRozpoczecia, @PCZTerminZ = PCZ_TerminZakonczenia, @RezerwujZas = PZL_RezerwujZasoby,
+	@PCZOddzial = PCZ_Oddzial, @Uruchomiona = PCZ_Uruchomiona
+	FROM CDN.ProdCzynnosci 
+	JOIN CDN.ProdZlecenia ON PZL_Id = PCZ_PZLId WHERE PCZ_Id = @Czynnosc
+
+	IF @PZLStan &gt;= 6 OR @PCZRealizuje &gt; 0 RETURN ''
+	
+	IF (@ListaKonfliktow&amp;16384 = 16384 OR @ListaKonfliktow&amp;1 = 1) AND @PCZZgrubnie = 0 AND @PCZIlosc &gt; @PCZZrealizowana
+	BEGIN
+		INSERT INTO @OperOpozn
+		SELECT CASE WHEN PCZId_Wprzod &gt; 0 THEN PCZId_Wprzod ELSE PCZId_WTyl END FROM 
+		(
+			SELECT PCZId_Wprzod,PCZId_WTyl,CASE WHEN PrzesunieciePow &gt; Przesuniecie THEN PrzesunieciePow ELSE Przesuniecie END	Przesuniecie,PPC_PlanowacOd,Termin,WPrzod_TerminZak,
+			WTyl_TerminRozp,Odstep FROM
+			(
+				SELECT CASE WHEN ISNULL(PCZNast_WPrzod.PCZ_Realizuje,0) = 0 THEN ISNULL(PCZNast_WPrzod.PCZ_Id,0) 
+					ELSE ISNULL(PCZNast_WPrzod.PCZ_Realizuje,0) END PCZId_Wprzod, 
+				CASE WHEN ISNULL(PCZNast_WTyl.PCZ_Realizuje,0) = 0 THEN ISNULL(PCZNast_WTyl.PCZ_Id,0) 
+					ELSE ISNULL(PCZNast_WTyl.PCZ_Realizuje,0) END PCZId_WTyl,
+				A.PPC_PlanowacOd,A.Przesuniecie,A.Termin,ISNULL(PCZNast_WPrzod.PCZ_TerminZakonczenia,0) WPrzod_TerminZak,
+				ISNULL(PCZNast_WTyl.PCZ_TerminRozpoczecia,0) WTyl_TerminRozp, 
+				CASE 
+				WHEN PPC_PlanowacOd &gt;= 0 THEN CASE WHEN PTC_WPrzod.PTC_OdstepPrzedJm = 4 THEN (PCZNast_WPrzod.PCZ_CzasRealizacji * PTC_WPrzod.PTC_OdstepPrzed) ELSE PTC_WPrzod.PTC_OdstepPrzed END
+				ELSE 
+					CASE WHEN PTC_WTyl.PTC_OdstepPoJm = 4 THEN (PCZNast_WTyl.PCZ_CzasRealizacji * PTC_WTyl.PTC_OdstepPo)/100 ELSE PTC_WTyl.PTC_OdstepPo END 
+				END + Odstep Odstep,
+				CASE WHEN A.PPC_PlanowacOd &gt;= 0 THEN
+					CASE WHEN PTC_WPrzod.PTC_PrzesunieciePoJm = 3 THEN (PCZNast_WPrzod.PCZ_CzasRealizacji * PTC_WPrzod.PTC_PrzesunieciePo)/100 ELSE PTC_WPrzod.PTC_PrzesunieciePo END  
+				ELSE
+					CASE WHEN PTC_WTyl.PTC_PrzesunieciePrzedJm = 3 THEN (PCZNast_WTyl.PCZ_CzasRealizacji * PTC_WTyl.PTC_PrzesunieciePrzed)/100 ELSE PTC_WTyl.PTC_PrzesunieciePrzed END  
+				END PrzesunieciePow
+				FROM 
+				(
+					SELECT 
+					CASE WHEN PPC_PlanowacOd &gt;= 0 THEN 
+						CASE WHEN PTC_PrzesunieciePrzedJm = 3 THEN (@PCZCzasR * PTC_PrzesunieciePrzed)/100 ELSE PTC_PrzesunieciePrzed END  
+					ELSE 
+						CASE WHEN PTC_PrzesunieciePoJm = 3 THEN (@PCZCzasR * PTC_PrzesunieciePo)/100 ELSE PTC_PrzesunieciePo END 
+					END Przesuniecie,
+					CASE WHEN PPC_PlanowacOd &gt;= 0 THEN (SELECT MIN(PCZ_TerminRozpoczecia) FROM CDN.ProdCzynnosci R 
+						WHERE R.PCZ_Id = @Czynnosc OR R.PCZ_Realizuje = @Czynnosc ) 
+					ELSE (SELECT MAX(PCZ_TerminZakonczenia) FROM CDN.ProdCzynnosci R WHERE R.PCZ_Id =@Czynnosc OR R.PCZ_Realizuje = @Czynnosc ) 
+					END Termin,PPC_PlanowacOd,
+					CASE WHEN PPC_PlanowacOd &gt;= 0 THEN 
+						CASE WHEN PTC_OdstepPoJm = 4 THEN (@PCZCzasR * PTC_OdstepPo)/100 ELSE PTC_OdstepPo END 
+					ELSE 
+						CASE WHEN PTC_OdstepPrzedJm = 4 THEN (@PCZCzasR * PTC_OdstepPrzed) ELSE PTC_OdstepPrzed END 
+					END Odstep
+					FROM CDN.ProdProcesy 
+					JOIN CDN.ProdTechnologiaCzynnosci ON PTC_Id = @PTCId
+					WHERE PPC_Id = @PPCId
+				) A
+				LEFT JOIN CDN.ProdOperacjePowiazane WPrzod ON  A.PPC_PlanowacOd &gt;=0 AND WPrzod.POP_PczId = @Czynnosc AND WPrzod.POP_PrzedPczId &lt;&gt; 0
+				LEFT JOIN CDN.ProdCzynnosci PCZNast_WPrzod ON POP_PrzedPczId = PCZNast_WPrzod.PCZ_Id OR PCZNast_WPrzod.PCZ_Realizuje = POP_PrzedPczId
+				LEFT JOIN CDN.ProdTechnologiaCzynnosci PTC_WPrzod ON PTC_WPrzod.PTC_Id = PCZNast_WPrzod.PCZ_TechnologiaCzynnosc
+				LEFT JOIN CDN.ProdOperacjePowiazane WTyl ON A.PPC_PlanowacOd &lt; 0 AND WTyl.POP_PrzedPczId =@Czynnosc AND WTyl.POP_PczId &lt;&gt; 0
+				LEFT JOIN CDN.ProdCzynnosci PCZNast_WTyl ON WTyl.POP_PczId = PCZNast_WTyl.PCZ_Id OR PCZNast_WTyl.PCZ_Realizuje = WTyl.POP_PczId
+				LEFT JOIN CDN.ProdTechnologiaCzynnosci PTC_WTyl ON PTC_WTyl.PTC_Id = PCZNast_WTyl.PCZ_TechnologiaCzynnosc
+			) D 
+		) B
+		GROUP BY PCZId_WTyl,PCZId_Wprzod,PPC_PlanowacOd,Termin,Przesuniecie,Odstep
+		HAVING ((B.PPC_PlanowacOd &gt;=0 AND PCZId_Wprzod &lt;&gt; 0 AND ((B.Termin - Przesuniecie  &gt; MAX(B.WPrzod_TerminZak) + Odstep ) 
+			OR (B.Termin + Przesuniecie &lt; MAX(B.WPrzod_TerminZak)+Odstep))) 
+			OR (B.PPC_PlanowacOd &lt; 0 AND PCZId_WTyl &lt;&gt; 0 AND((B.Termin - Przesuniecie  &gt; Min(WTyl_TerminRozp) - Odstep) OR (B.Termin + Przesuniecie&lt; Min(B.WTyl_TerminRozp) - Odstep))))
+
+		IF EXISTS(SELECT * FROM @OperOpozn) 
+		BEGIN
+			IF @ListaKonfliktow&amp;16384 = 16384
+				RETURN '11, Niezgodne terminy zakończenia/rozpoczęcia operacji'
+			ELSE
+				SET @jestKonflikt11 = 1
+		END
+	END
+
+	DECLARE @ZasobPowielone TABLE(Kod VARCHAR(40), PCZId INT, POBId INT, PFUId INT, PCTId INT, PlanowacOdPodst INT, PlanowacOdPow INT, PriorytetPodst INT, PriorytetPow INT, CzyPowiazana TINYINT)
+
+	IF (@ListaKonfliktow&amp;32 = 32 OR @ListaKonfliktow&amp;4096 = 4096) AND @PCZZgrubnie = 0 AND @PCZIlosc &gt; @PCZZrealizowana
+	BEGIN
+		INSERT INTO @operPowiazane SELECT Czynnosc FROM CDN.ProdOperacjePowiazaneDrzewo(@Czynnosc,0)
+
+		INSERT INTO @ZasobPowielone(Kod, PCZId, POBId, PFUId, PCTId, PlanowacOdPodst, PlanowacOdPow, PriorytetPodst, PriorytetPow, CzyPowiazana)
+		select POB_Kod, D.PCZ_Id, C.PCO_Obiekt, C.PCO_Funkcja, C.PCT_Id, @PCZPlanowacOd, D.PCZ_PlanowacOd, @PCZPriorytetZlc, D.PCZ_PriorytetZlc, 
+		CASE WHEN D.PCZ_ID  IN (SELECT PCZId FROM @operPowiazane) THEN 1 ELSE 0 END
+		from 
+		(
+			select PCO_Obiekt, PCO_Funkcja, isnull(PCT_Id,0) PCT_Id,
+			isnull(PCT_TerminOd,@PCZTerminR) PCT_TerminOd, isnull(PCT_TerminDo,@PCZTerminZ) PCT_TerminDo
+			from CDN.ProdCzynnosciObiekty
+			inner join CDN.ProdCzynnosciTerminy on PCT_Czynnosc=@Czynnosc and (PCO_Termin=0 or PCO_Termin=PCT_Id) 
+			WHERE PCO_Czynnosc = @Czynnosc
+		) C
+		inner join CDN.ProdCzynnosciObiekty P on P.PCO_Obiekt=C.PCO_Obiekt and P.PCO_Czynnosc&lt;&gt;@Czynnosc
+		inner join CDN.ProdCzynnosci D on D.PCZ_Id=P.PCO_Czynnosc and D.PCZ_Realizuje=0 and D.PCZ_PlanZgrubnie=0
+		inner join CDN.ProdCzynnosciTerminy U on U.PCT_Czynnosc=P.PCO_Czynnosc and (U.PCT_Id=P.PCO_Termin or P.PCO_Termin=0)
+			and U.PCT_TerminOd&lt;C.PCT_TerminDo and C.PCT_TerminOd&lt;U.PCT_TerminDo and U.PCT_Id&lt;&gt;C.PCT_Id 
+		inner join CDN.ProdObiekty on POB_Id=C.PCO_Obiekt and POB_NieograniczonaZdolnoscProd = 0
+		where d.PCZ_Ilosc &gt; d.PCZ_IloscZrealizowana 
+
+	END
+	IF @ListaKonfliktow&amp;32 = 32
+	BEGIN
+		IF @PlanowacOdJakoPriorytet = 1
+		BEGIN
+			select @wynik = @wynik + rtrim(Kod)+' '+convert(varchar,count(*))+', '
+			from 
+			(
+				SELECT Kod, POBId, PFUId, PCTId
+				FROM @ZasobPowielone
+				where 
+				 (	 				 
+				 ((PlanowacOdPodst &lt; 0 AND PlanowacOdPow &lt; 0 AND PlanowacOdPodst &lt; PlanowacOdPow ) OR (PlanowacOdPodst &gt;PlanowacOdPow AND 
+				 (PlanowacOdPodst &gt;= 0 OR PlanowacOdPow &gt;= 0))) 
+					OR 
+				 	(PlanowacOdPodst = PlanowacOdPow AND PriorytetPodst&gt;=PriorytetPow) OR (@ListaKonfliktow&amp;4096 = 0)) 
+					AND CzyPowiazana = 0
+			) W
+			group by Kod, POBId, PFUId, PCTId
+		END
+		ELSE
+		BEGIN
+			select @wynik = @wynik + rtrim(Kod)+' '+convert(varchar,count(*))+', '
+			from 
+			(
+				SELECT Kod, POBId, PFUId, PCTId
+				FROM @ZasobPowielone
+				where (PriorytetPodst&gt;=PriorytetPow) AND CzyPowiazana = 0
+			) W
+			group by Kod, POBId, PFUId, PCTId
+		END
+
+		if @wynik&lt;&gt;'' return '4A, Zasoby w innych operacjach: ' + @wynik
+	END
+
+	IF @ListaKonfliktow&amp;64 = 64 AND @PCZZgrubnie = 0
+	BEGIN
+		select @wynik = @wynik+rtrim(POB_Kod)+' '+convert(varchar,count(*))+', '
+		from 
+		(
+			select POB_Kod, PCO_Obiekt, PCO_Funkcja, PCT_Id
+			from CDN.ProdCzynnosciTerminy 
+			inner join CDN.ProdCzynnosciObiekty on PCO_Czynnosc=@Czynnosc and (PCO_Termin=0 or PCO_Termin=PCT_Id)
+			inner join CDN.ProdObiekty on POB_Id=PCO_Obiekt and POB_NieograniczonaZdolnoscProd = 0
+			inner join CDN.ZadaniaObiekty on (ZAO_ObiTyp=14337 and ZAO_ObiNumer=POB_Id) or (ZAO_ObiTyp=POB_ObiTyp and ZAO_ObiNumer=POB_ObiNumer)
+			inner join CDN.Zadania on ZAD_Id=ZAO_ZadId and ZAD_RezerwujCzas&lt;&gt;0 and ZAD_ZrdTyp&lt;&gt;14345 and ZAD_CzasWykonania=0 and ZAD_TerminOd&lt;PCT_TerminDo and PCT_TerminOd&lt;ZAD_TerminDo
+			where PCT_Czynnosc=@Czynnosc and @PCZPriorytetZlc&gt;=Zad_Priorytet
+		) Zad
+		group by POB_Kod, PCO_Obiekt, PCO_Funkcja, PCT_Id
+
+		if @wynik&lt;&gt;'' return '4B, Zasoby w innych zadaniach: ' + @wynik
+	END
+
+	IF @ListaKonfliktow&amp;1 = 1
+	BEGIN
+		declare @surowce table ( S_Id int, S_TwrTyp smallint, S_TwrNumer int,
+		S_TechnologiaZasob int, S_Zamiennik int, S_Ilosc decimal(11,4),
+		S_Dok decimal(11,4), S_Prod decimal(11,4), S_Zam decimal(11,4) )
+
+		insert into @surowce
+		select PTZ_Id, PTZ_TwrTyp, PTZ_TwrNumer, PTZ_TechnologiaZasob, PTZ_Zamiennik,
+			CDN.ProdIloscAtr(@PCZIlosc - @PCZZrealizowana,PTZ_Ilosc,PTZ_IloscAtr,PTZ_IloscFormat,PTZ_TypZasobu,
+			 PTC_Ilosc,PTC_IloscAtr,14340,PTC_Technologia,@PCZTerminR,@PPCId), 0, 0, 0
+		from CDN.ProdTechnologiaCzynnosci
+		inner join CDN.ProdTechnologiaZasoby on PTZ_TechnologiaCzynnosc=PTC_Id and not (PTZ_TwrTyp=0 and PTZ_TechnologiaZasob=0)
+		left join cdn.TwrKarty on Twr_GIDNumer = PTZ_TwrNumer and PTZ_TwrTyp = 16
+		where PTC_Id = @PTCId and PTZ_TypZasobu=1 and (@PCZZgrubnie=0 or PTZ_TechnologiaZasob=0) and isnull(Twr_Archiwalny,0) = 0
+
+		update Sur set S_Dok=Dok
+		from 
+		(
+			select S_Id, Rez+isnull(sum(case when TrE_GIDNumer is null then 0 else TrS_Ilosc end),0) Dok
+			from 
+			(
+				select S_Id, S_TwrTyp, S_TwrNumer, isnull(sum(Rez_Ilosc-Rez_Zrealizowano),0) Rez
+				from @surowce
+				left outer join CDN.Rezerwacje on Rez_GIDTyp=2576 and Rez_ZrdTyp=14345 and Rez_ZrdNumer=@Czynnosc and Rez_PTZId=S_Id
+				where S_Ilosc&gt;0
+				group by S_Id, S_TwrTyp, S_TwrNumer
+			) Rez
+			left outer join CDN.TraSElem on TrS_ZlcTyp=14345 and TrS_ZlcNumer=@Czynnosc
+			left outer join CDN.TraElem on TrE_GIDNumer=TrS_GIDNumer and TrE_TwrTyp=S_TwrTyp and TrE_TwrNumer=S_TwrNumer
+			 group by S_Id, Rez
+		) Dok
+		inner join @surowce Sur on Sur.S_Id=Dok.S_Id
+
+		update @surowce set S_Prod = Ilosc
+		from @surowce
+		inner join
+		(
+			select Z1.PZA_TechnologiaZasob, ISNULL(SUM(case when ISNULL(PCZId,0) &gt;0 THEN 0 ELSE PZP_Ilosc END),0) Ilosc 
+			from cdn.ProdZasoby Z1
+			left join cdn.ProdZwiazanePolprodukty on PZP_PZAIDPlanowany = PZA_Id	
+			LEFT JOIN CDN.ProdZasoby Z2 ON PZP_PZAIDWykonany = Z2.PZA_Id
+			LEFT JOIN CDN.ProdCzynnosci ON PCZ_Id = Z2.PZA_Czynnosc
+			LEFT JOIN @OperOpozn ON PCZId = PCZ_Id	
+			where Z1.PZA_Planowany = 1 and Z1.PZA_Czynnosc = @czynnosc
+			group by Z1.PZA_TechnologiaZasob
+		) Zasoby on PZA_TechnologiaZasob = S_Id
+		where S_TechnologiaZasob &gt; 0
+
+
+		update @surowce set S_Prod=0 where S_Prod&lt;0
+
+		while 1=1
+		begin
+			update Tow set S_Zam = Tow.S_Zam + (Zam.S_Prod+Zam.S_Dok+Zam.S_Zam)*Tow.S_Ilosc/Zam.S_Ilosc
+			from @surowce Zam
+			inner join @surowce Tow on Tow.S_Id=Zam.S_Zamiennik
+			left outer join @surowce ZZ on ZZ.S_Zamiennik=Zam.S_Id
+			where Zam.S_Ilosc&gt;0 and ZZ.S_Id is null
+
+			delete Zam
+			from @surowce Zam
+			left outer join @surowce ZZ on ZZ.S_Zamiennik=Zam.S_Id
+			where Zam.S_Zamiennik&lt;&gt;0 and ZZ.S_Id is null
+			if @@rowcount=0 break
+		end
+		delete @surowce where S_Zamiennik&lt;&gt;0 or S_Ilosc&lt;=S_Dok+S_Prod+S_Zam
+
+		  
+		select @wynik = @wynik+isnull(Twr_Kod,PTZ_Kod)+' '+convert(varchar,S_Ilosc-S_Dok-S_Prod-S_Zam)+', '
+		from @surowce
+		inner join CDN.ProdTechnologiaZasoby on PTZ_Id=S_Id
+		left outer join CDN.TwrKarty on Twr_GIDTyp=S_TwrTyp and Twr_GIDNumer=S_TwrNumer and Twr_Typ&lt;3
+
+		if @Wynik&lt;&gt;''  return '1, Brak surowców: ' + @wynik else set @wynik = ''
+	END
+
+	IF (@ListaKonfliktow &amp; 2 = 2 OR @ListaKonfliktow &amp; 4 = 4 OR @ListaKonfliktow &amp; 8 = 8) AND @PCZZgrubnie = 0 AND @RezerwujZas &gt; 0
+	BEGIN
+		select @wynikData = @wynikData +
+			CASE 
+			WHEN @ListaKonfliktow &amp; 8 = 8 THEN 
+				case 
+				when zam.ZaN_DataRealizacji IS not null and zam.ZaN_DataRealizacji &gt; DATEDIFF(d,'18001228','19900101') + PCZ_TerminRozpoczecia/86400 then Zam.Twr_Kod+' '+convert(varchar,Zam.Rez_Ilosc)+', ' 
+				else '' 
+				end 
+			ELSE '' 
+			END, 
+		@wynikZZ  = 
+		CASE WHEN @ListaKonfliktow&amp;4 = 4 THEN @wynikZZ+  
+			case 
+			when  ( select COUNT(*) from  CDN.ProdZamowieniaDoZwiazania(Zam.Rez_PTZID , Zam.Rez_Ilosc-isnull(Zam.ZZL_ZwiazanaIlosc,0), zam.PCZ_TerminRozpoczecia/86400+69035, @Data, 1)) &gt; 0 
+				and (zam.ZaN_DataRealizacji IS null or Zam.Rez_Ilosc&gt;Zam.ZZL_ZwiazanaIlosc) then Zam.Twr_Kod+' '+convert(varchar,Zam.Rez_Ilosc-isnull(Zam.ZZL_ZwiazanaIlosc,0))+', '
+			else '' 
+			end 
+		ELSE '' 
+		END,
+		@wynik = 
+		CASE 
+		WHEN @ListaKonfliktow&amp;2 = 2 THEN @wynik + 
+			case 
+			when ( select COUNT(*) from  CDN.ProdZamowieniaDoZwiazania(Zam.Rez_PTZID , Zam.Rez_Ilosc-isnull(Zam.ZZL_ZwiazanaIlosc,0), zam.PCZ_TerminRozpoczecia/86400+69035, @Data, 1)) = 0 
+				and (zam.ZaN_DataRealizacji IS null or Zam.Rez_Ilosc&gt;Zam.ZZL_ZwiazanaIlosc) then  Zam.Twr_Kod+' '+convert(varchar,Zam.Rez_Ilosc-isnull(Zam.ZZL_ZwiazanaIlosc,0))+', '
+			else '' 
+			end 
+		ELSE '' 
+		END
+		from 
+		(
+			select Twr_kod, Rez_Ilosc, Rez_PTZID, PCZ_CzasRealizacji, ZaN_DataRealizacji , PCZ_TerminRozpoczecia, ZZL_ZwiazanaIlosc
+			from 
+			(	
+				select Twr_kod, Rez_Ilosc, Rez_PTZID, @PCZCzasR PCZ_CzasRealizacji, Twr_GIDNumer , @PCZTerminR PCZ_TerminRozpoczecia 			  
+				from CDN.Rezerwacje
+				inner join CDN.TwrKarty on Twr_GIDTyp=Rez_TwrTyp and Twr_GIDNumer=Rez_TwrNumer and Twr_Typ&lt;3
+				where Rez_ZrdNumer=@Czynnosc and Rez_ZrdTyp=14345 and Rez_GIDTyp=2576 AND Rez_Aktywna&lt;&gt;0 and Rez_Typ&gt;0
+					and isnull(Rez_DstNumer,0)=0 and @Data between Rez_DataAktywacji and Rez_DataWaznosci
+			) Rez
+			left outer join 
+			(
+				select ZaE_TwrNumer, max(ZaN_DataRealizacji) ZaN_DataRealizacji, sum(ZZL_ZwiazanaIlosc) ZZL_ZwiazanaIlosc 
+				from Cdn.ZamZamLinki linki 
+				left outer join Cdn.ZamElem ZE on ZE.ZaE_GIDNumer = linki.ZZL_ZZGidNumer and ZE.ZaE_GIDLp = linki.ZZL_ZZGidLp
+				left outer join CDN.ZamNag ZN on ZN.ZaN_GIDNumer = Ze.ZaE_GIDNumer
+				where linki.ZZL_ZSGidNumer = @Czynnosc and linki.ZZL_ZSGidTyp = 14345
+				group by ZaE_TwrNumer
+			) Zam on Zam.ZaE_TwrNumer = REz.Twr_GIDNumer
+		) Zam	
+
+	   select  @wynik = case when  @wynik&lt;&gt;'' then '2, Brak dostaw: '+ @wynik +'; ' else '' end 
+					  + case when @wynikZZ&lt;&gt;'' then '2A, Brak dostaw. Są zarejestrowane na ZZ/ZW: ' + @wynikZZ +'; ' else '' end 		
+					  + case when @wynikData&lt;&gt;'' then '2B, Data realizacji ZZ/ZW późniejsza niż termin rozpoczęcia operacji: ' + @wynikData +'; ' else ''end 
+	   --if @wynik&lt;&gt;'' return '2, Brak dostaw: ' + @wynik
+	   if @wynik&lt;&gt;'' return  @wynik
+   END
+	
+	IF @ListaKonfliktow&amp;16 = 16 
+	BEGIN	
+
+		SELECT @wynik = @wynik+isnull(PFU_Kod+' '+convert(varchar,PTF_LiczbaObiektow-count(POBG.POB_Id))+', ','') + ISNULL(POBKod.POB_Kod+', ','')
+		FROM CDN.ProdCzynnosci
+		LEFT JOIN 
+		(
+			select PTF_Funkcja, sum(PTF_LiczbaObiektow) PTF_LiczbaObiektow, 0 Zasob
+			from CDN.ProdTechnologiaDrzewo(@PTCId,-1)
+			inner join CDN.ProdTechnologiaFunkcje on PTF_TechnologiaCzynnosc=Id and PTF_LiczbaObiektow&gt;0 and PTF_Planowana &amp; (1+@PCZZgrubnie)&gt;0 and (Poziom=0 or PTF_Wszystkie&gt;0)
+			group by PTF_Funkcja
+			union all
+			select 0, 1, PTG_ZasobGniazda
+			from CDN.ProdTechnologieZasobyGniazd WHERE PTG_TechnologiaOperacje = @PTCId and PTG_Planowana&amp; (1+@PCZZgrubnie)&gt;0 
+
+		) Gniazda ON 1 = 1
+		left join CDN.ProdFunkcje on PFU_Id=PTF_Funkcja
+		left join CDN.ProdObiekty POBKod ON POBKod.POB_Id = Zasob
+		left outer join CDN.ProdCzynnosciTerminy on PCT_Czynnosc=@czynnosc
+		left outer join CDN.ProdCzynnosciObiekty on PCO_Czynnosc=@czynnosc and  (PCO_Termin=0 or PCO_Termin=PCT_Id) 
+		left outer join CDN.ProdObiektyFunkcje on POF_Funkcja=PTF_Funkcja and POF_Obiekt=PCO_Obiekt AND POF_Widocznosc IN (2,3)
+			and (POF_Oddzial=0 or PCZ_Oddzial=0 or POF_Oddzial=PCZ_Oddzial) and PCO_Pochodzenie = 0
+		left outer join CDN.ProdObiekty POBG on POBG.POB_Id=POF_Obiekt and POBG.POB_Archiwalny=0 AND PCO_Pochodzenie = 0 AND PCO_Funkcja=PTF_Funkcja
+		left outer join CDN.ProdObiekty POBZ on POBZ.POB_Id=Zasob and POBZ.POB_Archiwalny=0 AND PCO_Pochodzenie = 1
+		WHERE PCZ_Id = @czynnosc
+		group by PTF_Funkcja,Zasob, PFU_Kod, PTF_LiczbaObiektow, PCT_Id, POBKod.POB_Kod
+		having PTF_LiczbaObiektow&gt;(count(POBG.POB_Id) + COUNT(POBZ.POB_Id))
+
+		if @wynik&lt;&gt;'' return '3, Brak zasobów: ' + @wynik
+	END
+	
+
+	IF @ListaKonfliktow&amp;128 = 128
+	BEGIN
+		select @wynik = @wynik+rtrim(POB_Kod)+', '
+		from CDN.ProdCzynnosciObiekty 
+		inner join CDN.ProdObiektyFunkcje on POF_Obiekt=PCO_Obiekt and POF_Funkcja=PCO_Funkcja AND POF_Widocznosc IN (2,3)
+			and (POF_Oddzial=@PCZOddzial or (POF_Oddzial=0 and not exists
+			(
+				select 1 from CDN.ProdObiektyFunkcje
+				where POF_Obiekt=PCO_Obiekt and POF_Funkcja=PCO_Funkcja and POF_Oddzial=@PCZOddzial AND POF_Widocznosc IN (2,3)
+			)
+			))
+		inner join CDN.ProdObiekty on POB_Id=PCO_Obiekt
+		where PCO_Czynnosc=@czynnosc and (@PCZIlosc&lt;POF_MinIlosc or (POF_MaxIlosc&gt;0 and POF_MaxIlosc&lt;@PCZIlosc))
+
+		if @wynik&lt;&gt;'' return '5, Ilość min/max gniazda roboczego: ' + @wynik
+	END
+
+	IF @ListaKonfliktow&amp;4096 = 4096
+	BEGIN		
+		IF @PlanowacOdJakoPriorytet = 0 
+		BEGIN
+			select @wynik = @wynik + rtrim(Kod)+' '+convert(varchar,count(*))+', '
+			from 
+			(
+				SELECT Kod, POBId, PFUId, PCTId
+				FROM @ZasobPowielone
+				where (PriorytetPodst&lt;PriorytetPow ) OR CzyPowiazana = 1
+			) W
+			group by Kod, POBId, PFUId, PCTId
+		END
+		ELSE
+		BEGIN
+			select @wynik = @wynik + rtrim(Kod)+' '+convert(varchar,count(*))+', '
+			from 
+			(
+				SELECT Kod, POBId, PFUId, PCTId
+				FROM @ZasobPowielone
+				where
+				(		 				 
+				((PlanowacOdPodst &lt; 0 AND PlanowacOdPow &lt; 0 AND PlanowacOdPodst &gt; PlanowacOdPow ) OR (PlanowacOdPodst &lt; PlanowacOdPow AND 
+				 (PlanowacOdPodst &gt;= 0 OR PlanowacOdPow &gt;= 0))) 
+				 OR 
+				 	(PlanowacOdPodst = PlanowacOdPow AND PriorytetPodst&lt;PriorytetPow))OR CzyPowiazana = 1
+			) W
+			group by Kod, POBId, PFUId, PCTId
+		END
+
+		if @wynik&lt;&gt;'' return '9, Zasoby w operacjach o niższym priorytecie: ' + @wynik
+	END
+
+	IF @ListaKonfliktow&amp;256 = 256 AND @PCZZgrubnie = 0 AND @PCZIlosc &gt; @PCZZrealizowana
+	BEGIN
+		select @wynik = @wynik+rtrim(POB_Kod)+', '
+		from 
+		(
+			select POB_Kod, O.PCO_Obiekt, O.PCO_Funkcja, T.PCT_Id
+			from CDN.ProdCzynnosciTerminy T 
+			inner join CDN.ProdCzynnosciObiekty O on O.PCO_Czynnosc=@Czynnosc and (O.PCO_Termin=0 or O.PCO_Termin=T.PCT_Id)
+			left outer join CDN.ProdObiektyFunkcje F on F.POF_Obiekt=O.PCO_Obiekt and F.POF_Funkcja=O.PCO_Funkcja AND F.POF_Widocznosc IN (2,3)
+					and (F.POF_Oddzial=@PCZOddzial or (F.POF_Oddzial=0 and not exists(select * from CDN.ProdObiektyFunkcje
+							where POF_Obiekt=O.PCO_Obiekt and POF_Funkcja=O.PCO_Funkcja and POF_Oddzial=@PCZOddzial AND POF_Widocznosc IN (2,3))))
+			inner join CDN.ProdObiekty on POB_Id=O.PCO_Obiekt and POB_NieograniczonaZdolnoscProd = 0
+			inner join CDN.ProdCzynnosciObiekty P on P.PCO_Obiekt=O.PCO_Obiekt and P.PCO_Funkcja&lt;&gt;O.PCO_Funkcja
+			inner join CDN.ProdCzynnosciTerminy U on U.PCT_Czynnosc=P.PCO_Czynnosc and (U.PCT_Id=P.PCO_Termin or P.PCO_Termin=0)
+			inner join CDN.ProdCzynnosci D on D.PCZ_Id=P.PCO_Czynnosc and (D.PCZ_Realizuje=0 or d.PCZ_Uruchomiona = 1) and D.PCZ_PlanZgrubnie=0
+					and not (D.PCZ_Id=@Czynnosc or (D.PCZ_Realizuje=@Czynnosc AND D.PCZ_Uruchomiona = 1))
+			left outer join CDN.ProdObiektyFunkcje G on G.POF_Obiekt=P.PCO_Obiekt and G.POF_Funkcja=P.PCO_Funkcja AND G.POF_Widocznosc IN (2,3)
+					and (G.POF_Oddzial=D.PCZ_Oddzial or (G.POF_Oddzial=0 and not exists(select 1 from CDN.ProdObiektyFunkcje
+							where POF_Obiekt=P.PCO_Obiekt and POF_Funkcja=P.PCO_Funkcja and POF_Oddzial=D.PCZ_Oddzial AND POF_Widocznosc IN (2,3))))
+			where T.PCT_Czynnosc= @Czynnosc AND ( (U.PCT_TerminDo+isnull(G.POF_CzasZakonczenia,0) &gt; T.PCT_TerminOd-isnull(F.POF_CzasPrzygotowania,0)-POB_ZmianaCzas
+							and (U.PCT_TerminOd&lt;T.PCT_TerminOd or (U.PCT_TerminOd=T.PCT_TerminOd and U.PCT_Id&lt;T.PCT_Id)))
+					or (T.PCT_TerminDo+isnull(F.POF_CzasZakonczenia,0) &gt; U.PCT_TerminOd-isnull(G.POF_CzasPrzygotowania,0)-POB_ZmianaCzas
+							and (T.PCT_TerminOd&lt;U.PCT_TerminOd or (T.PCT_TerminOd=U.PCT_TerminOd and T.PCT_Id&lt;U.PCT_Id)))
+				)
+		) W
+		group by PCO_Obiekt, PCO_Funkcja, PCT_Id, POB_Kod
+
+		if @wynik&lt;&gt;'' return '6, Czas zmiany gniazda roboczego: ' + @wynik
+	END
+
+	IF @ListaKonfliktow&amp;512 = 512
+	BEGIN
+		if exists(select * from CDN.ProdCzynnosci where PCZ_Id=@czynnosc and PCZ_Realizuje=0 and PCZ_Ilosc&lt;&gt;0 and PCZ_TerminZakonczenia&lt;86400*(@data-69035) )
+			and not exists(select * from CDN.ProdCzynnosci where PCZ_Realizuje=@czynnosc)
+		return '7, Brak realizacji operacji po terminie'
+	END
+
+	IF @ListaKonfliktow&amp;8192 = 8192
+	BEGIN
+		if exists(
+			select PPC_Id 
+			from CDN.ProdProcesy
+			where PPC_Id = @PPCId AND PPC_PlanowacOd&lt;0 AND @PCZTerminZ&gt;0-PPC_PlanowacOd
+			union all
+			select PTZ_Id 
+			from CDN.ProdProcesy 
+			inner join CDN.ProdTechnologiaZasoby on PTZ_TechnologiaCzynnosc=@PTCId and PTZ_TypZasobu=0
+			inner join CDN.ProdZlecElem on PZE_Zlecenie=PPC_Zlecenie and PZE_TwrTyp=PTZ_TwrTyp and PZE_TwrNumer=PTZ_TwrNumer and PZE_PlanowacOd&lt;0
+			where PPC_Id = @PPCId and PPC_PlanowacOd=0
+			group by PTZ_Id
+			having @PCZTerminZ&gt;0-min(PZE_PlanowacOd)
+		) and not exists(select * from CDN.ProdCzynnosci where PCZ_Realizuje=@czynnosc)
+			return '10, Operacja zaplanowana po wyznaczonym terminie'
+	END
+	
+	return ''
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,204 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Usuwanie funkcji SrtKwotaZmniejszenWartoscInwentarzowa"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Usuwanie funkcji SrtKwotaZmniejszenWartoscInwentarzowa */</I><BR>
+IF EXISTS (SELECT name  FROM sysobjects WHERE name = 'SrtKwotaZmniejszenWartoscInwentarzowa' AND type = 'FN')
+ drop function CDN.SrtKwotaZmniejszenWartoscInwentarzowa;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie funkcji SrtKwotaZmniejszenWartoscInwentarzowa"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie funkcji SrtKwotaZmniejszenWartoscInwentarzowa */</I><BR>
+
+CREATE   function CDN.SrtKwotaZmniejszenWartoscInwentarzowa(@SrtNumer int, @DataNaDzien int ,@DataRozp int, @DataPoczatekB int, @Zakres int, @DataDok int = null, @WartoscSys tinyint = 0, @tor tinyint = 0) 
+returns decimal(15,2) 
+AS 
+BEGIN 
+
+	-- @ZestTryb	- 0 - działanie po staremu (@SrtNumer - to jest GIDNumer środka trwałego), 1 - kwota dla zestawu (@SrtNumer - to jest GIDNumer karty zestawu), 2 - kwota dla elementu zestawu (@SrtNumer - to jest SZE_Id)
+
+  declare @wynik decimal(15,2);
+  declare @OT int = 2048,@OTK int = 2176,  @LT int = 2096,@LTK int = 2224,  @MW int = 2432,@MWK int = 2496,  @NT int = 2536; 
+   
+    declare @t1 tinyint = 1, @t2 tinyint = 2, @t3 tinyint = 3, @t4 tinyint = 4, @t5 tinyint = 5, @ptor tinyint = @tor + 1
+	
+	set @DataDok = isnull(@DataDok,0)
+
+  if (@Zakres = 0 )
+  begin
+    set @wynik =
+         isnull(
+			(
+				select max(case @ptor when @t1 then T1 
+									when @t2 then T2
+									when @t3 then T3
+									when @t4 then T4
+									when @t5 then T5
+									else 0
+									end) kwota
+				from (
+					select sum(case when @WartoscSys = 1 then SHE_KwotaInwSys else SHE_KwotaInw end)  T1
+						, sum(case when @WartoscSys = 1 then SHE_PodstawaAmSys else SHE_PodstawaAm end) T2
+						, sum(case when @WartoscSys = 1 then SHE_PodstawaAmTor3Sys else SHE_PodstawaAmTor3 end) T3
+						, sum(case when @WartoscSys = 1 then SHE_PodstawaAmTor4Sys else SHE_PodstawaAmTor4 end) T4
+						, sum(case when @WartoscSys = 1 then SHE_PodstawaAmTor5Sys else SHE_PodstawaAmTor5 end) T5
+					from cdn.srthistelem 
+					where she_srtnumer = @SrtNumer
+						and she_gidtyp in (@LT, @LTK) 
+						and ((she_kwotainw &gt; 0 and @ptor = @t1) OR (SHE_PodstawaAm &gt; 0 and @ptor = @t2) OR (SHE_PodstawaAmTor3 &gt; 0 and @ptor = @t3) OR (SHE_PodstawaAmTor4 &gt; 0 and @ptor = @t4) OR (SHE_PodstawaAmTor5 &gt; 0 and @ptor = @t5)) 
+						and she_data &lt;= @DataNaDzien
+						and (@DataDok = 0 or @DataDok &lt;&gt; 0  and she_dataZap &lt;= @DataDok)
+				) a ),0)
+       - isnull(
+			(
+				select max(case @ptor when @t1 then T1 
+									when @t2 then T2
+									when @t3 then T3
+									when @t4 then T4
+									when @t5 then T5
+									else 0
+									end) kwota
+				from (
+					select sum(case when @WartoscSys = 1 then SHE_KwotaInwSys else SHE_KwotaInw end)  T1
+						, sum(case when @WartoscSys = 1 then SHE_PodstawaAmSys else SHE_PodstawaAm end) T2
+						, sum(case when @WartoscSys = 1 then SHE_PodstawaAmTor3Sys else SHE_PodstawaAmTor3 end) T3
+						, sum(case when @WartoscSys = 1 then SHE_PodstawaAmTor4Sys else SHE_PodstawaAmTor4 end) T4
+						, sum(case when @WartoscSys = 1 then SHE_PodstawaAmTor5Sys else SHE_PodstawaAmTor5 end) T5
+					from cdn.srthistelem 
+					where she_srtnumer = @SrtNumer 
+						and she_gidtyp in (@OTK, @MW, @MWK)
+						and ((she_kwotainw &lt; 0 and @ptor = @t1) OR (SHE_PodstawaAm &lt; 0 and @ptor = @t2) OR (SHE_PodstawaAmTor3 &lt; 0 and @ptor = @t3) OR (SHE_PodstawaAmTor4 &lt; 0 and @ptor = @t4) OR (SHE_PodstawaAmTor5 &lt; 0 and @ptor = @t5)) 
+						and  (she_data &gt; @DataRozp and she_data &lt;= @DataNaDzien)
+						and (@DataDok = 0 or @DataDok &lt;&gt; 0  and she_dataZap &lt;= @DataDok)
+				) a ),0)		
+  end
+			
+			
+  if (@Zakres = 1 )
+  begin
+    set @wynik =
+		isnull(
+			(
+				select max(case @ptor when @t1 then T1 
+									when @t2 then T2
+									when @t3 then T3
+									when @t4 then T4
+									when @t5 then T5
+									else 0
+									end) kwota
+				from (
+					select sum(case when @WartoscSys = 1 then SHE_KwotaInwSys else SHE_KwotaInw end)  T1
+						, sum(case when @WartoscSys = 1 then SHE_PodstawaAmSys else SHE_PodstawaAm end) T2
+						, sum(case when @WartoscSys = 1 then SHE_PodstawaAmTor3Sys else SHE_PodstawaAmTor3 end) T3
+						, sum(case when @WartoscSys = 1 then SHE_PodstawaAmTor4Sys else SHE_PodstawaAmTor4 end) T4
+						, sum(case when @WartoscSys = 1 then SHE_PodstawaAmTor5Sys else SHE_PodstawaAmTor5 end) T5
+					from cdn.srthistelem 
+					where she_srtnumer = @SrtNumer 
+						and (she_gidtyp = @LT or she_gidtyp = @LTK  ) 
+						and ((she_kwotainw &gt; 0 and @ptor = @t1) OR (SHE_PodstawaAm &gt; 0 and @ptor = @t2) OR (SHE_PodstawaAmTor3 &gt; 0 and @ptor = @t3) OR (SHE_PodstawaAmTor4 &gt; 0 and @ptor = @t4) OR (SHE_PodstawaAmTor5 &gt; 0 and @ptor = @t5)) 
+						and   she_data &lt;= @DataNaDzien
+						and (@DataDok = 0 or @DataDok &lt;&gt; 0  and she_dataZap &lt;= @DataDok)
+				) a ),0)
+      - isnull(
+			(
+				select max(case @ptor when @t1 then T1 
+									when @t2 then T2
+									when @t3 then T3
+									when @t4 then T4
+									when @t5 then T5
+									else 0
+									end) kwota
+				from (
+					select sum(case when @WartoscSys = 1 then SHE_KwotaInwSys else SHE_KwotaInw end)  T1
+						, sum(case when @WartoscSys = 1 then SHE_PodstawaAmSys else SHE_PodstawaAm end) T2
+						, sum(case when @WartoscSys = 1 then SHE_PodstawaAmTor3Sys else SHE_PodstawaAmTor3 end) T3
+						, sum(case when @WartoscSys = 1 then SHE_PodstawaAmTor4Sys else SHE_PodstawaAmTor4 end) T4
+						, sum(case when @WartoscSys = 1 then SHE_PodstawaAmTor5Sys else SHE_PodstawaAmTor5 end) T5
+					from cdn.srthistelem 
+					where she_srtnumer = @SrtNumer 
+						and she_gidtyp in (@OTK, @MWK, @MW)
+						and ((she_kwotainw &lt; 0 and @ptor = @t1) OR (SHE_PodstawaAm &lt; 0 and @ptor = @t2) OR (SHE_PodstawaAmTor3 &lt; 0 and @ptor = @t3) OR (SHE_PodstawaAmTor4 &lt; 0 and @ptor = @t4) OR (SHE_PodstawaAmTor5 &lt; 0 and @ptor = @t5)) 
+						and  (she_data &gt;= @DataRozp and she_data &lt;= @DataNaDzien)
+						and (@DataDok = 0 or @DataDok &lt;&gt; 0  and she_dataZap &lt;= @DataDok)
+				) a ),0)
+      
+  end
+  
+  
+  if (@Zakres = 2 )
+   begin
+   set @wynik =
+		isnull(
+			(
+				select max(case @ptor when @t1 then T1 
+									when @t2 then T2
+									when @t3 then T3
+									when @t4 then T4
+									when @t5 then T5
+									else 0
+									end) kwota
+				from (
+					select sum(case when @WartoscSys = 1 then SHE_KwotaInwSys else SHE_KwotaInw end)  T1
+							, sum(case when @WartoscSys = 1 then SHE_PodstawaAmSys else SHE_PodstawaAm end) T2
+							, sum(case when @WartoscSys = 1 then SHE_PodstawaAmTor3Sys else SHE_PodstawaAmTor3 end) T3
+							, sum(case when @WartoscSys = 1 then SHE_PodstawaAmTor4Sys else SHE_PodstawaAmTor4 end) T4
+							, sum(case when @WartoscSys = 1 then SHE_PodstawaAmTor5Sys else SHE_PodstawaAmTor5 end) T5
+					from cdn.srthistelem 
+					where she_srtnumer = @SrtNumer 
+						and (she_gidtyp = @LT or she_gidtyp = @LTK  ) 
+						and ((she_kwotainw &gt; 0 and @ptor = @t1) OR (SHE_PodstawaAm &gt; 0 and @ptor = @t2) OR (SHE_PodstawaAmTor3 &gt; 0 and @ptor = @t3) OR (SHE_PodstawaAmTor4 &gt; 0 and @ptor = @t4) OR (SHE_PodstawaAmTor5 &gt; 0 and @ptor = @t5)) 
+						and  (she_data &gt;@DataPoczatekB and she_data &lt;= @DataNaDzien)
+						and (@DataDok = 0 or @DataDok &lt;&gt; 0  and she_dataZap &lt;= @DataDok)
+				) a ),0)
+      - isnull(
+			(
+				select max(case @ptor when @t1 then T1 
+									when @t2 then T2
+									when @t3 then T3
+									when @t4 then T4
+									when @t5 then T5
+									else 0
+									end) kwota
+				from (
+					select sum(case when @WartoscSys = 1 then SHE_KwotaInwSys else SHE_KwotaInw end)  T1
+							, sum(case when @WartoscSys = 1 then SHE_PodstawaAmSys else SHE_PodstawaAm end) T2
+							, sum(case when @WartoscSys = 1 then SHE_PodstawaAmTor3Sys else SHE_PodstawaAmTor3 end) T3
+							, sum(case when @WartoscSys = 1 then SHE_PodstawaAmTor4Sys else SHE_PodstawaAmTor4 end) T4
+							, sum(case when @WartoscSys = 1 then SHE_PodstawaAmTor5Sys else SHE_PodstawaAmTor5 end) T5
+					from cdn.srthistelem 
+					where she_srtnumer = @SrtNumer 
+						and she_gidtyp in (@OTK, @MWK, @MW)
+						and ((she_kwotainw &lt; 0 and @ptor = @t1) OR (SHE_PodstawaAm &lt; 0 and @ptor = @t2) OR (SHE_PodstawaAmTor3 &lt; 0 and @ptor = @t3) OR (SHE_PodstawaAmTor4 &lt; 0 and @ptor = @t4) OR (SHE_PodstawaAmTor5 &lt; 0 and @ptor = @t5)) 
+						and  (she_data &gt;@DataPoczatekB and she_data &lt;= @DataNaDzien)
+						and (@DataDok = 0 or @DataDok &lt;&gt; 0  and she_dataZap &lt;= @DataDok)
+				) a ),0)
+   end
+ return( @wynik)
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do funkcji SrtKwotaZmniejszenWartoscInwentarzowa"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do funkcji SrtKwotaZmniejszenWartoscInwentarzowa */</I><BR>
+GRANT EXECUTE ON CDN.SrtKwotaZmniejszenWartoscInwentarzowa TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

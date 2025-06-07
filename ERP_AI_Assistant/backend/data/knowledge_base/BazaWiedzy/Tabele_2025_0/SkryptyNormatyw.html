@@ -1,0 +1,301 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="fn_Split"></A><PRE>
+          <FONT SIZE="2"><I>/* fn_Split */</I><BR>
+CREATE  FUNCTION cdn.fn_Split(@text varchar(8000), @delimiter varchar(20) = ' ')
+RETURNS @Strings TABLE
+(   
+  position int IDENTITY PRIMARY KEY,
+  value varchar(8000)  
+)
+AS
+BEGIN
+
+DECLARE @index int
+SET @index = -1
+
+WHILE (LEN(@text) &gt; 0)
+  BEGIN 
+    SET @index = CHARINDEX(@delimiter , @text) 
+    IF (@index = 0) AND (LEN(@text) &gt; 0) 
+      BEGIN  
+        INSERT INTO @Strings VALUES (@text)
+          BREAK 
+      END 
+    IF (@index &gt; 1) 
+      BEGIN  
+        INSERT INTO @Strings VALUES (LEFT(@text, @index - 1))  
+        SET @text = RIGHT(@text, (LEN(@text) - @index)) 
+      END 
+    ELSE
+      SET @text = RIGHT(@text, (LEN(@text) - @index))
+    END
+  RETURN
+END
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="ProdCzynnosciRealizujaceTechnologie"></A><PRE>
+          <FONT SIZE="2"><I>/* ProdCzynnosciRealizujaceTechnologie */</I><BR>
+create view [CDN].ProdCzynnosciRealizujaceTechnologie
+as
+select ptc_id,ptc_kod,ptc_nazwa, ptc_czasRozliczeniowy,
+pcz_id,pcz_czasrealizacji,
+pza_Id,  PZA_IloscTechnologiczna, PZA_Ilosc,
+PTZ_Id,PTZ_Kod,PTZ_Nazwa, PTZ_Ilosc,PCZ_PZLID,PTZ_TypZasobu
+
+from cdn.Prodtechnologiaczynnosci 
+join cdn.ProdCzynnosci on pcz_technologiaczynnosc = ptc_id
+join cdn.ProdZasoby on pcz_id = PZA_Czynnosc
+join cdn.ProdTechnologiaZasoby on PTZ_id = pza_TechnologiaZasob
+where pcz_realizuje &lt;&gt; 0 and PTZ_TypZasobu = 0
+
+
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="ProdCzynnosciPodczasProdukcji"></A><PRE>
+          <FONT SIZE="2"><I>/* ProdCzynnosciPodczasProdukcji */</I><BR>
+create FUNCTION CDN.ProdCzynnosciPodczasProdukcji
+(@IdProduktu INT)
+RETURNS TABLE
+as RETURN
+(
+         WITH polprodukty_cte(pr_id,
+                              pr_TechnologiaCzynnosc,
+                              pr_TypZasobu,
+                              pr_Kod,
+                              pr_Nazwa,
+                              pr_TechnologiaZasob,
+                              pr_test,
+                              pr_czynnosc)
+              AS (
+              SELECT pp.PTZ_Id,
+                     pp.PTZ_TechnologiaCzynnosc,
+                     pp.PTZ_TypZasobu,
+                     pp.PTZ_Kod,
+                     pp.PTZ_Nazwa,
+                     pp.PTZ_TechnologiaZasob,
+                     pr.PTZ_Id,
+                     isnull(pr.PTZ_TechnologiaCzynnosc, pp.PTZ_TechnologiaCzynnosc)
+              FROM CDN.ProdTechnologiaZasoby pp
+                   LEFT JOIN CDN.ProdTechnologiaZasoby ps ON ps.[PTZ_TechnologiaCzynnosc] = pp.[PTZ_TechnologiaCzynnosc]
+                   LEFT JOIN CDN.ProdTechnologiaZasoby pr ON pr.ptz_id = pp.ptz_technologiazasob
+              WHERE ps.PTZ_Id = @IdProduktu
+              UNION ALL
+              SELECT pp.PTZ_Id,
+                     pp.PTZ_TechnologiaCzynnosc,
+                     pp.PTZ_TypZasobu,
+                     pp.PTZ_Kod,
+                     pp.PTZ_Nazwa,
+                     pp.PTZ_TechnologiaZasob,
+                     pr.PTZ_Id,
+                     pr.PTZ_TechnologiaCzynnosc
+              FROM CDN.ProdTechnologiaZasoby pp
+                   JOIN CDN.ProdTechnologiaZasoby ps ON ps.[PTZ_TechnologiaCzynnosc] = pp.[PTZ_TechnologiaCzynnosc]
+                   JOIN CDN.ProdTechnologiaZasoby pr ON pr.ptz_id = pp.ptz_technologiazasob
+                   JOIN polprodukty_cte ct ON ps.ptz_id = pr_TechnologiaZasob)
+              SELECT PTC_Id
+              FROM
+              (
+                  SELECT pr_czynnosc
+                  FROM polprodukty_cte
+                  GROUP BY pr_czynnosc
+              ) a
+              JOIN cdn.prodTechnologiaCzynnosci ON PTC_Id = pr_czynnosc
+)
+
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="ProdProduktyWZleceniu"></A><PRE>
+          <FONT SIZE="2"><I>/* ProdProduktyWZleceniu */</I><BR>
+create FUNCTION CDN.ProdProduktyWZleceniu
+(
+  @listaZlecen VARCHAR(MAX) ,@OdDnia      INT, @DoDnia      INT)
+RETURNS TABLE
+AS
+RETURN
+(
+
+select zlecenie, produkt,proces, sum(iloscWytworzona) iloscWytworzona,sum(MnoznikIlosci) MnoznikIlosci
+from(
+SELECT pza_pzlid                      Zlecenie,
+          PZL_DataWystawienia,
+          pza_TechnologiaZasob        Produkt,
+          PZA_Ilosc                   IloscWytworzona,
+          PZA_IloscTechnologiczna,
+          PTZ_Ilosc,
+          pza_czynnosc                Proces,
+          case  when PZA_Ilosc &lt;&gt; 0 then PZA_Ilosc
+                                else 0 end MnoznikIlosci,
+          pza_id,
+          pza_TechnologiaZasob
+   FROM cdn.ProdZasoby
+   JOIN cdn.ProdTechnologiaZasoby ON PTZ_id=pza_TechnologiaZasob
+   JOIN cdn.ProdZlecenia ON PZL_Id=pza_pzlid
+   WHERE PTZ_TypZasobu = 0 and  PZA_Ilosc  &gt; 0 and  not exists  (SELECT PZP_PZAIDWykonany FROM CDN.ProdZwiazanePolprodukty where  pza_id = PZP_PZAIDWykonany)
+	)a	
+	where (@listaZlecen = '' OR Zlecenie IN (SELECT CAST(StrValue AS INT) FROM cdn.Split(@listaZlecen, ',',0))) 
+	and (@OdDnia = 0 OR @DoDnia = 0  or  PZL_DataWystawienia between @oDDnia and @DoDnia)
+	group by  zlecenie, produkt,proces
+)
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="NormatywZleceniaIlosciMaterialowPodczasProdukcji"></A><PRE>
+          <FONT SIZE="2"><I>/* NormatywZleceniaIlosciMaterialowPodczasProdukcji */</I><BR>
+create FUNCTION CDN.NormatywZleceniaIlosciMaterialowPodczasProdukcji
+(
+  @IdProduktu  INT,
+  @listaZlecen VARCHAR(MAX),
+  @OdDnia      INT,
+  @DoDnia      INT)
+RETURNS TABLE
+AS
+RETURN
+(
+	WITH cte_query
+	AS
+	(
+		SELECT pcz_id, ptc_id, cp.PTC_Id czynnosc, ptz_id Zasob, ptz_id,pza_id, case when ptz_id is null then  ms.pza_id  else ptz_id end zasobUzyty,
+			PZA_Ilosc, pza_czynnosc, PZA_PZLId Zlecenie--, pwz.produkt, pwz.IloscWytworzona,pwz.MnoznikIlosci, 
+		FROM
+		(
+			SELECT PTC_Id
+			FROM CDN.ProdCzynnosciPodczasProdukcji(@IdProduktu)
+		) cp
+			JOIN cdn.ProdCzynnosci ON pcz_technologiaczynnosc=cp.ptc_id
+			JOIN cdn.ProdZasoby ms ON pcz_id=PZA_Czynnosc
+			JOIN cdn.ProdTechnologiaZasoby ON PTZ_id=ms.pza_TechnologiaZasob
+		WHERE pcz_realizuje &lt;&gt; 0 AND (PTZ_TypZasobu&lt;&gt;0 or PTZ_TypZasobu is null)
+	)
+	SELECT ms.Zlecenie, Czynnosc, Zasob, zasobUzyty, ZuzycieSumaryczne, ZuzycieSumaryczne/WytworzonoSumarycznie ZuzycieSumaryczneZnormalizowane
+	FROM
+	(
+	-------------------------------
+		SELECT Zlecenie, Czynnosc, Zasob, zasobUzyty, SUM(IloscWytworzona) WytworzonoSumarycznie, SUM(PZA_Ilosc) ZuzycieSumaryczne
+		FROM
+		(
+			SELECT pcz_id, ptc_id, PTC_Id czynnosc, Zasob, zasobUzyty, SUM(PZA_Ilosc) PZA_Ilosc, pwz.produkt, pwz.IloscWytworzona, pwz.MnoznikIlosci, cte_query.Zlecenie
+			FROM cte_query
+	  			JOIN (
+					select * from cdn.ProdProduktyWZleceniu (@listaZlecen,@odDnia,@Dodnia)
+				) pwz ON pwz.zlecenie= cte_query.Zlecenie and pwz.proces = pza_czynnosc
+			GROUP BY pcz_id, ptc_id, PTC_Id, Zasob, zasobUzyty, pwz.produkt, pwz.IloscWytworzona, pwz.MnoznikIlosci, cte_query.Zlecenie
+		----------------------
+		) czs
+		GROUP BY Zlecenie, Czynnosc, Zasob ,zasobUzyty
+	) ms
+);
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="NormatywIlosciMaterialowPodczasProdukcji"></A><PRE>
+          <FONT SIZE="2"><I>/* NormatywIlosciMaterialowPodczasProdukcji */</I><BR>
+CREATE FUNCTION CDN.NormatywIlosciMaterialowPodczasProdukcji
+(@IdProduktu  INT,
+@listaZlecen VARCHAR(MAX),
+@OdDnia      INT,
+@DoDnia      INT)
+RETURNS TABLE
+AS
+     RETURN
+(
+
+WITH cte as
+(
+    SELECT * FROM CDN.NormatywZleceniaIlosciMaterialowPodczasProdukcji(@IdProduktu, @listaZlecen, @OdDnia, @DoDnia)
+)
+
+    SELECT Czynnosc,
+           Zasob,
+           zasobUzyty,
+           MIN(ZuzycieSumaryczneZnormalizowane) IloscMin,
+           AVG(ZuzycieSumaryczneZnormalizowane) IloscAVG,
+           MAX(ZuzycieSumaryczneZnormalizowane) IloscMax,
+		   (select top 1 Zlecenie from cte mx where cte.zasobUzyty = mx.zasobUzyty order by ZuzycieSumaryczneZnormalizowane desc) IdZpMax,
+		   (select top 1 Zlecenie from cte mn where  cte.zasobUzyty = mn.zasobUzyty  order by ZuzycieSumaryczneZnormalizowane ) IdZpMin
+    FROM cte GROUP BY Czynnosc,Zasob ,zasobUzyty
+);
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="NormatywCzasPodczasProdukcji"></A><PRE>
+          <FONT SIZE="2"><I>/* NormatywCzasPodczasProdukcji */</I><BR>
+create FUNCTION CDN.NormatywCzasPodczasProdukcji(@IdProduktu  INT,
+                                                    @listaZlecen VARCHAR(MAX), @OdDnia int, @DoDnia int)
+RETURNS TABLE
+AS
+	RETURN
+         (
+			WITH cte AS
+			(
+				SELECT Czynnosc, Czas/MnoznikIlosci CzasZnormalizowany, pz.Zlecenie, MnoznikIlosci,Czas
+				FROM
+				(
+					SELECT Czynnosc, SUM(Czas) Czas, Sum(MnoznikIlosci) MnoznikIlosci, Zlecenie
+					FROM
+					(
+						SELECT r.PTC_Id czynnosc,r.pcz_id proces, r.Pcz_czasRealizacji Czas, pcz_pzlid Zlecenie,MnoznikIlosci
+						FROM cdn.ProdCzynnosciRealizujaceTechnologie r
+		 				join (
+							select Zlecenie,Proces, MnoznikIlosci from cdn.ProdProduktyWZleceniu (@listaZlecen,@odDnia,@Dodnia)
+							) pwz on pwz.zlecenie = pcz_pzlid and pwz.proces = pcz_id
+						JOIN (
+							SELECT PTC_Id
+							FROM CDN.ProdCzynnosciPodczasProdukcji(@IdProduktu)
+							) c ON c.ptc_id = r.ptc_id
+					) z
+					GROUP BY Czynnosc, Zlecenie
+				) pz
+			) 
+
+			SELECT czynnosc,
+			cast (MIN(CzasZnormalizowany) as int)  CzasMin,
+			cast (AVG(CzasZnormalizowany) as int ) CzasAvg,
+			cast (MAX(CzasZnormalizowany) as int ) CzasMax,
+                   (select top 1 Zlecenie from cte order by CzasZnormalizowany desc) IdZpMax,
+                   (select top 1 Zlecenie from cte order by CzasZnormalizowany ) IdZpMin
+			FROM cte
+			GROUP BY Czynnosc
+		)
+	
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,207 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="XLModyfikujCzynnoscPDO"></A><PRE>
+          <FONT SIZE="2"><I>/* XLModyfikujCzynnoscPDO */</I><BR>
+CREATE PROCEDURE CDN.XLModyfikujCzynnoscPDO
+(
+/* ==========================================================================================
+	SQL API: Procedura serwerowa do modyfikacji czynności przetwarzania danych osobowych
+
+	Parametry wejściowe: 
+   ========================================================================================== */
+	@Id INT									-- Identyfikator czynności (PDOC_Id)
+	,@OpeNumer INT							-- GidNumer operatora, który wykonuje tą operacje
+	,@KategorieOsob VARCHAR(4000)=NULL		-- Kategorie osób, których dane dotyczą
+	,@KategorieDO VARCHAR(4000)=NULL		-- Kategorie danych osobowych
+    ,@KategorieOdbiorcow VARCHAR(4000)=NULL	-- Kategorie odbiorców, którym dane ujawniono lub zostaną ujawnione
+    ,@PlanowaneTerminy VARCHAR(4000)=NULL	-- Planowane terminy usunięcia danych
+    ,@Kategoria INT=NULL					-- Kategoria czynności (Identyfikator z tabeli CDN.Slowniki)
+    ,@Cel VARCHAR(4000)=NULL				-- Cel przetwarzania
+    ,@Archiwalny TINYINT=NULL				-- Archiwalny
+    ,@Dodatkowe VARCHAR(4000)=NULL			-- Informacje dodatkowe 
+    ,@AdminTyp SMALLINT=NULL				-- Dane podmiotu powierzającego - GidTyp Administratora
+    ,@AdminNumer INT=NULL					-- Dane podmiotu powierzającego - GidNumer Administratora
+    ,@AdminLp INT=NULL						-- Dane podmiotu powierzającego - Lp osoby Administratora
+    ,@AdminAdr INT=NULL						-- Dane podmiotu powierzającego - Numer adresu Administratora
+    ,@PrzedstTyp SMALLINT=NULL				-- Dane podmiotu powierzającego - GidTyp Przedstawiciela
+    ,@PrzedstNumer INT=NULL					-- Dane podmiotu powierzającego - GidNumer Przedstawiciela
+    ,@PrzedstLp INT=NULL					-- Dane podmiotu powierzającego - Lp osoby Przedstawiciela
+    ,@PrzedstAdr INT=NULL					-- Dane podmiotu powierzającego - Numer adresu Przedstawiciela
+    ,@InspTyp SMALLINT=NULL					-- Dane podmiotu powierzającego - GidTyp Inspektora
+    ,@InspNumer INT=NULL					-- Dane podmiotu powierzającego - GidNumer Inspektora
+    ,@InspLp INT=NULL						-- Dane podmiotu powierzającego - Lp osoby Inspektora
+    ,@InspAdr INT=NULL						-- Dane podmiotu powierzającego - Numer adresu Inspektora
+
+
+/* ==========================================================================================
+	Return:
+	 0 : Operacja zakończona sukcesem
+	-1 : Nie powiodła się modyfikacja w tabeli CDN.PDOCzynnosci
+	-2 : Podany operator nie występuje w bazie
+	-3 : Nie istnieje wpis w tabeli CDN.PDOCzynnosci o podanym identyfikatorze
+	-10 : Podany kontrahent (administrator) nie występuje w bazie
+	-11 : Podany adres kontrahenta (administrator) nie występuje w bazie
+	-12 : Podana osoba kontrahenta (administrator) nie występuje w bazie
+	-13 : Podany pracownik (administrator) nie występuje w bazie
+	-20 : Podany kontrahent (przedstawiciel) nie występuje w bazie
+	-21 : Podany adres kontrahenta (przedstawiciel) nie występuje w bazie
+	-22 : Podana osoba kontrahenta (przedstawiciel) nie występuje w bazie
+	-23 : Podany pracownik (przedstawiciel) nie występuje w bazie
+	-30 : Podany kontrahent (inspektor) nie występuje w bazie
+	-31 : Podany adres kontrahenta (inspektor) nie występuje w bazie
+	-32 : Podana osoba kontrahenta (inspektor) nie występuje w bazie
+	-33 : Podany pracownik (inspektor) nie występuje w bazie
+   ========================================================================================== */
+)
+AS
+BEGIN
+
+	DECLARE @TimeStamp INT
+	DECLARE @TypPDOC SMALLINT
+	DECLARE @PDOCId INT
+	SET @PDOCId = 0
+	SET @TypPDOC = 6562
+	
+	SET @TimeStamp = DATEDIFF(s,'19900101',GETDATE())
+
+	IF NOT EXISTS(SELECT * FROM CDN.PDOCzynnosci WHERE PDOC_Id=@Id) BEGIN
+		RAISERROR ('Nie istnieje wpis w tabeli CDN.PDOCzynnosci o podanym identyfikatorze.', 16, 1)
+		RETURN -3
+	END
+
+
+	UPDATE PDOC
+	SET
+		PDOC_KategorieOsob=IsNull(@KategorieOsob,PDOC.PDOC_KategorieOsob)
+        ,PDOC_KategorieDO=IsNull(@KategorieDO,PDOC.PDOC_KategorieDO)
+        ,PDOC_KategorieOdbiorcow=IsNull(@KategorieOdbiorcow,PDOC.PDOC_KategorieOdbiorcow)
+        ,PDOC_PlanowaneTerminy=IsNull(@PlanowaneTerminy,PDOC.PDOC_PlanowaneTerminy)
+        ,PDOC_CzasModyfikacji=@TimeStamp
+        ,PDOC_OpeNumerM=@OpeNumer
+        ,PDOC_Kategoria=IsNull(S.SLW_ID,PDOC.PDOC_Kategoria)
+        ,PDOC_Cel=IsNull(@Cel,PDOC.PDOC_Cel)
+        ,PDOC_Archiwalny=IsNull(@Archiwalny,PDOC.PDOC_Archiwalny)
+        ,PDOC_Dodatkowe=IsNull(@Dodatkowe,PDOC.PDOC_Dodatkowe)
+        ,PDOC_AdminTyp=IsNull(@AdminTyp,PDOC.PDOC_AdminTyp)
+        ,PDOC_AdminNumer=IsNull(CASE WHEN @AdminTyp=32 THEN KAdmin.Knt_GIDNumer ELSE PAdmin.Prc_GIDNumer END,PDOC.PDOC_AdminNumer)
+        ,PDOC_AdminLp=IsNull(OAdmin.KnS_KntLp,PDOC.PDOC_AdminLp)
+        ,PDOC_AdminAdr=IsNull(AAdmin.KnA_GIDNumer,PDOC.PDOC_AdminAdr)
+        ,PDOC_PrzedstTyp=IsNull(@PrzedstTyp,PDOC.PDOC_PrzedstTyp)
+        ,PDOC_PrzedstNumer=IsNull(CASE WHEN @PrzedstTyp=32 THEN KPrzedst.Knt_GIDNumer ELSE PPrzedst.Prc_GIDNumer END,PDOC.PDOC_PrzedstNumer)
+        ,PDOC_PrzedstLp=IsNull(OPrzedst.KnS_KntLp,PDOC.PDOC_PrzedstLp)
+        ,PDOC_PrzedstAdr=IsNull(APrzedst.KnA_GIDNumer,PDOC.PDOC_PrzedstAdr)
+        ,PDOC_InspTyp=IsNull(@InspTyp,PDOC.PDOC_InspTyp)
+        ,PDOC_InspNumer=IsNull(CASE WHEN @InspTyp=32 THEN KInsp.Knt_GIDNumer ELSE PInsp.Prc_GIDNumer END,PDOC.PDOC_InspNumer)
+        ,PDOC_InspLp=IsNull(OInsp.KnS_KntLp,PDOC.PDOC_InspLp)
+        ,PDOC_InspAdr=IsNull(AInsp.KnA_GIDNumer,PDOC.PDOC_InspAdr)
+	FROM cdn.PDOCzynnosci as PDOC
+
+	LEFT OUTER JOIN CDN.Slowniki S ON S.SLW_ID=@Kategoria
+
+	LEFT OUTER JOIN CDN.KntKarty KAdmin ON KAdmin.Knt_GIDNumer=@AdminNumer AND KAdmin.Knt_GIDTyp=@AdminTyp	
+	LEFT OUTER JOIN CDN.KntAdresy AAdmin ON AAdmin.KnA_GIDNumer=@AdminAdr AND AAdmin.KnA_KntTyp=KAdmin.Knt_GIDTyp AND AAdmin.KnA_KntNumer=KAdmin.Knt_GIDNumer
+	LEFT OUTER JOIN CDN.KntOsoby OAdmin ON OAdmin.KnS_KntTyp=@AdminTyp AND OAdmin.KnS_KntNumer=@AdminNumer AND OAdmin.KnS_KntLp=@AdminLp
+
+	LEFT OUTER JOIN CDN.KntKarty KPrzedst ON KPrzedst.Knt_GIDNumer=@PrzedstNumer AND KPrzedst.Knt_GIDTyp=@PrzedstTyp	
+	LEFT OUTER JOIN CDN.KntAdresy APrzedst ON APrzedst.KnA_GIDNumer=@PrzedstAdr AND APrzedst.KnA_KntTyp=KPrzedst.Knt_GIDTyp AND APrzedst.KnA_KntNumer=KPrzedst.Knt_GIDNumer
+	LEFT OUTER JOIN CDN.KntOsoby OPrzedst ON OPrzedst.KnS_KntTyp=@PrzedstTyp AND OPrzedst.KnS_KntNumer=@PrzedstNumer AND OPrzedst.KnS_KntLp=@PrzedstLp
+
+	LEFT OUTER JOIN CDN.KntKarty KInsp ON KInsp.Knt_GIDNumer=@InspNumer AND KInsp.Knt_GIDTyp=@InspTyp	
+	LEFT OUTER JOIN CDN.KntAdresy AInsp ON AInsp.KnA_GIDNumer=@InspAdr AND AInsp.KnA_KntTyp=KInsp.Knt_GIDTyp AND AInsp.KnA_KntNumer=KInsp.Knt_GIDNumer
+	LEFT OUTER JOIN CDN.KntOsoby OInsp ON OInsp.KnS_KntTyp=@InspTyp AND OInsp.KnS_KntNumer=@InspNumer AND OInsp.KnS_KntLp=@InspLp
+
+	
+	LEFT OUTER JOIN CDN.PrcKarty PAdmin ON PAdmin.Prc_GIDNumer=@AdminNumer AND PAdmin.Prc_GIDTyp=@AdminTyp
+	LEFT OUTER JOIN CDN.PrcKarty PPrzedst ON PPrzedst.Prc_GIDNumer=@PrzedstNumer AND PPrzedst.Prc_GIDTyp=@PrzedstTyp
+	LEFT OUTER JOIN CDN.PrcKarty PInsp ON PInsp.Prc_GIDNumer=@InspNumer AND PInsp.Prc_GIDTyp=@InspTyp
+	WHERE PDOC_id=@Id
+
+			
+
+	IF @@ERROR&lt;&gt;0 BEGIN
+
+		IF NOT EXISTS(SELECT * FROM CDN.OpeKarty WHERE Ope_GIDNumer=@OpeNumer) BEGIN
+			RAISERROR ('Wystąpił błąd podczas modyfikacji czynności przetwarzania danych osobowych. Podany operator nie występuje w bazie.', 16, 1)
+			RETURN -2
+		END	
+					
+		IF @AdminTyp=32 BEGIN
+			IF NOT EXISTS(SELECT * FROM CDN.KntKarty WHERE Knt_GIDNumer=@AdminNumer) BEGIN 
+				RAISERROR ('Wystąpił błąd podczas modyfikacji czynności przetwarzania danych osobowych. Podany kontrahent (administrator) nie występuje w bazie.', 16, 1)
+				RETURN -10
+			END ELSE
+				IF NOT EXISTS(SELECT * FROM CDN.KntAdresy WHERE KnA_GIDNumer=@AdminAdr) BEGIN 
+					RAISERROR ('Wystąpił błąd podczas modyfikacji czynności przetwarzania danych osobowych. Podany adres kontrahenta (administrator) nie występuje w bazie.', 16, 1)
+					RETURN -11
+				END ELSE IF NOT EXISTS(SELECT * FROM CDN.KntOsoby WHERE KnS_KntTyp=@AdminTyp AND KnS_KntNumer=@AdminNumer AND KnS_KntLp=@AdminLp) BEGIN 
+							RAISERROR ('Wystąpił błąd podczas modyfikacji czynności przetwarzania danych osobowych. Podana osoba kontrahenta (administrator) nie występuje w bazie.', 16, 1)
+							RETURN -12	
+						END
+		END ELSE BEGIN
+			IF NOT EXISTS(SELECT * FROM CDN.PrcKarty WHERE Prc_GIDNumer=@AdminNumer) BEGIN 
+				RAISERROR ('Wystąpił błąd podczas modyfikacji czynności przetwarzania danych osobowych. Podany pracownik (administrator) nie występuje w bazie.', 16, 1)
+				RETURN -13
+			END			
+		END
+
+		IF @PrzedstTyp=32 BEGIN
+			IF NOT EXISTS(SELECT * FROM CDN.KntKarty WHERE Knt_GIDNumer=@PrzedstNumer) BEGIN 
+				RAISERROR ('Wystąpił błąd podczas modyfikacji czynności przetwarzania danych osobowych. Podany kontrahent (przedstwiciel) nie występuje w bazie.', 16, 1)
+				RETURN -20
+			END ELSE
+				IF NOT EXISTS(SELECT * FROM CDN.KntAdresy WHERE KnA_GIDNumer=@PrzedstAdr) BEGIN 
+					RAISERROR ('Wystąpił błąd podczas modyfikacji czynności przetwarzania danych osobowych. Podany adres kontrahenta (przedstwiciel) nie występuje w bazie.', 16, 1)
+					RETURN -21
+				END ELSE IF NOT EXISTS(SELECT * FROM CDN.KntOsoby WHERE KnS_KntTyp=@PrzedstTyp AND KnS_KntNumer=@PrzedstNumer AND KnS_KntLp=@PrzedstLp) BEGIN 
+							RAISERROR ('Wystąpił błąd podczas modyfikacji czynności przetwarzania danych osobowych. Podana osoba kontrahenta (przedstwiciel) nie występuje w bazie.', 16, 1)
+							RETURN -22	
+						END		
+		END ELSE BEGIN
+			IF NOT EXISTS(SELECT * FROM CDN.PrcKarty WHERE Prc_GIDNumer=@PrzedstNumer) BEGIN 
+				RAISERROR ('Wystąpił błąd podczas modyfikacji czynności przetwarzania danych osobowych. Podany pracownik (przedstwiciel) nie występuje w bazie.', 16, 1)
+				RETURN -23
+			END
+		END
+		
+		IF @InspTyp=32 BEGIN
+			IF NOT EXISTS(SELECT * FROM CDN.KntKarty WHERE Knt_GIDNumer=@InspNumer) BEGIN 
+				RAISERROR ('Wystąpił błąd podczas modyfikacji czynności przetwarzania danych osobowych. Podany kontrahent (inspektor) nie występuje w bazie.', 16, 1)
+				RETURN -30
+			END ELSE
+				IF NOT EXISTS(SELECT * FROM CDN.KntAdresy WHERE KnA_GIDNumer=@InspAdr) BEGIN 
+					RAISERROR ('Wystąpił błąd podczas modyfikacji czynności przetwarzania danych osobowych. Podany adres kontrahenta (inspektor) nie występuje w bazie.', 16, 1)
+					RETURN -31
+				END ELSE IF NOT EXISTS(SELECT * FROM CDN.KntOsoby WHERE KnS_KntTyp=@InspTyp AND KnS_KntNumer=@InspNumer AND KnS_KntLp=@InspLp) BEGIN 
+							RAISERROR ('Wystąpił błąd podczas modyfikacji czynności przetwarzania danych osobowych. Podana osoba kontrahenta (inspektor) nie występuje w bazie.', 16, 1)
+							RETURN -32	
+						END
+		END ELSE BEGIN
+			IF NOT EXISTS(SELECT * FROM CDN.PrcKarty WHERE Prc_GIDNumer=@InspNumer) BEGIN 
+				RAISERROR ('Wystąpił błąd podczas modyfikacji czynności przetwarzania danych osobowych. Podany pracownik (inspektor) nie występuje w bazie.', 16, 1)
+				RETURN -33
+			END
+		END
+		
+		-- inny powód błędu:						
+		RAISERROR ('Nie powiodła się modyfikacja w tabeli CDN.PDOCzynnosci.', 16, 1)
+		RETURN -1
+	END
+
+	RETURN 0
+	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

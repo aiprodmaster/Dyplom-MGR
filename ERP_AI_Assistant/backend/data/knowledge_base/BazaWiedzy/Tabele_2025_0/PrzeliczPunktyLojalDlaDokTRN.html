@@ -1,0 +1,376 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="PrzeliczPunktyLojalDlaDokTRN"></A><PRE>
+          <FONT SIZE="2"><I>/* PrzeliczPunktyLojalDlaDokTRN */</I><BR>
+CREATE PROCEDURE cdn.PrzeliczPunktyLojalDlaDokTRN
+    @GidNumer  int,
+    @GidLp int=0
+
+AS
+SET NOCOUNT ON
+/* ==========================================================================================
+        Błędy:
+        1 : Wystąpił błąd podczas wyliczania punktów lojalnościowych. Przekroczona maksymalna ilość punktów dla pozycji.
+        2 : Wystąpił błąd podczas wyliczania punktów lojalnościowych. Przekroczona maksymalna ilość punktów dla dokumentu.
+   ========================================================================================== */
+
+
+ DECLARE @TwrNumer INT
+
+CREATE TABLE #Towary
+(
+    SposobLiczenia INT,
+    -- 1 - Proporcjonalne od brutto z PunktyKonfig
+    -- 2 - Proporcjonalne od netto z PunktyKonfig
+    -- 3 - Progowe od brutto z PunktyKonfig
+    -- 4 - Progowe od netto z PunktyKonfig
+    IloscPKT DECIMAL(11,2),
+    WartoscDlaPKT DECIMAL(6,2),
+    WartoscBruttoSuma DECIMAL (19,2),
+    WartoscNettoSuma DECIMAL (19,2),
+    TwrNumer INT
+)
+DECLARE @TwrIloscPozycji INT
+DECLARE @GidTyp SMALLINT
+DECLARE @SpiTyp SMALLINT
+DECLARE @SposobLiczenia INT
+DECLARE @IloscPKT DECIMAL(11,2)
+DECLARE @WartoscDlaPKT DECIMAL(6,2)
+DECLARE @WartoscBruttoSuma DECIMAL (19,2)
+DECLARE @WartoscNettoSuma DECIMAL (19,2)
+DECLARE @IloscPunktowWyliczona DECIMAL(15,2)
+
+DECLARE @TRNData2 INT
+
+
+CREATE TABLE #AktualizowanePunkty
+(
+    Id  int not null identity(1,1) primary key,
+    TreLp SMALLINT,
+    KsiegowaBrutto DECIMAL(15,2),
+    KsiegowaNetto DECIMAL(15,2),
+    Punkty DECIMAL(11,2),
+    TwrNumer INT
+)
+
+SELECT @TRNData2=COALESCE(org.TrN_Data2,wyst.TrN_Data2)
+from cdn.TraNag wyst
+LEFT JOIN cdn.TraNag org on wyst.TrN_GIDNumer=org.TrN_ZwrNumer
+ where wyst.TrN_GIDNumer=@GidNumer
+
+IF NOT exists(select *
+from cdn.TraNag
+    join cdn.KntKarty on Knt_DataOdLoj&lt;=@TRNData2 and Knt_DataDoLoj&gt;=@TRNData2 and TrN_KntNumer=Knt_GIDNumer
+where TrN_GIDNumer=@GidNumer) 
+BEGIN
+    UPDATE cdn.TraNag SET TRN_Punkty=0 where TrN_GIDNumer=@GidNumer
+    UPDATE cdn.TraElem SET TRE_Punkty=0 where TrE_GIDNumer=@GidNumer
+    SELECT 0 AS ERROR
+    SET NOCOUNT OFF
+    RETURN 0
+END
+
+SELECT @GidTyp=TRN_GIDTYP, @SpiTyp=TrN_SpiTyp FROM cdn.TraNag WHERE TrN_GIDNumer=@GidNumer
+
+
+
+if NOT exists(select *
+from cdn.TraNag
+     join cdn.PunktyKonfig PuKFRS on PuKFRS.PuK_OkresOd&lt;=@TRNData2 and PuKFRS.PuK_OkresDo&gt;=@TRNData2 and PuKFRS.PuK_ObiTyp=-4272 AND PuKFRS.PuK_ObiNumer=1
+where TrN_GIDNumer=@GidNumer ) AND (@SpiTyp&lt;&gt;0 OR @GidTyp IN (2034,2042))--punkty z towaru, nie jest spinaczem naglowkowym
+    
+BEGIN
+    select @TwrNumer = Tre_TwrNumer
+    from cdn.TraElem
+    where TrE_GIDNumer=@GidNumer and TrE_GIDLp=@GidLp
+
+    INSERT INTO #Towary
+        (SposobLiczenia,IloscPKT,WartoscDlaPKT,WartoscBruttoSuma,WartoscNettoSuma,TwrNumer)
+    select distinct
+        CASE 
+when COALESCE(PuKTwr.PuK_SposobLiczPunkt,PuKTwrGr.PuK_SposobLiczPunkt,0)=1
+            AND COALESCE(PuKTwr.PuK_WartoscNBPunkt,PuKTwrGr.PuK_WartoscNBPunkt,0)=2 then 1
+when COALESCE(PuKTwr.PuK_SposobLiczPunkt,PuKTwrGr.PuK_SposobLiczPunkt,0)=1
+            AND COALESCE(PuKTwr.PuK_WartoscNBPunkt,PuKTwrGr.PuK_WartoscNBPunkt,0)=1 then 2
+when COALESCE(PuKTwr.PuK_SposobLiczPunkt,PuKTwrGr.PuK_SposobLiczPunkt,0)=2
+            AND COALESCE(PuKTwr.PuK_WartoscNBPunkt,PuKTwrGr.PuK_WartoscNBPunkt,0)=2 then 3
+when COALESCE(PuKTwr.PuK_SposobLiczPunkt,PuKTwrGr.PuK_SposobLiczPunkt,0)=2
+            AND COALESCE(PuKTwr.PuK_WartoscNBPunkt,PuKTwrGr.PuK_WartoscNBPunkt,0)=1 then 4
+else 0 end,
+        IloscPKT= COALESCE(PuKTwr.PuK_Punkty,PuKTwrGr.PuK_Punkty,0),
+        WartoscDlaPKT= COALESCE(PuKTwr.PuK_WartoscPunkt,PuKTwrGr.PuK_WartoscPunkt,0),
+        WartoscBruttoSuma= SUM(TrE_KsiegowaBrutto) OVER (PARTITION BY TrE_TwrNumer),
+        WartoscNettoSuma= SUM(TrE_KsiegowaNetto)  OVER (PARTITION BY TrE_TwrNumer),
+        TwrNumer=TrE_TwrNumer
+    from cdn.TraNag
+        join cdn.TraElem on TrE_GIDNumer=TrN_GIDNumer
+        join cdn.TwrKarty on TWR_GIDNumer=TrE_TwrNumer
+        left join cdn.PunktyKonfig PuKTwr on PuKTwr.PuK_OkresOd&lt;=@TRNData2 and PuKTwr.PuK_OkresDo&gt;=@TRNData2 and PuKTwr.PuK_ObiTyp=16 AND PuKTwr.PuK_ObiNumer=TrE_TwrNumer
+        left join cdn.PunktyKonfig PuKTwrGr on PuKTwrGr.PuK_OkresOd&lt;=@TRNData2 and PuKTwrGr.PuK_OkresDo&gt;=@TRNData2 and PuKTwrGr.PuK_ObiTyp=-16
+            AND exists (select *
+            from CDN.PobierzDrzewoGrupTowarowychKuLisciom(PuKTwrGr.PuK_ObiNumer,default,null,null,null)
+                join cdn.TwrGrupy on TwG_GIDTyp=-16 AND GidNumer=TWG_GroNumer and TWG_GidNumer=TWR_GIDNumer)
+    where TrN_GIDNumer=@GidNumer and (@GidLp=0 OR TrE_TwrNumer=@TwrNumer)
+
+
+    DECLARE TowaryCursor CURSOR LOCAL FOR
+           SELECT SposobLiczenia, IloscPKT, WartoscDlaPKT, WartoscBruttoSuma, WartoscNettoSuma, TwrNumer
+    from #Towary
+    where SposobLiczenia&lt;&gt;0
+    -- 0 - brak konfiguracji dla wyliczania punktów
+
+    OPEN TowaryCursor
+    FETCH NEXT FROM TowaryCursor
+                INTO  @SposobLiczenia, @IloscPKT, @WartoscDlaPKT, @WartoscBruttoSuma, @WartoscNettoSuma, @TwrNumer
+
+    WHILE @@FETCH_STATUS = 0
+BEGIN
+    IF @WartoscDlaPKT=0  
+    BEGIN
+        SET @WartoscDlaPKT=1
+        SET @IloscPKT=0
+    END
+
+
+        set @IloscPunktowWyliczona = case @SposobLiczenia
+    when 1 then ROUND(@WartoscBruttoSuma*@IloscPKT/@WartoscDlaPKT,2)
+    when 2 then ROUND(@WartoscNettoSuma*@IloscPKT/@WartoscDlaPKT,2)
+    when 3 then ROUND(@WartoscBruttoSuma/@WartoscDlaPKT,0,1)*@IloscPKT
+    when 4 then ROUND(@WartoscNettoSuma/@WartoscDlaPKT,0,1)*@IloscPKT
+    end
+
+
+        SELECT @TwrIloscPozycji=count(*)
+        from cdn.TraElem
+        where TrE_GIDNumer=@GidNumer and TrE_TwrNumer=@TwrNumer
+
+        INSERT INTO #AktualizowanePunkty(TreLp,KsiegowaBrutto,KsiegowaNetto,Punkty, TwrNumer)
+        select TrE_GIDLp, TrE_KsiegowaBrutto, TrE_KsiegowaNetto, 0 as Punkty,@TwrNumer
+        from cdn.TraElem
+        where TrE_GIDNumer=@GidNumer and TrE_TwrNumer=@TwrNumer
+
+
+        BEGIN TRY
+    update #AktualizowanePunkty
+    set Punkty=case @SposobLiczenia
+    when 1 then ROUND(KsiegowaBrutto*@IloscPKT/@WartoscDlaPKT,2)
+    when 2 then ROUND(KsiegowaNetto*@IloscPKT/@WartoscDlaPKT,2)
+    when 3 then ROUND(KsiegowaBrutto/@WartoscDlaPKT,0,1)*@IloscPKT
+    when 4 then ROUND(KsiegowaNetto/@WartoscDlaPKT,0,1)*@IloscPKT
+    end
+    where TwrNumer=@TwrNumer
+
+    update #AktualizowanePunkty
+    set Punkty=Punkty+@IloscPunktowWyliczona-(select sum(Punkty)
+        from #AktualizowanePunkty where TwrNumer=@TwrNumer)
+    where Id=@@IDENTITY
+
+    END TRY
+    BEGIN CATCH
+    update cdn.TraElem set TrE_Punkty=0
+        where TrE_GIDNumer=@GidNumer and TrE_GIDLp=@GidLp
+    SELECT 1 AS ERROR
+    SET NOCOUNT OFF
+    RETURN 1 --Przekroczona maksymalna ilość punktów dla pozycji
+    END CATCH
+
+        update cdn.TraElem set TrE_Punkty=Punkty
+    from cdn.TraElem
+            join #AktualizowanePunkty on TreLp=TrE_GIDLp
+        where TrE_GIDNumer=@GidNumer and Tre_TwrNumer=@TwrNumer
+
+FETCH NEXT FROM TowaryCursor
+                INTO  @SposobLiczenia, @IloscPKT, @WartoscDlaPKT, @WartoscBruttoSuma, @WartoscNettoSuma, @TwrNumer
+
+    END
+END
+ELSE IF  exists(select *
+from cdn.TraNag
+     join cdn.PunktyKonfig PuKFRS on PuKFRS.PuK_OkresOd&lt;=@TRNData2 and PuKFRS.PuK_OkresDo&gt;=@TRNData2 and PuKFRS.PuK_ObiTyp=-4272 AND PuKFRS.PuK_ObiNumer=1
+where TrN_GIDNumer=@GidNumer) AND (@SpiTyp&lt;&gt;0 OR @GidTyp IN (2034,2042))--punkty z konfiguracji, nie jest spinaczem naglowkowym
+BEGIN
+    BEGIN TRY
+	
+;with
+        dane
+        as
+        (
+            select distinct
+                CASE 
+when PuK_SposobLiczPunkt=1
+                    AND PuK_WartoscNBPunkt=2 then 1
+when PuK_SposobLiczPunkt=1
+                    AND PuK_WartoscNBPunkt=1 then 2
+when PuK_SposobLiczPunkt=2
+                    AND PuK_WartoscNBPunkt=2 then 3
+when PuK_SposobLiczPunkt=2
+                    AND PuK_WartoscNBPunkt=1 then 4
+else 0 end  SposobLiczenia,
+                IloscPKT=  case when PuK_WartoscPunkt &gt;0 THEN PuK_Punkty ELSE 0 END ,
+                WartoscDlaPKT= case when PuK_WartoscPunkt &gt;0 THEN PuK_WartoscPunkt ELSE 1 END,
+                WartoscBruttoSuma= case when TrN_NettoR+Trn_VatR=0 AND  (TrN_Stan=0 OR TrN_GIDTyp=-TrN_SpiTyp) THEN SUM(TrE_KsiegowaBrutto) OVER (PARTITION BY TrE_GIDNumer) ELSE TrN_NettoR+Trn_VatR END ,
+                WartoscNettoSuma= case when TrN_NettoR=0 AND  (TrN_Stan=0 OR TrN_GIDTyp=-TrN_SpiTyp) THEN SUM(TrE_KsiegowaNetto) OVER (PARTITION BY TrE_GIDNumer) ELSE TrN_NettoR END ,
+                TrN_GidNumer dane_GidNumer
+            from cdn.TraNag
+            join cdn.TraElem on TrE_GIDNumer=TrN_GIDNumer
+                join cdn.PunktyKonfig on PuK_OkresOd&lt;=@TRNData2 and PuK_OkresDo&gt;=@TRNData2 and PuK_ObiTyp=-4272 AND PuK_ObiNumer=1
+            where TrN_GIDNumer=@GidNumer
+        )
+ update cdn.Tranag set TRN_Punkty = case SposobLiczenia
+    when 1 then ROUND(WartoscBruttoSuma*IloscPKT/WartoscDlaPKT,2)
+    when 2 then ROUND(WartoscNettoSuma*IloscPKT/WartoscDlaPKT,2)
+    when 3 then ROUND(WartoscBruttoSuma/WartoscDlaPKT,0,1)*IloscPKT
+    when 4 then ROUND(WartoscNettoSuma/WartoscDlaPKT,0,1)*IloscPKT
+    end
+    from cdn.Tranag
+        join dane on dane_GidNumer=TRN_GidNumer
+END TRY
+    BEGIN CATCH
+   update cdn.Tranag set TRN_Punkty=0
+        where TRN_GidNumer=@GidNumer
+    SELECT 2 AS ERROR
+    SET NOCOUNT OFF
+    RETURN 2 --Przekroczona maksymalna ilość punktów dla dokumentu
+    END CATCH
+
+
+END
+ELSE IF @GidTyp NOT IN (2035, 2043) --dokument jest spinaczem naglowkowym (z pominięciem RA i RAK)
+BEGIN
+IF (select count(*) from cdn.TraNag where TrN_SpiNumer=@GidNumer)=0 
+    UPDATE cdn.TraNag set TrN_Punkty=0 where TrN_GIDNumer=@GidNumer
+
+	ELSE IF  exists(select *
+from cdn.TraNag
+     join cdn.PunktyKonfig PuKFRS on PuKFRS.PuK_OkresOd&lt;=@TRNData2 and PuKFRS.PuK_OkresDo&gt;=@TRNData2 and PuKFRS.PuK_ObiTyp=-4272 AND PuKFRS.PuK_ObiNumer=1
+where TrN_GIDNumer=@GidNumer)--punkty z konfiguracji
+BEGIN
+;with
+        dane
+        as
+        (
+            select distinct
+                CASE 
+when PuK_SposobLiczPunkt=1
+                    AND PuK_WartoscNBPunkt=2 then 1
+when PuK_SposobLiczPunkt=1
+                    AND PuK_WartoscNBPunkt=1 then 2
+when PuK_SposobLiczPunkt=2
+                    AND PuK_WartoscNBPunkt=2 then 3
+when PuK_SposobLiczPunkt=2
+                    AND PuK_WartoscNBPunkt=1 then 4
+else 0 end  SposobLiczenia,
+                IloscPKT=  case when PuK_WartoscPunkt &gt;0 THEN PuK_Punkty ELSE 0 END ,
+                WartoscDlaPKT= case when PuK_WartoscPunkt &gt;0 THEN PuK_WartoscPunkt ELSE 1 END,
+                 WartoscBruttoSuma= case when  dok.TrN_NettoR+ dok.Trn_VatR=0 AND  dok.TrN_Stan=0 THEN SUM(TrE_KsiegowaBrutto) OVER (PARTITION BY TrE_GIDNumer) ELSE  dok.TrN_NettoR+ dok.Trn_VatR END ,
+                 WartoscNettoSuma= case when dok.TrN_NettoR=0 AND  dok.TrN_Stan=0 THEN SUM(TrE_KsiegowaNetto) OVER (PARTITION BY TrE_GIDNumer) ELSE  dok.TrN_NettoR END ,
+                spi.TrN_GidNumer dane_GidNumer,
+				dok.TrN_GidNumer
+             from cdn.TraNag spi
+		JOIN cdn.TraNag  dok ON spi.TRN_GidNumer=dok.TRN_SpiNumer
+            join cdn.TraElem on TrE_GIDNumer=dok.TrN_GIDNumer
+                join cdn.PunktyKonfig on PuK_OkresOd&lt;=@TRNData2 and PuK_OkresDo&gt;=@TRNData2 and PuK_ObiTyp=-4272 AND PuK_ObiNumer=1
+            where spi.TrN_GIDNumer=@GidNumer
+        ),
+		dane2 AS (
+		select SposobLiczenia, IloscPKT, WartoscDlaPKT,COALESCE(SUM(WartoscBruttoSuma),0) WartoscBruttoSuma, COALESCE(SUM(WartoscNettoSuma),0) WartoscNettoSuma,dane_GidNumer
+		FROM dane
+		GROUP BY SposobLiczenia, IloscPKT, WartoscDlaPKT,dane_GidNumer
+		)
+ update cdn.Tranag set TRN_Punkty = case SposobLiczenia
+    when 1 then ROUND(WartoscBruttoSuma*IloscPKT/WartoscDlaPKT,2)
+    when 2 then ROUND(WartoscNettoSuma*IloscPKT/WartoscDlaPKT,2)
+    when 3 then ROUND(WartoscBruttoSuma/WartoscDlaPKT,0,1)*IloscPKT
+    when 4 then ROUND(WartoscNettoSuma/WartoscDlaPKT,0,1)*IloscPKT
+    end
+    from cdn.Tranag
+        join dane2 on dane_GidNumer=TRN_GidNumer
+END
+ELSE--punkty z towarów
+BEGIN
+
+    INSERT INTO #Towary
+        (SposobLiczenia,IloscPKT,WartoscDlaPKT,WartoscBruttoSuma,WartoscNettoSuma,TwrNumer)
+    select distinct
+        CASE 
+when COALESCE(PuKTwr.PuK_SposobLiczPunkt,PuKTwrGr.PuK_SposobLiczPunkt,0)=1
+            AND COALESCE(PuKTwr.PuK_WartoscNBPunkt,PuKTwrGr.PuK_WartoscNBPunkt,0)=2 then 1
+when COALESCE(PuKTwr.PuK_SposobLiczPunkt,PuKTwrGr.PuK_SposobLiczPunkt,0)=1
+            AND COALESCE(PuKTwr.PuK_WartoscNBPunkt,PuKTwrGr.PuK_WartoscNBPunkt,0)=1 then 2
+when COALESCE(PuKTwr.PuK_SposobLiczPunkt,PuKTwrGr.PuK_SposobLiczPunkt,0)=2
+            AND COALESCE(PuKTwr.PuK_WartoscNBPunkt,PuKTwrGr.PuK_WartoscNBPunkt,0)=2 then 3
+when COALESCE(PuKTwr.PuK_SposobLiczPunkt,PuKTwrGr.PuK_SposobLiczPunkt,0)=2
+            AND COALESCE(PuKTwr.PuK_WartoscNBPunkt,PuKTwrGr.PuK_WartoscNBPunkt,0)=1 then 4
+else 0 end,
+        IloscPKT= COALESCE(PuKTwr.PuK_Punkty,PuKTwrGr.PuK_Punkty,0),
+        WartoscDlaPKT= COALESCE(PuKTwr.PuK_WartoscPunkt,PuKTwrGr.PuK_WartoscPunkt,0),
+        WartoscBruttoSuma= SUM(TrE_KsiegowaBrutto) OVER (PARTITION BY TrE_TwrNumer),
+        WartoscNettoSuma= SUM(TrE_KsiegowaNetto)  OVER (PARTITION BY TrE_TwrNumer),
+        TwrNumer=TrE_TwrNumer
+    from cdn.TraNag spi
+		JOIN cdn.TraNag  dok ON spi.TRN_GidNumer=dok.TRN_SpiNumer
+        join cdn.TraElem on TrE_GIDNumer=dok.TrN_GIDNumer
+        join cdn.TwrKarty on TWR_GIDNumer=TrE_TwrNumer
+        left join cdn.PunktyKonfig PuKTwr on PuKTwr.PuK_OkresOd&lt;=@TRNData2 and PuKTwr.PuK_OkresDo&gt;=@TRNData2 and PuKTwr.PuK_ObiTyp=16 AND PuKTwr.PuK_ObiNumer=TrE_TwrNumer
+        left join cdn.PunktyKonfig PuKTwrGr on PuKTwrGr.PuK_OkresOd&lt;=@TRNData2 and PuKTwrGr.PuK_OkresDo&gt;=@TRNData2 and PuKTwrGr.PuK_ObiTyp=-16
+            AND exists (select *
+            from CDN.PobierzDrzewoGrupTowarowychKuLisciom(PuKTwrGr.PuK_ObiNumer,default,null,null,null)
+                join cdn.TwrGrupy on TwG_GIDTyp=-16 AND GidNumer=TWG_GroNumer and TWG_GidNumer=TWR_GIDNumer)
+    where spi.TrN_GIDNumer=@GidNumer --and (@GidLp=0 OR TrE_TwrNumer=@TwrNumer)
+
+
+  
+
+BEGIN TRY
+        select @IloscPunktowWyliczona = 
+       SUM( case SposobLiczenia
+    when 0 then 0
+    when 1 then ROUND(WartoscBruttoSuma*IloscPKT/WartoscDlaPKT,2)
+    when 2 then ROUND(WartoscNettoSuma*IloscPKT/WartoscDlaPKT,2)
+    when 3 then ROUND(WartoscBruttoSuma/WartoscDlaPKT,0,1)*IloscPKT
+    when 4 then ROUND(WartoscNettoSuma/WartoscDlaPKT,0,1)*IloscPKT
+    end
+       ) from #Towary
+
+update cdn.TraNag set TrN_Punkty=COALESCE(@IloscPunktowWyliczona,0)
+            
+        where TrN_GIDNumer=@GidNumer
+   
+   
+    END TRY
+    BEGIN CATCH
+    update cdn.TraNag set TrN_Punkty=0
+        where TrN_GIDNumer=@GidNumer
+    SELECT 1 AS ERROR
+    SET NOCOUNT OFF
+    RETURN 1 --Przekroczona maksymalna ilość punktów dla pozycji
+    END CATCH
+       
+	    
+
+
+
+END
+
+
+END
+
+SELECT 0 AS ERROR
+SET NOCOUNT OFF
+RETURN 0
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

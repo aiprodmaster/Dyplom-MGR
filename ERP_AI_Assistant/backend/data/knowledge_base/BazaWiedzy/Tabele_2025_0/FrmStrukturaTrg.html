@@ -1,0 +1,218 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="FrmStruktura_UaktualnijCentrumDom"></A><PRE>
+          <FONT SIZE="2"><I>/* FrmStruktura_UaktualnijCentrumDom */</I><BR>
+CREATE TRIGGER FrmStruktura_UaktualnijCentrumDom
+  ON CDN.FrmStruktura
+  FOR INSERT, UPDATE
+AS
+BEGIN
+  IF (UPDATE(Frs_GroTyp) OR UPDATE(Frs_GroNumer)) and EXISTS( SELECT * FROM INSERTED WHERE Inserted.Frs_GIDTyp=944 OR Inserted.Frs_GIDTyp=128) 
+  BEGIN
+	DECLARE	@GidTyp	SMALLINT
+	DECLARE	@GidFirma INT
+	DECLARE	@GidNumer INT
+	DECLARE @Warstwa SMALLINT
+
+
+	SELECT @GidTyp=Frs_GIDTyp, @GidFirma=Frs_GIDFirma, @GidNumer=Frs_GIDNumer, @Warstwa=Frs_Warstwa FROM INSERTED
+
+	IF @GidTyp=944 
+	  BEGIN
+	    if @Warstwa&lt;&gt;2
+	      return
+	    --pracownik może być tylko w jednym centrum, nie ma problemu
+		
+		--Ponizej zakomentowane na potrzeby projektu Domyslne centra kosztowe 
+		
+	    --update cdn.prckarty set prc_frsid=
+	    --(select isnull(max(b.frs_id),0) from cdn.frmstruktura as a
+	    --join cdn.frmstruktura as b
+	    --on b.frs_gidtyp=a.frs_grotyp and b.frs_gidfirma=a.frs_grofirma and b.frs_gidnumer=a.frs_gronumer and b.frs_gidlp=a.frs_grolp
+	    --where a.frs_warstwa=2 and a.frs_gidtyp=@GidTyp and a.frs_gidfirma=@GidFirma and a.frs_gidnumer=@GidNumer)
+	    --where prc_gidtyp=@GidTyp and prc_gidfirma=@GidFirma and prc_gidnumer=@GidNumer
+
+	  END
+	ELSE
+	  BEGIN
+		IF	(SELECT max(a.Frs_Id) 
+			FROM DELETED 
+			JOIN CDN.FrmStruktura a 
+			ON a.FRS_GIDTyp=DELETED.FRS_GROTyp 
+			AND a.FRS_GIDFirma=DELETED.FRS_GROFirma 
+			AND a.FRS_GIDNumer=DELETED.FRS_GRONumer)= 
+			(SELECT max(Ope_FrsId) 
+			FROM DELETED 
+			JOIN CDN.OpeKarty 
+			ON FRS_GIDTyp=Ope_GIDTyp 
+			AND FRS_GIDFirma=Ope_GIDFirma 
+			AND FRS_GIDNumer=Ope_GIDNumer)
+		OR (SELECT max(Ope_FrsId) 
+			FROM INSERTED 
+			JOIN CDN.OpeKarty 
+			ON FRS_GIDTyp=Ope_GIDTyp 
+			AND FRS_GIDFirma=Ope_GIDFirma 
+			AND FRS_GIDNumer=Ope_GIDNumer) IS NULL
+		OR (SELECT max(Ope_FrsId) 
+			FROM INSERTED 
+			JOIN CDN.OpeKarty 
+			ON FRS_GIDTyp=Ope_GIDTyp 
+			AND FRS_GIDFirma=Ope_GIDFirma 
+			AND FRS_GIDNumer=Ope_GIDNumer)=0
+		BEGIN
+			UPDATE CDN.OpeKarty
+				SET Ope_FrsId=(SELECT a.Frs_Id 
+				FROM INSERTED 
+				JOIN CDN.FrmStruktura a 
+				ON a.FRS_GIDTyp=INSERTED.FRS_GROTyp 
+				AND a.FRS_GIDFirma=INSERTED.FRS_GROFirma 
+				AND a.FRS_GIDNumer=INSERTED.FRS_GRONumer)
+				WHERE 
+				Ope_GIDTyp=@GidTyp
+				AND Ope_GIDFirma=@GidFirma
+				AND Ope_GIDNumer=@GidNumer
+		END
+	  END
+	END
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="FrmStruktura_UaktualnijDaty"></A><PRE>
+          <FONT SIZE="2"><I>/* FrmStruktura_UaktualnijDaty */</I><BR>
+CREATE TRIGGER FrmStruktura_UaktualnijDaty
+  ON CDN.FrmStruktura
+  FOR INSERT, UPDATE
+AS
+BEGIN
+  IF (UPDATE(Frs_AktywnyOd) OR UPDATE(Frs_AktywnyDo)) and EXISTS( SELECT Inserted.Frs_Warstwa FROM INSERTED WHERE Inserted.Frs_Warstwa=3)
+  BEGIN
+    begin tran;
+    set nocount on;
+
+    declare @Id int
+    declare @GidTyp smallint
+    declare @GidNumer int
+    declare @AktywnyOd int
+    declare @AktywnyDo int
+
+    declare @sav_gidtyp smallint
+    declare @sav_gidnumer int
+    declare @sav_aktywnydo int
+    set @sav_gidtyp = 0
+    set @sav_gidnumer = 0
+
+    declare @old_aktywnyod int
+    declare @old_aktywnydo int
+    set @old_aktywnyod = 0
+    set @old_aktywnydo = 0
+
+    --tabela tymczasowa jest potrzebna bo algorytm działa w ten sposób, że przepisuje do niej rekordy
+    --z frmstruktura o takim samym gidzie, następnie robi update na podstawie inserted
+    --a na końcu przechodzi w odpowiednim porządku (frs_aktywnydo) i ustawia odpowiednie daty
+    create table #frmstrukturadaty(FRS_ID int,FRS_GIDTyp smallint, FRS_GIDNumer int, FRS_AktywnyOd int, FRS_AktywnyDo int)
+    insert into #frmstrukturadaty select a.FRS_ID,a.FRS_GIDTyp,a.FRS_GIDNumer,a.FRS_AktywnyOd,a.FRS_AktywnyDo from cdn.FrmStruktura a
+      join Inserted on a.FRS_GIDTyp=Inserted.FRS_GIDTyp and a.FRS_GIDNumer=Inserted.FRS_GIDNumer
+      where a.Frs_Warstwa=3 
+   
+    --update na podstawie inserted
+    update #frmstrukturadaty set #frmstrukturadaty.Frs_AktywnyOd=Inserted.Frs_AktywnyOd, #frmstrukturadaty.Frs_AktywnyDo=Inserted.Frs_AktywnyDo
+    from #frmstrukturadaty join Inserted on #frmstrukturadaty.Frs_Id=Inserted.Frs_Id
+
+    declare strukturafirmydaty_cur cursor local fast_forward for
+      select frs_id, frs_gidtyp, frs_gidnumer, frs_aktywnyod, frs_aktywnydo
+      from #frmstrukturadaty
+      order by frs_gidtyp, frs_gidnumer, frs_aktywnyod, frs_aktywnydo
+    open strukturafirmydaty_cur
+    fetch next from strukturafirmydaty_cur into @Id, @GIDTyp, @GIDNumer, @AktywnyOd, @AktywnyDo;
+    while @@FETCH_STATUS = 0
+    begin
+
+      set @old_aktywnyod = @AktywnyOd
+      set @old_aktywnydo = @AktywnyDo
+
+      --jeśli to rekord o nowym gidzie (pierwszy rekord)
+      if @sav_gidtyp &lt;&gt; @gidtyp or @sav_gidnumer &lt;&gt; @gidnumer
+	set @sav_aktywnydo = -1
+
+      --modyfikujemy daty jeśli trzeba
+      if @AktywnyOd&lt;=@sav_aktywnydo
+        set @AktywnyOd = @sav_aktywnydo+1
+      if @AktywnyDo=0
+	select top 1 @AktywnyDo = case when frs_aktywnyod&gt;1 then frs_aktywnyod-1 else 1 end
+	from #frmstrukturadaty
+	where frs_gidtyp=@gidtyp and frs_gidnumer=@gidnumer and frs_aktywnyod&gt;=@AktywnyOd and frs_id&lt;&gt;@Id
+	order by frs_aktywnyod, frs_id
+      if @AktywnyDo&lt;@AktywnyOd and @AktywnyDo&lt;&gt;0
+        set @AktywnyDo = @AktywnyOd
+
+      --update tylko wtedy, gdy była zmiana
+      if @old_aktywnyod &lt;&gt; @AktywnyOd or @old_aktywnydo &lt;&gt; @AktywnyDo
+        update cdn.frmstruktura set frs_aktywnyod=@aktywnyod, frs_aktywnydo=@aktywnydo where frs_id=@id
+
+      set @sav_gidtyp    = @gidtyp
+      set @sav_gidnumer  = @gidnumer
+      set @sav_aktywnydo = @AktywnyDo
+
+      fetch next from strukturafirmydaty_cur into @Id, @GIDTyp, @GIDNumer, @AktywnyOd, @AktywnyDo;
+    end
+    close strukturafirmydaty_cur;    
+    deallocate strukturafirmydaty_cur;
+
+    set nocount off;
+    commit;
+  END
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="FrmStruktura_UaktualnijProdZmianyGantta"></A><PRE>
+          <FONT SIZE="2"><I>/* FrmStruktura_UaktualnijProdZmianyGantta */</I><BR>
+CREATE TRIGGER FrmStruktura_UaktualnijProdZmianyGantta
+  ON CDN.FrmStruktura
+  FOR INSERT, DELETE
+AS
+BEGIN
+	INSERT INTO cdn.ProdZmianyGantta(
+  PZG_FRSId, PZG_Numer, PZG_Kod, PZG_GodzinaOd, PZG_GodzinaDo, PZG_Aktywny)
+  select 
+	FRS_ID, 1, '1 zmiana', 2520000,5400000,1
+  FROM inserted
+  where FRS_Warstwa=1 AND FRS_GIDTyp=-4272
+  INSERT INTO cdn.ProdZmianyGantta(
+  PZG_FRSId, PZG_Numer, PZG_Kod, PZG_GodzinaOd, PZG_GodzinaDo, PZG_Aktywny)
+  select 
+    FRS_ID, 2, '2 zmiana', 5400000,8280000,1
+	FROM inserted
+	where FRS_Warstwa=1 AND FRS_GIDTyp=-4272
+  INSERT INTO cdn.ProdZmianyGantta(
+  PZG_FRSId, PZG_Numer, PZG_Kod, PZG_GodzinaOd, PZG_GodzinaDo, PZG_Aktywny)
+  select 
+	FRS_ID, 3, '3 zmiana', 8280000,2520000,1
+	FROM inserted
+	where FRS_Warstwa=1 AND FRS_GIDTyp=-4272
+
+	DELETE from cdn.ProdZmianyGantta where cdn.ProdZmianyGantta.PZG_FRSId  IN(SELECT deleted.FRS_ID FROM deleted)
+
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,295 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="XLNowyDokumentRLN"></A><PRE>
+          <FONT SIZE="2"><I>/* XLNowyDokumentRLN */</I><BR>
+CREATE PROCEDURE CDN.XLNowyDokumentRLN
+
+@RlnTyp			SMALLINT,			-- typ reklamacji
+@DokumentObcy	VARCHAR(40)='',		-- numer dokumentu reklamacji u kontrahenta
+@KntTyp			INT,				-- kontrahent główny
+@KntFirma		INT = NULL,			-- kontrahent główny
+@KntNumer		INT,				-- kontrahent główny
+@KntLp			SMALLINT,			-- osoba odbierająca
+@KnATyp			INT = NULL,			-- adres kontrahenta głównego
+@KnANumer		INT = NULL,			-- adres kontrahenta głównego
+@KnDTyp			INT = NULL,			-- kontrahent docelowy
+@KnDFirma		INT = NULL,			-- kontrahent docelowy
+@KnDNumer		INT = NULL,			-- kontrahent docelowy
+@KnDLp			SMALLINT = NULL,	-- osoba odbierająca
+@AdWTyp			INT = NULL,			-- adres kontrahenta docelowego
+@AdWNumer		INT = NULL,			-- adres kontrahenta docelowego
+@Rok			SMALLINT = NULL,	-- rok dokumentu
+@Miesiac		SMALLINT = NULL,	-- miesiąc dokumentu
+@Seria			VARCHAR(5) = NULL,	-- seria dokumentu	
+@Numer			INT = NULL,			-- numer dokumentu	
+@ZrdTyp			SMALLINT = NULL,	-- GID dokumentu reklamowanego
+@ZrdNumer		INT = NULL,
+@ZrdLp			SMALLINT = NULL,
+@DokNumer		VARCHAR(40)= NULL,	-- Numer dokumentu
+@DataWyst		INT = NULL,			-- data wystawienia
+@Stan           INT = 1,            -- Stan dokumentu
+@OpeNumer       INT = NULL,         -- Identyfikator operatora
+@FrsId			INT = NULL,			-- Identyfikator centrum wystawiającego
+@Wsk            SMALLINT = 0,       -- Wskaźnik do zaznaczania rekordu, wykorzystywane przez API.
+@GenAut         SMALLINT = 0,       -- Generowany automatycznie
+@Id             INT OUTPUT,			-- Identyfikator reklamacji
+@DokumentNr     VARCHAR(40) OUTPUT, -- Numer dodanej reklamacji
+@Mag            INT = NULL,
+@SeriaPominWWW	BIT = 0				-- Nie pobieraj serii dla WWW
+
+
+AS
+BEGIN
+
+DECLARE 
+@OpiTyp	INT,
+@OpiNumer INT,
+@DataMod INT
+
+IF @RlnTyp NOT in (3584,3585) RETURN 1
+
+IF NOT EXISTS(SELECT * FROM CDN.KntKarty WHERE Knt_GIDNumer=@KntNumer) RETURN 2
+
+IF @KnDNumer IS NULL 
+BEGIN
+	SET @KnDFirma = @KntFirma
+	SET @KnDLp = @KntLp
+	SET @KnDNumer = @KntNumer
+	SET @KnDTyp = @KntTyp
+END
+
+IF @AdWNumer IS NULL
+BEGIN
+	IF EXISTS(SELECT * FROM CDN.KntAdresy WHERE KnA_KntNumer = @KnDNumer AND KnA_KntTyp = @KnDTyp AND KnA_Wysylkowy = 1 AND KnA_Domyslny = 1) 
+	BEGIN
+		SELECT @AdWNumer = KnA_GIDNumer,@AdWTyp = KnA_GIDTyp FROM CDN.KntAdresy WHERE KnA_KntNumer = @KnDNumer AND KnA_KntTyp = @KnDTyp 
+			AND KnA_Wysylkowy = 1 AND KnA_Domyslny = 1
+	END
+	ELSE
+	BEGIN
+		SELECT @AdWNumer = Knt_KnANumer,@AdWTyp = Knt_KnATyp FROM CDN.KntKarty WHERE Knt_GIDNumer = @KnDNumer AND Knt_GIDTyp = @KnDTyp
+	END
+END
+
+IF @KnaNumer IS NULL
+BEGIN
+	SELECT @KnANumer = Knt_KnANumer,@KnATyp = Knt_KnATyp FROM CDN.KntKarty WHERE Knt_GIDNumer = @KntNumer AND Knt_GIDTyp = @KntTyp
+END
+
+IF @DataWyst IS NULL SET @DataWyst = DATEDIFF(d,'18001228',GETDATE())
+IF @Rok IS NULL SET @Rok = YEAR(GETDATE())
+IF EXISTS(SELECT * FROM CDN.Konfig WHERE kon_numer=992 AND (CHARINDEX('6',Kon_wartosc)&gt;0 OR CHARINDEX('7',Kon_wartosc)&gt;0)) 
+BEGIN
+	IF @Miesiac IS NULL 
+		SET @Miesiac = MONTH(GETDATE())
+END
+ELSE
+	SET @Miesiac = 0
+
+IF @KntTyp = 0 OR @KntNumer = 0
+	BEGIN
+		SET @OpiTyp = 0
+		SET @OpiNumer = 0
+	END
+ELSE
+	BEGIN		 
+		IF CDN.GetKntOpiekun(@KntNumer,DATEDIFF(d,'18001228',GETDATE()))&lt;&gt;0 SET @OpiTyp = 944 ELSE SET @OpiTyp = 0
+		SET @OpiNumer = CDN.GetKntOpiekun(@KntNumer,DATEDIFF(d,'18001228',GETDATE()))
+	END 
+	
+
+SET @DataMod = DATEDIFF(s,'19900101',GETDATE())
+
+
+INSERT INTO CDN.ReklNag(
+	RLN_Typ,
+	RLN_KntTyp,
+	RLN_KntFirma,
+	RLN_KntNumer,
+	RLN_KntLp,
+	RLN_KnATyp,
+	RLN_KnANumer,
+	RLN_KnDTyp,
+	RLN_KnDFirma,
+	RLN_KnDNumer,
+	RLN_KnDLp,
+	RLN_AkwTyp,
+	RLN_AkwNumer,
+	RLN_AdWTyp,
+	RLN_AdWNumer,
+	RLN_OpiTyp,
+	RLN_OpiNumer,
+	RLN_DataWyst,
+	RLN_CzasModyfikacji,
+	RLN_DataRozp,
+	RLN_DataZamkniecia,
+	RLN_Rok,
+	RLN_Miesiac,
+	RLN_Seria,
+	RLN_Numer,
+	RLN_Lp,
+	RLN_DokumentObcy,
+	RLN_Stan,
+	RLN_LicznikKopii,
+	RLN_OpeTypW,
+	RLN_OpeNumerW,
+	RLN_OpeTypM,
+	RLN_OpeNumerM,
+	RLN_OpeTypR,
+	RLN_OpeNumerR,
+	RLN_OpeTypZ,
+	RLN_OpeNumerZ,
+	RLN_OdoTyp,
+	RLN_OdoNumer,
+	RLN_OdoLp,
+	RLN_FrsID,
+	RLN_CechaOpis,
+	RLN_RokMiesiac,
+	RLN_Aktywny,
+	RLN_Url,
+	RLN_Opis,
+	RLN_FrmNumer,
+	RLN_ZewnetrznySys,
+	RLN_ZewnetrznyId,
+	RLN_KnSTyp,
+	RLN_KnSFirma,
+	RLN_KnSNumer,
+	RLN_KnSLp,
+	RLN_KnSTypD,
+	RLN_KnSFirmaD,
+	RLN_KnSNumerD,
+	RLN_KnSLpD,
+    RLN_MagNumer,
+    RLN_GenerujAutomatycznie,
+    RLN_Status,
+	RLN_Wsk,
+	RLN_OpeNumerO,
+	RLN_OperatorPOS,
+	RLN_GUID)
+SELECT
+	@RlnTyp,	
+    ISNULL(@KntTyp,0),
+    ISNULL(@KntFirma,0),
+	ISNULL(@KntNumer,0),
+	ISNULL(@KntLp,0),
+	ISNULL(@KnATyp,0),
+	ISNULL(@KnANumer,0),
+	ISNULL(@KnDTyp,0),
+	ISNULL(@KnDFirma,0),
+	ISNULL(@KnDNumer,0),
+	ISNULL(@KnDLp,0),
+	ISNULL(@KntTyp,0),
+	ISNULL(@KntNumer,0),
+	ISNULL(@AdWTyp,0),
+	ISNULL(@AdWNumer,0),
+	@OpiTyp,
+	@OpiNumer,
+	@DataWyst,
+	@DataMod,
+	0,
+	0,
+	@Rok,
+	@Miesiac,
+	ISNULL(@Seria,CASE WHEN  @SeriaPominWWW = 0 and ISNULL(S.Kon_Wartosc,0) = 1 THEN ISNULL(KAp_Seria,Ser_Nazwa) ELSE Ser_Nazwa END),
+	CASE WHEN IsNull(@Numer,0)=0 
+				THEN IsNull((SELECT MAX(RLN_Numer) as Numer FROM CDN.ReklNag WHERE RLN_Rok=ISNULL(@Rok,YEAR(GETDATE())) AND 
+				RLN_Miesiac=ISNULL(@Miesiac,CASE WHEN CHARINDEX('6',N.Kon_Wartosc)&gt;0 OR CHARINDEX('7',N.Kon_Wartosc)&gt;0 THEN MONTH(GETDATE()) ELSE 0 END)
+				AND RLN_Seria=ISNULL(@Seria,CASE WHEN  @SeriaPominWWW = 0 and ISNULL(S.Kon_Wartosc,0) = 1 THEN ISNULL(KAp_Seria,Ser_Nazwa) ELSE Ser_Nazwa END) AND RLN_Typ = @RlnTyp),0)+1
+				ELSE @Numer
+				END,
+	127,
+	@DokumentObcy,
+	ISNULL(@Stan,1),
+	0,
+	128,
+	ISNULL(@OpeNumer,Ope_GIDNumer),
+	128,
+	ISNULL(@OpeNumer,Ope_GIDNumer),
+	0,
+	0,
+	0,
+	0,
+	ISNULL(KnS_KntTyp,0),
+	ISNULL(KnS_KntNumer,0),
+	ISNULL(KnS_KntLp,0),
+	ISNULL(@FrsId,ISNULL(Ope_FrSId,0)),
+	'',
+	CASE WHEN ISNULL(@DataWyst,0)=0
+		 THEN 100*YEAR(GETDATE()) + MONTH(GETDATE())
+		 ELSE 100*YEAR(DATEADD(d,@DataWyst,'18001228')) + MONTH(DATEADD(d,@DataWyst,'18001228'))
+	END,
+	0,
+	'',
+	'',
+	0,
+	0,
+	0,
+	0,
+	0,
+	0,
+	0,
+	0,
+	0,
+	0,
+	0,
+    CASE WHEN Dok_ReklUwzgledniajMag = 1 
+         THEN CASE WHEN ISNULL(@Mag,0)=0
+         THEN CASE WHEN @RlnTyp=3585 THEN Dok_MagZNumer ELSE Dok_MagDNumer END
+         ELSE @Mag END ELSE 0
+	END,
+	@GenAut,
+	0,
+	@Wsk,
+	ISNULL(@OpeNumer,Ope_GIDNumer),
+	0,
+	NEWID()
+FROM CDN.KntKarty K
+LEFT OUTER JOIN CDN.KntOsoby ON KnS_KntTyp=K.Knt_GIDTyp AND KnS_KntNumer=K.Knt_GIDNumer AND KnS_KntLp=@KntLp
+INNER JOIN CDN.Konfig N ON N.Kon_Numer=992
+LEFT OUTER JOIN CDN.KntAplikacje ON KAp_KntNumer = K.Knt_GIDNumer AND KAp_KntTyp = K.Knt_GIDTyp
+INNER JOIN CDN.OpeKarty ON Ope_GIDNumer=@OpeNumer OR (Ope_GIDNumer=KAp_OpeNumer AND @OpeNumer IS NULL)
+INNER JOIN CDN.DokDefinicje ON Dok_GIDTyp=@RlnTyp AND Dok_FrsId = ISNULL(@FrsId, CASE WHEN Ope_FrsId=0 THEN 1 ELSE Ope_FrsId END)
+INNER JOIN CDN.Serie ON Ser_GIDNumer=Dok_SerNumer
+LEFT OUTER JOIN CDN.Konfig S ON S.Kon_Numer=2306
+LEFT OUTER JOIN CDN.ReklNag ON RLN_Typ=@RlnTyp AND RLN_Rok=YEAR(GETDATE())
+        AND RLN_Miesiac=CASE WHEN CHARINDEX('6',N.Kon_Wartosc)&gt;0 OR CHARINDEX('7',N.Kon_Wartosc)&gt;0 THEN MONTH(GETDATE()) ELSE 0 END
+        AND RLN_Seria=CASE WHEN S.Kon_Wartosc='1' THEN KAp_Seria ELSE Ser_Nazwa END AND RLN_Lp=127
+WHERE K.Knt_GIDNumer=@KntNumer
+GROUP BY K.Knt_KnGTyp,K.Knt_KnGNumer,K.Knt_GIDTyp,K.Knt_GIDNumer,
+             K.Knt_GIDTyp,K.Knt_GIDNumer,K.Knt_KnATyp,K.Knt_KnANumer,K.Knt_PrcTyp,K.Knt_PrcNumer,KnS_KntTyp,KnS_KntNumer,KnS_KntLp,
+             N.Kon_Wartosc,S.Kon_Wartosc,KAp_Seria,Ser_Nazwa,Ope_GIDNumer,Ope_FrsId,Dok_MagZNumer,Dok_MagDNumer,
+             Dok_ReklUwzgledniajMag
+
+IF @@ROWCOUNT=0 RETURN 4
+
+DECLARE @RlnId INT
+SET @RlnId = SCOPE_IDENTITY()
+
+INSERT INTO CDN.Atrybuty(Atr_ObiTyp,Atr_ObiFirma,Atr_ObiNumer,Atr_ObiLp,Atr_ObiSubLp
+                         ,Atr_AtkId,Atr_Wartosc,Atr_AtrTyp,Atr_AtrFirma,Atr_AtrNumer,Atr_AtrLp,Atr_AtrSubLp,Atr_OptimaId,Atr_Grupujacy)
+SELECT @RlnTyp,CDN.GIDFirma(),@RlnId,0,0,Atk_Id,AtK_DomyslnaAPI,0,0,0,0,0,0,0
+FROM CDN.AtrybutyKlasy
+JOIN CDN.AtrybutyObiekty ON AtO_AtKId=AtK_ID
+WHERE AtK_Automat=1 AND AtO_GIDTyp=@RlnTyp AND AtO_Element=0
+
+print @RlnId
+
+SELECT @Id=RLN_Id
+	  ,@DokumentNr=CDN.NumerDokumentu(RLN_Typ,0,0,RLN_Numer,RLN_Rok,RLN_Seria,RLN_Miesiac) 
+FROM CDN.ReklNag WHERE RLN_Id = @RlnId
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

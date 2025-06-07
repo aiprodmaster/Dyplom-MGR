@@ -1,0 +1,1193 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie procedury DodajRozrachunek"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie procedury DodajRozrachunek */</I><BR>
+if exists (select name from sysobjects where name = 'DodajRozrachunek' and type = 'P')
+  drop procedure CDN.DodajRozrachunek;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie procedury DodajRozrachunek"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie procedury DodajRozrachunek */</I><BR>
+CREATE PROCEDURE CDN.DodajRozrachunek 
+AS
+SELECT 1
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury DodajRozrachunek"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury DodajRozrachunek */</I><BR>
+ALTER PROCEDURE CDN.DodajRozrachunek
+@GIDFirma int,
+@Dekret1Numer INT,
+@Dekret1Lp SMALLINT,
+@Dekret1DC SMALLINT,
+@Dekret2Numer INT,
+@Dekret2Lp SMALLINT,
+@Dekret2DC SMALLINT,
+@Kwota DECIMAL(15,2) OUTPUT,
+@UserID INT,
+@ParID INT OUTPUT,
+@Dod INT = 0,
+@DataDzisiejsza INT,
+@TylkoRozrachunek smallint = 0, 
+@Tryb smallint = 0, 	-- 0 rozrachunek tylko na dekretach nierozrachowanych lub rozrachowanych bez rozliczenia
+				-- 1 rozrachunek mozliwy na dekretach rozrachowanych z rozliczeniem
+@Wycena smallint = 0,
+@WycenaParID int = 0
+AS
+
+-- deklaracje
+DECLARE @KontaNieTozsame INT
+DECLARE @OpisRK VARCHAR(80)
+DECLARE @OpisKompensaty VARCHAR(80)
+DECLARE @Dokument1 VARCHAR(40)
+DECLARE @Dokument2 VARCHAR(40)
+DECLARE @KompGIDNumer INT
+DECLARE @WalutaSys VARCHAR(3)
+DECLARE @KwotaWal1 DECIMAL(15,2)
+DECLARE @KwotaSys1 DECIMAL(15,2)
+DECLARE @KwotaWal2 DECIMAL(15,2)
+DECLARE @KwotaSys2 DECIMAL(15,2)
+DECLARE @KwotaWal DECIMAL(15,2)
+DECLARE @KwotaSys DECIMAL(15,2)
+DECLARE @DataRoz1 INT
+DECLARE @DataRoz2 INT
+DECLARE @DataRozrachunku  INT
+DECLARE @DataRK  INT
+
+DECLARE @KwotaRozSys1 DECIMAL(15,2)
+DECLARE @KwotaRozSys2 DECIMAL(15,2)
+
+DECLARE @GIDTyp1 SMALLINT
+DECLARE @GIDNumer1 INT
+DECLARE @GIDLp1 SMALLINT
+
+DECLARE @GIDTyp2 SMALLINT
+DECLARE @GIDNumer2 INT
+DECLARE @GIDLp2 SMALLINT
+
+
+DECLARE @Waluta1 VARCHAR(3)
+DECLARE @Waluta2 VARCHAR(3)
+
+DECLARE @Data1 INT
+DECLARE @Data2 INT
+DECLARE @Konto1 VARCHAR(50)
+DECLARE @Konto2 VARCHAR(50)
+DECLARE @Konto1Numer INT
+DECLARE @Konto2Numer INT
+DECLARE @KontoWal1 VARCHAR(50)
+DECLARE @KontoWal2 VARCHAR(50)
+DECLARE @KontoWal1Numer INT
+DECLARE @KontoWal2Numer INT
+DECLARE @Konto1TypPozabil TINYINT
+DECLARE @Konto2TypPozabil TINYINT
+
+DECLARE @Cnt1 SMALLINT;
+DECLARE @Cnt2 SMALLINT;
+DECLARE @RoznicaKursowa DECIMAL(15,2);
+DECLARE @KontoDT VARCHAR(50);
+DECLARE @KontoCT VARCHAR(50);
+DECLARE @KontoDTNumer INT;
+DECLARE @KontoCTNumer INT;
+DECLARE @Znak1 INT
+DECLARE @Znak2 INT
+
+
+DECLARE @DataDzisiejszaRK INT;
+DECLARE @DataDzisiejszaKomp INT;
+DECLARE @OkresRK INT
+DECLARE @StronaRK SMALLINT
+DECLARE @RKDekretNumer INT
+declare @DekretRKDC smallint
+DECLARE @StronaRozl tinyint
+DECLARE @DataKomp INT
+DECLARE @Termin1 INT
+DECLARE @Termin2 INT
+
+declare @KursDTL1 decimal(29,10)
+declare @KursDTM1 decimal(29,10)
+declare @KursDTL2 decimal(29,10)
+declare @KursDTM2 decimal(29,10)
+declare @KursDTL decimal(29,10)
+declare @KursDTM decimal(29,10)
+
+DECLARE @Nierozliczone TABLE(
+Numer    SMALLINT,
+GIDNumer INT,
+GIDLp    SMALLINT,
+DC       SMALLINT,
+KwotaSys DECIMAL(15,2),
+KwotaWal DECIMAL(15,2),
+Konto    VARCHAR(50),
+KontoNumer INT,
+KontoTypPozabil TINYINT,
+KontoWal VARCHAR(50),
+KontoWalNumer INT,
+Waluta   VARCHAR(3),
+KursL	 DECIMAL(29,10),
+KursM	 DECIMAL(29,10),
+Znak     SMALLINT,
+Data     INT,
+Termin   INT,
+Dokument VARCHAR(40),
+Rozliczony smallint,
+MaRozliczenie smallint
+  );
+
+DECLARE @Dokumenty1 TABLE(
+GIDTyp    SMALLINT,
+GIDNumer  INT,
+GIDLp     SMALLINT
+  );
+
+DECLARE @Dokumenty2 TABLE(
+GIDTyp    SMALLINT,
+GIDNumer  INT,
+GIDLp     SMALLINT
+  );
+
+
+declare @OldKonto1Numer int
+declare @OldKonto2Numer int
+declare @OldKonto1 varchar(50)
+declare @OldKonto2 varchar(50)
+declare @OldKontoWal1Numer int
+declare @OldKontoWal2Numer int
+declare @OldKontoWal1 varchar(50)
+declare @OldKontoWal2 varchar(50)
+
+
+
+declare @TypRk smallint
+set @TypRK = 435
+declare @TypKAZ smallint
+set @TypKAZ = 784
+declare @TypKOK smallint
+set @TypKOK = 2752
+declare @TypDT smallint
+set @TypDT = 432
+
+declare @poz_DecKwota smallint
+set @poz_DecKwota = 2
+declare @Kurs1 decimal(29,10)
+declare @Kurs2 decimal(29,10)
+declare @RozliczenieCalkowite smallint
+declare @BZ smallint
+
+-- początek transakcji
+SET NOCOUNT ON
+BEGIN TRAN
+
+SET @Kwota = ISNULL(Abs(@Kwota),0)
+
+
+if @TylkoRozrachunek = 0
+begin
+	-- pobranie dokumentów 
+	INSERT INTO @Dokumenty1( GIDTyp, GIDNumer, GIDLp ) 
+	SELECT ZRO_TRNTyp, ZRO_TRNNumer, ZRO_TRNLp 
+	FROM CDN.Zrodla 
+	WHERE ZRO_DTTyp = 432 AND ZRO_DTNumer = @Dekret1Numer AND ZRO_DTLp = @Dekret1Lp
+		AND (ZRO_TRNLp&lt;&gt;0 OR ZRO_TRNTyp=784) AND ZRO_TRNTyp &lt;&gt; 2752 AND ZRO_TRNTyp &lt;&gt; 435
+	
+	
+	
+	INSERT INTO @Dokumenty2( GIDTyp, GIDNumer, GIDLp ) 
+	SELECT ZRO_TRNTyp, ZRO_TRNNumer, ZRO_TRNLp 
+	FROM CDN.Zrodla 
+	WHERE ZRO_DTTyp = 432 AND ZRO_DTNumer = @Dekret2Numer AND ZRO_DTLp = @Dekret2Lp
+		AND (ZRO_TRNLp&lt;&gt;0 OR ZRO_TRNTyp=784) AND ZRO_TRNTyp &lt;&gt; 2752 AND ZRO_TRNTyp &lt;&gt; 435
+	
+	
+	
+	SELECT @Cnt1 = ISNULL(COUNT(*),0) FROM @Dokumenty1
+	SELECT @Cnt2 = ISNULL(COUNT(*),0) FROM @Dokumenty2
+	
+	
+	IF @Cnt1 &gt; 0 AND @Cnt2 &gt; 0
+	BEGIN
+		DECLARE D1 CURSOR LOCAL STATIC FOR SELECT GIDTyp, GIDNumer, GIDLp FROM @Dokumenty1  
+		DECLARE D2 CURSOR LOCAL STATIC FOR SELECT GIDTyp, GIDNumer, GIDLp FROM @Dokumenty2
+	
+		DECLARE @KwotaRozliczenia DECIMAL(15,2)
+		DECLARE @KwotaRazem DECIMAL(15,2)
+		DECLARE @KwotaOrg DECIMAL(15,2)
+		
+		SET @KwotaRazem = 0
+		SET @KwotaOrg = @Kwota
+	
+		OPEN D1
+		FETCH NEXT FROM D1 INTO @GIDTyp1, @GIDNumer1, @GIDLp1
+	
+		WHILE @@FETCH_STATUS = 0 
+		BEGIN
+			OPEN D2
+			FETCH NEXT FROM D2 INTO @GIDTyp2, @GIDNumer2, @GIDLp2
+	
+			WHILE @@FETCH_STATUS = 0 
+			BEGIN
+				IF @KwotaOrg &gt; 0
+					SET @KwotaRozliczenia = @Kwota  
+				ELSE
+					SET @KwotaRozliczenia = 0
+	
+
+				if @GIDTyp1 = 784 or @GIDTyp2 = 784
+					exec cdn.DodajRozliczenieUwzglWycene
+							@GIDFirma = @GIDFirma,
+							@GIDTyp1 = @GIDTyp1,
+							@GIDNumer1 = @GIDNumer1,
+							@GIDLp1 = @GIDLp1,
+							@GIDTyp2 = @GIDTyp2,
+							@GIDNumer2 = @GIDNumer2,
+							@GIDLp2 = @GIDLp2,
+							@Kwota = @KwotaRozliczenia OUTPUT,
+							@UserID = @UserID,
+							@DataDzisiejsza = @DataDzisiejsza,
+							@R2ParID = @ParID OUTPUT,
+							@D1Numer = @Dekret1Numer,
+							@D1Lp = @Dekret1Lp,
+							@D1DC = @Dekret1DC,
+							@D2Numer = @Dekret2Numer,
+							@D2Lp = @Dekret2Lp,
+							@D2DC = @Dekret2DC
+
+
+				else
+					exec cdn.DodajRozliczenie
+							@GIDFirma = @GIDFirma,
+							@GIDTyp1 = @GIDTyp1,
+							@GIDNumer1 = @GIDNumer1,
+							@GIDLp1 = @GIDLp1,
+							@GIDTyp2 = @GIDTyp2,
+							@GIDNumer2 = @GIDNumer2,
+							@GIDLp2 = @GIDLp2,
+							@Kwota = @KwotaRozliczenia OUTPUT,
+							@UserID = @UserID,
+							@DataDzisiejsza = @DataDzisiejsza,
+							@R2ParID = @ParID OUTPUT,
+							@D1Numer = @Dekret1Numer,
+							@D1Lp = @Dekret1Lp,
+							@D1DC = @Dekret1DC,
+							@D2Numer = @Dekret2Numer,
+							@D2Lp = @Dekret2Lp,
+							@D2DC = @Dekret2DC
+
+
+
+				IF @@TRANCOUNT = 0
+					RETURN 0
+	
+	
+				SET @KwotaRazem = @KwotaRazem + @KwotaRozliczenia
+				SET @Kwota = @Kwota - @KwotaRozliczenia
+	
+				IF @KwotaOrg &gt; 0 AND @Kwota &lt;= 0
+					BREAK
+	
+	
+	
+				FETCH NEXT FROM D2 INTO @GIDTyp2, @GIDNumer2, @GIDLp2
+			END
+	
+			CLOSE D2
+	
+	
+			IF @KwotaOrg &gt; 0 AND @Kwota &lt;= 0
+				BREAK
+	
+	
+			FETCH NEXT FROM D1 INTO @GIDTyp1, @GIDNumer1, @GIDLp1
+		END
+	
+		CLOSE D1
+		DEALLOCATE D1
+		DEALLOCATE D2
+	
+	
+		SET @Kwota = @KwotaRazem
+	
+		if @KwotaRazem = 0
+		BEGIN
+			ROLLBACK TRAN
+			RAISERROR('200:Operacja anulowana. Jeden lub oba dokumenty źródłowe związane z danym dekretem są całkowicie rozliczone', 16, 1) 
+			RETURN 200
+		END
+	
+		COMMIT TRAN
+		RETURN 0
+	END
+end	
+
+
+
+
+-- pobranie dekretów
+SELECT @WalutaSys = KON_Wartosc FROM CDN.Konfig with(nolock) WHERE KON_Numer = 211
+
+SET @Waluta1 = @WalutaSys
+SET @Waluta2 = @WalutaSys
+
+
+--select @Dekret1Numer,@Dekret1Lp,@Dekret1DC
+DELETE FROM @Nierozliczone;
+INSERT INTO @Nierozliczone( Numer, GIDNumer, GIDLp, DC, KwotaSys, KwotaWal, Konto, KontoNumer, KontoTypPozabil,
+KontoWal, KontoWalNumer, Waluta, KursL, KursM, Znak, Data, Termin, Dokument, Rozliczony ) 
+SELECT 1, DT_GIDNumer, DT_GIDLp, DT_DC,
+MAX( CASE WHEN DT_Waluta = @WalutaSys THEN ABS(DT_Pozostaje) ELSE 0 END), 
+MAX( CASE WHEN DT_Waluta &lt;&gt; @WalutaSys THEN ABS(DT_Pozostaje) ELSE 0 END),
+MAX( CASE WHEN DT_Waluta = @WalutaSys THEN KKS_Konto ELSE '' END), 
+MAX( CASE WHEN DT_Waluta = @WalutaSys THEN KKS_GIDNumer ELSE '' END), 
+MAX( CASE WHEN DT_Waluta = @WalutaSys AND KKS_TypKonta=6 THEN 1 ELSE 0 END),
+MAX( CASE WHEN DT_Waluta &lt;&gt; @WalutaSys THEN KKS_Konto ELSE '' END), 
+MAX( CASE WHEN DT_Waluta &lt;&gt; @WalutaSys THEN KKS_GIDNumer ELSE '' END), 
+MAX( CASE WHEN DT_Waluta &lt;&gt; @WalutaSys THEN DT_Waluta ELSE '' END ),
+MAX( CASE WHEN DT_Waluta = @WalutaSys THEN DT_KursKwota ELSE 1 END ),
+MAX( CASE WHEN DT_Waluta &lt;&gt; @WalutaSys THEN DT_KursKwota ELSE 1 END ),
+MAX( DT_Znak ), 
+MAX( DT_DataDekr ),
+MAX( DT_Termin ),
+MAX( cdn.NumerDekretu('', DT_Dziennik, DT_Rok, DT_Miesiac, DZK_RMNumer, DEL_Pozycja, DZK_Prosty, DZK_OkrSymbol) ),
+Max( DT_Rozliczony )
+FROM CDN.Dekrety with(updlock)
+	JOIN CDN.Konta 
+		ON DT_KKSNumer = KKS_GIDNumer
+	JOIN CDN.DziennikElem with(nolock)
+		ON DT_GIDNumer = DEL_GIDNumer AND DT_GIDLp = DEL_GIDLp
+	JOIN CDN.Dziennik with(nolock)
+		ON DEL_GIDNumer = DZK_GIDNumer
+WHERE DT_GIDNumer = @Dekret1Numer AND DT_GIDLp = @Dekret1Lp AND (DT_Nierozliczony = 1 OR DT_Rozliczony = 1) AND (DT_DC = @Dekret1DC OR @Dekret1DC = 0)
+	AND KKS_Rozrachunkowe &lt;&gt; 0
+GROUP BY DT_GIDNumer, DT_GIDLp, DT_DC
+
+
+
+INSERT INTO @Nierozliczone( Numer, GIDNumer, GIDLp, DC, KwotaSys, KwotaWal, Konto, KontoNumer, KontoTypPozabil, 
+KontoWal, KontoWalNumer, Waluta, KursL, KursM, Znak, Data, Termin, Dokument, Rozliczony ) 
+SELECT 2, DT_GIDNumer, DT_GIDLp, DT_DC,
+MAX( CASE WHEN DT_Waluta = @WalutaSys THEN ABS(DT_Pozostaje) ELSE 0 END), 
+MAX( CASE WHEN DT_Waluta &lt;&gt; @WalutaSys THEN ABS(DT_Pozostaje) ELSE 0 END),
+MAX( CASE WHEN DT_Waluta = @WalutaSys THEN KKS_Konto ELSE '' END), 
+MAX( CASE WHEN DT_Waluta = @WalutaSys THEN KKS_GIDNumer ELSE '' END), 
+MAX( CASE WHEN DT_Waluta = @WalutaSys AND KKS_TypKonta=6 THEN 1 ELSE 0 END),
+MAX( CASE WHEN DT_Waluta &lt;&gt; @WalutaSys THEN KKS_Konto ELSE '' END), 
+MAX( CASE WHEN DT_Waluta &lt;&gt; @WalutaSys THEN KKS_GIDNumer ELSE '' END), 
+MAX( CASE WHEN DT_Waluta &lt;&gt; @WalutaSys THEN DT_Waluta ELSE '' END),
+MAX( CASE WHEN DT_Waluta = @WalutaSys THEN DT_KursKwota ELSE 1 END ),
+MAX( CASE WHEN DT_Waluta &lt;&gt; @WalutaSys THEN DT_KursKwota ELSE 1 END ),
+MAX( DT_Znak ), 
+MAX( DT_DataDekr ),
+MAX( DT_Termin ),
+MAX( cdn.NumerDekretu('', DT_Dziennik, DT_Rok, DT_Miesiac, DZK_RMNumer, DEL_Pozycja, DZK_Prosty, DZK_OkrSymbol) ),
+Max( DT_Rozliczony )
+FROM CDN.Dekrety with(updlock) 
+	JOIN CDN.Konta 
+		ON DT_KKSNumer = KKS_GIDNumer
+	JOIN CDN.DziennikElem with(nolock)
+		ON DT_GIDNumer = DEL_GIDNumer AND DT_GIDLp = DEL_GIDLp
+	JOIN CDN.Dziennik with(nolock)
+		ON DEL_GIDNumer = DZK_GIDNumer
+WHERE DT_GIDNumer = @Dekret2Numer AND DT_GIDLp = @Dekret2Lp AND (DT_Nierozliczony = 1 OR DT_Rozliczony = 1) AND (DT_DC = @Dekret2DC OR @Dekret2DC = 0)
+	AND KKS_Rozrachunkowe &lt;&gt; 0
+GROUP BY DT_GIDNumer, DT_GIDLp, DT_DC
+
+
+
+UPDATE @Nierozliczone SET Waluta = @WalutaSys WHERE Waluta = '';
+
+
+
+--pobierz opisy
+select 
+	@Dokument1 = MAX(case when Numer = 1 then Dokument else '' end),
+	@Dokument2 = MAX(case when Numer = 2 then Dokument else '' end)
+from @Nierozliczone
+
+
+
+
+select @Cnt1 = max(Numer)
+from @Nierozliczone 
+where Rozliczony &lt;&gt; 0 and Numer = 1
+
+
+
+IF isnull(@Cnt1,0) &lt;&gt; 0 --sa jakies rozrachowane 
+begin
+	if isnull(@Tryb,0) = 0 -- (sprawdzaj rozliczenia)
+	begin 
+		update b set b.MaRozliczenie = case a.Wycena --1 - normalne rozliczenie, 2 - rozliczenie wyceny, 0 - brak rozliczenia						
+										when 1 then 2
+										when 0 then 1
+										when -1 then 0
+										else 0
+									end					
+		from @Nierozliczone b
+				join (select GIDNumer, GIDLp, DC, max(case when roz2.R2_Wycena is null then -1 else roz2.R2_Wycena end) Wycena 
+						from @Nierozliczone
+							left join (select R2_ParId, R2_Dekret1Numer R2_DekretNumer, R2_Dekret1Lp R2_DekretLp, R2_Dekret1DC R2_DekretDC
+										from cdn.Rozliczenia
+										union all
+										select R2_ParId, R2_Dekret2Numer R2_DekretNumer, R2_Dekret2Lp R2_DekretLp, R2_Dekret2DC R2_DekretDC
+										from cdn.Rozliczenia) roz
+										on GIDNumer = roz.R2_DekretNumer and GIDLp = roz.R2_DekretLp and DC = roz.R2_DekretDC
+							left join cdn.Rozliczenia roz2
+									on roz.R2_ParID = roz2.R2_ParID and roz2.R2_Dok1Typ &lt;&gt; 0 and roz2.R2_Dok2Typ &lt;&gt; 0
+
+									where Rozliczony &lt;&gt; 0 and Numer = 1
+									group by GIDNumer, GIDLp, DC
+						) a
+				on b.GIDNumer = a.GIDNumer and b.GIDLp = a.GIDLp and b.DC = a.DC
+
+
+		DELETE FROM @Nierozliczone 
+		WHERE Numer = 1 and Rozliczony &lt;&gt; 0 and isnull(MaRozliczenie,0) = 1
+
+
+		SELECT @Cnt1 = COUNT(Znak) FROM @Nierozliczone WHERE Numer = 1
+		if @Cnt1 = 0
+		BEGIN
+			ROLLBACK TRAN
+			RAISERROR('200:Operacja anulowana. Dekret %s jest już rozrachowany wraz z rozliczeniem ', 16, 1,@Dokument1) 
+			RETURN 301
+		end
+		
+		
+		DELETE FROM @Nierozliczone 
+		WHERE Numer = 1 and Rozliczony &lt;&gt; 0 and isnull(MaRozliczenie,0) = 2
+
+
+		SELECT @Cnt1 = COUNT(Znak) FROM @Nierozliczone WHERE Numer = 1
+		if @Cnt1 = 0
+		BEGIN
+			ROLLBACK TRAN
+			RAISERROR('200:Operacja anulowana. Dekret %s jest już rozrachowany z rozliczeniem wyceny', 16, 1,@Dokument1) 
+			RETURN 301
+		end
+		
+	END
+end
+
+
+select @Cnt2 = max(Numer)
+from @Nierozliczone 
+where Rozliczony &lt;&gt; 0 and Numer = 2
+
+
+
+IF isnull(@Cnt2,0) &lt;&gt; 0 --sa jakies rozrachowane 
+begin
+	if isnull(@Tryb,0) = 0 -- (sprawdzaj rozliczenia)
+	begin 
+		update b set b.MaRozliczenie = case a.Wycena --1 - normalne rozliczenie, 2 - rozliczenie wyceny, 0 - brak rozliczenia						
+										when 1 then 2
+										when 0 then 1
+										when -1 then 0
+										else 0
+									end					
+		from @Nierozliczone b
+				join (select GIDNumer, GIDLp, DC, max(case when roz2.R2_Wycena is null then -1 else roz2.R2_Wycena end) Wycena 
+						from @Nierozliczone
+							left join (select R2_ParId, R2_Dekret1Numer R2_DekretNumer, R2_Dekret1Lp R2_DekretLp, R2_Dekret1DC R2_DekretDC
+										from cdn.Rozliczenia
+										union all
+										select R2_ParId, R2_Dekret2Numer R2_DekretNumer, R2_Dekret2Lp R2_DekretLp, R2_Dekret2DC R2_DekretDC
+										from cdn.Rozliczenia) roz
+										on GIDNumer = roz.R2_DekretNumer and GIDLp = roz.R2_DekretLp and DC = roz.R2_DekretDC
+							left join cdn.Rozliczenia roz2
+									on roz.R2_ParID = roz2.R2_ParID and roz2.R2_Dok1Typ &lt;&gt; 0 and roz2.R2_Dok2Typ &lt;&gt; 0
+
+									where Rozliczony &lt;&gt; 0 and Numer = 2
+									group by GIDNumer, GIDLp, DC
+						) a
+				on b.GIDNumer = a.GIDNumer and b.GIDLp = a.GIDLp and b.DC = a.DC
+
+
+		DELETE FROM @Nierozliczone 
+		WHERE Numer = 2 and Rozliczony &lt;&gt; 0 and isnull(MaRozliczenie,0) = 1
+
+
+		SELECT @Cnt2 = COUNT(Znak) FROM @Nierozliczone WHERE Numer = 2
+		if @Cnt2 = 0
+		BEGIN
+			ROLLBACK TRAN
+			RAISERROR('200:Operacja anulowana. Dekret %s jest już rozrachowany wraz z rozliczeniem', 16, 1,@Dokument2) 
+			RETURN 301
+		end
+		
+		DELETE FROM @Nierozliczone 
+		WHERE Numer = 2 and Rozliczony &lt;&gt; 0 and isnull(MaRozliczenie,0) = 2
+
+
+		SELECT @Cnt2 = COUNT(Znak) FROM @Nierozliczone WHERE Numer = 2
+		if @Cnt2 = 0
+		BEGIN
+			ROLLBACK TRAN
+			RAISERROR('200:Operacja anulowana. Dekret %s jest już rozrachowany z rozliczeniem wyceny', 16, 1,@Dokument2) 
+			RETURN 301
+		end
+	END
+end
+
+
+
+
+SELECT @Cnt1 = COUNT(Znak) FROM @Nierozliczone WHERE Numer = 1;
+SELECT @Cnt2 = COUNT(Znak) FROM @Nierozliczone WHERE Numer = 2;
+
+
+
+IF @Cnt1 = 1 AND @Cnt2 = 2
+	DELETE FROM a 
+	FROM @Nierozliczone a 
+	WHERE a.Numer = 2 
+		AND EXISTS(SELECT * FROM @Nierozliczone b WHERE b.Numer = 1 AND b.Znak = a.Znak)
+
+ELSE IF @Cnt1 = 2 AND @Cnt2 = 1
+	DELETE FROM a 
+	FROM @Nierozliczone a 
+	WHERE a.Numer = 1 
+		AND EXISTS(SELECT * FROM @Nierozliczone b WHERE b.Numer = 2 AND b.Znak = a.Znak)
+
+
+
+
+ELSE IF @Cnt1 &lt;&gt; 1 OR @Cnt2 &lt;&gt; 1
+BEGIN  
+	SELECT @Cnt1 = COUNT(Znak) FROM @Nierozliczone WHERE Numer = 1;
+	SELECT @Cnt2 = COUNT(Znak) FROM @Nierozliczone WHERE Numer = 2;
+
+
+	IF @Cnt1 &lt;&gt; 1 OR @Cnt2 &lt;&gt; 1
+	BEGIN
+		DELETE FROM a 
+		FROM @Nierozliczone a 
+		WHERE NOT EXISTS(SELECT * 
+				FROM @Nierozliczone b 
+					left join cdn.KontaNastLinki c
+						on b.KontoNumer = c.KLI_NastNumer and a.KontoNumer = c.KLI_PoprzNumer
+					left join cdn.KontaNastLinki d
+						on a.KontoNumer = d.KLI_NastNumer and b.KontoNumer = d.KLI_PoprzNumer
+				WHERE b.Numer = 3-a.Numer AND b.Znak = 3-a.Znak AND not (c.KLI_NastNumer is null and d.KLI_NastNumer is null))
+
+
+
+		SELECT @Cnt1 = COUNT(Znak) FROM @Nierozliczone WHERE Numer = 1;
+		SELECT @Cnt2 = COUNT(Znak) FROM @Nierozliczone WHERE Numer = 2;
+
+
+		IF @Cnt1 &lt;&gt; 1 OR @Cnt2 &lt;&gt; 1
+		BEGIN
+			ROLLBACK TRAN
+			RAISERROR('300:Niemożliwe ustalenie kont rozrachunkowych (3)', 16, 1) 
+			RETURN 300
+		END
+	END
+END
+
+
+
+
+-----opisy dokumentow
+--update @Nierozliczone set
+--	Dokument = cdn.NumerDekretu('', DT_Dziennik, DT_Rok, DT_Miesiac, DZK_RMNumer, DEL_Pozycja, DZK_Prosty)
+--from @Nierozliczone 
+--	join cdn.DziennikElem with(nolock)
+--		on GIDNumer = DEL_GIDNumer and GIDLp = DEL_GIDLp
+--	join cdn.Dziennik with(nolock)
+--		on Del_GIDNumer = DZK_GIDNumer
+--	join cdn.Dekrety with(nolock)
+--		on DEL_GIDNumer = DT_GIDNumer and DEL_GIDlp = DT_GIDLp
+
+
+
+
+
+SELECT 
+	@KwotaWal1 = KwotaWal, 
+	@KwotaSys1 = KwotaSys, 
+	@DataRoz1 = Data, 
+  	@Waluta1 = Waluta,
+  	@KursDTL1 = KursL,
+	@KursDTM1 = KursM, 
+	@Dekret1DC = DC, 
+	@Konto1 = Konto, 
+	@Konto1Numer = KontoNumer, 
+	@Konto1TypPozabil = KontoTypPozabil,
+	@Znak1 = Znak,
+  	@KontoWal1 = KontoWal, 
+	@KontoWal1Numer = KontoWalNumer, 
+	@Termin1 = Termin
+	--@Dokument1 = Dokument
+FROM @Nierozliczone 
+WHERE Numer = 1
+
+
+IF @@ERROR &lt;&gt; 0
+BEGIN
+	ROLLBACK TRAN
+	RAISERROR('200:Błąd pobrania wiersza do rozrachunku', 16, 1) 
+	RETURN 200
+END
+
+
+
+SELECT 
+	@KwotaWal2 = KwotaWal, 
+	@KwotaSys2 = KwotaSys, 
+	@DataRoz2 = Data, 
+  	@Waluta2 = Waluta, 
+  	@KursDTL2 = KursL,
+	@KursDTM2 = KursM,
+	@Dekret2DC = DC, 
+	@Konto2 = Konto, 
+	@Konto2Numer = KontoNumer, 
+	@Konto2TypPozabil = KontoTypPozabil,
+	@Znak2 = Znak,
+  	@KontoWal2 = KontoWal, 
+	@KontoWal2Numer = KontoWalNumer, 
+	@Termin2 = Termin
+	--@Dokument2 = Dokument
+FROM @Nierozliczone 
+WHERE Numer = 2
+
+
+IF @@ERROR &lt;&gt; 0
+BEGIN
+	ROLLBACK TRAN
+	RAISERROR('200:Błąd pobrania wiersza do rozrachunku', 16, 1) 
+	RETURN 200
+END
+
+
+
+IF @Znak1 = @Znak2 
+BEGIN
+  ROLLBACK TRAN
+  RAISERROR('102:Zapisy księgowe mają konta rozrachunkowe po tej samej stronie. Rozrachunek niemożliwy.', 16, 1) 
+  RETURN 102
+END
+
+
+-- sprawdzenie waluty
+if @Tryb = 1
+begin
+	IF @Waluta1 &lt;&gt; @Waluta2 AND @Waluta1 &lt;&gt; @WalutaSys AND @Waluta2 &lt;&gt; @WalutaSys
+	BEGIN
+		ROLLBACK TRAN
+		RAISERROR('101:Rozrachowywane zapisy księgowe różnią się walutą: %s &lt;&gt; %s. Rozrachunek niemożliwy!', 16, 1, @Waluta1, @Waluta2) 
+		RETURN 101
+	END
+end
+else
+begin
+	IF @Waluta1 &lt;&gt; @Waluta2 
+	BEGIN
+		ROLLBACK TRAN
+		RAISERROR('101:Rozrachowywane zapisy księgowe różnią się walutą: %s &lt;&gt; %s. Rozrachunek niemożliwy!', 16, 1, @Waluta1, @Waluta2) 
+		RETURN 101
+	END
+end
+
+IF @Konto1TypPozabil&lt;&gt;@Konto2TypPozabil
+BEGIN
+	ROLLBACK TRAN
+	RAISERROR('102:Nie można dokonywać rozrachunku na kontach o różnych typach - bilansowe, pozabilansowe', 16, 1) 
+	RETURN 102
+END
+
+
+
+
+
+exec cdn.UstalKwoteRozliczenia 
+		@Waluta1,
+		null,
+		null,
+		@KwotaWal1,
+		@KwotaSys1,						
+		@Waluta2,
+		null,
+		null,
+		@KwotaWal2,
+		@KwotaSys2,
+								
+		@WalutaSys,
+		@Kwota,
+		0,
+		@poz_DecKwota,
+		0,
+		0,
+		@Kurs1 output,
+		@Kurs2 output,
+		@KwotaWal output,
+		@KwotaSys output,
+		@RozliczenieCalkowite output,
+		@RoznicaKursowa output,
+		@StronaRK output,
+		@BZ output,
+		@KwotaRozSys1 output,
+		@KwotaRozSys2 output,
+		@StronaRozl output
+ 
+
+
+if @StronaRK = 2
+begin
+	set @KursDTL = @KursDTL1
+	set @KursDTM = @KursDTM1
+end
+else
+begin
+	set @KursDTL = @KursDTL2
+	set @KursDTM = @KursDTM2
+end
+
+
+
+
+--ustal date rozrachunku
+IF @DataRoz1 &lt; @DataRoz2
+	SET @DataRozrachunku = @DataRoz2
+ELSE
+	SET @DataRozrachunku = @DataRoz1
+
+
+
+
+-- ewentualna kompensata
+SELECT @DataDzisiejszaKomp = ISNULL(KON_Wartosc,0) FROM CDN.Konfig with(nolock) WHERE KON_Numer = 2058
+
+
+IF @DataDzisiejszaKomp = 1
+	SET @DataKomp = @DataDzisiejsza  
+ELSE
+	IF @DataDzisiejszaKomp = 2
+		IF @Termin1 &lt; @Termin2
+			SET @DataKomp = @Termin2
+		ELSE
+			SET @DataKomp = @Termin1
+	ELSE
+		IF @DataRoz1 &lt; @DataRoz2
+			SET @DataKomp = @DataRoz2
+		ELSE
+			SET @DataKomp = @DataRoz1
+
+
+
+IF ISNULL( @DataKomp, 0 ) = 0
+	SET @DataKomp = @DataDzisiejsza  
+
+
+
+if @DataKomp &lt; @DataRozrachunku
+	set @DataKomp = @DataRozrachunku
+
+
+
+set @OldKonto1Numer = @Konto1Numer
+set @OldKonto2Numer = @Konto2Numer
+set @OldKonto1 = @Konto1
+set @OldKonto2 = @Konto2
+set @OldKontoWal1Numer = @KontoWal1Numer
+set @OldKontoWal2Numer = @KontoWal2Numer
+set @OldKontoWal1 = @KontoWal1
+set @OldKontoWal2 = @KontoWal2
+
+
+
+
+EXEC @KontaNieTozsame = CDN.PorownajKonta @DataRozrachunku, @Konto1Numer OUTPUT, @Konto1 OUTPUT, @Konto2Numer OUTPUT, @Konto2 OUTPUT, @KontoWal1Numer OUTPUT, @KontoWal1 OUTPUT, @KontoWal2Numer OUTPUT, @KontoWal2 OUTPUT
+
+if @KontaNieTozsame = -1
+begin
+	ROLLBACK TRAN
+	RAISERROR('102:Błąd sprawdzania tożsamości kont. Błędne parametry procedury cdn.PorownajKonta ', 16, 1) 
+	RETURN 102			
+end
+else if @KontaNieTozsame = 2
+begin
+	ROLLBACK TRAN
+	RAISERROR('102:Błąd sprawdzania tożsamości kont. Konta bilansowe rozrachowywanych dekretów są ze sobą tożsame, pozabilansowe nie', 16, 1) 
+	RETURN 102			
+end
+else if @KontaNieTozsame = 3
+begin
+	ROLLBACK TRAN
+	RAISERROR('102:Błąd sprawdzania tożsamości kont. Konta bilansowe i pozabilansowe jednego z rozrachowywanych dekretów nie są z tego samego okresu ', 16, 1) 
+	RETURN 102			
+end
+else if @KontaNieTozsame = 4
+begin
+	ROLLBACK TRAN
+	RAISERROR('102:Błąd sprawdzania tożsamości kont. W okresie, w którym dokonywany jest rozrachunek nie istnieje konto tożsame do konta rozrachowywanego dekretu ', 16, 1) 
+	RETURN 102			
+end
+else if @KontaNieTozsame = 5
+begin
+	ROLLBACK TRAN
+	RAISERROR('102:Błąd sprawdzania tożsamości kont. Nie istnieje konto o podanym identyfikatorze ', 16, 1) 
+	RETURN 102			
+end
+else if @KontaNieTozsame = 1
+BEGIN
+	SET @OpisKompensaty = 'Kompensata: ' + RTRIM( @Dokument1 ) + ' - ' + RTRIM( @Dokument2 )
+
+
+
+	if @DataKomp &gt; @DataRozrachunku 
+	begin
+		SET @DataRozrachunku = @DataKomp
+	
+		set @Konto1Numer = @OldKonto1Numer
+		set @Konto2Numer = @OldKonto2Numer
+		set @Konto1 = @OldKonto1
+		set @Konto2 = @OldKonto2
+		set @KontoWal1Numer = @OldKontoWal1Numer
+		set @KontoWal2Numer = @OldKontoWal2Numer
+		set @KontoWal1 = @OldKontoWal1
+		set @KontoWal2 = @OldKontoWal2
+	
+	
+	
+	  	EXEC @KontaNieTozsame = CDN.PorownajKonta @DataRozrachunku, @Konto1Numer OUTPUT, @Konto1 OUTPUT, @Konto2Numer OUTPUT, @Konto2 OUTPUT, @KontoWal1Numer OUTPUT, @KontoWal1 OUTPUT, @KontoWal2Numer OUTPUT, @KontoWal2 OUTPUT
+	
+		
+		--tutaj powinny co najwyzej byc bledy 1, 4
+		if @KontaNieTozsame = -1
+		begin
+			ROLLBACK TRAN
+			RAISERROR('102:Błąd sprawdzania tożsamości kont. Błędne parametry procedury cdn.PorownajKonta ', 16, 1) 
+			RETURN 102			
+		end
+		else if @KontaNieTozsame = 2
+		begin
+			ROLLBACK TRAN
+			RAISERROR('102:Błąd sprawdzania tożsamości kont. Konta bilansowe rozrachowywanych dekretów są ze sobą tożsame, pozabilansowe nie', 16, 1) 
+			RETURN 102			
+		end
+		else if @KontaNieTozsame = 3
+		begin
+			ROLLBACK TRAN
+			RAISERROR('102:Błąd sprawdzania tożsamości kont. Konta bilansowe i pozabilansowe jednego z rozrachowywanych dekretów nie są z tego samego okresu ', 16, 1) 
+			RETURN 102			
+		end
+		else if @KontaNieTozsame = 4
+		begin
+			ROLLBACK TRAN
+			RAISERROR('102:Błąd sprawdzania tożsamości kont. W okresie, w którym dokonywany jest rozrachunek z dekretem kompensacyjnym nie istnieje konto tożsame do konta rozrachowywanego dekretu ', 16, 1) 
+			RETURN 102			
+		end
+		else if @KontaNieTozsame = 5
+		begin
+			ROLLBACK TRAN
+			RAISERROR('102:Błąd sprawdzania tożsamości kont. Nie istnieje konto o podanym identyfikatorze ', 16, 1) 
+			RETURN 102			
+		end
+		--else if @KontaNieTozsame = 1
+		--begin
+	
+		--end
+	end
+	
+
+	IF @Znak1 = 1
+	BEGIN
+		EXEC CDN.DodajKompensate @GIDFirma, @DataRozrachunku, @UserID, @KwotaSys, @WalutaSys, 
+			@Konto2, @Konto2Numer, @Konto1, @Konto1Numer, 
+			@KwotaWal, @KontoWal2, @KontoWal2Numer, @Waluta2,
+			@KwotaWal, @KontoWal1, @KontoWal1Numer, @Waluta1, @KursDTL, @KursDTM,
+			@OpisKompensaty, @KompGIDNumer OUTPUT, @DataDzisiejsza
+	END
+	ELSE
+	BEGIN
+		EXEC CDN.DodajKompensate @GIDFirma, @DataRozrachunku, @UserID, @KwotaSys, @WalutaSys, 
+			@Konto1, @Konto1Numer, @Konto2, @Konto2Numer, 
+			@KwotaWal, @KontoWal1, @KontoWal1Numer, @Waluta1,
+			@KwotaWal, @KontoWal2, @KontoWal2Numer, @Waluta2, @KursDTL, @KursDTM,
+			@OpisKompensaty, @KompGIDNumer OUTPUT, @DataDzisiejsza
+	END
+
+
+	IF @@TRANCOUNT = 0
+		RETURN 0
+
+
+
+
+	EXEC CDN.DodajRozrachunek @GIDFirma, @Dekret1Numer, @Dekret1Lp, @Dekret1DC, @KompGIDnumer, 1, 0, 0, @UserID, @ParID OUTPUT, 2, @DataDzisiejsza, 1, 1, @Wycena, @WycenaParID
+
+	IF @@TRANCOUNT = 0
+		RETURN 0
+
+
+
+	EXEC CDN.DodajRozrachunek @GIDFirma, @Dekret2Numer, @Dekret2Lp, @Dekret2DC, @KompGIDnumer, 1, 0, 0, @UserID, @ParID, 2, @DataDzisiejsza, 1, 1, @Wycena, @WycenaParID
+
+	IF @@TRANCOUNT = 0
+		RETURN 0
+	
+
+	SET @Kwota = @KwotaWal
+
+	COMMIT TRAN
+	RETURN 0
+END
+
+
+
+
+
+SET @GIDTyp1   = NULL
+SET @GIDNumer1 = NULL 
+SET @GIDLp1    = NULL
+
+SET @GIDTyp2   = NULL
+SET @GIDNumer2 = NULL
+SET @GIDLp2    = NULL 
+
+
+
+
+
+-- aktualizacja dekretów
+UPDATE CDN.Dekrety SET
+	DT_Pozostaje = DT_Pozostaje - SIGN(DT_Kwota) * CASE WHEN DT_Waluta = @WalutaSys THEN @KwotaSys WHEN DT_Waluta = @Waluta1 THEN @KwotaWal ELSE 0 END,
+  	DT_Rozliczony = CASE WHEN DT_Pozostaje - SIGN(DT_Kwota) * CASE WHEN DT_Waluta = @WalutaSys THEN @KwotaSys WHEN DT_Waluta = @Waluta1 THEN @KwotaWal ELSE 0 END &lt;&gt; DT_Kwota THEN 1 ELSE 0 END,  
+  	DT_Nierozliczony = CASE WHEN DT_Pozostaje - SIGN(DT_Kwota) * CASE WHEN DT_Waluta = @WalutaSys THEN @KwotaSys WHEN DT_Waluta = @Waluta1 THEN @KwotaWal ELSE 0 END &lt;&gt; 0 THEN 1 ELSE 0 END
+WHERE DT_GIDNumer = @Dekret1Numer AND DT_GIDLp = @Dekret1Lp AND DT_DC = @Dekret1DC
+
+
+IF @@ERROR &lt;&gt; 0
+BEGIN
+	ROLLBACK TRAN
+	RAISERROR('103:Błąd aktualizacji dekretów', 16, 1) 
+	RETURN 103
+END
+
+
+
+
+UPDATE CDN.Dekrety SET 
+	DT_Pozostaje = DT_Pozostaje - SIGN(DT_Kwota) * CASE WHEN DT_Waluta = @WalutaSys THEN @KwotaSys WHEN DT_Waluta = @Waluta2 THEN @KwotaWal ELSE 0 END,
+	DT_Rozliczony = CASE WHEN DT_Pozostaje - SIGN(DT_Kwota) * CASE WHEN DT_Waluta = @WalutaSys THEN @KwotaSys WHEN DT_Waluta = @Waluta2 THEN @KwotaWal ELSE 0 END &lt;&gt; DT_Kwota THEN 1 ELSE 0 END,  
+	DT_Nierozliczony = CASE WHEN DT_Pozostaje - SIGN(DT_Kwota) * CASE WHEN DT_Waluta = @WalutaSys THEN @KwotaSys WHEN DT_Waluta = @Waluta2 THEN @KwotaWal ELSE 0 END &lt;&gt; 0 THEN 1 ELSE 0 END
+WHERE DT_GIDNumer = @Dekret2Numer AND DT_GIDLp = @Dekret2Lp AND DT_DC = @Dekret2DC
+
+IF @@ERROR &lt;&gt; 0
+BEGIN
+	ROLLBACK TRAN
+	RAISERROR('103:Błąd aktualizacji dekretów', 16, 1) 
+	RETURN 103
+END
+
+
+
+IF @KwotaWal = 0 AND @KwotaSys = 0
+BEGIN
+	ROLLBACK TRAN
+	RAISERROR('203:Jeden z zapisów  księgowych (lub oba zapisy) został całkowicie rozrachowany.', 16, 1) 
+	RETURN 203
+END
+
+
+
+
+
+-- dodanie rozrachunku
+INSERT INTO CDN.Rozliczenia(
+	R2_Dok1Typ, R2_Dok1Numer, R2_Dok1Lp, R2_Dekret1Numer, R2_Dekret1Lp, R2_Dekret1DC, R2_Waluta1, R2_KwotaWal1, 
+	R2_Dok2Typ, R2_Dok2Numer, R2_Dok2Lp, R2_Dekret2Numer, R2_Dekret2Lp, R2_Dekret2DC, R2_Waluta2, R2_KwotaWal2, 
+	R2_KwotaSys, R2_DataRozliczenia, R2_DataRozrachunku, 
+	R2_OpeNumerRZ, R2_ParID, 
+	R2_GIDFirma, R2_Dekret1Dod, R2_Dekret2Dod, R2_RK, R2_RKStrona, 
+	R2_Wycena,
+	R2_PozostajeZWyc, 
+	R2_PozostajeZWycSys, 
+	R2_WycenaParID) 
+VALUES( 
+	@GIDTyp1, @GIDNumer1, @GIDLp1, @Dekret1Numer, @Dekret1Lp, @Dekret1DC, @Waluta1, @KwotaWal, 
+	@GIDTyp2, @GIDNumer2, @GIDLp2, @Dekret2Numer, @Dekret2Lp, @Dekret2DC, @Waluta2, @KwotaWal, 
+	@KwotaSys, 0, @DataRozrachunku, 
+	@UserID, @ParID, 
+	@GIDFirma, CASE @Dod WHEN 1 THEN 1 ELSE 0 END, CASE @Dod WHEN 2 THEN 1 ELSE 0 END, 0, 0, 
+	@Wycena,
+	0,
+	0,
+	@WycenaParID )
+
+
+
+IF @@ERROR &lt;&gt; 0
+BEGIN
+	ROLLBACK TRAN
+	RAISERROR('102:Błąd dodania rozliczenia', 16, 1) 
+	RETURN 102
+END
+
+
+
+IF @ParID IS NULL
+	SET @ParID = SCOPE_IDENTITY()
+
+
+
+
+IF @RoznicaKursowa &lt;&gt; 0 -- w przypadku rozrachunku zaklada tylko dekret RK
+BEGIN
+	SELECT @DataDzisiejszaRK = ISNULL(KON_Wartosc,0) FROM CDN.Konfig with(nolock) WHERE KON_Numer = 2057
+		
+	set @DataRK = @DataRozrachunku
+
+
+  	IF @DataDzisiejszaRK = 1 and @DataRozrachunku &lt; @DataDzisiejsza
+    		SET @DataRK = @DataDzisiejsza  --DATEDIFF( dd, '18001228', Getdate() )
+
+
+
+
+	set @Konto1Numer = @OldKonto1Numer
+	set @Konto2Numer = @OldKonto2Numer
+	set @Konto1 = @OldKonto1
+	set @Konto2 = @OldKonto2
+
+
+
+	EXEC @KontaNieTozsame = CDN.PorownajKonta @DataRK, @Konto1Numer OUTPUT, @Konto1 OUTPUT, @Konto2Numer OUTPUT, @Konto2 OUTPUT 
+
+
+	if @KontaNieTozsame = -1
+	begin
+		ROLLBACK TRAN
+		RAISERROR('102:Błąd sprawdzania tożsamości kont. Błędne parametry procedury cdn.PorownajKonta ', 16, 1) 
+		RETURN 102			
+	end
+	else if @KontaNieTozsame = 2
+	begin
+		ROLLBACK TRAN
+		RAISERROR('102:Błąd sprawdzania tożsamości kont. Konta bilansowe rozrachowywanych dekretów są ze sobą tożsame, pozabilansowe nie', 16, 1) 
+		RETURN 102			
+	end
+	else if @KontaNieTozsame = 3
+	begin
+		ROLLBACK TRAN
+		RAISERROR('102:Błąd sprawdzania tożsamości kont. Konta bilansowe i pozabilansowe jednego z rozrachowywanych dekretów nie są z tego samego okresu ', 16, 1) 
+		RETURN 102			
+	end
+	else if @KontaNieTozsame = 4
+	begin
+		ROLLBACK TRAN
+		RAISERROR('102:Błąd sprawdzania tożsamości kont. W okresie, w którym dokonywany jest rozrachunek nie istnieje konto tożsame do konta rozrachowywanego dekretu ', 16, 1) 
+		RETURN 102			
+	end
+	else if @KontaNieTozsame = 5
+	begin
+		ROLLBACK TRAN
+		RAISERROR('102:Błąd sprawdzania tożsamości kont. Nie istnieje konto o podanym identyfikatorze ', 16, 1) 
+		RETURN 102			
+	end
+
+
+
+
+	-- obliczenie kont waluty do RK
+	SELECT @OkresRK = OKR_ID FROM CDN.Okresy with(nolock) WHERE @DataRK BETWEEN OKR_Poczatek AND OKR_Koniec
+
+
+
+
+	--zapis ksiegowy RK
+	exec cdn.UstalKontaRK
+			@Kurs1,
+			@Kurs2,
+			@Znak1,
+			@Znak2,
+			@StronaRK,
+			@Dokument1,
+			@Dokument2,
+			@OkresRK,
+			@Waluta1,
+			@Konto1,
+			@Konto1Numer,
+			@Konto2,
+			@Konto2Numer,
+			@KontoDT output,
+			@KontoDTNumer output,
+			@KontoCT output,
+			@KontoCTNumer output,
+			@DekretRKDC output,
+			@OpisRK output,
+			@BZ
+
+
+
+
+
+	IF @KontoDTNumer IS NULL OR @KontoCTNumer IS NULL
+	BEGIN
+		ROLLBACK TRAN
+		RAISERROR('Brak konta różnic kursowych waluty %s. Uzupełnij konto RK na formatce waluty.', 16, 1, @Waluta1 ) 
+		RETURN 301
+	END
+
+
+	EXEC CDN.DodajRozniceKursowa @GIDFirma, @DataRK, @UserID, @RoznicaKursowa, @WalutaSys, 
+		@KontoDT, @KontoDTNumer, @KontoCT, @KontoCTNumer, @OpisRK, @RKDekretNumer OUTPUT, @DataDzisiejsza, ''
+
+
+	IF @@TRANCOUNT = 0
+		RETURN 0
+
+
+
+	IF @StronaRK = 1
+		EXEC CDN.DodajRozrachunek @GIDFirma, @Dekret1Numer,@Dekret1Lp,@Dekret1DC, @RKDekretNumer, 1, 0, 0, @UserID, @ParID, 2, @DataDzisiejsza, 1, 1, @Wycena, @WycenaParID
+	ELSE
+		EXEC CDN.DodajRozrachunek @GIDFirma, @Dekret2Numer,@Dekret2Lp,@Dekret2DC, @RKDekretNumer, 1, 0, 0, @UserID, @ParID, 2, @DataDzisiejsza, 1, 1, @Wycena, @WycenaParID
+
+
+
+	IF @@TRANCOUNT = 0
+		RETURN 0
+END
+
+
+-- koniec transakcji i powrót
+COMMIT TRAN
+SET NOCOUNT OFF
+
+
+SET @Kwota = @KwotaWal
+RETURN 0
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury DodajRozrachunek"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury DodajRozrachunek */</I><BR>
+GRANT EXECUTE ON CDN.DodajRozrachunek TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

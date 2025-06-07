@@ -1,0 +1,656 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie funkcji KSeF_TabelaPlatnosci"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie funkcji KSeF_TabelaPlatnosci */</I><BR>
+if exists (select name from sysobjects where name = 'KSeF_TabelaPlatnosci' and type = 'TF')
+  drop function CDN.KSeF_TabelaPlatnosci;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie funkcji KSeF_TabelaPlatnosci"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie funkcji KSeF_TabelaPlatnosci */</I><BR>
+CREATE FUNCTION CDN.KSeF_TabelaPlatnosci(
+@GIDTyp smallint,
+@GIDNumer int)
+RETURNS @TmpPlatnosci TABLE
+(
+TRP_SpiTyp SMALLINT
+,TRP_SpiNumer INT
+,TRP_GIDTyp SMALLINT
+,TRP_GIDNumer INT
+,TRP_GIDLp SMALLINT
+,TRP_Termin INT
+,TRP_FormaNr TINYINT
+,TrP_FormaNazwa VARCHAR(15)
+,TRP_Waluta VARCHAR(3)
+,TrP_KARNumer INT
+,TrP_KntTyp SMALLINT
+,TrP_KntNumer INT
+,TrP_Rozliczona TINYINT
+,TRP_Kwota DECIMAL(15,2)
+,TRP_KwotaSys DECIMAL(15,2)
+,PozostajeDlaPlatnosciWszystkieRozliczenia DECIMAL(15,2)
+,PrzeliczPoKursie TINYINT
+,KwotaZaplaty DECIMAL(15,2)
+,KwotaZaplatyDoPrzeliczeniaPoKursie DECIMAL(15,2)
+,DataRozliczenia INT
+,DataZaplaty INT
+,KAZDataZapisu INT
+,FormaID TINYINT
+,TerminPlatnosciOpis VARCHAR(100)
+,StatusZaplatyPlatnosci TINYINT
+,InnaPlatnosc TINYINT
+,MaxFormaID TINYINT
+,KursL DECIMAL(15,10)
+,KursM DECIMAL(5)
+,CzyZaliczka TINYINT
+)
+AS
+BEGIN	
+	
+	DECLARE @WalutaSys VARCHAR(3),
+			@TRNWaluta VARCHAR(3),
+			@KursL DECIMAL(15,10)=1,
+			@KursM DECIMAL(5)=1,
+			@DokumentWWalucie tinyint=0,			
+			@ZobowiazanieNaleznosc tinyint=0,
+			@ZnakDokumentu smallint=1,
+			@DataWyst INT=0,
+			@DataSprz INT=0
+
+
+	SELECT @WalutaSys = KON_Wartosc FROM CDN.Konfig WHERE KON_Numer = 211
+	if @GIDTyp in (2037,2045,1828,1836,2005,2013) --FSE,FKE,FEL,KEL,WZE,WKE
+	begin
+		set @DokumentWWalucie = 1		
+	end
+
+	select 
+		@KursL = ISNULL(NULLIF(TRN_KursL,0),1)
+		, @KursM = ISNULL(NULLIF(TRN_KursM,0),1)
+		, @ZnakDokumentu = case when Trn_NettoR+Trn_NettoP+Trn_VatR+Trn_VatP &lt; 0 THEN -1 else 1 end 
+		, @DataSprz = TRN_Data3
+		, @DataWyst = TRN_Data2
+		, @TRNWaluta = TrN_Waluta
+	from cdn.TraNag where trn_gidnumer = @GIDNumer
+
+
+	if cdn.CzyPrzychod(@GIDTyp) = 1	
+	begin
+		if (@GIDTyp &amp; 8) = 0 
+			set @ZobowiazanieNaleznosc = 1
+		else
+			set @ZobowiazanieNaleznosc = 2
+	end
+	else
+	begin
+		if (@GIDTyp &amp; 8) &gt; 0 			
+			set @ZobowiazanieNaleznosc = 1
+		else
+			set @ZobowiazanieNaleznosc = 2
+	end
+
+
+
+	;With Roz AS (
+	select R2_Dok1Typ R2TRPTyp, R2_Dok1Numer R2TRPNumer, R2_Dok1Lp R2TRPLp
+		, R2_Dok2Typ R2DokTyp, R2_Dok2Numer R2DokNumer, R2_Dok2Lp R2DokLp
+		, R2_KwotaWal1 R2KwotaWal, R2_KwotaSys + case when R2_RkStrona = 1 then isnull(R2_RK,0) else 0 end R2KwotaSys, R2_DataRozliczenia R2DataRozliczenia
+		, R2_Waluta1 R2Waluta, R2_ID R2ID
+	from cdn.Rozliczenia
+	where R2_Dok2Typ&lt;&gt;435 and R2_Wycena =0
+	union all
+	select R2_Dok2Typ R2TRPTyp, R2_Dok2Numer R2TRPNumer, R2_Dok2Lp R2TRPLp
+		, R2_Dok1Typ R2DokTyp, R2_Dok1Numer R2DokNumer, R2_Dok1Lp R2DokLp
+		, R2_KwotaWal2 R2KwotaWal, R2_KwotaSys + case when R2_RkStrona = 2 then isnull(R2_RK,0) else 0 end R2KwotaSys, R2_DataRozliczenia R2DataRozliczenia
+		, R2_Waluta2 R2Waluta, R2_ID R2ID
+	from cdn.Rozliczenia
+	where R2_Dok1Typ&lt;&gt;435 and R2_Wycena =0
+	)
+
+	, TRPROZ as (
+	select 
+		TRP_SpiTyp, TRP_SpiNumer, TRP_GIDTyp, TRP_GIDNumer, TRP_GIDLp
+		,TRP_Termin, TRP_FormaNr, TrP_FormaNazwa, TRP_Waluta
+		,TrP_KARNumer
+		,TrP_KntTyp, TrP_KntNumer
+		,TRP_Kwota,TRP_KwotaSys
+		,TrP_Rozliczona			
+		,ISNULL(SUM(R2KwotaWal),0) R2KwotaWal
+		,ISNULL(SUM(R2KwotaSys),0) R2KwotaSys
+		,ISNULL(MAX(R2DataRozliczenia),0) R2DataRozliczenia
+		,ISNULL(KAZ_DataZapisu,0) KAZDataZapisu
+		,@ZnakDokumentu*case when @ZobowiazanieNaleznosc = 3-TRP_Typ then -1 else 1 end Znak		
+	from cdn.TraPlat
+		left join Roz on TRP_GIDTyp=R2TRPTyp and TRP_GIDNumer=R2TRPNumer and TRP_GIDLp=R2TRPLp
+		left join cdn.Zapisy on R2DokTyp=784 and R2DokNumer=KAZ_GIDNumer and R2DokLp=0
+	where TrP_KorektaDanych=0
+	group by TRP_SpiTyp, TRP_SpiNumer, TRP_GIDTyp, TRP_GIDNumer, TRP_GIDLp
+		,TRP_Termin, TRP_FormaNr, TrP_FormaNazwa, TRP_Waluta
+		,TrP_KARNumer
+		,TrP_KntTyp, TrP_KntNumer
+		,TRP_Kwota,TRP_KwotaSys
+		,TrP_Rozliczona	
+		,TRP_Typ
+		,R2ID
+		,ISNULL(KAZ_DataZapisu,0)		
+	)
+
+	, TRP as (
+	select TRP_SpiTyp, TRP_SpiNumer, TRP_GIDTyp, TRP_GIDNumer, TRP_GIDLp
+		,TRP_Termin, TRP_FormaNr, TrP_FormaNazwa, TRP_Waluta
+		,TrP_KARNumer
+		,TrP_KntTyp, TrP_KntNumer
+		,TrP_Rozliczona
+		,Znak*TRP_Kwota TRP_Kwota,Znak*TRP_KwotaSys TRP_KwotaSys		
+		,Znak*TRP_Kwota-ISNULL(SUM(R2KwotaWal) OVER (PARTITION BY TRP_GIDTyp, TRP_GIDNumer, TRP_GIDLp),0) PozostajeDlaPlatnosciWszystkieRozliczenia
+		,case when @DokumentWWalucie=1 then 1 else 0 end PrzeliczPoKursie				
+		,Znak*case when @DokumentWWalucie=1 then
+				case when @TRNWaluta=TRP_Waluta then R2KwotaWal 
+				else 0 end
+			else R2KwotaSys
+			end KwotaZaplaty
+		,Znak*case when @DokumentWWalucie=1 then
+				case when @TRNWaluta=TRP_Waluta then 0
+				else R2KwotaSys end
+			else 0
+			end KwotaZaplatyDoPrzeliczeniaPoKursie
+		,case when R2DataRozliczenia&gt;KAZDataZapisu THEN R2DataRozliczenia else KAZDataZapisu end DataRozliczenia
+		,case when KAZDataZapisu&lt;&gt;0 THEN KAZDataZapisu else R2DataRozliczenia end DataZaplaty
+		,KAZDataZapisu
+		,case 
+			when TRP_FormaNr between 10 and 19 then 1 --gotowka
+			when TRP_FormaNr between 20 and 29 then 6 --przelew
+			when TRP_FormaNr between 30 and 39 then 5 --kredyt
+			when TRP_FormaNr between 40 and 49 then 4 --czek
+			when TRP_FormaNr between 50 and 59 then 2 --karta		
+			when TRP_FormaNr between 70 and 79 then 3 --bon
+			else 0
+		end FormaID
+		, (rtrim(TrP_FormaNazwa) + ' ' + convert(varchar,Znak*TRP_Kwota) + ' ' + TRP_Waluta) TerminPlatnosciOpis
+
+	from TRPROZ
+	)
+
+	INSERT INTO @TmpPlatnosci
+	select 
+		*
+		,case 
+			when PozostajeDlaPlatnosciWszystkieRozliczenia=0 THEN 2
+			when PozostajeDlaPlatnosciWszystkieRozliczenia=TRP_Kwota THEN 0
+			else 1
+		end StatusZaplatyPlatnosci
+		,case when FormaID=0 then 1 else 0 end InnaPlatnosc
+		,MAX(FormaID) OVER (Partition by 1) MaxFormaID
+		,@KursL
+		,@KursM
+		,case when KAZDataZapisu&lt;&gt;0 and DataZaplaty &lt; @DataSprz and DataZaplaty &lt;&gt; @DataWyst then 1 else 0 end CzyZaliczka
+	from TRP
+	where (TrP_SpiTyp=@GIDTyp and TRP_SpiNumer = @GIDNumer) OR (TrP_GIDTyp=@GIDTyp and TRP_GIDNumer = @GIDNumer)
+	
+	RETURN
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do funkcji CDN.KSeF_TabelaPlatnosci"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do funkcji CDN.KSeF_TabelaPlatnosci */</I><BR>
+GRANT SELECT ON CDN.KSeF_TabelaPlatnosci TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie procedury KSeF_RachunkiBankowe"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie procedury KSeF_RachunkiBankowe */</I><BR>
+if exists (select name from sysobjects where name = 'KSeF_RachunkiBankowe' and type = 'P')
+  drop procedure CDN.KSeF_RachunkiBankowe;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury KSeF_RachunkiBankowe"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury KSeF_RachunkiBankowe */</I><BR>
+CREATE PROCEDURE CDN.KSeF_RachunkiBankowe
+AS
+BEGIN	
+	;with CTEPlatnosci as (
+		select  TRP_GIDTyp,TRP_GIDNumer,TRP_GIDLp,TRP_SPITyp, TRP_SPINumer, TRP_KNTTyp,TRP_KNTNumer, TRP_KARNumer, TRP_Rozliczona 
+		from #tmpPlat
+		group by TRP_GIDTyp,TRP_GIDNumer,TRP_GIDLp,TRP_SPITyp, TRP_SPINumer, TRP_KNTTyp,TRP_KNTNumer, TRP_KARNumer, TRP_Rozliczona 
+	)
+	, CTERejestry as (
+	select 
+		DISTINCT
+		KAR_GIDNumer
+		,KAR_Typ
+		,KAR_Seria
+		,convert(TinyInt,1) Zrodlo
+		,KAR_NRB	
+		,Bnk_Swift
+		,Bnk_Nazwa
+		,KAR_Waluta 
+		,KAR_IdentKontr,KAR_NrRachunku,KAR_RachIdentNrKier, KAR_RachIdent
+		,TrP_KntTyp KNPTyp,TrP_KntNumer KNPNumer
+	from CTEPlatnosci
+		join cdn.Rejestry on TrP_KARNumer=KAR_GIDNumer
+		join cdn.Banki on KAR_BNKNumer=Bnk_GIDNumer
+	where TrP_Rozliczona&lt;&gt;2 and KAR_Typ=2
+	union all
+	select 
+		KAR_GIDNumer
+		,KAR_Typ
+		,KAR_Seria
+		,convert(TinyInt,0) Zrodlo
+		,KAR_NRB	
+		,Bnk_Swift
+		,Bnk_Nazwa
+		,KAR_Waluta 
+		,KAR_IdentKontr,KAR_NrRachunku,KAR_RachIdentNrKier, KAR_RachIdent
+		,TrN_KnPTyp,TrN_KnPNumer
+	from cdn.TraNag 
+		join cdn.Rejestry on TrN_KARNumer=KAR_GIDNumer
+		left join cdn.Banki on KAR_BNKNumer=Bnk_GIDNumer
+	where KAR_Typ=2 
+		and exists(select 1 from CTEPlatnosci where TrP_SpiTyp=TRN_GIDTyp and TrP_SpiNumer=TRN_GIDNumer)
+	)
+
+
+	, CTERachunki as (
+	select 
+		r.*
+		,case when KAR_IdentKontr=0 then KAR_NrRachunku
+		else
+			coalesce(
+				(select top 1 KRj_NrRachunku
+				from cdn.KntRejestr
+				where KRj_ObiTyp=KNPTyp and KRj_ObiNumer=KNPNumer and KRj_KarNumer=KAR_GIDNumer and KRj_CzasArchiwizacji=0)
+				,case when KNPTyp=32 THEN cdn.WirtualnyNumerRachunku(KAR_RachIdentNrKier, KAR_RachIdent, KNPNumer, 'PL') else NULL end) 
+		end NrRB
+	from CTERejestry r	
+	where isnull((select Kon_Wartosc from cdn.konfig where Kon_Numer=7418),0)=Zrodlo
+	)
+	
+	select 		
+		KAR_Typ
+		,KAR_Seria
+		--,convert(TinyInt,0) Zrodlo
+		,KAR_NRB	
+		,replace(replace(NrRB,'-',''),' ','') NrRB
+		,Bnk_Swift Swift
+		,Bnk_Nazwa NazwaBanku
+		,KAR_Waluta OpisRachunku						
+	from CTERachunki
+
+	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury CDN.KSeF_RachunkiBankowe"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury CDN.KSeF_RachunkiBankowe */</I><BR>
+GRANT EXECUTE ON CDN.KSeF_RachunkiBankowe TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie procedury KSeF_Platnosci"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie procedury KSeF_Platnosci */</I><BR>
+if exists (select name from sysobjects where name = 'KSeF_Platnosci' and type = 'P')
+  drop procedure CDN.KSeF_Platnosci;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury KSeF_Platnosci"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury KSeF_Platnosci */</I><BR>
+CREATE PROCEDURE CDN.KSeF_Platnosci
+AS
+BEGIN		
+	select 
+		TRP_Termin 
+		,TRP_FormaNr
+		,rtrim(TrP_FormaNazwa) TrP_FormaNazwa
+		,TrP_Kwota
+		,TrP_Waluta
+		,TerminPlatnosciOpis		
+	from #tmpPlat
+	group by TRP_GIDTyp,TRP_GIDNumer,TRP_GIDLp
+		,TRP_Termin 
+		,TRP_FormaNr
+		,TrP_FormaNazwa
+		,TrP_Kwota
+		,TrP_Waluta
+		,TerminPlatnosciOpis
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury CDN.KSeF_Platnosci"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury CDN.KSeF_Platnosci */</I><BR>
+GRANT EXECUTE ON CDN.KSeF_Platnosci TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie procedury KSeF_Zapisy"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie procedury KSeF_Zapisy */</I><BR>
+if exists (select name from sysobjects where name = 'KSeF_Zapisy' and type = 'P')
+  drop procedure CDN.KSeF_Zapisy;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury KSeF_Zapisy"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury KSeF_Zapisy */</I><BR>
+CREATE PROCEDURE CDN.KSeF_Zapisy
+AS
+BEGIN		
+	select 
+		DataZaplaty		
+		,cast((case when PrzeliczPoKursie=1 then KursM/KursL else 1 end*SUM(KwotaZaplatyDoPrzeliczeniaPoKursie)) AS DECIMAL(15,2))+SUM(KwotaZaplaty) KwotaZaplaty		
+		,case when TRP_SpiTyp in (1824, 1828, 1832, 1836) then 1 else CzyZaliczka end CzyZaliczka --FSL/FEL/KSL/KEL 
+	from #tmpPlat
+	where DataZaplaty&lt;&gt;0
+	group by KursL, KursM, PrzeliczPoKursie, TRP_SpiTyp, CzyZaliczka, DataZaplaty	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury CDN.KSeF_Zapisy"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury CDN.KSeF_Zapisy */</I><BR>
+GRANT EXECUTE ON CDN.KSeF_Zapisy TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie procedury KSeF_Dokumenty"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie procedury KSeF_Dokumenty */</I><BR>
+if exists (select name from sysobjects where name = 'KSeF_Dokumenty' and type = 'P')
+  drop procedure CDN.KSeF_Dokumenty;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury KSeF_Dokumenty"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury KSeF_Dokumenty */</I><BR>
+CREATE PROCEDURE CDN.KSeF_Dokumenty
+AS
+BEGIN		
+	select 	
+		case when MAX(TRP_FormaNr)=MIN(TRP_FormaNr) then 1 else 0 end CzyFormaTaSama
+		,rtrim(ISNULL(MAX(case when MaxFormaID=FormaID then TrP_FormaNazwa else '' end),'')) FormaNazwa
+		,case MAX(MaxFormaID)
+			when 1 then 'Gotowka'
+			when 2 then 'Karta'
+			when 3 then 'Bon'
+			when 4 then 'Czek'
+			when 5 then 'Kredyt'
+			when 6 then 'Przelew'				
+			else 'Inna'
+		end KSeFFormaNazwa
+		,ISNULL(MAX(DataZaplaty),0) DataZaplaty
+		,case 		
+			when MAX(StatusZaplatyPlatnosci)=0 THEN 0
+			when MAX(StatusZaplatyPlatnosci)=2 and MIN(StatusZaplatyPlatnosci)=2 THEN 2
+			when COUNT(TRP_SpiTyp)=0 then 0
+			else 1 
+		end StatusZaplatyDokumentu		
+		,cast((case when PrzeliczPoKursie=1 then KursM/KursL else 1 end*SUM(KwotaZaplatyDoPrzeliczeniaPoKursie)) AS DECIMAL(15,2))+SUM(KwotaZaplaty) KwotaZaplaty		
+		,case 
+			when MAX(TRP_SpiTyp) IN(2033, 2037, 2035) then --FS, FSE, RA --, 2041, 2045, 2043
+				max(CzyZaliczka)
+			when MAX(TRP_SpiTyp) in (1824, 1828) then --FSL, FEL --,1832, 1836
+				case when max(DataZaplaty)&lt;&gt;min(DataZaplaty) then 1 else 0 end 
+		else 0 end CzyZaliczka
+	from #tmpPlat
+	group by KursL, KursM, PrzeliczPoKursie
+
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury CDN.KSeF_Dokumenty"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury CDN.KSeF_Dokumenty */</I><BR>
+GRANT EXECUTE ON CDN.KSeF_Dokumenty TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie procedury KSeF_DanePlatnosci"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie procedury KSeF_DanePlatnosci */</I><BR>
+if exists (select name from sysobjects where name = 'KSeF_DanePlatnosci' and type = 'P')
+  drop procedure CDN.KSeF_DanePlatnosci;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury KSeF_DanePlatnosci"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury KSeF_DanePlatnosci */</I><BR>
+CREATE PROCEDURE CDN.KSeF_DanePlatnosci
+@GIDTyp smallint,
+@GIDNumer int
+AS
+BEGIN		
+	select * 
+	into #tmpPlat
+	from cdn.KSEF_TabelaPlatnosci(@GIDTyp, @GIDNumer)
+
+	exec cdn.KSeF_Platnosci
+	exec cdn.KSeF_Zapisy
+	exec cdn.KSeF_RachunkiBankowe
+	exec cdn.KSeF_Dokumenty	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury KSeF_DanePlatnosci"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury KSeF_DanePlatnosci */</I><BR>
+GRANT EXECUTE ON CDN.KSeF_DanePlatnosci TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie procedury KSeF_WydrPlatnosci"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie procedury KSeF_WydrPlatnosci */</I><BR>
+if exists (select name from sysobjects where name = 'KSeF_WydrPlatnosci' and type = 'P')
+  drop procedure CDN.KSeF_WydrPlatnosci;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury KSeF_WydrPlatnosci"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury KSeF_WydrPlatnosci */</I><BR>
+CREATE PROCEDURE CDN.KSeF_WydrPlatnosci
+@GIDTyp smallint,
+@GIDNumer int
+AS
+BEGIN		
+	select * 
+	into #tmpPlat
+	from cdn.KSEF_TabelaPlatnosci(@GIDTyp, @GIDNumer)
+
+	exec cdn.KSeF_Platnosci
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury KSeF_WydrPlatnosci"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury KSeF_WydrPlatnosci */</I><BR>
+GRANT EXECUTE ON CDN.KSeF_WydrPlatnosci TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie procedury KSeF_WydrZapisy"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie procedury KSeF_WydrZapisy */</I><BR>
+if exists (select name from sysobjects where name = 'KSeF_WydrZapisy' and type = 'P')
+  drop procedure CDN.KSeF_WydrZapisy;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury KSeF_WydrZapisy"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury KSeF_WydrZapisy */</I><BR>
+CREATE PROCEDURE CDN.KSeF_WydrZapisy
+@GIDTyp smallint,
+@GIDNumer int
+AS
+BEGIN		
+	select * 
+	into #tmpPlat
+	from cdn.KSEF_TabelaPlatnosci(@GIDTyp, @GIDNumer)
+
+	exec cdn.KSeF_Zapisy
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury KSeF_WydrZapisy"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury KSeF_WydrZapisy */</I><BR>
+GRANT EXECUTE ON CDN.KSeF_WydrZapisy TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie procedury KSeF_WydrRachunkiBankowe"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie procedury KSeF_WydrRachunkiBankowe */</I><BR>
+if exists (select name from sysobjects where name = 'KSeF_WydrRachunkiBankowe' and type = 'P')
+  drop procedure CDN.KSeF_WydrRachunkiBankowe;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury KSeF_WydrRachunkiBankowe"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury KSeF_WydrRachunkiBankowe */</I><BR>
+CREATE PROCEDURE CDN.KSeF_WydrRachunkiBankowe
+@GIDTyp smallint,
+@GIDNumer int
+AS
+BEGIN		
+	select * 
+	into #tmpPlat
+	from cdn.KSEF_TabelaPlatnosci(@GIDTyp, @GIDNumer)
+
+	exec cdn.KSeF_RachunkiBankowe
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury KSeF_WydrRachunkiBankowe"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury KSeF_WydrRachunkiBankowe */</I><BR>
+GRANT EXECUTE ON CDN.KSeF_WydrRachunkiBankowe TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie procedury KSeF_WydrDokumenty"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie procedury KSeF_WydrDokumenty */</I><BR>
+if exists (select name from sysobjects where name = 'KSeF_WydrDokumenty' and type = 'P')
+  drop procedure CDN.KSeF_WydrDokumenty;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury KSeF_WydrDokumenty"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury KSeF_WydrDokumenty */</I><BR>
+CREATE PROCEDURE CDN.KSeF_WydrDokumenty
+@GIDTyp smallint,
+@GIDNumer int
+AS
+BEGIN		
+	select * 
+	into #tmpPlat
+	from cdn.KSEF_TabelaPlatnosci(@GIDTyp, @GIDNumer)
+
+	exec cdn.KSeF_Dokumenty	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury KSeF_WydrDokumenty"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury KSeF_WydrDokumenty */</I><BR>
+GRANT EXECUTE ON CDN.KSeF_WydrDokumenty TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

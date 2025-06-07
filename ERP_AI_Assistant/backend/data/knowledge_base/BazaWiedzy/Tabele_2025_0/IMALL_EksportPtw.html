@@ -1,0 +1,143 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[IMALL_EksportPtw]"></A><PRE>
+          <FONT SIZE="2"><I>/* [IMALL_EksportPtw] */</I><BR>
+CREATE PROCEDURE [CDN].[IMALL_EksportPtw]
+   @ID INT				-- ID e-sklepu
+  ,@ExpCennik INT      	-- Eksport cennika (0 - nie, 1 - tak)
+  ,@ExpCennikTyp INT   	-- Typ eksportu cennika (0 - różnicowy, 1 - pełny)
+AS
+
+DECLARE  @TypPtw_Knt SMALLINT
+		,@TypPtw_Zam SMALLINT
+		,@TypPtw_ZamStan SMALLINT
+		,@TypPtw_Twr SMALLINT
+
+
+SELECT @TypPtw_Knt		= 1
+   	  ,@TypPtw_Zam		= 2
+	  ,@TypPtw_ZamStan	= 3
+  	  ,@TypPtw_Twr		= 4
+
+IF NOT EXISTS(select * from CDN.PicoKonfig where PcK_PicoID = @ID)
+BEGIN
+	select @ID = PcK_PicoID from CDN.PicoKonfig where PcK_iMallID = CAST(@ID AS VARCHAR(20))
+END  
+
+IF @ExpCennik = 1
+BEGIN
+	-- ustawiamy flagę dostępności w e-sklepie (towar nieaktywny w e-sklepie: PcL_ObiektID = 0, towar aktywny w e-sklepie: PcL_ObiektID = 1 i zmiana timestampu)
+	UPDATE CDN.PicoLog
+		SET PcL_ObiektID = 0, PcL_TStamp = DATEDIFF(s,CONVERT(DATETIME,'19900101',121),GETDATE())  
+	FROM CDN.TwrKarty
+	JOIN CDN.TwrAplikacje ON Twr_GIDNumer = TAP_ObiNumer and Twr_GIDTyp = TAP_ObiTyp
+	JOIN CDN.TwrGrupy ON TwG_GIDNumer = Twr_GIDNumer AND TwG_GIDTyp = Twr_GIDTyp
+	JOIN CDN.PicoKonfig ON PcK_PicoID = @ID
+	JOIN CDN.PicoLog ON PcL_PcKID = PcK_PicoID AND PcL_ObiTyp = 16 AND PcL_ObiNumer = Twr_GIDNumer
+	WHERE (Twr_Oddzialowy&amp;2)/2 = 1 AND Twr_GIDNumer &gt; 0 AND (TwG_CzasModyfikacji &gt; PcK_TSSynchrGrupPtw OR Twr_LastModC &gt; PcK_TSSynchrTwrPtw OR PcL_ObiektID = 1)
+	AND (TAP_iMall = 0 OR Twr_Archiwalny = 1 OR NOT EXISTS(SELECT TwL_GIDNumer FROM CDN.TwrLinki WHERE TwL_GIDNumer = Twr_GIDNumer AND TwL_GIDTyp = 16 AND TwL_GrONumer = PcK_TwGNumer ) )
+
+	UPDATE CDN.PicoLog
+		SET PcL_ObiektID = 1, PcL_TStamp = DATEDIFF(s,CONVERT(DATETIME,'19900101',121),GETDATE())   
+	FROM CDN.TwrKarty
+	JOIN CDN.TwrAplikacje ON Twr_GIDNumer = TAP_ObiNumer and Twr_GIDTyp = TAP_ObiTyp
+	JOIN CDN.TwrGrupy ON TwG_GIDNumer = Twr_GIDNumer AND TwG_GIDTyp = Twr_GIDTyp
+	JOIN CDN.PicoKonfig ON PcK_PicoID = @ID
+	JOIN CDN.PicoLog ON PcL_PcKID = PcK_PicoID AND PcL_ObiTyp = 16 AND PcL_ObiNumer = Twr_GIDNumer
+	WHERE (Twr_Oddzialowy&amp;2)/2 = 1 AND Twr_GIDNumer &gt; 0 AND (Twr_LastModC &gt; CASE WHEN @ExpCennikTyp=0 THEN PcK_TSSynchrTwrPtw ELSE 0 END OR TwG_CzasModyfikacji &gt; PcK_TSSynchrGrupPtw OR PcL_ObiektID = 0)
+	AND (TAP_iMall = 1 AND Twr_Archiwalny = 0 AND EXISTS(SELECT TwL_GIDNumer FROM CDN.TwrLinki WHERE TwL_GIDNumer = Twr_GIDNumer AND TwL_GIDTyp = 16 AND TwL_GrONumer = PcK_TwGNumer ) )
+END
+
+SELECT	 1 AS Tag, NULL AS Parent, 
+		 PTW.Typ		AS [PTW!1!Typ]
+		,PTW.ID			AS [PTW!1!ID]
+		,PTW.GIDTyp		AS [PTW!1!GIDTyp]
+		,PTW.GIDNumer	AS [PTW!1!GIDNumer]
+		,PTW.Status		AS [PTW!1!Status]
+		,PTW.Data		AS [PTW!1!Data]
+		,PTW.Opis		AS [PTW!1!Opis]  
+		,PTW.NrList		AS [PTW!1!NrList]  
+FROM
+	(
+		SELECT	 @TypPtw_Knt	AS Typ 
+				,PcL_ObiektID	AS ID 
+				,PcL_ObiTyp		AS GIDTyp 
+				,PcL_ObiNumer	AS GIDNumer 
+				,0				AS Status 
+				,''				AS Data 
+				,''				AS Opis
+				,''				AS NrList
+		FROM CDN.PicoKonfig JOIN CDN.PicoLog ON Pcl_PcKID=PcK_PicoID
+		WHERE PcK_PicoID = @ID AND PcL_ObiTyp = 32 AND PcL_TStamp &gt; PcK_TSSynchrPtw
+
+		UNION ALL
+
+		SELECT	 @TypPtw_Zam 
+				,ZaN_OddDokID 
+				,CDN.DokMapTypDokumentu(ZaN_GIDTyp,ZaN_ZamTyp,ZaN_Rodzaj) 
+				,ZaN_GIDNumer
+				,0
+				,CASE WHEN ZaN_DataRealizacji &gt; 0 THEN CAST( (ZaN_DataRealizacji - 69035)*86400  AS VARCHAR) ELSE '' END
+				,CDN.NumerDokumentu(CDN.DokMapTypDokumentu(ZaN_GIDTyp,ZaN_ZamTyp,ZaN_Rodzaj),0,0,ZaN_ZamNumer,ZaN_ZamRok,ZaN_ZamSeria,ZaN_ZamMiesiac)
+				,''				AS NrList
+		FROM CDN.ZamNag  WITH(NOLOCK) JOIN CDN.PicoKonfig WITH(NOLOCK)ON PcK_PicoID = ZaN_PcKID
+		WHERE PcK_PicoID = @ID AND ZaN_OddDokID &gt; 0 AND ZaN_LastMod &gt; PcK_TSSynchrPtw
+
+		UNION ALL
+
+		SELECT	 @TypPtw_ZamStan
+				,ZaN_OddDokID
+				,CDN.DokMapTypDokumentu(ZaN_GIDTyp,ZaN_ZamTyp,ZaN_Rodzaj)
+				,ZaN_GIDNumer
+				,CASE WHEN ZaN_Stan = 2			 THEN 1	 -- oczekuje na potwierdzenie
+ 					 WHEN ZaN_Stan IN (3,5)		 THEN 2  -- potwierdzone
+					 WHEN ZaN_Stan IN (21)		 THEN 3	 -- zrealizowane 	
+					 WHEN ZaN_Stan IN (32,35,37) THEN 4	 -- anulowane
+				 END
+				,CASE WHEN ZaN_Stan = 2			 THEN ''						    
+					 WHEN ZaN_Stan IN (3,5)		 THEN CASE WHEN ZaN_DataPotwierdz &gt; 0 THEN CAST( (ZaN_DataPotwierdz - 69035)*86400 + (ZaN_GodzinaPotwierdzenia - 1)/100  AS VARCHAR) ELSE '' END   
+					 WHEN ZaN_Stan IN (21)		 THEN CAST((SELECT MAX(TrS_TrnTStamp) FROM CDN.TraSElem WHERE TrS_RezNumer = ZaN_GIDNumer AND TrS_RezTyp = ZaN_GIDTyp)  AS VARCHAR)		
+					 WHEN ZaN_Stan IN (32,35,37) THEN ''	    
+				 END
+				,''
+				,''				AS NrList
+		FROM CDN.ZamNag  WITH(NOLOCK) JOIN CDN.PicoKonfig WITH(NOLOCK)ON PcK_PicoID = ZaN_PcKID
+		WHERE PcK_PicoID = @ID AND ZaN_OddDokID &gt; 0 AND ZaN_LastMod &gt; PcK_TSSynchrPtw
+
+		UNION ALL
+
+		SELECT DISTINCT
+				 @TypPtw_Twr
+				,Twr_GIDNumer
+				,16
+				,Twr_GIDNumer
+				,0
+				,''
+				,'' 
+				,''				AS NrList
+		FROM CDN.TwrKarty
+		JOIN CDN.TwrAplikacje ON Twr_GIDNumer = TAP_ObiNumer and Twr_GIDTyp = TAP_ObiTyp
+		JOIN CDN.TwrGrupy On TwG_GIDNumer = Twr_GIDNumer AND TwG_GIDTyp = Twr_GIDTyp
+		JOIN CDN.PicoKonfig ON PcK_PicoID = @ID
+		JOIN CDN.PicoLog ON PcL_PcKID = Pck_PicoId AND PcL_ObiTyp = Twr_GIDTyp AND PcL_ObiNumer = Twr_GIDNumer
+		WHERE @ExpCennik = 1 AND (Twr_Oddzialowy&amp;2)/2 = 1 AND Twr_GIDNumer &gt; 0 	AND
+	    (TwG_CzasModyfikacji &gt; PcK_TSSynchrGrupPtw OR Twr_LastModC &gt; PcK_TSSynchrTwrPtw OR PcL_TStamp &gt; PcK_TSSynchrTwrPtw)
+		AND (TAP_iMall = 0 OR Twr_Archiwalny = 1 OR NOT EXISTS(SELECT TwL_GIDNumer FROM CDN.TwrLinki WHERE TwL_GIDNumer = Twr_GIDNumer AND TwL_GIDTyp = 16 AND TwL_GrONumer = PcK_TwGNumer ) )
+	) PTW
+FOR XML EXPLICIT
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

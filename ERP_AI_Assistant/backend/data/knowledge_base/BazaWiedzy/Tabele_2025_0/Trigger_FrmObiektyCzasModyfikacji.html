@@ -1,0 +1,89 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[FrmObiekty_CzasModyfikacji]"></A><PRE>
+          <FONT SIZE="2"><I>/* [FrmObiekty_CzasModyfikacji] */</I><BR>
+CREATE TRIGGER [CDN].[FrmObiekty_CzasModyfikacji]
+ON [CDN].[FrmObiekty]
+FOR INSERT, UPDATE
+AS
+BEGIN
+	SET NOCOUNT ON
+
+	DECLARE @Typ int	
+	SELECT @Typ = FRO_GIDTyp from inserted
+	
+	IF @Typ = 736 -- formy płatności
+	BEGIN
+		UPDATE N SET N.Kon_CzasModyfikacji = DATEDIFF(s,CONVERT(DATETIME,'1990-01-01',120),GETDATE())
+		FROM CDN.Konfig N join inserted I on N.Kon_Lp = I.FRO_GIDNumer and Kon_Numer=FRO_GIDTyp and FRO_GIDTyp = 736
+			
+	END	
+	
+	IF @Typ = 208 -- magazyny
+	BEGIN
+		UPDATE N SET N.MAG_CzasModyfikacji = DATEDIFF(s,CONVERT(DATETIME,'1990-01-01',120),GETDATE())
+		FROM CDN.Magazyny N	JOIN Inserted I ON I.FRO_GIDTyp = N.MAG_GIDTyp AND I.FRO_GIDNumer = N.MAG_GIDNumer
+	END
+
+	IF @Typ = 272 -- serie
+	BEGIN
+		UPDATE N SET N.SER_CzasModyfikacji = DATEDIFF(s,CONVERT(DATETIME,'1990-01-01',120),GETDATE())
+		FROM CDN.Serie N JOIN Inserted I ON I.FRO_GIDTyp = SER_GIDTyp AND I.FRO_GIDNumer = SER_GIDNumer
+	END
+	
+	IF @Typ = 752 -- rejestry (w przypadku bankowych dodatkowo uaktualnienie na bankach)
+	BEGIN
+		UPDATE N SET N.KAR_CzasModyfikacji = DATEDIFF(s,CONVERT(DATETIME,'1990-01-01',120),GETDATE())
+		FROM CDN.Rejestry N JOIN Inserted I ON I.FRO_GIDTyp = KAR_GIDTyp AND I.FRO_GIDNumer = KAR_GIDNumer
+		
+		IF EXISTS(select top 1 * FROM CDN.Rejestry N 
+			JOIN Inserted I ON I.FRO_GIDTyp = KAR_GIDTyp AND I.FRO_GIDNumer = KAR_GIDNumer
+			JOIN CDN.Banki ON KAR_BNKNumer = Bnk_GIDNumer)
+		BEGIN
+			UPDATE B SET Bnk_LastModL=DATEDIFF(s,CONVERT(DATETIME,'1990-01-01',120),GETDATE())
+			FROM CDN.Banki B
+			JOIN CDN.Rejestry ON KAR_BNKNumer = Bnk_GIDNumer
+			JOIN Inserted I ON I.FRO_GIDTyp = KAR_GIDTyp AND I.FRO_GIDNumer = KAR_GIDNumer
+		END
+	END		
+	
+	IF @Typ = 64
+	BEGIN
+		UPDATE N SET Naz_CzasModyfikacji = DATEDIFF(s,CONVERT(DATETIME,'1990-01-01',120),GETDATE())
+		FROM CDN.Nazwy N
+		JOIN Inserted I ON Naz_GIDLp = I.FRO_GIDLp AND Naz_GIDTyp = I.FRO_GIDTyp
+
+		IF NOT EXISTS(SELECT * FROM Inserted (NOLOCK) JOIN CDN.FrmStruktura (NOLOCK) ON FRS_ID = Inserted.FRO_FRMID WHERE FRS_Oddzial IN (0,4))
+		BEGIN
+			UPDATE Twr SET Twr_LastModC = DATEDIFF(s,CONVERT(DATETIME,'1990-01-01',120),GETDATE()) --TFSID:265971
+			FROM CDN.TwrKarty Twr
+			JOIN CDN.TwrCeny ON TwC_TwrNumer = Twr_GIDNumer
+			JOIN Inserted I ON TwC_TwrLp = I.FRO_GIDLp 
+			WHERE I.FRO_GIDTyp = 64
+
+			UPDATE Twc SET TwC_CzasModyfikacji = DATEDIFF(s,CONVERT(DATETIME,'1990-01-01',120),GETDATE()) --TFSID:265971
+			FROM CDN.TwrKarty 
+			JOIN CDN.TwrCeny Twc ON TwC_TwrNumer = Twr_GIDNumer
+			JOIN CDN.TwrCeny TwcIns ON TwcIns.TwC_TwrNumer = Twr_GIDNumer
+			JOIN Inserted I ON TwcIns.TwC_TwrLp = I.FRO_GIDLp 
+			WHERE I.FRO_GIDTyp = 64
+		END
+	END		
+	
+	SET NOCOUNT OFF
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,86 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[ESKLEP_AktualizujPtw]"></A><PRE>
+          <FONT SIZE="2"><I>/* [ESKLEP_AktualizujPtw] */</I><BR>
+CREATE  PROCEDURE [CDN].[ESKLEP_AktualizujPtw]
+  @ESklepID INT		-- ID e-sklepu
+ ,@ObiNumer INT     -- GIDNumer obiektu 
+ ,@ObiTyp   INT		-- GIDTyp obiektu  
+ ,@ObiektID INT		-- ID obiektu w e-sklepie	
+ ,@ObiektNazwa  VARCHAR(40) -- Nazwa obiektu 	
+ ,@Wartosc	INT		-- Wartosc
+AS
+SET NOCOUNT ON
+
+DECLARE @TimeStamp INT
+SET @TimeStamp = DATEDIFF(s,CONVERT(DATETIME,'19900101',121),GETDATE())
+
+IF @ObiTyp = 32 --kontrahent
+	BEGIN
+		IF NOT EXISTS(SELECT PcL_ID FROM CDN.PicoLog WHERE PcL_PcKID = @ESklepID AND PcL_ObiTyp = @ObiTyp AND PcL_ObiNumer = @ObiNumer)
+		BEGIN
+			INSERT INTO CDN.PicoLog ( PcL_PckID, PcL_ObiTyp, PcL_ObiNumer, PcL_ObiektID, PcL_Komentarz, PcL_Info, PcL_TStamp) 
+								VALUES ( @ESklepID, @ObiTyp, @ObiNumer, @ObiektID, 'Kontrahent - '+ @ObiektNazwa , '', @TimeStamp) 
+		END
+		ELSE
+		BEGIN
+			--TFSID:364281 Sprawdz czy knt nie był zmieniony po poprzednim wysłaniu a przed odebraniem potwierdzeń
+			IF NOT EXISTS(SELECT * FROM CDN.KntKarty JOIN CDN.PicoKonfig ON Pck_PicoID = @ESklepID
+													 JOIN CDN.PicoLog ON Knt_GIDNumer = PcL_ObiNumer and PcL_PcKID = @ESklepID and PcL_ObiTyp = 32
+													 WHERE KnT_GIDNumer = @ObiNumer AND Knt_LastModL &gt; PcK_TSSynchr AND Knt_DataUtworzenia &lt; Knt_LastModL AND PcL_ObiektID &lt;&gt; -1)
+				UPDATE CDN.PicoLog
+					SET  PcL_ObiektID = @ObiektID
+						,PcL_TStamp   = @TimeStamp
+				WHERE PcL_PcKID = @ESklepID AND PcL_ObiTyp = @ObiTyp AND PcL_ObiNumer = @ObiNumer
+		END
+
+	END
+ELSE IF @ObiTyp = 8211 --osoba kontrahenta
+	BEGIN
+		--TFSID:364281 Sprawdz czy osoba nie była zmieniona po poprzednim wysłaniu a przed odebraniem potwierdzeń
+		--TFSID:421909 IF NOT EXISTS(SELECT * FROM CDN.KntOsoby JOIN CDN.PicoKonfig ON Pck_PicoID = @ESklepID WHERE KnS_SyncID = @ObiNumer AND KnS_CzasModyfikacji &gt; PcK_TSSynchr)
+		IF EXISTS(SELECT * FROM CDN.KntOsoby JOIN CDN.PicoKonfig ON Pck_PicoID = @ESklepID WHERE KnS_SyncID = @ObiNumer AND KnS_CzasModyfikacji &lt;= PcK_TSSynchr)
+		BEGIN
+			IF NOT EXISTS(SELECT PcL_ID FROM CDN.PicoLog WHERE PcL_PcKID = @ESklepID AND PcL_ObiTyp = @ObiTyp AND PcL_ObiNumer = @ObiNumer)
+				INSERT INTO CDN.PicoLog ( PcL_PckID, PcL_ObiTyp, PcL_ObiNumer, PcL_ObiektID, PcL_Komentarz, PcL_Info, PcL_TStamp) 
+								 VALUES ( @ESklepID, @ObiTyp, @ObiNumer, @ObiektID, 'Osoba - '+@ObiektNazwa , '', @TimeStamp) 
+			ELSE
+				UPDATE CDN.PicoLog
+					SET  PcL_ObiektID = @ObiektID
+						,PcL_TStamp   = @TimeStamp
+				WHERE PcL_PcKID = @ESklepID AND PcL_ObiTyp = @ObiTyp AND PcL_ObiNumer = @ObiNumer
+		END
+	END
+ELSE IF @ObiTyp = -1 -- potwierdzenia synchronizacji
+	BEGIN
+		IF @ObiektNazwa = 'TSSynchrPtw' 
+			BEGIN
+				UPDATE CDN.PicoKonfig SET PcK_TSSynchrPtw = @Wartosc WHERE PcK_PicoID = @EsklepID
+				IF EXISTS(SELECT PcK_Stan FROM CDN.PicoKonfig WHERE PcK_PicoID = @EsklepID AND PcK_Stan = 1)
+					UPDATE CDN.PicoKonfig SET PcK_Stan = 2 WHERE PcK_PicoID = @EsklepID
+			END
+		IF @ObiektNazwa = 'TSSynchrTwrPtw' 
+			UPDATE CDN.PicoKonfig SET PcK_TSSynchrTwrPtw = @Wartosc WHERE PcK_PicoID = @EsklepID AND PcK_TSSynchrTwr &gt; 0
+		IF @ObiektNazwa = 'TSSynchrGrupPtw' 
+			UPDATE CDN.PicoKonfig SET PcK_TSSynchrGrupPtw = @Wartosc WHERE PcK_PicoID = @EsklepID AND PcK_TSSynchrGrup &gt; 0
+		IF @ObiektNazwa = 'TSSynchrKnt' 
+			UPDATE CDN.PicoKonfig SET PcK_TSSynchrKnt = @Wartosc WHERE PcK_PicoID = @EsklepID
+		IF @ObiektNazwa = 'TSSynchrBinPtw' 
+			UPDATE CDN.PicoKonfig SET pck_TSSynchrBinPtw = @Wartosc WHERE PcK_PicoID = @EsklepID AND pck_TSSynchrBin &gt; 0
+	END
+SET NOCOUNT OFF
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

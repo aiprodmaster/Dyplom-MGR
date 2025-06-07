@@ -1,0 +1,301 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="XLDodajPlanKontKKS"></A><PRE>
+          <FONT SIZE="2"><I>/* XLDodajPlanKontKKS */</I><BR>
+CREATE PROCEDURE CDN.XLDodajPlanKontKKS
+@KKS_Konto              VARCHAR(40)=NULL,       --      numer konta księgowego
+@KKS_SubKonto   VARCHAR(30)=NULL,       --      numer konta księgowego na danym poziomie
+@KKS_Nazwa              VARCHAR(40)=NULL,       --      nazwa konta
+@KKS_Nazwa2             VARCHAR(40)='', --      obca nazwa konta
+@KKS_Rozrachunkowe      TINYINT=NULL,
+@KKS_TypKonta           TINYINT=NULL,
+@KKS_Akronim            VARCHAR(20)=NULL,
+@KKS_AkronimTyp         TINYINT=1, -- 2-pracownik, 3-urzad, kontrahent jesli jest rozne od 2 i 3
+@OkresObrachunkowy  INT=NULL,   --okres obrachunkowy
+@IgnorujBledy   TINYINT = NULL,          --      Jeżeli różne od NULL wtedy wyswietlana informacja o bledzie
+@KKS_Waluta       VARCHAR(3)=NULL, --waluta konta
+@KKS_KontoPLN     VARCHAR(40)='' -- konto w PLN dla konta walutowego
+AS
+BEGIN
+        SET NOCOUNT ON;
+
+DECLARE         @OKR_ID                         INT
+DECLARE         @KontoNadrzedne         VARCHAR(30)
+DECLARE         @KKS_SynNumer           INT
+DECLARE         @KKS_Rozrachunkowe1     TINYINT
+DECLARE         @KKS_TypKonta1          TINYINT
+DECLARE         @KKS_GIDNumer           INTEGER
+DECLARE         @KKS_Rok                        SMALLINT
+DECLARE         @KKS_Miesiac            SMALLINT
+DECLARE         @KKS_WalutaPom                     VARCHAR(3)
+DECLARE     @KKS_WalutaNad      VARCHAR(3)
+DECLARE         @KKS_TStamp                     INTEGER
+
+DECLARE         @KKS_KNTTyp                     SMALLINT
+DECLARE         @KKS_KNTFirma           INTEGER
+DECLARE         @KKS_KNTNumer           INTEGER
+DECLARE         @KKS_KNTLp                      SMALLINT
+DECLARE         @KKS_Poziom                     SMALLINT
+
+DECLARE         @Data                           DATETIME
+
+if @OkresObrachunkowy is null
+        SET @OkresObrachunkowy=datediff(d,'18001228',getdate())
+
+SELECT @OKR_ID=isnull(max(OKR_ID),0) from CDN.Okresy where @OkresObrachunkowy between OKR_Poczatek and OKR_Koniec
+if @OKR_ID=0
+        begin
+                if @IgnorujBledy is null
+                        raiserror('Brak okresu obrachunkowego - (-5)',16,1)
+                return -5
+        end
+select @OkresObrachunkowy = OKR_Poczatek from CDN.Okresy where OKR_ID = @OKR_ID
+set @Data = DATEADD(d,@OkresObrachunkowy,'18001228')
+SET @KKS_Rok=YEAR(@Data)
+SET @KKS_Miesiac=MONTH(@OkresObrachunkowy)
+
+if @KKS_Konto is null or @KKS_Konto=''
+        begin
+                if @IgnorujBledy is null
+                        raiserror('Nie podano numeru konta - (-1)',16,1)
+                return -1
+        end
+else if (select KKS_GIDNumer from cdn.Konta where KKS_Konto = @KKS_Konto and KKS_OkresID = @OKR_ID) is not null
+        begin
+                if @IgnorujBledy is null
+                        raiserror('Konto o podanym numerze już istnieje - (-6)',16,1)
+                return -6
+        end
+
+if LEN(@KKS_Konto)&gt;30
+        begin
+                if @IgnorujBledy is null
+                        raiserror('Numer konta może składać się maksymalnie z 30 znaków - (-19)',16,1)
+                return -6
+        end
+
+if @KKS_SubKonto is null or @KKS_SubKonto=''
+        begin
+                if @IgnorujBledy is null
+                        raiserror('Nie podano numeru subkonta - (-2)',16,1)
+                return -2
+        end
+
+if CHARINDEX(' ',@KKS_Konto)&lt;&gt;0 or CHARINDEX('*',@KKS_Konto)&lt;&gt;0 or CHARINDEX('?',@KKS_Konto)&lt;&gt;0 or CHARINDEX('''',@KKS_Konto)&lt;&gt;0 or CHARINDEX('.',@KKS_Konto)&lt;&gt;0 or CHARINDEX(' ',@KKS_SubKonto)&lt;&gt;0 or CHARINDEX('*',@KKS_SubKonto)&lt;&gt;0 or CHARINDEX('?',@KKS_SubKonto)&lt;&gt;0 or CHARINDEX('''',@KKS_SubKonto)&lt;&gt;0 or CHARINDEX('.',@KKS_SubKonto)&lt;&gt;0
+                begin
+                if @IgnorujBledy is null
+                        raiserror('Numer konta i subkonta nie może zawierać odstępów, ani znaków * (gwiazdka), ? (pytajnik), '' (apostrof), . (kropka) - (-3)',16,1)
+                return -3
+        end
+
+if @KKS_Nazwa is null or @KKS_Nazwa=''
+        begin
+                if @IgnorujBledy is null
+                        raiserror('Nie podano nazwy konta - (-4)',16,1)
+                return -4
+        end
+
+if @KKS_Rozrachunkowe is not null
+        if @KKS_Rozrachunkowe!=0 AND @KKS_Rozrachunkowe!=1
+                begin
+                        if @IgnorujBledy is null
+                                raiserror('Parametr @KKS_Rozrachunkowe może przyjmować wartości 0 albo 1 - (-10)',16,1)
+                        return -10
+                end
+
+if @KKS_TypKonta is not null
+        if @KKS_TypKonta!=1 and @KKS_TypKonta!=2 and @KKS_TypKonta!=3 and @KKS_TypKonta!=4 and @KKS_TypKonta!=5 and @KKS_TypKonta!=6
+                begin
+                        if @IgnorujBledy is null
+                                raiserror('Parametr @KKS_TypKonta może przyjmować wartości  1-aktywa, 2-pasywa, 3-koszty, 4-przychód, 5-aktywa-pasywa, 6-pozabilansowe  - (-11)',16,1)
+                        return -11
+                end
+
+if @KKS_Konto=@KKS_SubKonto
+        --czy zgodna liczba znakow z konfiguracja
+        if (SELECT Kon_Wartosc FROM CDN.Konfig WHERE Kon_Numer=202)=0 or (SELECT Kon_Wartosc FROM CDN.Konfig WHERE Kon_Numer=202)=LEN(@KKS_Konto)
+                begin
+                        SET @KKS_SynNumer=0
+                        if @KKS_Rozrachunkowe is null
+                                SET @KKS_Rozrachunkowe=0
+                        if @KKS_TypKonta is null
+                                SET @KKS_TypKonta=1
+                end
+        else
+                begin
+                        if @IgnorujBledy is null
+                                raiserror('Niezgodna liczba znaków dla konta syntetycznego z ustawieniem w konfiguracji - (-8)',16,1)
+                        return -8
+                end
+else if LEN(@KKS_SubKonto)&lt;LEN(@KKS_Konto)
+        begin
+                if SUBSTRING(@KKS_Konto,LEN(@KKS_Konto)-LEN(@KKS_SubKonto)+1,LEN(@KKS_Konto))!=@KKS_SubKonto
+                        begin
+                                if @IgnorujBledy is null
+                                        raiserror('Subkonto nie jest cześcią konta - (-17)',16,1)
+                                return -17
+                        end
+
+                select @KKS_SynNumer=KKS_GIDNumer, @KKS_Rozrachunkowe1=KKS_Rozrachunkowe, @KKS_TypKonta1=KKS_TypKonta , @KKS_Poziom=KKS_Poziom, @KKS_WalutaNad=KKS_Waluta
+                        from cdn.Konta
+                        where KKS_Konto = SUBSTRING(@KKS_Konto,1,LEN(@KKS_Konto)-LEN(@KKS_SubKonto)-1) and KKS_OkresID = @OKR_ID
+                if @KKS_SynNumer is null
+                        begin
+                                if @IgnorujBledy is null
+                                        raiserror('Brak konta nadrzędnego dla subkonta - (-9)',16,1)
+                                return -9
+                        end
+                if @KKS_Poziom&gt;4
+                        begin
+                                if @IgnorujBledy is null
+                                        raiserror('Można utworzyć maksymalnie 6 poziomów kont. - (-18)',16,1)
+                                return -18
+                        end
+                        --ustawianie czy konto jest rozrachunkowe dla analityka na podstawie nadrzednego syntetyka
+                        if @KKS_Rozrachunkowe is null
+                                SET @KKS_Rozrachunkowe=@KKS_Rozrachunkowe1
+                        else
+                                if @KKS_Rozrachunkowe!=@KKS_Rozrachunkowe1
+                                        begin
+                                                if @IgnorujBledy is null
+                                                        raiserror('Niezgodność typów(rozrachunkowe) konta nadrzędnego z dodawanym kontem - (-12)',16,1)
+                                                return -12
+                                        end
+                        --ustawianie typu konta dla analityka na podstawie nadrzednego syntetyka
+                        if @KKS_TypKonta is null
+                                SET @KKS_TypKonta=@KKS_TypKonta1
+                        else
+                                if ((@KKS_TypKonta1=1 or @KKS_TypKonta1=2) and (@KKS_TypKonta!=1 and @KKS_TypKonta!=2)) or (@KKS_TypKonta1=5 and (@KKS_TypKonta!=1 and @KKS_TypKonta!=2 and @KKS_TypKonta!=5)) or ((@KKS_TypKonta1=3 or @KKS_TypKonta1=4) and (@KKS_TypKonta!=3 and @KKS_TypKonta!=4)) or (@KKS_TypKonta1=6 and @KKS_TypKonta!=6)
+                                        begin
+                                                if @IgnorujBledy is null
+                                                        raiserror('Niezgodność typów(typ konta) konta nadrzędnego z dodawanym kontem - (-13)',16,1)
+                                                return -13
+                                        end
+
+        end
+else
+        begin
+                if @IgnorujBledy is null
+                        raiserror('Numer konta jest niezgodny z numerem subkonta - (-7)',16,1)
+                return -7
+        end
+
+
+if @KKS_Akronim is null or @KKS_Akronim=''
+        begin
+                SET     @KKS_KNTTyp=0
+                SET     @KKS_KNTFirma=0
+                SET     @KKS_KNTNumer=0
+                SET     @KKS_KNTLp=0
+        end
+else
+        begin
+                if @KKS_AkronimTyp!=2 and @KKS_AkronimTyp!=3
+                begin
+                        Select @KKS_KNTTyp=Knt_GIDTyp,@KKS_KNTFirma=Knt_GIDFirma,@KKS_KNTNumer=Knt_GIDNumer,@KKS_KNTLp=Knt_GIDLp from CDN.KntKarty where Knt_Akronim=@KKS_Akronim
+                        if @KKS_KNTNumer is null
+                                begin
+                                        if @IgnorujBledy is null
+                                                raiserror('Nie znaleziono kontrahenta o podanym akronimie - (-14)',16,1)
+                                        return -14
+                                end
+                end
+                if @KKS_AkronimTyp=2
+                begin
+                        Select @KKS_KNTTyp=Prc_GIDTyp,@KKS_KNTFirma=Prc_GIDFirma,@KKS_KNTNumer=Prc_GIDNumer,@KKS_KNTLp=Prc_GIDLp from CDN.PrcKarty where Prc_Akronim=@KKS_Akronim
+                        if @KKS_KNTNumer is null
+                                begin
+                                        if @IgnorujBledy is null
+                                                raiserror('Nie znaleziono pracownika o podanym akronimie - (-15)',16,1)
+                                        return -15
+                                end
+                end
+                if @KKS_AkronimTyp=3
+                begin
+                        Select @KKS_KNTTyp=URZ_GIDTyp,@KKS_KNTFirma=URZ_GIDFirma,@KKS_KNTNumer=URZ_GIDNumer,@KKS_KNTLp=URZ_GIDLp from CDN.Urzedy where URZ_Akronim=@KKS_Akronim
+                        if @KKS_KNTNumer is null
+                                begin
+                                        if @IgnorujBledy is null
+                                                raiserror('Nie znaleziono urzędu o podanym akronimie - (-16)',16,1)
+                                        return -16
+                                end
+                end
+        end
+
+select @KKS_WalutaPom=Kon_Wartosc from CDN.Konfig where Kon_Numer=211
+
+if @KKS_Waluta is not null or @KKS_Waluta !=''
+begin
+	if @KKS_WalutaPom != @KKS_Waluta
+	begin	
+		if (select WaN_Id from CDN.WalNag where WaN_Symbol = @KKS_Waluta ) is null
+		begin
+			if @IgnorujBledy is null
+				raiserror('Nie istnieje podana waluta - (-24)',16,1)
+			return -24
+		end	
+		if @KKS_KontoPLN is null or @KKS_KontoPLN = '' 
+		begin
+			if @IgnorujBledy is null
+				raiserror('Nie podano numeru konta w PLN - (-21)',16,1)
+			return -21
+		end
+		if (select KKS_GIDNumer  from cdn.Konta where KKS_Konto = @KKS_KontoPLN and KKS_OkresID = @OKR_ID and KKS_Waluta = @KKS_WalutaPom) is null
+		begin
+			if @IgnorujBledy is null
+				raiserror('Podane konto w PLN nie istnieje lub nie jest w walucie systemowej - (-22)',16,1)
+			return -22
+		end
+		if @KKS_TypKonta!=6--dla konta walutowego tym musi pozabilansowy
+		begin
+			if @IgnorujBledy is null
+				raiserror('Konto walutowe musi być pozabilansowe - (-23)',16,1)
+			return -23
+		end
+		set @KKS_WalutaPom = @KKS_Waluta					
+	end
+end
+ 
+
+if @KKS_WalutaNad&lt;&gt;@KKS_WalutaPom
+        begin
+                if @IgnorujBledy is null
+                        raiserror('Niezgodna waluta z kontem nadrzędnym - (-20)',16,1)
+                return -20
+        end
+
+Select @KKS_GIDNumer=isnull(max(KKS_GIDNumer)+1, 1) FROM CDN.Konta
+select @KKS_TStamp=DATEDIFF(second,'19900101',GETDATE())
+
+INSERT INTO [CDN].[Konta]([KKS_GIDTyp], [KKS_GIDFirma], [KKS_GIDNumer], [KKS_GIDLp], [KKS_Rok], [KKS_Miesiac], [KKS_SubKonto],
+                [KKS_Nazwa], [KKS_Nazwa2], [KKS_DataZal], [KKS_Rozrachunkowe], [KKS_Pozabilansowe], [KKS_TypKonta], [KKS_Waluta],
+                [KKS_Kontrola], [KKS_PoziomUprawnien], [KKS_KZKonto], [KKS_Lokalne], [KKS_TStamp], [KKS_BODebet], [KKS_BOCredit],
+                [KKS_Klasa], [KKS_KNTTyp], [KKS_KNTFirma], [KKS_KNTNumer], [KKS_KNTLp], [KKS_OkresID],[KKS_CzasModyfikacji], [KKS_OpeNumer],
+                [KKS_OpeZaklNumer],[KKS_SynNumer],[KKS_NastNumer],[KKS_NastTyp],[KKS_SaldoWgObr],[KKS_AktualizujPodrz],[KKS_Aktywny],[KKS_Archiwalny])
+        VALUES (448,CDN.GIDFirma(),@KKS_GIDNumer,0,@KKS_Rok,@KKS_Miesiac,@KKS_SubKonto,@KKS_Nazwa,@KKS_Nazwa2,
+                DATEDIFF(day,'18001228',getdate()),@KKS_Rozrachunkowe,0,@KKS_TypKonta,@KKS_WalutaPom,2,0, @KKS_KontoPLN,0,@KKS_TStamp,0,0,
+                0,@KKS_KNTTyp,@KKS_KNTFirma,@KKS_KNTNumer,@KKS_KNTLp,@OKR_ID,@KKS_TStamp,1,1,@KKS_SynNumer,0,1,0,1,0,0)
+
+if @@Error &lt;&gt; 0
+        begin
+                if @IgnorujBledy is null
+                        raiserror('Wystąpił błąd podczas zapisu danych - (-100)',16,1)
+                return -100
+        end
+return 0
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,372 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="AktualizujPracownika3"></A><PRE>
+          <FONT SIZE="2"><I>/* AktualizujPracownika3 */</I><BR>
+CREATE PROCEDURE CDN.AktualizujPracownika3
+@sKod  VARCHAR(20), @sImie1 VARCHAR(30), @sImie2 VARCHAR(30), @sNazwisko VARCHAR(50), @lArchiwalny int,
+@sKodP VARCHAR(5),@sMiasto VARCHAR(30), @sUlica VARCHAR(30), @sNrDomu VARCHAR(10),
+@sNrLokalu VARCHAR(10), @sNipE VARCHAR(13), @sNip VARCHAR(10), @sPesel VARCHAR(11),
+@OptimaID INT, @GIDFirma int, @sTel1 VARCHAR(20), @sTel2 VARCHAR(20) ,
+@sEmail VARCHAR(255), @sRachunek VARCHAR(51), @iIBAN int, @fpl int, @fpltermin int ,
+@sBnkNazwa1 VARCHAR(50), @sBnkNazwa2 VARCHAR(50), @sBnkKod VARCHAR(20), @sBnkTel VARCHAR(20),
+@sBnkFax VARCHAR(20), @sBnkMiasto VARCHAR(40), @sBnkUlica VARCHAR(60),
+@sBnkKodP VARCHAR(10), @sBnkWoj VARCHAR(40) , @sBnkNumer VARCHAR(10), @sPoczta VARCHAR(40),
+@sBnkSwift VARCHAR(20)
+AS SET NOCOUNT ON
+
+SET @sKod = RTRIM(@sKod)
+
+declare @PrcXL_GIDTyp   INT
+declare @PrcXL_GIDNumer INT
+declare @PrcXL_GIDFirma INT
+declare @PrcXL_GIDLp    INT
+declare @BnkGIDTyp INT
+declare @BnkGIDNumer INT
+declare @BnkGIDFirma INT
+declare @BnkGIDLp INT
+declare @Found          INT
+declare @xlfpl    INT
+declare @DaneSzczegolowe INT
+declare @FormaPlatnosci INT
+DECLARE  @SlwId INTEGER
+
+SET     @Found          = 0
+
+SET @DaneSzczegolowe = isnull((select cast(kon_wartosc as smallint) from cdn.konfig where kon_numer=2081),0)
+SET @FormaPlatnosci = isnull((select cast(kon_wartosc as smallint) from cdn.konfig where kon_numer=2094),1)
+
+IF @fpl=1 and @fpltermin=0
+  SET @xlfpl = 10              -- gotówka
+ELSE IF @fpl=2
+  SET @xlfpl = 20              -- przelew
+ELSE IF @fpl=1 and @fpltermin&gt;0
+  SET @xlfpl = 30              -- kredyt
+ELSE IF @fpl=3
+  SET @xlfpl = 50              -- karta
+ELSE
+  SET @xlfpl = 60              -- inne
+
+if @FormaPlatnosci&lt;&gt;0
+begin
+  declare @bnkfound   INT
+  SET @bnkfound = 0
+
+    DECLARE BnkCursor CURSOR LOCAL FAST_FORWARD READ_ONLY FOR
+       SELECT Bnk_GidTyp, Bnk_GidNumer, Bnk_GidFirma, Bnk_GidLp from cdn.banki where bnk_numer=@sBnkNumer
+    OPEN BnkCursor
+    WHILE 1=1
+       BEGIN
+       FETCH NEXT FROM BnkCursor INTO @BnkGIDTyp, @BnkGIDNumer, @BnkGIDFirma, @BnkGIDLp
+       IF @@FETCH_STATUS &lt;&gt; 0 BREAK
+       SET @bnkfound = 1
+    END
+    CLOSE BnkCursor
+    DEALLOCATE BnkCursor
+
+  IF @bnkfound=0
+  BEGIN
+  --Dodaję bank jeżeli oczywiście mam wystarczające dane
+  --SET @BnkGIDNumer = (select isnull(max(bnk_gidnumer),0)+1 from cdn.banki where bnk_gidfirma=@GIDFirma)
+    SET @BnkGIDTyp   = 48
+    SET @BnkGIDLp    = 0
+    SET @BnkGIDFirma = @GIDFirma
+    SET @iIBAN       = @iIBAN
+    if @sBnkNazwa1&lt;&gt;'' or @sBnkNumer&lt;&gt;''
+    BEGIN
+      insert into cdn.banki
+      (bnk_gidtyp, bnk_gidfirma, bnk_gidlp,
+       bnk_kod, bnk_nazwa, bnk_miasto, bnk_ulica, bnk_kodp,
+       bnk_telefon, bnk_numer, bnk_wojewodztwo, bnk_fax, bnk_nrb,
+       Bnk_LastModL, Bnk_LastModO, Bnk_LastModC, Bnk_Aktywny, Bnk_Wsk,
+       Bnk_PKOBP, Bnk_Swift, Bnk_Kraj, Bnk_Powiat, Bnk_Gmina, Bnk_Poczta,
+       Bnk_Modem, Bnk_Url, Bnk_Format, Bnk_OddzialBRE, Bnk_KlientBRE,
+       Bnk_CzasRealizacji, Bnk_OpeZTyp, Bnk_OpeZFirma, Bnk_OpeZNumer, Bnk_OpeZLp,
+       Bnk_TSZapisu, Bnk_OpeMTyp, Bnk_OpeMFirma, Bnk_OpeMNumer, Bnk_OpeMLp,
+       Bnk_Konto, Bnk_FBNId, Bnk_KodKraju, Bnk_FBNImpId
+      )
+      values
+      (@BnkGIDTyp, @BnkGIDFirma, @BnkGIDLp,
+       @sBnkKod,@sBnkNazwa1+@sBnkNazwa2, @sBnkMiasto, @sBnkUlica, @sBnkKodP,
+       @sBnkTel, @sBnkNumer , @sBnkWoj, @sBnkFax, @iIBAN,
+       0,0,0,0,0, 0,@sBnkSwift,'','','','', '','',0,0,0, 0,0,0,0,0, 0,0,0,0,0, '',0,'',0
+      )
+      IF @@ERROR = 0
+        SET @BnkGIDNumer = SCOPE_IDENTITY()
+    END
+    ELSE
+    BEGIN
+      SET @BnkGIDNumer = 0
+      SET @BnkGIDTyp   = 0
+      SET @BnkGIDLp    = 0
+      SET @BnkGIDFirma = 0
+      SET @sRachunek   = ''
+      SET @iIBAN       = 0
+    END
+  END
+end
+
+DECLARE PrcCursor CURSOR LOCAL FAST_FORWARD READ_ONLY FOR
+        SELECT  prc_GIDTyp, prc_GIDNumer, prc_GIDFirma, prc_GIDLp
+        FROM cdn.prcKarty
+        where prc_optimaid = @OptimaID
+
+OPEN PrcCursor
+WHILE 1=1
+BEGIN
+   FETCH NEXT FROM PrcCursor INTO @PrcXL_GIDTyp, @PrcXL_GIDNumer, @PrcXL_GIDFirma, @PrcXL_GIDLp
+   IF @@FETCH_STATUS &lt;&gt; 0 BREAK
+
+   SET @Found = 1
+
+END
+CLOSE PrcCursor
+DEALLOCATE PrcCursor
+
+if LEN(@sRachunek)&lt;24 AND @iIBAN=1
+  SET @iIBAN = 0
+
+IF @Found=1
+BEGIN
+ -- Jeżeli znalazłem pracownika po id z optimy to uaktualniam mu dane
+  if @DaneSzczegolowe=1  BEGIN
+         UPDATE cdn.prckarty SET
+                Prc_Akronim     = @sKod,
+                Prc_Imie1       = @sImie1,
+                Prc_Imie2       = @sImie2,
+                Prc_Nazwisko    = @sNazwisko,
+				Prc_Archiwalny  = @lArchiwalny,
+                Prc_KodP        = @sKodP,
+                Prc_Miasto      = @sMiasto,
+                Prc_Ulica       = @sUlica,
+                Prc_NrDomu      = @sNrDomu,
+                Prc_NrLokalu    = @sNrLokalu,
+                Prc_Nip         = @sNip,
+                Prc_NipE        = @sNipE,
+                Prc_Pesel       = @sPesel,
+                Prc_Email       = @sEmail,
+                Prc_Telefon2    = @sTel1,
+                Prc_Telefon3    = @sTel2,
+                Prc_BnkTyp      = case @FormaPlatnosci when 0 then Prc_BnkTyp else @BnkGIDTyp end,
+                Prc_BnkNumer    = case @FormaPlatnosci when 0 then Prc_BnkNumer else @BnkGIDNumer end,
+                Prc_BnkFirma    = case @FormaPlatnosci when 0 then Prc_BnkFirma else @BnkGIDFirma end,
+                Prc_BnkLp       = case @FormaPlatnosci when 0 then Prc_BnkLp else @BnkGIDLp end,
+                Prc_NrRachunku  = case @FormaPlatnosci when 0 then Prc_NrRachunku else @sRachunek end,
+                Prc_FormaNr     = case @FormaPlatnosci when 0 then Prc_FormaNr else @xlfpl end,
+                Prc_NRB         = case @FormaPlatnosci when 0 then Prc_NRB else @iIBAN end,
+                Prc_Poczta      = @sPoczta,
+                Prc_CzasModyfikacji = DATEDIFF(second, convert(datetime,'01-01-1990',105),convert(datetime,GETDATE(),105)) 
+         WHERE
+           prc_optimaid = @OptimaID
+      
+ END
+ ELSE
+ BEGIN
+         UPDATE cdn.prckarty SET
+                Prc_Akronim     = @sKod,
+                Prc_Imie1       = @sImie1,
+                Prc_Imie2       = @sImie2,
+                Prc_Nazwisko    = @sNazwisko,
+				Prc_Archiwalny  = @lArchiwalny,
+                Prc_CzasModyfikacji = DATEDIFF(second, convert(datetime,'01-01-1990',105),convert(datetime,GETDATE(),105)) 
+         WHERE
+           prc_optimaid = @OptimaID
+
+ END
+		 UPDATE cdn.OsoKarty SET
+				--Oso_GIDNumer    =  Prc_GIDNumer,
+				Oso_Akronim     =  Prc_Akronim,
+				Oso_Imie1       =  Prc_Imie1,
+				Oso_Imie2       =  Prc_Imie2,
+				Oso_Nazwisko    =  Prc_Nazwisko,
+				Oso_Pesel       =  Prc_Pesel,
+				Oso_NIP         =  Prc_Nip,
+				Oso_Rodzaj		=  Prc_Rodzaj
+		 FROM cdn.OsoKarty INNER JOIN cdn.PrcKarty ON Oso_GIDNumer =  Prc_GIDNumer
+         WHERE
+           prc_optimaid = @OptimaID AND Oso_DataDo = 2147483647
+
+		 UPDATE cdn.OsoAdresy SET
+                 OsA_MeldunekKodP=Prc_KodP,
+                 OsA_MeldunekMiasto=Prc_Miasto,
+                 OsA_MeldunekPoczta=Prc_Poczta,
+                 OsA_MeldunekUlica=Prc_Ulica,
+                 OsA_MeldunekNrDom=Prc_NrDomu,
+                 OsA_MeldunekNrLokal=Prc_NrLokalu
+		 FROM cdn.OsoAdresy INNER JOIN cdn.PrcKarty ON OsA_OsoNumer = Prc_GIDNumer
+         WHERE
+           prc_optimaid = @OptimaID  AND OsA_DataDo = 2147483647
+END
+ELSE
+BEGIN
+ -- Jeżeli nie znalazłem pracownika po id z optimy to
+ -- szukam po kodzie
+ DECLARE PrcCursor CURSOR LOCAL FAST_FORWARD READ_ONLY FOR
+        SELECT  prc_GIDTyp, prc_GIDNumer, prc_GIDFirma, prc_GIDLp
+        FROM cdn.prcKarty
+        where prc_akronim = @sKod
+
+ OPEN PrcCursor
+ WHILE 1=1
+ BEGIN
+   FETCH NEXT FROM PrcCursor INTO @PrcXL_GIDTyp, @PrcXL_GIDNumer, @PrcXL_GIDFirma, @PrcXL_GIDLp
+   IF @@FETCH_STATUS &lt;&gt; 0 BREAK
+        SET @Found = 1
+
+        --Update pracownika po kodzie
+   if @DaneSzczegolowe=1
+   BEGIN
+         UPDATE cdn.prckarty SET
+                Prc_Akronim     = @sKod,
+                Prc_Imie1       = @sImie1,
+                Prc_Imie2       = @sImie2,
+                Prc_Nazwisko    = @sNazwisko,
+				Prc_Archiwalny  = @lArchiwalny,
+                Prc_KodP        = @sKodP,
+                Prc_Miasto      = @sMiasto,
+                Prc_Ulica       = @sUlica,
+                Prc_NrDomu      = @sNrDomu,
+                Prc_NrLokalu    = @sNrLokalu,
+                Prc_Nip         = @sNip,
+                Prc_NipE        = @sNipE,
+                Prc_Pesel       = @sPesel,
+                Prc_Email       = @sEmail,
+                Prc_OptimaID    = @OptimaID,
+                Prc_Telefon2    = @sTel1,
+                Prc_Telefon3    = @sTel2,
+                Prc_BnkTyp      = case @FormaPlatnosci when 0 then Prc_BnkTyp else @BnkGIDTyp end,
+                Prc_BnkNumer    = case @FormaPlatnosci when 0 then Prc_BnkNumer else @BnkGIDNumer end,
+                Prc_BnkFirma    = case @FormaPlatnosci when 0 then Prc_BnkFirma else @BnkGIDFirma end,
+                Prc_BnkLp       = case @FormaPlatnosci when 0 then Prc_BnkLp else @BnkGIDLp end,
+                Prc_NrRachunku  = case @FormaPlatnosci when 0 then Prc_NrRachunku else @sRachunek end,
+                Prc_FormaNr     = case @FormaPlatnosci when 0 then Prc_FormaNr else @xlfpl end,
+                Prc_NRB         = case @FormaPlatnosci when 0 then Prc_NRB else @iIBAN end,
+                Prc_Poczta      = @sPoczta,
+                Prc_CzasModyfikacji = DATEDIFF(second, convert(datetime,'01-01-1990',105),convert(datetime,GETDATE(),105)) 
+
+         WHERE
+           prc_Akronim   = @sKod
+
+   END
+   ELSE
+   BEGIN
+         UPDATE cdn.prckarty SET
+                Prc_Akronim     = @sKod,
+                Prc_Imie1       = @sImie1,
+                Prc_Imie2       = @sImie2,
+                Prc_Nazwisko    = @sNazwisko,
+				Prc_Archiwalny  = @lArchiwalny,
+                Prc_OptimaID    = @OptimaID,
+                Prc_FormaNr     = case @FormaPlatnosci when 0 then Prc_FormaNr else 10 end,
+                Prc_CzasModyfikacji = DATEDIFF(second, convert(datetime,'01-01-1990',105),convert(datetime,GETDATE(),105)) 
+         WHERE
+           prc_Akronim   = @sKod
+   END
+
+	UPDATE cdn.OsoKarty SET
+		--Oso_GIDNumer    =  Prc_GIDNumer,
+		Oso_Akronim     =  Prc_Akronim,
+		Oso_Imie1       =  Prc_Imie1,
+		Oso_Imie2       =  Prc_Imie2,
+		Oso_Nazwisko    =  Prc_Nazwisko,
+		Oso_Pesel       =  Prc_Pesel,
+		Oso_NIP         =  Prc_Nip,
+		Oso_Rodzaj		=  Prc_Rodzaj
+	 FROM cdn.OsoKarty INNER JOIN cdn.PrcKarty ON Oso_GIDNumer =  Prc_GIDNumer
+     WHERE
+        prc_Akronim   = @sKod AND Oso_DataDo = 2147483647
+
+	 UPDATE cdn.OsoAdresy SET
+        OsA_MeldunekKodP=Prc_KodP,
+        OsA_MeldunekMiasto=Prc_Miasto,
+        OsA_MeldunekPoczta=Prc_Poczta,
+        OsA_MeldunekUlica=Prc_Ulica,
+        OsA_MeldunekNrDom=Prc_NrDomu,
+        OsA_MeldunekNrLokal=Prc_NrLokalu
+	 FROM cdn.OsoAdresy INNER JOIN cdn.PrcKarty ON OsA_OsoNumer = Prc_GIDNumer
+     WHERE
+        prc_Akronim   = @sKod AND OsA_DataDo = 2147483647
+
+ END
+
+ IF @Found=0
+ BEGIN
+        declare @lFrSId int
+        declare @GIDTyp int
+        declare @GIDNumer int
+        declare @GIDLp int
+        SET @lFrSId   = 0
+        SET @GIDTyp   = 944
+        SET @GIDNumer = 0 --uwaga, teraz identity
+        SET @GIDLp    = 0
+
+        if @DaneSzczegolowe=1
+        BEGIN
+                insert into CDN.PrcKarty
+                (Prc_FormaNr, prc_gidtyp, prc_gidfirma, prc_gidlp, prc_opetyp, prc_OpeFirma, prc_OpeNumer, prc_OpeLp, prc_ZakTyp, prc_ZakFirma, prc_ZakNumer, prc_ZakLp, prc_Akronim, prc_Imie1, prc_Imie2, prc_Nazwisko, prc_KodP, prc_Miasto, prc_Ulica, prc_NrDomu, prc_NrLokalu,  prc_nipe, prc_Nip, prc_Pesel, prc_Email, prc_KontoKs1, prc_KontoKs2, prc_KontoKs3, prc_KontoKs4, prc_KontoKs5, prc_Ksiegowany, prc_WmrId, prc_Wyrazenie, prc_Inbox, prc_FrsId, prc_OptimaId, prc_telefon1, prc_telefon2, prc_Telefon3 , prc_bnktyp, prc_bnknumer, prc_bnkfirma, prc_bnklp, prc_nrrachunku, prc_nrb, prc_poczta, prc_archiwalny, prc_archiwalnydata, prc_telefonwew1,prc_url,prc_typwymiaru,prc_ntsid,prc_ntkonto,prc_haslo,prc_serwisant,Prc_PKAId,PRC_Rodzaj,Prc_CzasWprowadzenia,Prc_CzasModyfikacji)
+                values
+                (@xlfpl, @GIDTyp,@GIDFirma,@GIDLp, 0,0,0,0, 0,0,0,0, @sKod,@sImie1,@sImie2,@sNazwisko,@sKodP,@sMiasto,@sUlica,@sNrDomu,@sNrLokalu,@sNipE,@sNip,@sPesel,@sEmail, '', '', '','', '', 0, 0, 0, '', @lFrSId,@OptimaID, '', @sTel1, @sTel2, @BnkGIDTyp, @BnkGIDNumer, @BnkGIDFirma, @BnkGIDLp, @sRachunek, @iIBAN, @sPoczta, @lArchiwalny, 0, '','',0,'','',0x00000000000000000000000000000000,0,0,0,
+                DATEDIFF(second, convert(datetime,'01-01-1990',105),convert(datetime,GETDATE(),105)) ,
+                DATEDIFF(second, convert(datetime,'01-01-1990',105),convert(datetime,GETDATE(),105))  )
+
+        END
+        ELSE
+        BEGIN
+                insert into CDN.PrcKarty
+                (Prc_FormaNr,prc_gidtyp, prc_gidfirma, prc_gidlp, prc_opetyp, prc_OpeFirma, prc_OpeNumer, prc_OpeLp, prc_ZakTyp, prc_ZakFirma, prc_ZakNumer, prc_ZakLp, prc_Akronim, prc_Imie1, prc_Imie2, prc_Nazwisko, prc_KodP, prc_Miasto, prc_Ulica, prc_NrDomu, prc_NrLokalu, prc_Nip, prc_Pesel, prc_Email, prc_NrRachunku, prc_KontoKs1, prc_KontoKs2, prc_KontoKs3, prc_KontoKs4, prc_KontoKs5, prc_Ksiegowany, prc_WmrId, prc_Wyrazenie, prc_Inbox, prc_FrsId, prc_OptimaId, prc_telefon1, prc_telefon2, prc_telefon3, prc_poczta, prc_archiwalny, prc_archiwalnydata, prc_telefonwew1,prc_url,prc_typwymiaru,prc_ntsid,prc_ntkonto,prc_haslo,prc_serwisant,Prc_PKAId,PRC_Rodzaj, Prc_CzasWprowadzenia,Prc_CzasModyfikacji)
+                values
+                (10,@GIDTyp,@GIDFirma,@GIDLp, 0,0,0,0, 0,0,0,0, @sKod,@sImie1,@sImie2,@sNazwisko,'','','','','','','','', '', '', '', '','', '', 0,   0, 0, '', @lFrSId,@OptimaID, '','', '', '', @lArchiwalny, 0, '','',0,'','',0x00000000000000000000000000000000,0,0,0,
+                DATEDIFF(second, convert(datetime,'01-01-1990',105),convert(datetime,GETDATE(),105)) ,
+                DATEDIFF(second, convert(datetime,'01-01-1990',105),convert(datetime,GETDATE(),105)) )
+        END
+
+		SET @SlwId =  0 ;
+		--SELECT  @SlwId = SLW_ID FROM cdn.Slowniki join cdn.SlownikiStruktura ON SLS_Id = SLW_SLSId 
+		--WHERE SLS_Predefiniowany = 70 AND SLW_Predefiniowany = 18
+
+		INSERT INTO [CDN].[OsoKarty]
+		([Oso_GIDNumer],[Oso_DataOd],[Oso_DataDo],[Oso_Rodzaj],[Oso_Akronim],[Oso_Imie1],[Oso_Imie2]
+		,[Oso_Nazwisko],[Oso_NazwiskoRodowe],[Oso_Plec],[Oso_Pesel],[Oso_NIP],[Oso_DataUrodzenia],[Oso_MiejsceUrodzenia]
+		,[Oso_ImieOjca],[Oso_ImieMatki],[Oso_NazwiskoMatki],[Oso_DokTozsamosci],[Oso_DokNumer],[Oso_DokWystawil]
+		,[Oso_DokMiejsce],[Oso_DokDataOd],[Oso_DokDataDo],[Oso_Obywatelstwo],[Oso_ObywatelstwoData],[Oso_ObywatelstwoZmiana]
+		,[Oso_AktaNumer],[Oso_PropStanowisko],[Oso_StanCywilny],[Oso_NrAktuM],[Oso_UrzadStanuCywilnego],[Oso_DataSlubu])
+		SELECT
+			Prc_GIDNumer,-2147483647,2147483647,Prc_Rodzaj,Prc_Akronim,Prc_Imie1,Prc_Imie2,Prc_Nazwisko,'',0,Prc_Pesel,Prc_Nip,0,'','','','',0,'','','',0,0,'POLSKIE',0,'','',0,0,'','',0
+		FROM CDN.PrcKarty WHERE Prc_GIDNumer NOT IN (SELECT a.Oso_GIDNumer FROM CDN.OsoKarty a ) AND Prc_Akronim   = @sKod
+
+		INSERT INTO [CDN].[OsoAdresy]
+        ([OsA_OsoNumer],[OsA_DataOd],[OsA_DataDo],[OsA_MeldunekUlica],[OsA_MeldunekNrDom],[OsA_MeldunekNrLokal],[OsA_MeldunekKodP]
+        ,[OsA_MeldunekMiasto],[OsA_MeldunekPoczta],[OsA_MeldunekGmina],[OsA_MeldunekWojewodztwo],[OsA_MeldunekKodGUS],[OsA_MeldunekPowiat]
+        ,[OsA_MeldunekKraj],[OsA_MieszkaUlica],[OsA_MieszkaNrDom],[OsA_MieszkaNrLokal],[OsA_MieszkaKodP],[OsA_MieszkaMiasto]
+        ,[OsA_MieszkaPoczta],[OsA_MieszkaGmina],[OsA_MieszkaWojewodztwo],[OsA_MieszkaKodGUS],[OsA_MieszkaPowiat],[OsA_MieszkaKraj]
+        ,[OsA_KorespUlica],[OsA_KorespNrDom],[OsA_KorespNrLokal],[OsA_KorespKodP],[OsA_KorespMiasto],[OsA_KorespPoczta],[OsA_KorespGmina]
+        ,[OsA_KorespWojewodztwo],[OsA_KorespKodGUS],[OsA_KorespPowiat],[OsA_KorespKraj],[OsA_Telefon1],[OsA_Telefon2],[OsA_Email]
+        ,[OsA_Url],[OsA_WypadekOsoba],[OsA_WypadekTelefon],[OsA_WypadekAdres])
+        SELECT Prc_GIDNumer
+           ,-2147483647,2147483647,Prc_Ulica,Prc_NrDomu,Prc_NrLokalu,Prc_KodP,Prc_Miasto,Prc_Poczta,'','','','','','','','','','','','','','','','',''
+		   ,'','','','','','','','','','','','','','','','','' FROM CDN.PrcKarty 
+		WHERE Prc_GIDNumer NOT IN (SELECT b.OsA_OsoNumer FROM CDN.OsoAdresy b ) AND Prc_Akronim = @sKod
+		AND (Prc_Ulica&lt;&gt; '' OR Prc_NrDomu&lt;&gt; '' OR Prc_NrLokalu&lt;&gt; '' OR Prc_KodP&lt;&gt; '' OR Prc_Miasto&lt;&gt; '' OR Prc_Poczta&lt;&gt; '')
+
+		INSERT INTO CDN.ZadaniaPrcPodl(ZPP_PrcTyp,ZPP_PrcFirma,ZPP_PrcNumer,ZPP_PrcLp,ZPP_PrcPodlTyp,ZPP_PrcPodlFirma,ZPP_PrcPodlNumer,ZPP_PrcPodlLp,ZPP_Filter)
+		SELECT Prc_GIDTyp,Prc_GIDFirma,Prc_GIDNumer,Prc_GIDLp,Prc_GIDTyp,Prc_GIDFirma,Prc_GIDNumer,Prc_GIDLp,1 
+		FROM CDN.PrcKarty WHERE Prc_Akronim = @sKod
+
+ END
+
+
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

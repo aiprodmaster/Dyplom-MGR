@@ -1,0 +1,129 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="WFL_DodajProces"></A><PRE>
+          <FONT SIZE="2"><I>/* WFL_DodajProces */</I><BR>
+Create Procedure CDN.WFL_DodajProces
+ @p_WDPID integer,	-- identyfikator wynkdefinicji procesu
+ @p_Nazwa varchar(256), --  nazwa procesu ( jeśli nie podane to z definicji)
+ 
+ @p_WDZID integer = 0, -- identyfikator zadania do wykonania, 0 - wybierz zadanie domyślne
+
+ @p_OpisProcesu varchar(1024)='',
+ @p_OpisZadania varchar(1024)='',
+ @p_Priorytet integer,
+ @p_URL varchar(255),
+ @p_NazwaObiektu varchar(40) = '', -- nazwa obiektu, numer dokumentu
+	
+ @p_OBITyp   smallint,  -- typ obiektu
+ @p_OBINumer integer,  -- identyfikator obiektu
+ @p_PRCTyp   smallint, -- typ pracownika
+ @p_PRCNumer integer,  -- identyfikator pracownika
+ @p_OPENumer integer,  -- identyfikator operatora
+ @p_ZrdNumer integer,  -- identyfikator zadania źródłowego (uruchamiającego proces)
+ @p_ZwrotWyniku	smallint=0, --  czy zwracać wyynik selectem
+ 
+ @p_WFPID integer =0 OUTPUT,
+ @p_LastWFZID integer = 0 OUTPUT,
+ @ret_status integer =0 OUTPUT,
+
+ @p_FrSId integer = 0 --identyfikator centrum operatora TFS 233768
+
+
+
+
+as 
+begin
+
+	DECLARE @DataUtworzenia integer
+	DECLARE @StanDefinicjiProcesu smallint
+
+	SET @ret_status = 0
+	Set @DataUtworzenia = CDN.WFL_PobierzDate(GETDATE())
+	
+	if(@p_Priorytet = -1)
+		select @p_Priorytet = WDP_Priorytet from cdn.wf_defprocesy where wdp_id = @p_WDPID
+		
+	BEGIN Transaction	
+
+	insert into CDN.WF_Procesy(	WFP_WDPID, 
+					WFP_Nazwa, 
+					WFP_Opis, 
+					WFP_Priorytet, 
+					WFP_URL, 
+					WFP_OBITyp, WFP_OBINumer, WFP_OBILp, 
+					WFP_DataUtworzenia,
+					WFP_NazwaObiektu,
+					WFP_PrcTyp, WFP_PrcNumer,
+					WFP_DataZamkniecia,
+					WFP_ZrdNumer)
+	values( @p_WDPID, 
+		@p_Nazwa, 
+		@p_OpisProcesu, 
+		@p_Priorytet, 
+		@p_URL, 
+		@p_OBITyp, @p_OBINumer, 0,
+		@DataUtworzenia,
+		@p_NazwaObiektu,
+		@p_PRCTyp, @p_PRCNumer,
+		0,
+		@p_ZrdNumer)
+	set @ret_status = @@ERROR
+	if @ret_status&lt;&gt;0
+	BEGIN
+		RAISERROR('Błąd dodawania procesu.[%s]',16,1, @ret_status)
+		GOTO BLAD
+	END
+
+		
+
+	SET @p_WFPID = SCOPE_IDENTITY()
+
+	if(@p_WDZID=0)
+		set @p_WDZID = CDN.WFL_ZnajdzZadanie( @p_WDPID, -1, @p_PRCTyp, @p_PRCNumer, @DataUtworzenia, @p_FrSId) --TFS 233768
+
+
+	EXEC CDN.WFL_WykonajZadanie
+		 @p_WFZID = -1, -- start
+		 @p_WDZID = @p_WDZID,	-- identyfikator definicji zadania
+		 @p_WFPID = @p_WFPID,
+		 @p_OpisZadaniaNowego =@p_OpisZadania ,
+		 @p_OBITyp   = @p_OBITyp,
+		 @p_OBINumer = @p_OBINumer,   -- identyfikator obiektu
+		 @p_PRCTyp   =@p_PRCTyp,    -- typ pracownika
+		 @p_PRCNumer =@p_PRCNumer,  -- identyfikator pracownika
+		 @p_OPENumer = @p_OPENumer,
+		 @p_LastWFZID = @p_LastWFZID OUTPUT,
+		 @ret_status = @ret_status OUTPUT,
+		 @p_FrSId = @p_FrSId	--TFS 233768
+
+
+BLAD: if (@ret_status&lt;&gt;0)
+	  begin
+		if (@@trancount&gt;0)
+			ROLLBACK TRANSACTION
+	  end
+	  else
+		COMMIT TRANSACTION
+
+		
+	if (@p_ZwrotWyniku&lt;&gt;0 and @ret_status=0)
+		Select @p_WFPID as F_WFPID --, @ret_status as T_KODBLEDU
+		
+		
+
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

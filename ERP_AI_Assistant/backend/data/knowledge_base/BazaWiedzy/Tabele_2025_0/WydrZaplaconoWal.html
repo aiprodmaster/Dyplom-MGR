@@ -1,0 +1,148 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie funkcji CDN.WydrZaplaconoWal"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie funkcji CDN.WydrZaplaconoWal */</I><BR>
+IF EXISTS (SELECT name FROM sysobjects WHERE name = 'WydrZaplaconoWal' AND type = 'FN')
+  DROP FUNCTION CDN.WydrZaplaconoWal;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie funkcji WydrZaplaconoWal"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie funkcji WydrZaplaconoWal */</I><BR>
+CREATE FUNCTION CDN.WydrZaplaconoWal(@GIDTyp smallint, @GIDNumer int, @Data int)
+RETURNS DECIMAL(15,2) 
+AS 
+BEGIN
+DECLARE @Zaplacono DECIMAL(15,2) 
+
+
+	DECLARE @WalutaSys VARCHAR(3),
+			@TRNWaluta VARCHAR(3),
+			@KursL DECIMAL(15,10)=1,
+			@KursM DECIMAL(5)=1,
+			@DokumentWWalucie tinyint=0,			
+			@ZobowiazanieNaleznosc tinyint=0,
+			@ZnakDokumentu smallint=1,
+			@DataWyst INT=0,
+			@DataSprz INT=0
+
+
+	SELECT @WalutaSys = KON_Wartosc FROM CDN.Konfig WHERE KON_Numer = 211
+	if @GIDTyp in (2037,2045,1828,1836,2005,2013,1824,1832,1312,1320) --FSE,FKE,FEL,KEL,WZE,WKE,FSL,KSL,FZL,KZL
+	begin
+		set @DokumentWWalucie = 1		
+	end
+
+	select 
+		@KursL = ISNULL(NULLIF(TRN_KursL,0),1)
+		, @KursM = ISNULL(NULLIF(TRN_KursM,0),1)
+		, @ZnakDokumentu = case when Trn_NettoR+Trn_NettoP+Trn_VatR+Trn_VatP &lt; 0 THEN -1 else 1 end 
+		, @DataSprz = TRN_Data3
+		, @DataWyst = TRN_Data2
+		, @TRNWaluta = TrN_Waluta
+	from cdn.TraNag where trn_gidnumer = @GIDNumer
+
+
+	if cdn.CzyPrzychod(@GIDTyp) = 1	
+	begin
+		if (@GIDTyp &amp; 8) = 0 
+			set @ZobowiazanieNaleznosc = 1
+		else
+			set @ZobowiazanieNaleznosc = 2
+	end
+	else
+	begin
+		if (@GIDTyp &amp; 8) &gt; 0 			
+			set @ZobowiazanieNaleznosc = 1
+		else
+			set @ZobowiazanieNaleznosc = 2
+	end
+
+
+
+	;With Roz AS (
+	select R2_Dok1Typ R2TRPTyp, R2_Dok1Numer R2TRPNumer, R2_Dok1Lp R2TRPLp
+		, R2_Dok2Typ R2DokTyp, R2_Dok2Numer R2DokNumer, R2_Dok2Lp R2DokLp
+		, R2_KwotaWal1 R2KwotaWal, R2_KwotaSys + case when R2_RkStrona = 1 then isnull(R2_RK,0) else 0 end R2KwotaSys, R2_DataRozliczenia R2DataRozliczenia
+		, R2_Waluta1 R2Waluta, R2_ID R2ID
+	from cdn.Rozliczenia
+	where R2_Dok2Typ&lt;&gt;435 and R2_Wycena =0
+	union all
+	select R2_Dok2Typ R2TRPTyp, R2_Dok2Numer R2TRPNumer, R2_Dok2Lp R2TRPLp
+		, R2_Dok1Typ R2DokTyp, R2_Dok1Numer R2DokNumer, R2_Dok1Lp R2DokLp
+		, R2_KwotaWal2 R2KwotaWal, R2_KwotaSys + case when R2_RkStrona = 2 then isnull(R2_RK,0) else 0 end R2KwotaSys, R2_DataRozliczenia R2DataRozliczenia
+		, R2_Waluta2 R2Waluta, R2_ID R2ID
+	from cdn.Rozliczenia
+	where R2_Dok1Typ&lt;&gt;435 and R2_Wycena =0
+	)
+
+	, TRPROZ as (
+	select 
+		TRP_SpiTyp, TRP_SpiNumer, TRP_GIDTyp, TRP_GIDNumer, TRP_GIDLp
+		, TRP_Waluta
+	
+		,ISNULL(SUM(R2KwotaWal),0) R2KwotaWal
+		,ISNULL(SUM(R2KwotaSys),0) R2KwotaSys
+		,ISNULL(MAX(R2DataRozliczenia),0) R2DataRozliczenia
+		
+		,@ZnakDokumentu*case when @ZobowiazanieNaleznosc = 3-TRP_Typ then -1 else 1 end Znak		
+	from cdn.TraPlat
+		left join Roz on TRP_GIDTyp=R2TRPTyp and TRP_GIDNumer=R2TRPNumer and TRP_GIDLp=R2TRPLp and R2DataRozliczenia&lt;=@Data
+	where TrP_KorektaDanych=0
+	group by TRP_SpiTyp, TRP_SpiNumer, TRP_GIDTyp, TRP_GIDNumer, TRP_GIDLp
+		, TRP_Typ, TRP_Waluta
+		, R2ID
+		
+	)
+
+	, TRP as (
+	select TRP_SpiTyp, TRP_SpiNumer, TRP_GIDTyp, TRP_GIDNumer, TRP_GIDLp
+		, TRP_Waluta		
+		,Znak*case when @DokumentWWalucie=1 then
+				case when @TRNWaluta=TRP_Waluta then R2KwotaWal 
+				else 0 end
+			else R2KwotaSys
+			end KwotaZaplaty
+		,Znak*case when @DokumentWWalucie=1 then
+				case when @TRNWaluta=TRP_Waluta then 0
+				else R2KwotaSys end
+			else 0
+			end KwotaZaplatyDoPrzeliczeniaPoKursie
+	from TRPROZ
+	where (TrP_SpiTyp=@GIDTyp and TRP_SpiNumer = @GIDNumer) OR (TrP_GIDTyp=@GIDTyp and TRP_GIDNumer = @GIDNumer)
+	)
+
+	select 
+		@Zaplacono = cast((case when @DokumentWWalucie=1 then @KursM/@KursL else 1 end*SUM(KwotaZaplatyDoPrzeliczeniaPoKursie)) AS DECIMAL(15,2))+SUM(KwotaZaplaty) 
+	from TRP
+
+
+	RETURN ISNULL(@Zaplacono,0)
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury WydrZaplaconoWal"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury WydrZaplaconoWal */</I><BR>
+GRANT EXECUTE ON CDN.WydrZaplaconoWal TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

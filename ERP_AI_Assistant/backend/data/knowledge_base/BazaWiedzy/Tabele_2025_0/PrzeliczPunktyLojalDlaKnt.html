@@ -1,0 +1,83 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="PrzeliczPunktyLojalDlaKnt"></A><PRE>
+          <FONT SIZE="2"><I>/* PrzeliczPunktyLojalDlaKnt */</I><BR>
+CREATE PROCEDURE CDN.PrzeliczPunktyLojalDlaKnt
+  @KntNumer  int,
+  @CAAId int 
+AS
+
+CREATE TABLE #DokumentyRozliczone
+(
+    GidNumer int,
+    GidLp smallint,
+    TrN_Punkty DECIMAL(11,2),
+    TrE_Punkty DECIMAL(11,2)
+)
+CREATE TABLE #DokumentyWystawione
+(
+    GidNumer int,
+    GidLp smallint,
+    ZaE_Punkty DECIMAL(11,2)
+)
+DECLARE @PktNaliczone DECIMAL(13,2)
+DECLARE @PktOdebrane DECIMAL(13,2)
+
+
+INSERT INTO #DokumentyRozliczone
+SELECT TrN_GIDNumer, TrE_GIDLp, TrN_Punkty, TrE_Punkty
+from cdn.TraNag
+join cdn.CRMAkcjeDokumenty on CAD_CAAId=@CAAId and TrN_GIDTyp=CAD_DokTyp
+join cdn.KntKarty on Knt_DataOdLoj&lt;=TrN_Data2 and Knt_DataDoLoj&gt;TrN_Data2 and TrN_KntNumer=Knt_GIDNumer
+join cdn.CRMAkcjeAutomatyczne on @CAAId=CAA_Id AND  CAA_TerminOD&lt;=TrN_Data2 and CAA_TerminDo&gt;TrN_Data2
+join cdn.TraElem on TrN_GIDNumer=TrE_GIDNumer
+WHERE Knt_GIDNumer=@KntNumer AND TrN_Stan=5 --transakcja rozliczona
+AND (TrN_Punkty&lt;&gt;0 OR TrE_Punkty&lt;&gt;0)
+
+INSERT INTO #DokumentyWystawione 
+SELECT ZaN_GIDNumer,ZaE_GIDLp,ZaE_Punkty
+from cdn.ZamNag
+join cdn.CRMAkcjeDokumenty on CAD_CAAId=@CAAId and ZaN_ZamTyp=1280 AND CAD_DokTyp=9472
+join cdn.KntKarty on Knt_DataOdLoj&lt;=ZaN_DataWystawienia and Knt_DataDoLoj&gt;ZaN_DataWystawienia and ZaN_KntNumer=Knt_GIDNumer
+join cdn.CRMAkcjeAutomatyczne on @CAAId=CAA_Id AND  CAA_TerminOD&lt;=ZaN_DataWystawienia and CAA_TerminDo&gt;ZaN_DataWystawienia
+join cdn.ZamElem on ZaN_GIDNumer=ZaE_GIDNumer
+WHERE Knt_GIDNumer=@KntNumer
+AND ZaE_Nagroda=1
+
+
+SELECT @PktNaliczone=(
+  select SUM(TrE_Punkty) from #DokumentyRozliczone
+)+(
+  select SUM(TrN_Punkty) from (
+    select TRN_Punkty,ROW_NUMBER() OVER(PARTITION BY GidNumer ORDER BY (SELECT NULL)) rownum from #DokumentyRozliczone
+  ) as a
+  where rownum=1
+)
+IF @PktNaliczone&lt;0
+  SET @PktNaliczone=0
+
+SELECT @PktOdebrane=SUM(ZaE_Punkty) FROM #DokumentyWystawione
+
+
+
+UPDATE CDN.KntKarty 
+SET Knt_PunktyNalicz=COALESCE(@PktNaliczone,0),
+Knt_PunktyOdebr=COALESCE(@PktOdebrane,0)
+WHERE Knt_GIDNumer=@KntNumer
+
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

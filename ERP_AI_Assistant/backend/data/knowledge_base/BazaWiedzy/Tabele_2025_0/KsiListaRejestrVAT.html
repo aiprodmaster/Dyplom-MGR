@@ -1,0 +1,386 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="KsiListaRejestrVAT"></A><PRE>
+          <FONT SIZE="2"><I>/* KsiListaRejestrVAT */</I><BR>
+CREATE PROCEDURE CDN.KsiListaRejestrVAT
+@SortOrder tinyint = 1,
+@ZakupSprzedaz tinyint = 1,
+@Platnosc bit = 0,
+@PlatnoscRodzaj tinyint = 0,
+@PlatnoscPrezentacjaCtl bit = 0,
+@PlatnoscPrezentacja tinyint = 0,
+@PlatnoscPrzeterminowaneCtl bit = 0,
+@PlatnoscPrzeterminowane tinyint = 0,
+@PlatnoscPrzeterminowaneWg tinyint = 0,
+@DniZwlokiOd int = 151,
+@DniZwlokiDo int = 0,
+@TerminPlatnosciLiczbaDni tinyint = 1, --1 - 90 dni, 2- 150, 3 - 90 lub 150
+@TerminPlatnosciWg tinyint = 0,
+@TerminPlatnosciRok smallint = 0,
+@TerminPlatnosciMiesiac tinyint = 0,
+@TerminPlatnosciKwartal tinyint = 0,
+@DataRozliczenia int = 0,
+@DataRozliczeniaCalkowitego int = 0,
+@PdmNazwa bit = 0,
+@DokBezVat bit = 0,
+@PodzialTRV bit = 0,
+@VATZDGIDNumerCtl tinyint = 0, --Czy sprawdzać powiązanie dokumentu z VATZD
+@VATZDGIDNumer int = 0, --GIDNumer deklaracji VATZD
+@VATZDGIDLp smallint = 0, --GIDLp pozycji deklaracji VATZD
+@FltTraNag nvarchar(max) = '',
+@FltSadNag nvarchar(max) = '',
+@FltOgolny nvarchar(max) = '',
+@FltStrony nvarchar(max) = ''
+,@VIUDO tinyint = 0
+
+AS
+
+declare @SelectFields nvarchar(max)
+declare @From nvarchar(max)
+declare @Where nvarchar(max)
+declare @GroupByFields nvarchar(max)
+declare @OrderByFields nvarchar(max)
+declare @SQL nvarchar(max)
+
+
+declare @GIDFirma int
+select top 1 @GIDFirma = Ope_GIDFirma from cdn.OpeKarty
+
+declare @sKNATRN varchar(15)
+declare @sKNASAN varchar(100)
+
+
+if @GIDFirma in (736001, 570625) and @ZakupSprzedaz=2
+begin
+	set @sKNATRN = 'TRN_ADPNumer'
+    set @sKNASAN = 'SAN_ADPNumer'
+end
+else
+begin
+     set @sKNATRN = 'TRN_KNANumer'
+     set @sKNASAN = 'case when SAN_GIDTyp=3376 then SAN_DstAdres else SAN_KNANumer end' --SAD
+end
+
+
+
+
+
+
+
+set @SelectFields = ' ttv_VatRejestr, ttv_uTyp, ttv_VatRok, ttv_VatMiesiac, ttv_VatDzien, ttv_VatNumer, ttv_NumerDokumentu, ttv_DokumentObcy, ttv_TrnData2, ttv_TrnData3, ttv_trndataodprawy, ttv_SaNdataZgl, ttv_SaNdataWplyw, ttv_trnDataOdb, ttv_DataPO,' +
+            case when (@SortOrder&lt;&gt;5 and @SortOrder&lt;&gt;6) and @Platnosc = 1 and @PlatnoscPrezentacjaCtl = 1 and @PlatnoscPrezentacja = 0 then 'TrP_Termin' else '0' end + ' as TRPTermin,' +
+			' case when TTV_KorektaDanych=0 then' +	case when @PdmNazwa=0 then ' KNA.KnA_Akronim' else ' KNA.KnA_Nazwa1+'' ''+KNA.KnA_Nazwa2+'' ''+KNA.KnA_Nazwa3' end +' else' + case when @PdmNazwa=0 then ' KNATRV.KnA_Akronim' else ' KNATRV.KnA_Nazwa1+'' ''+KNATRV.KnA_Nazwa2+'' ''+KNATRV.KnA_Nazwa3' end +' end KnA_AkronimNazwa,' +
+			' case when TTV_KorektaDanych=0 then KNA.KnA_Miasto else KNATRV.KnA_Miasto end KnA_Miasto,' +				
+            case when @PdmNazwa=0 then ' Urz_Akronim,' else ' Urz_Nazwa+'' ''+Urz_Nazwa1 as Urz_AkronimNazwa,' end +
+            ' Urz_Miasto, ttv_gidtyp, ttv_gidnumer, ttv_zaksiegowano, ttv_KntNumer, ttv_TrnTyp, ttv_Aktywny,' +
+            case when @Platnosc = 0 or (@SortOrder=5 or @SortOrder=6) then             
+					' sum(isnull(TSV_NettoR,0)) + sum(isnull(TSV_NettoP,0)) as Netto, sum(isnull(TSV_VatR,0)) + sum(isnull(TSV_VatP,0)) as Vat,'
+                else
+                    ' sum(((isnull(TSV_NettoR,0) + isnull(TSV_NettoP,0) + isnull(TSV_VatR,0) + isnull(TSV_VatP,0))/NULLIF(sumTRVNetto+sumTRVVat,0))*sumKwotaTRPRoz - ((isnull(TSV_NettoR,0) + isnull(TSV_NettoP,0) + isnull(TSV_VatR,0) + isnull(TSV_VatP,0))/NULLIF(sumTRVNetto+sumTRVVat,0))*sumKwotaTRPRoz*((isnull(TSV_VatR,0) + isnull(TSV_VatP,0))/NULLIF((isnull(TSV_NettoR,0) + isnull(TSV_NettoP,0) + isnull(TSV_VatR,0) + isnull(TSV_VatP,0)),0))) as Netto, sum(((isnull(TSV_NettoR,0) + isnull(TSV_NettoP,0) + isnull(TSV_VatR,0) + isnull(TSV_VatP,0))/NULLIF(sumTRVNetto+sumTRVVat,0))*sumKwotaTRPRoz*((isnull(TSV_VatR,0) + isnull(TSV_VatP,0))/NULLIF((isnull(TSV_NettoR,0) + isnull(TSV_NettoP,0) + isnull(TSV_VatR,0) + isnull(TSV_VatP,0)),0))) as Vat,' 
+                end +                     
+            ' max(trv_ExpoNorm) as ExpoNorm, ttv_SpiTyp, ttv_Stan, ttv_TrnLp, ttv_Fiskalny, ttv_KonTyp, ttv_gidlp,' +
+            case when (@SortOrder&lt;&gt;5 and @SortOrder&lt;&gt;6) then
+				case when @Platnosc = 1 and @PlatnoscPrezentacjaCtl = 1 and @PlatnoscPrezentacja = 0 then ' trp_gidTyp,trp_gidNumer,trp_gidlp' else ' 0 trp_gidTyp,0 trp_gidNumer,0 trp_gidlp' end 
+			else
+				' 0 trp_gidTyp,0 trp_gidNumer,0 trp_gidlp'
+			end + 
+			case when @SortOrder in (5,6,2,4) then case when @ZakupSprzedaz=2 then ', TSV_dataOp' else ', TSV_dataPO' end else ',0' end + ' trv_dataOpPo' + 
+			case when @PodzialTRV = 1 then ',TrV_StawkaPod,TrV_FlagaVat,TSV_RodzajZakupu TrV_RodzajZakupu,TSV_OdliczeniaVat TRV_OdliczeniaVat,TrV_Struktura,TrV_Zrodlowa,TSV_DeklMiesiac TRV_DeklMiesiac,TSV_DeklRok TRV_DeklRok,TRV_VatNalOd' else ',0 TrV_StawkaPod,0 TrV_FlagaVat,0 TrV_RodzajZakupu,0 TrV_OdliczeniaVat,0 TrV_Struktura,0 TrV_Zrodlowa,0 TrV_DeklMiesiac,0 TrV_DeklRok,0 TrV_VatNalOd' end + 
+			' ,ttv_KnANumer, ttv_Detal, ttv_NrKorekty, Naz_Opis, DZK_Identyfikator'+			
+			',case when TTV_KorektaDanych=0 then KNA.KnA_KodP else KNATRV.KnA_KodP end KnA_KodP'+
+			',case when TTV_KorektaDanych=0 then KNA.KnA_Ulica else KNATRV.KnA_Ulica end KnA_Ulica'+
+			',case when TTV_KorektaDanych=0 then KNA.KnA_Adres else KNATRV.KnA_Adres end KnA_Adres'+
+			',case when TTV_KorektaDanych=0 then KNA.KnA_NipPrefiks else KNATRV.KnA_NipPrefiks end KnA_NipPrefiks'+
+			',case when TTV_KorektaDanych=0 then KNA.KnA_NipE else KNATRV.KnA_NipE end KnA_NipE'+
+			',case when TTV_KorektaDanych=0 then KNA.KnA_Akronim else KNATRV.KnA_Akronim end KnA_Akronim'+
+			',case when TTV_KorektaDanych=0 then KNA.KnA_Nazwa1+'' ''+KNA.KnA_Nazwa2+'' ''+KNA.KnA_Nazwa3 else KNATRV.KnA_Nazwa1+'' ''+KNATRV.KnA_Nazwa2+'' ''+KNATRV.KnA_Nazwa3 end KnA_Nazwa'+
+			', ttv_DataRoz, Urz_Akronim, Urz_Nazwa, ttv_KorektaOdlicz' +
+			case when (@SortOrder&lt;&gt;5 and @SortOrder&lt;&gt;6) and @Platnosc = 1 then ',max(sumTRVNetto+sumTRVVat) Brutto,TRP_KorektaDanych' else ',0 Brutto,0 TRP_KorektaDanych' end +
+			', max(TRV_KorektaDanych) TRV_KorektaDanych'+
+			case when @VIUDO=1 then ', ttv_KrajPrzezWys, ttv_KrajWydania, ttv_KorektaRokKwartal ' else '' end			-- VIU-DO
+		
+			
+
+
+set @GroupByFields = ' ttv_VatRejestr, ttv_uTyp, ttv_VatRok, ttv_VatMiesiac, ttv_VatDzien, ttv_VatNumer, ttv_NumerDokumentu, ttv_KorektaDanych, ttv_DokumentObcy, ttv_TrnData2, ttv_TrnData3, ttv_trndataodprawy, ttv_SaNdataZgl, ttv_SaNdataWplyw, ttv_trnDataOdb, ttv_DataPO,' +                    
+					' KNA.KnA_Miasto,KNATRV.KnA_Miasto,' +
+					case when @PdmNazwa=0 then ' Urz_Akronim,' else ' Urz_Nazwa+'' ''+Urz_Nazwa1,' end +
+                    ' Urz_Miasto, ttv_gidtyp, ttv_gidnumer, ttv_zaksiegowano, ttv_KntNumer, ttv_TrnTyp, ttv_Aktywny, ttv_SpiTyp, ttv_Stan, ttv_TrnLp, ttv_Fiskalny, ttv_KonTyp, ttv_gidlp' +
+                    case when not @SortOrder in (5,6) then											
+						case when @Platnosc = 1 and @PlatnoscPrezentacjaCtl = 1 and @PlatnoscPrezentacja = 0 then ',trp_gidTyp,trp_gidNumer,TrP_GIDLp,TrP_Typ,TrP_Termin' else '' end
+					else
+						''
+					end + 
+					case when not @SortOrder in (5,6) then																	
+						case when @Platnosc = 1 then ',TRP_KorektaDanych,sumTRPKwotaSys,sumRozKwota,sumKwotaTRPRoz' else '' end
+					else
+						''
+					end + 
+					case when @PodzialTRV = 1 then ',TrV_StawkaPod,TrV_FlagaVat,TSV_RodzajZakupu ,TSV_OdliczeniaVat ,TrV_Struktura,TrV_Zrodlowa,TSV_DeklMiesiac ,TSV_DeklRok ,TrV_VatNalOd' else '' end +
+					case when @SortOrder in (5,6,2,4) then case when @ZakupSprzedaz=2 then ', TSV_dataOp' else ', TSV_dataPO' end else '' end +
+					' ,ttv_KnANumer, ttv_Detal, ttv_NrKorekty, Naz_Opis, DZK_Identyfikator' +
+					',KNA.KnA_KodP, KNA.KnA_Ulica, KNA.KnA_Adres, KNA.KnA_NipPrefiks, KNA.KnA_NipE, KNA.KnA_Akronim, KNA.KnA_Nazwa1+'' ''+KNA.KnA_Nazwa2+'' ''+KNA.KnA_Nazwa3' +
+					',KNATRV.KnA_KodP, KNATRV.KnA_Ulica, KNATRV.KnA_Adres, KNATRV.KnA_NipPrefiks, KNATRV.KnA_NipE, KNATRV.KnA_Akronim, KNATRV.KnA_Nazwa1+'' ''+KNATRV.KnA_Nazwa2+'' ''+KNATRV.KnA_Nazwa3' +
+					', ttv_DataRoz, Urz_Akronim, Urz_Nazwa, ttv_KorektaOdlicz'
+					--VIUDO
+					+ ', TrN_KorektaVIU'
+					+ case when @VIUDO=1 then  ', ttv_KrajPrzezWys, ttv_KrajWydania, ttv_KorektaRokKwartal ' else '' end			-- VIU-DO
+				
+
+if @SortOrder = 1
+	set @OrderByFields = 'ttv_VatRejestr,ttv_VatRok,ttv_VatMiesiac,ttv_VatNumer,ttv_uTyp,ttv_GIDNumer'
+else if @SortOrder = 2
+	set @OrderByFields = 'ttv_VatRok,ttv_VatMiesiac,ttv_VatNumer,ttv_uTyp,ttv_GIDNumer'
+else if @SortOrder = 3
+	set @OrderByFields = 'ttv_VatRejestr,ttv_VatRok,ttv_VatMiesiac,ttv_VatNumer,ttv_uTyp,ttv_GIDNumer'
+else if @SortOrder = 4
+	set @OrderByFields = 'ttv_VatRok,ttv_VatMiesiac,ttv_VatNumer,ttv_uTyp,ttv_GIDNumer'		
+else if @SortOrder = 5
+	set @OrderByFields = 'tsv_DataOp,ttv_uTyp,ttv_GIDNumer'
+else if @SortOrder = 6
+	set @OrderByFields = 'tsv_dataPo,ttv_uTyp,ttv_GIDNumer'	
+	
+		
+if (@SortOrder&lt;&gt;5 and @SortOrder&lt;&gt;6) and @Platnosc = 1 and @PlatnoscPrezentacjaCtl = 1 and @PlatnoscPrezentacja = 0 
+	set @OrderByFields =  @OrderByFields + ',trp_gidTyp,trp_gidNumer,TRP_GIDLp,trp_KorektaDanych'
+		
+IF @VIUDO=1
+	set @OrderByFields = 'ttv_KrajPrzezWys, ttv_KrajWydania, ttv_KorektaRokKwartal,'+ @OrderByFields
+
+
+if @Platnosc = 0 or (@SortOrder=5 or @SortOrder=6)
+begin	
+print '1'
+	set @From = '( select  trn_vatRejestr Ttv_VaTRejestr, 1 ttv_uTyp, trn_vatRok ttv_VatRok, trn_vatMiesiac ttv_VatMiesiac, trn_vatDzien ttv_VatDzien, trn_vatNumer ttv_vatNumer, trn_vatTyp ttv_vatTyp, CDN.NumerDokumentu(TrN_GIDTyp,TrN_SpiTyp,TrN_TrnTyp,TrN_TrnNumer,TrN_TrNRok,Trn_TrnSeria,Trn_TrnMiesiac) as ttv_NumerDokumentu, TrN_DokumentObcy ttv_dokumentObcy, trn_data2 ttv_trndata2, trn_data3 ttv_trndata3, case when (trn_gidtyp = 2037 or trn_gidtyp = 2045) and TRN_ExpoNorm in (2,3,4,5,14,15,23) then TrN_DataOdprawyPotwierdzenia else trn_data2 end ttv_trndataodprawy, 0 ttv_SaNdataZgl, 0 ttv_SaNdataWplyw, trn_DataOdb ttv_trnDataOdb, trn_DataPO ttv_DataPO, '+@sKNATRN+' ttv_knanumer, trn_knptyp ttv_knptyp, trn_knpnumer ttv_knpnumer, trn_gidtyp ttv_gidtyp, trn_gidnumer ttv_gidnumer, trn_Zaksiegowano ttv_zaksiegowano, trn_kntnumer ttv_kntnumer, trn_TrnTyp ttv_trnTyp, trn_Aktywny ttv_Aktywny, trn_SpiTyp ttv_SpiTyp, trn_Stan ttv_Stan, trn_TrnLp ttv_TrnLp, trn_Fiskalny ttv_Fiskalny, '+
+			'trn_KonTyp ttv_KonTyp, trn_gidlp ttv_gidlp, trn_ExpoNorm ttv_ExpoNorm, trn_Detal ttv_Detal, trn_NrKorekty ttv_NrKorekty, trn_DataRoz ttv_DataRoz, trn_KorektaOdlicz ttv_KorektaOdlicz, TRN_KorektaDanych TTV_KorektaDanych '+			
+			case when @VIUDO=1 then 
+				N',TrN_KrajPrzezWys ttv_KrajPrzezWys, TrN_KrajWydania ttv_KrajWydania, case when TRN_KorektaVIU=1 then convert(nvarchar(4), TrN_DeklRokKVIU) + ''/'' + convert(nvarchar(2), TrN_DeklKwartalKVIU) else '''' end ttv_KorektaRokKwartal ' 			-- VIU-DO
+			else '' end +
+			'from cdn.TraNag TRN' +
+				case when @FltTraNag &lt;&gt; '' then ' where ' + @FltTraNag else '' end + 					
+				' union all select san_vatRejestr Ttv_VaTRejestr, 10 ttv_uTyp, San_vatRok ttv_VatRok, san_vatMiesiac ttv_VatMiesiac, san_vatDzien ttv_VatDzien, san_vatNumer ttv_vatNumer, san_vatTyp ttv_vatTyp, CDN.NumerDokumentu(SaN_GIDTyp,0,SaN_SaNTyp,SaN_SaNNumer,SaN_SaNRok,SaN_SaNSeria,SaN_SaNMiesiac) as ttv_NumerDokumentu, SaN_NumerSAD ttv_dokumentObcy, 0 ttv_trndata2, 0 ttv_trndata3, 0 ttv_trndataodprawy, SAN_DataZgloszenia ttv_SaNdataZgl, SAN_DataWplywu ttv_SaNdataWplyw, 0 ttv_trnDataOdb, san_DataPO ttv_DataPO, '+@sKNASAN+' ttv_knanumer, san_pdmtyp ttv_knptyp, san_pdmnumer ttv_knpnumer, san_gidtyp ttv_gidtyp, san_gidnumer ttv_gidnumer, san_Zaksiegowano ttv_zaksiegowano, San_kntnumer ttv_kntnumer, San_SanTyp ttv_trnTyp, San_Aktywny ttv_Aktywny, 0 ttv_SpiTyp, San_Stan ttv_Stan, SAN_SanLp ttv_TrnLp, 0 ttv_Fiskalny,' +
+				'0 ttv_KonTyp, san_gidlp ttv_gidlp, san_ExpoNorm ttv_ExpoNorm, 0 ttv_Detal, '''' ttv_NrKorekty, San_DataRoz ttv_DataRoz, 0 ttv_KorektaOdlicz, 0 TTV_KorektaDanych '+
+				case when @VIUDO=1 then ', '''' ttv_KrajPrzezWys, '''' ttv_KrajWydania, '''' ttv_KorektaRokKwartal ' else '' end + 			-- VIU-DO
+				'from cdn.SadNag' + 
+				case when @FltSadNag &lt;&gt; '' then ' where ' + @FltSadNag else '' end + 
+				' ) u1 ' +
+					case when @DokBezVat=1 then ' left' else '' end + ' join cdn.TraVat on ttv_Gidtyp = trv_gidtyp and ttv_gidnumer = trv_gidnumer' +
+					case when @DokBezVat=1 then ' left' else '' end + ' join cdn.TraSVat on trv_Gidtyp = tsv_gidtyp and trv_gidnumer = tsv_gidnumer and trv_gidLp = tsv_gidLp' +
+					' left join cdn.KntAdresy KNA on ttv_knanumer = KNA.KnA_GIDNumer' +
+					' left join cdn.KntKarty KNT on KNA.KnA_KNTNumer=KNT.KNT_GIDNumer' + 
+					' left join cdn.KntAdresy KNATRV on TRV_knanumer = KNATRV.KnA_GIDNumer' +
+					' left join cdn.KntKarty KNTTRV on KNATRV.KnA_KNTNumer=KNTTRV.KNT_GIDNumer' + 
+					' left join cdn.Urzedy on ttv_knptyp = urz_gidtyp and ttv_knpnumer = urz_gidnumer' +
+					' left join cdn.TraNag on ttv_uTyp = 1 and ttv_gidnumer = trn_gidnumer' +
+					' left join cdn.SadNag on ttv_uTyp = 10 and ttv_gidnumer = san_gidnumer' +
+					' left join cdn.Nazwy on Naz_GIDTyp = 576 and ttv_VatRejestr = Naz_Nazwa' + 
+					' left join cdn.Zrodla on ttv_gidtyp = zro_trntyp and ttv_gidnumer=zro_trnnumer and zro_trnlp=0 and zro_dtlp=0 and zro_dttyp=432' +
+					' left join cdn.Dziennik on zro_dttyp = dzk_gidtyp and zro_dtnumer = dzk_gidnumer and zro_dtlp = 0' +
+					' left join cdn.KSeFDokumenty on TTV_GIDTyp=KSF_DokTyp AND TTV_GIDNumer=KSF_DokNumer'
+end					
+else
+begin
+	print '2'
+	declare @WhereTerminPlatnosci_ZakresMiesiecy nvarchar(1025) = N''
+	declare @WhereTerminPlatnosci_ZakresKwartalu nvarchar(1025) = N''
+
+	if @TerminPlatnosciWg=0
+		set @WhereTerminPlatnosci_ZakresMiesiecy = convert(nvarchar,datediff(dd,'18001228',cdn.Ymd(@TerminPlatnosciRok,@TerminPlatnosciMiesiac,1)))+N' and '+convert(nvarchar,datediff(dd,'18001228',dateadd(m, 1,cdn.Ymd(@TerminPlatnosciRok,@TerminPlatnosciMiesiac,1)))-1)
+	else	
+		set @WhereTerminPlatnosci_ZakresKwartalu = convert(nvarchar,datediff(dd,'18001228',cdn.Ymd(@TerminPlatnosciRok,(((@TerminPlatnosciKwartal)*3)-2),1)))+N' and '+convert(nvarchar,datediff(dd,'18001228',dateadd(m, 1, cdn.Ymd(@TerminPlatnosciRok,(((@TerminPlatnosciKwartal)*3)),1)))-1)
+
+	declare @WhereTerminPlatnosci nvarchar(1025) = ''
+	declare @LiczbaDni90 nvarchar(10) = N'90'
+	declare @LiczbaDni150 nvarchar(10) = N'150'
+
+	if @TerminPlatnosciLiczbaDni = 3
+		set @WhereTerminPlatnosci = N'((TRPTermin+'+@LiczbaDni90+N' between '+ case when @TerminPlatnosciWg=0 then @WhereTerminPlatnosci_ZakresMiesiecy else @WhereTerminPlatnosci_ZakresKwartalu end +N') or (TRPTermin+'+@LiczbaDni150+N' between '+ case when @TerminPlatnosciWg=0 then @WhereTerminPlatnosci_ZakresMiesiecy else @WhereTerminPlatnosci_ZakresKwartalu end +N'))'
+	else
+		set @WhereTerminPlatnosci = N'TRPTermin+'+case when @TerminPlatnosciLiczbaDni=1 then @LiczbaDni90 else @LiczbaDni150 end+N' between '+ case when @TerminPlatnosciWg=0 then @WhereTerminPlatnosci_ZakresMiesiecy else @WhereTerminPlatnosci_ZakresKwartalu end
+
+
+	set @From = N'(select Ttv_VaTRejestr, ttv_uTyp, ttv_VatRok, ttv_VatMiesiac, ttv_VatDzien, ttv_vatNumer, ttv_vatTyp, ttv_NumerDokumentu, ttv_dokumentObcy, TTV_KorektaDanych, ttv_trndata2, ttv_trndata3, ttv_trndataodprawy, ttv_SaNdataZgl, ttv_SaNdataWplyw, ttv_trnDataOdb, ttv_DataPO, ttv_knanumer, ttv_knptyp, ttv_knpnumer, ttv_gidtyp, ttv_gidnumer, ttv_zaksiegowano, ttv_kntnumer, ttv_trnTyp, ttv_Aktywny, ttv_SpiTyp, ttv_Stan, ttv_TrnLp, ttv_Fiskalny, ttv_KonTyp, ttv_gidlp, ttv_ExpoNorm, ttv_Detal, ttv_NrKorekty, ttv_DataRoz, ttv_KorektaOdlicz' +
+                case when @Platnosc=1 and @PlatnoscPrezentacjaCtl = 1 and @PlatnoscPrezentacja = 0 then N',trp_gidTyp,trp_gidNumer,TrP_GIDLp,TrP_Typ,TrP_Termin' else N'' end +                
+                N',TRP_KorektaDanych,sumTRPKwotaSys, sumRozKwota, sumKwotaTRPRoz,SUM(isnull(TSV_NettoR,0)+isnull(TSV_NettoP,0)) sumTRVNetto, SUM(isnull(TSV_VatR,0)+isnull(TSV_VatP,0)) sumTRVVat' +
+				case when @VIUDO=1 then N', ttv_KrajPrzezWys, ttv_KrajWydania, ttv_KorektaRokKwartal ' else '' end + 			-- VIU-DO
+				N' from (select Ttv_VaTRejestr, ttv_uTyp, ttv_VatRok, ttv_VatMiesiac, ttv_VatDzien, ttv_vatNumer, ttv_vatTyp, ttv_NumerDokumentu, ttv_dokumentObcy, TTV_KorektaDanych, ttv_trndata2, ttv_trndata3, ttv_trndataodprawy, ttv_SaNdataZgl, ttv_SaNdataWplyw, ttv_trnDataOdb, ttv_DataPO, ttv_knanumer, ttv_knptyp, ttv_knpnumer, ttv_gidtyp, ttv_gidnumer, ttv_zaksiegowano, ttv_kntnumer, ttv_trnTyp, ttv_Aktywny, ttv_SpiTyp, ttv_Stan, ttv_TrnLp, ttv_Fiskalny, ttv_KonTyp, ttv_gidlp, ttv_ExpoNorm, ttv_Detal, ttv_NrKorekty, ttv_DataRoz, ttv_KorektaOdlicz,' +
+                    case when @Platnosc=1 and @PlatnoscPrezentacjaCtl = 1 and @PlatnoscPrezentacja = 0 then N'trp_gidTyp,trp_gidNumer,TrP_GIDLp,TrP_Typ,TrP_Termin,' else N'' end +                    
+                    N'TRP_KorektaDanych, SUM(trp_kwotasys) as sumTRPKwotaSys, sum(sumRozKwota) as sumRozKwota,' +
+                    case when @PlatnoscRodzaj = 0 or @PlatnoscRodzaj = 3 then                     
+                        N'SUM(trp_kwotasys)'
+                    else
+						case when @PlatnoscRodzaj = 1 then                             
+                                N'SUM(trp_kwotasys)-sum(sumRozKwota)'
+                        else
+                                N'sum(sumRozKwota)'
+                        end 
+                    end + N' sumKwotaTRPRoz' +
+					case when @VIUDO=1 then N', ttv_KrajPrzezWys, ttv_KrajWydania, ttv_KorektaRokKwartal ' else '' end + 			-- VIU-DO
+                N' from ' +
+						N'(select Ttv_VaTRejestr, ttv_uTyp, ttv_VatRok, ttv_VatMiesiac, ttv_VatDzien, ttv_vatNumer, ttv_vatTyp, ttv_NumerDokumentu, ttv_dokumentObcy, TTV_KorektaDanych, ttv_trndata2, ttv_trndata3, ttv_trndataodprawy, ttv_SaNdataZgl, ttv_SaNdataWplyw, ttv_trnDataOdb, ttv_DataPO, ttv_knanumer, ttv_knptyp, ttv_knpnumer, ttv_gidtyp, ttv_gidnumer, ttv_zaksiegowano, ttv_kntnumer, ttv_trnTyp, ttv_Aktywny, ttv_SpiTyp, ttv_Stan, ttv_TrnLp, ttv_Fiskalny, ttv_KonTyp, ttv_gidlp, ttv_ExpoNorm, ttv_Detal, ttv_NrKorekty, ttv_DataRoz, ttv_KorektaOdlicz,trp_gidTyp,trp_gidNumer,trp_gidlp, trp_typ, TRPTermin trp_termin,u11.TRP_KorektaDanych' +
+						N',((case when ttv_vatTyp=1 then case when trp_typ = 1 then 1 else -1 end else case when trp_typ = 2 then 1 else -1 end end)*trp_kwotasys) as trp_KwotaSys, sum(isnull(roz.R2_KwotaSys,0)*(case when ttv_vatTyp=1 then case when trp_typ = 1 then 1 else -1 end else case when trp_typ = 2 then 1 else -1 end end)) as sumRozKwota' +
+						case when @VIUDO=1 then N', ttv_KrajPrzezWys, ttv_KrajWydania, ttv_KorektaRokKwartal ' else '' end + 			-- VIU-DO
+						  N' from ' +
+								N'(select Ttv_VaTRejestr, ttv_uTyp, ttv_VatRok, ttv_VatMiesiac, ttv_VatDzien, ttv_vatNumer, ttv_vatTyp, ttv_NumerDokumentu, ttv_dokumentObcy, TTV_KorektaDanych, ttv_trndata2, ttv_trndata3, ttv_trndataodprawy, ttv_SaNdataZgl, ttv_SaNdataWplyw, ttv_trnDataOdb, ttv_DataPO, ttv_knanumer, ttv_knptyp, ttv_knpnumer, ttv_gidtyp, ttv_gidnumer, ttv_zaksiegowano, ttv_kntnumer, ttv_trnTyp, ttv_Aktywny, ttv_SpiTyp, ttv_Stan, ttv_TrnLp, ttv_Fiskalny, ttv_KonTyp, ttv_gidlp, ttv_ExpoNorm, ttv_Detal, ttv_NrKorekty, ttv_DataRoz, ttv_KorektaOdlicz' +
+								N',ProlTRP.TRP_GIDTyp TRPTyp, ProlTRP.TRP_GIDNumer TRPNumer, ProlTRP.TRP_GIDLp TRPLp'+
+								N',case when ProlTRP.TrP_TerminPoProlongacie=0 then ProlTRP.TRP_Termin else ProlTRP.TrP_TerminPoProlongacie end TRPTermin,u10.TRP_KorektaDanych' + 
+								case when @VIUDO=1 then N', ttv_KrajPrzezWys, ttv_KrajWydania, ttv_KorektaRokKwartal ' else '' end + 			-- VIU-DO
+								N' from ( select u10_0.*, cdn.TraPlat.* from'
+
+					set @From = @From +	N'( select  trn_vatRejestr Ttv_VaTRejestr, 1 ttv_uTyp, trn_vatRok ttv_VatRok, trn_vatMiesiac ttv_VatMiesiac, trn_vatDzien ttv_VatDzien, trn_vatNumer ttv_vatNumer, trn_vatTyp ttv_vatTyp, CDN.NumerDokumentu(TrN_GIDTyp,TrN_SpiTyp,TrN_TrnTyp,TrN_TrnNumer,TrN_TrNRok,Trn_TrnSeria,Trn_TrnMiesiac) as ttv_NumerDokumentu, TrN_DokumentObcy ttv_dokumentObcy, trn_data2 ttv_trndata2, trn_data3 ttv_trndata3, case when (trn_gidtyp = 2037 or trn_gidtyp = 2045) and TRN_ExpoNorm in (2,3,4,5,14,15,23) then TrN_DataOdprawyPotwierdzenia else trn_data2 end ttv_trndataodprawy'+
+										N',0 ttv_SaNdataZgl, 0 ttv_SaNdataWplyw, trn_DataOdb ttv_trnDataOdb, trn_DataPO ttv_DataPO, '+@sKNATRN+N' ttv_knanumer, trn_knptyp ttv_knptyp, trn_knpnumer ttv_knpnumer, trn_gidtyp ttv_gidtyp, trn_gidnumer ttv_gidnumer, trn_Zaksiegowano ttv_zaksiegowano, trn_kntnumer ttv_kntnumer, trn_TrnTyp ttv_trnTyp, trn_Aktywny ttv_Aktywny' +
+										N',trn_SpiTyp ttv_SpiTyp, trn_Stan ttv_Stan, trn_TrnLp ttv_TrnLp, trn_Fiskalny ttv_Fiskalny'+
+										N',trn_KonTyp ttv_KonTyp, trn_gidlp ttv_gidlp, trn_ExpoNorm ttv_ExpoNorm, trn_Detal ttv_Detal, trn_NrKorekty ttv_NrKorekty, trn_DataRoz ttv_DataRoz, trn_KorektaOdlicz ttv_KorektaOdlicz,TRN_KorektaDanych TTV_KorektaDanych '+
+										case when @VIUDO=1 then 
+											N',TrN_KrajPrzezWys ttv_KrajPrzezWys, TrN_KrajWydania ttv_KrajWydania, case when TRN_KorektaVIU=1 then convert(nvarchar(4), TrN_DeklRokKVIU) + ''/'' + convert(nvarchar(2), TrN_DeklKwartalKVIU) else '''' end ttv_KorektaRokKwartal ' 			-- VIU-DO
+										else '' end +
+										N' from cdn.TraNag' +
+										N' where not TRN_GIDTyp in (2039,2047)' +
+										case when @FltTraNag &lt;&gt; N'' then N' and ' + @FltTraNag else N'' end +                                 
+										N' union all select  san_vatRejestr Ttv_VaTRejestr, 10 ttv_uTyp, San_vatRok ttv_VatRok, san_vatMiesiac ttv_VatMiesiac, san_vatDzien ttv_VatDzien, san_vatNumer ttv_vatNumer, san_vatTyp ttv_vatTyp, CDN.NumerDokumentu(SaN_GIDTyp,0,SaN_SaNTyp,SaN_SaNNumer,SaN_SaNRok,SaN_SaNSeria,SaN_SaNMiesiac) as ttv_NumerDokumentu, SaN_NumerSAD ttv_dokumentObcy, 0 ttv_trndata2, 0 ttv_trndata3, 0 ttv_trndataodprawy'+
+										N', SAN_DataZgloszenia ttv_SaNdataZgl, SAN_DataWplywu ttv_SaNdataWplyw, 0 ttv_trnDataOdb, san_DataPO ttv_DataPO, '+@sKNASAN+N' ttv_knanumer, san_pdmtyp ttv_knptyp, san_pdmnumer ttv_knpnumer, san_gidtyp ttv_gidtyp, san_gidnumer ttv_gidnumer, san_Zaksiegowano ttv_zaksiegowano, San_kntnumer ttv_kntnumer, San_SanTyp ttv_trnTyp, San_Aktywny ttv_Aktywny, 0 ttv_SpiTyp, San_Stan ttv_Stan, SAN_SanLp ttv_TrnLp, 0 ttv_Fiskalny, 0 ttv_KonTyp, san_gidlp ttv_gidlp, san_ExpoNorm ttv_ExpoNorm, 0 ttv_Detal'+
+										N', '''' ttv_NrKorekty, San_DataRoz ttv_DataRoz, 0 ttv_KorektaOdlicz, 0 TTV_KorektaDanych' +
+										case when @VIUDO=1 then N', '''' ttv_KrajPrzezWys, '''' ttv_KrajWydania, '''' ttv_KorektaRokKwartal ' else '' end + 			-- VIU-DO
+										N' from cdn.SadNag' +
+										case when @FltSadNag &lt;&gt; N'' then N' where ' + @FltSadNag else N'' end +                                
+										N' ) u10_0 ' +
+											N' join cdn.TraPlat on ttv_gidtyp = TrP_SpiTyp and ttv_gidnumer = TrP_SpiNumer' +
+									N' union all' + --RS
+									N' select  trn_vatRejestr Ttv_VaTRejestr, 1 ttv_uTyp, trn_vatRok ttv_VatRok, trn_vatMiesiac ttv_VatMiesiac, trn_vatDzien ttv_VatDzien, trn_vatNumer ttv_vatNumer, trn_vatTyp ttv_vatTyp, CDN.NumerDokumentu(TrN_GIDTyp,TrN_SpiTyp,TrN_TrnTyp,TrN_TrnNumer,TrN_TrNRok,Trn_TrnSeria,Trn_TrnMiesiac) as ttv_NumerDokumentu,' +
+									case when @Platnosc=1 and @PlatnoscPrezentacjaCtl=1 and @PlatnoscPrezentacja=0 then N' CDN.NumerDokumentu(PAGIDTyp,PASpiTyp,PATrnTyp,PATrnNumer,PATrNRok,PATrnSeria,PATrnMiesiac)' else N' TrN_DokumentObcy' end + 
+									N' ttv_dokumentObcy, trn_data2 ttv_trndata2, trn_data3 ttv_trndata3, case when (trn_gidtyp = 2037 or trn_gidtyp = 2045) and TRN_ExpoNorm in (2,3,4,5,14,15,23) then TrN_DataOdprawyPotwierdzenia else trn_data2 end ttv_trndataodprawy'+
+									N', 0 ttv_SaNdataZgl, 0 ttv_SaNdataWplyw, trn_DataOdb ttv_trnDataOdb, trn_DataPO ttv_DataPO, PAknanumer ttv_knanumer, trn_knptyp ttv_knptyp, trn_knpnumer ttv_knpnumer, trn_gidtyp ttv_gidtyp, trn_gidnumer ttv_gidnumer, trn_Zaksiegowano ttv_zaksiegowano, trn_kntnumer ttv_kntnumer, trn_TrnTyp ttv_trnTyp, trn_Aktywny ttv_Aktywny, trn_SpiTyp ttv_SpiTyp, trn_Stan ttv_Stan, trn_TrnLp ttv_TrnLp, trn_Fiskalny ttv_Fiskalny, trn_KonTyp ttv_KonTyp, trn_gidlp ttv_gidlp, trn_ExpoNorm ttv_ExpoNorm, trn_Detal ttv_Detal, trn_NrKorekty ttv_NrKorekty, trn_DataRoz ttv_DataRoz, trn_KorektaOdlicz ttv_KorektaOdlicz, TRN_KorektaDanych TTV_KorektaDanych '+
+									case when @VIUDO=1 then 
+										N',TrN_KrajPrzezWys ttv_KrajPrzezWys, TrN_KrajWydania ttv_KrajWydania, case when TRN_KorektaVIU=1 then convert(nvarchar(4), TrN_DeklRokKVIU) + ''/'' + convert(nvarchar(2), TrN_DeklKwartalKVIU) else '''' end ttv_KorektaRokKwartal '
+									else '' end +
+									N', cdn.TraPlat.*' +
+									N' from' +
+										N' (select rs.*, pa.TRN_GIDTyp PAGIDTyp, pa.TRN_GIDNumer PAGIDNumer, pa.TrN_SpiTyp PASPITyp, pa.TrN_TrnTyp PATRNTyp, pa.TrN_TrnNumer PATRNNumer, pa.TrN_TrNRok PATRNRok, pa.Trn_TrnSeria PATRNSeria, pa.Trn_TrnMiesiac PATRNMiesiac, pa.'+@sKNATRN+N' PAKNANumer' +
+										N' from cdn.TraNag rs with(nolock)' +
+											N' join cdn.TraNag pa with(nolock) on rs.TrN_GIDNumer = pa.TrN_KonNumer) u10_1' +
+										N' join cdn.TraPlat on PAGIDTyp = TrP_GIDTyp and PAGIDNumer = TrP_GIDNumer' +
+									N' where TRN_GIDTyp in (2039,2047)' + --RS
+										case when @FltTraNag &lt;&gt; N'' then N' and ' + @FltTraNag else N'' end +
+								  N') u10' +
+								  N' left join cdn.TraPlat prolTRP on u10.TRP_GIDTyp=prolTRP.TRP_ProlZrdTyp and u10.TRP_GIDNumer=prolTRP.TRP_ProlZrdNumer and u10.TRP_GIDLp=prolTRP.TRP_ProlZrdLp' +
+						  N') u11'
+
+	  set @From = @From + N' join cdn.TraPlat on TRPTyp=TRP_GIDTyp and TRPNumer=TRP_GIDNumer and TRPLp=TRP_GIDLp' +
+                          N' left join (select R2_ID, R2_Dok1Typ R2_DokTyp, R2_Dok1Numer R2_DokNumer, R2_Dok1Lp R2_DokLp, R2_DataRozliczenia, R2_KwotaSys + case when R2_RKStrona = 1 then R2_RK else 0 end R2_KwotaSys' +
+                                    N' from cdn.Rozliczenia where R2_Dok2Typ &lt;&gt; 435' +
+                                    N' union all' +                                    
+                                    N' select R2_ID, R2_Dok2Typ R2_DokTyp, R2_Dok2Numer R2_DokNumer, R2_Dok2Lp R2_DokLp, R2_DataRozliczenia, R2_KwotaSys + case when R2_RKStrona = 2 then R2_RK else 0 end R2_KwotaSys' +
+                                    N' from cdn.Rozliczenia where R2_Dok1Typ &lt;&gt; 435 ) roz' +
+                                        N' on TrP_GIDTyp = roz.R2_DokTyp and TrP_GIDNumer = roz.R2_DokNumer and TrP_GIDLp = roz.R2_DokLp ' + case when @DataRozliczenia&lt;&gt;0 then N'and roz.R2_DataRozliczenia &lt;= @DataRozliczenia' else N'' end +
+                                        case when @PlatnoscRodzaj=2 and @PlatnoscPrzeterminowaneCtl=1 and @PlatnoscPrzeterminowane=1 and @PlatnoscPrzeterminowaneWg=0 and @DniZwlokiOd&lt;&gt;0 then N' and roz.R2_DataRozliczenia - TrPTermin &gt;= @DniZwlokiOd' else N'' end +
+                                        case when @PlatnoscRodzaj=2 and @PlatnoscPrzeterminowaneCtl=1 and @PlatnoscPrzeterminowane=1 and @PlatnoscPrzeterminowaneWg=0 and @DniZwlokiDo&lt;&gt;0 then N' and roz.R2_DataRozliczenia - TrPTermin &lt;= @DniZwlokiDo' else N'' end +
+                                        case when @PlatnoscRodzaj=2 and @PlatnoscPrzeterminowaneCtl=1 and @PlatnoscPrzeterminowane=1 then N' and roz.R2_DataRozliczenia - TrPTermin &gt;= 1' else N'' end +
+                                        case when @PlatnoscRodzaj=2 and @PlatnoscPrzeterminowaneCtl=1 and @PlatnoscPrzeterminowane=2 then N' and roz.R2_DataRozliczenia &lt;= TrPTermin' else N'' end +
+                    N' where ' + case when @PlatnoscRodzaj&lt;&gt;0 then
+									case when @PlatnoscRodzaj=3 then N'TRP_Rozliczona=2' else N'TRP_Rozliczona&lt;&gt;2' end
+								else
+									N'1=1' 
+								end +
+								case when @PlatnoscRodzaj=1 and @PlatnoscPrzeterminowaneCtl=1 and @PlatnoscPrzeterminowane=1 and @PlatnoscPrzeterminowaneWg=0 and @DniZwlokiOd&lt;&gt;0 then N' and @DataRozliczenia - @DniZwlokiOd &gt;= TrPTermin' else N'' end +
+								case when @PlatnoscRodzaj=1 and @PlatnoscPrzeterminowaneCtl=1 and @PlatnoscPrzeterminowane=1 and @PlatnoscPrzeterminowaneWg=0 and @DniZwlokiDo&lt;&gt;0 then N' and @DataRozliczenia - @DniZwlokiDo &lt;= TrPTermin' else N'' end +
+                                case when @PlatnoscRodzaj=1 and @PlatnoscPrzeterminowaneCtl=1 and @PlatnoscPrzeterminowane=1 then ' and @DataRozliczenia - 1 &gt;= TrPTermin' else N'' end +
+                                case when @PlatnoscRodzaj=1 and @PlatnoscPrzeterminowaneCtl=1 and @PlatnoscPrzeterminowane=2 then N' and @DataRozliczenia &lt;= TrPTermin' else N'' end +                                                               
+								case when @PlatnoscPrzeterminowaneCtl=1 and @PlatnoscPrzeterminowane=1 and @PlatnoscPrzeterminowaneWg=1 then N' and '+@WhereTerminPlatnosci else N'' end +								
+                    N' group by  Ttv_VaTRejestr, ttv_uTyp, ttv_VatRok, ttv_VatMiesiac, ttv_VatDzien, ttv_vatNumer, ttv_vatTyp, ttv_NumerDokumentu, ttv_dokumentObcy, TTV_KorektaDanych, ttv_trndata2, ttv_trndata3, ttv_trndataodprawy, ttv_SaNdataZgl, ttv_SaNdataWplyw, ttv_trnDataOdb, ttv_DataPO, ttv_knanumer, ttv_knptyp, ttv_knpnumer, ttv_gidtyp, ttv_gidnumer, ttv_zaksiegowano, ttv_kntnumer, ttv_trnTyp, ttv_Aktywny, ttv_SpiTyp, ttv_Stan, ttv_TrnLp, ttv_Fiskalny, ttv_KonTyp, ttv_gidlp, ttv_ExpoNorm, ttv_Detal, ttv_NrKorekty, ttv_DataRoz, ttv_KorektaOdlicz '+
+						case when @VIUDO=1 then N', ttv_KrajPrzezWys, ttv_KrajWydania, ttv_KorektaRokKwartal ' else '' end + 			-- VIU-DO
+						N', trp_gidTyp,trp_gidNumer,TrP_GIDLp, TrP_Typ, TrPTermin,u11.TRP_KorektaDanych, TrP_KwotaSys' + 
+                    N' having ' + case when @PlatnoscRodzaj=0 or @PlatnoscRodzaj=3 then N'1=1' else N'' end +
+								case when @PlatnoscRodzaj=1 then 
+									N'abs(trp_kwotasys) - sum(isnull(roz.R2_KwotaSys,0)) &gt; 0' --nierozliczone
+								else
+									case when @PlatnoscRodzaj=2 then N'sum(isnull(roz.R2_KwotaSys,0)) &gt; 0' else N'' end  --!rozliczone								
+								end +                                                       
+                 N' ) as u9' +
+                 N' group by  Ttv_VaTRejestr, ttv_uTyp, ttv_VatRok, ttv_VatMiesiac, ttv_VatDzien, ttv_vatNumer, ttv_vatTyp, ttv_NumerDokumentu, ttv_dokumentObcy, TTV_KorektaDanych, ttv_trndata2, ttv_trndata3, ttv_trndataodprawy, ttv_SaNdataZgl, ttv_SaNdataWplyw, ttv_trnDataOdb, ttv_DataPO, ttv_knanumer, ttv_knptyp, ttv_knpnumer, ttv_gidtyp, ttv_gidnumer, ttv_zaksiegowano, ttv_kntnumer, ttv_trnTyp, ttv_Aktywny, ttv_SpiTyp, ttv_Stan, ttv_TrnLp, ttv_Fiskalny, ttv_KonTyp, ttv_gidlp, ttv_ExpoNorm, ttv_Detal, ttv_NrKorekty, ttv_DataRoz, ttv_KorektaOdlicz' +
+					case when @VIUDO=1 then N', ttv_KrajPrzezWys, ttv_KrajWydania, ttv_KorektaRokKwartal ' else '' end + 			-- VIU-DO
+                              case when @Platnosc=1 and @PlatnoscPrezentacjaCtl=1 and @PlatnoscPrezentacja=0 then N',trp_gidTyp,trp_gidNumer,TrP_GIDLp, TrP_Typ, TrP_Termin, TRP_KorektaDanych, TrP_KwotaSys, sumRozKwota' else N',TRP_KorektaDanych' end +
+             N' ) as u8' +
+             case when @DokBezVat=1 then N' left' else N'' end + N' join cdn.TraVat on ttv_Gidtyp = trv_gidtyp and ttv_gidnumer = trv_gidnumer and TRP_KorektaDanych=TRV_KorektaDanych' +
+			 case when @DokBezVat=1 then N' left' else N'' end + N' join cdn.TraSVat on trv_Gidtyp = tsv_gidtyp and trv_gidnumer = tsv_gidnumer and trv_gidLp = tsv_gidLp' +
+             N' group by Ttv_VaTRejestr, ttv_uTyp, ttv_VatRok, ttv_VatMiesiac, ttv_VatDzien, ttv_vatNumer, ttv_vatTyp, ttv_NumerDokumentu, ttv_dokumentObcy, TTV_KorektaDanych, ttv_trndata2, ttv_trndata3, ttv_trndataodprawy, ttv_SaNdataZgl, ttv_SaNdataWplyw, ttv_trnDataOdb, ttv_DataPO, ttv_knanumer, ttv_knptyp, ttv_knpnumer, ttv_gidtyp, ttv_gidnumer, ttv_zaksiegowano, ttv_kntnumer, ttv_trnTyp, ttv_Aktywny, ttv_SpiTyp, ttv_Stan, ttv_TrnLp, ttv_Fiskalny, ttv_KonTyp, ttv_gidlp, ttv_ExpoNorm, ttv_Detal, ttv_NrKorekty, ttv_DataRoz, ttv_KorektaOdlicz,' +
+				 case when @VIUDO=1 then N' ttv_KrajPrzezWys, ttv_KrajWydania, ttv_KorektaRokKwartal, ' else '' end + 			-- VIU-DO
+                          case when @Platnosc=1 and @PlatnoscPrezentacjaCtl=1 and @PlatnoscPrezentacja=0 then N'trp_gidTyp,trp_gidNumer,TrP_GIDLp,TrP_Typ,TrP_Termin,' else N'' end  +
+                          N' TRP_KorektaDanych,sumTRPKwotaSys, sumRozKwota, sumKwotaTRPRoz' +
+         N' ) as u1' +
+            case when @DokBezVat=1 then N' left' else N'' end + N' join cdn.TraVat on ttv_Gidtyp = trv_gidtyp and ttv_gidnumer = trv_gidnumer and TRP_KorektaDanych=TRV_KorektaDanych' +
+			case when @DokBezVat=1 then N' left' else N'' end + N' join cdn.TraSVat on trv_Gidtyp = tsv_gidtyp and trv_gidnumer = tsv_gidnumer and trv_gidLp = tsv_gidLp' +
+			N' left join cdn.KntAdresy KNA on ttv_knanumer = KNA.KnA_GIDNumer' +
+			N' left join cdn.KntKarty KNT on KNA.KnA_KNTNumer=KNT.KNT_GIDNumer' + 
+			N' left join cdn.KntAdresy KNATRV on TRV_knanumer = KNATRV.KnA_GIDNumer' +
+			N' left join cdn.KntKarty KNTTRV on KNATRV.KnA_KNTNumer=KNTTRV.KNT_GIDNumer' + 
+            N' left join cdn.Urzedy on ttv_knptyp = urz_gidtyp and ttv_knpnumer = urz_gidnumer' +
+            N' left join cdn.TraNag on ttv_uTyp = 1 and ttv_gidnumer = trn_gidnumer' +
+            N' left join cdn.SadNag on ttv_uTyp = 10 and ttv_gidnumer = san_gidnumer' +
+            N' left join cdn.Nazwy on Naz_GIDTyp = 576 and ttv_VatRejestr = Naz_Nazwa' +
+            N' left join cdn.Zrodla on ttv_gidtyp = zro_trntyp and ttv_gidnumer=zro_trnnumer and zro_trnlp=0 and zro_dtlp=0 and zro_dttyp=432' +
+			N' left join cdn.Dziennik on zro_dttyp = dzk_gidtyp and zro_dtnumer = dzk_gidnumer and zro_dtlp = 0' +
+			N' left join cdn.KSeFDokumenty on TTV_GIDTyp=KSF_DokTyp AND TTV_GIDNumer=KSF_DokNumer'
+
+end
+
+
+if (@SortOrder&lt;&gt;5 and @SortOrder&lt;&gt;6) and @Platnosc = 1 and @PlatnoscPrezentacjaCtl = 1 and @PlatnoscPrezentacja = 0 and @VATZDGIDNumerCtl = 1
+begin
+	if @VATZDGIDNumer = 0
+		set @Where = 'not exists(select 1 from cdn.PodElemDok where PeD_TrpTyp=trp_GIDTyp and PeD_TrpNumer=trp_GIDNumer and PeD_TrpLp=trp_GidLp)'
+	else
+		set @Where = 'exists(select 1 from cdn.PodElemDok where PeD_TrpTyp=trp_GIDTyp and PeD_TrpNumer=trp_GIDNumer and PeD_TrpLp=trp_GidLp and PeD_PoNNumer=@VATZDGIDNumer' + case when @VATZDGIDLp&lt;&gt;0 then ' and PeD_PoNLp=@VATZDGIDLp' else '' end + ')'
+end		
+else
+	set @Where = ''
+
+
+
+if @DataRozliczeniaCalkowitego &lt;&gt; 0
+begin
+	if @Where &lt;&gt; ''
+		set @Where = @Where + ' and '
+			
+	set @Where = @Where + '(ttv_Stan = 5 and ttv_DataRoz between 1 and @DataRozliczeniaCalkowitego)'
+end
+
+
+if @FltOgolny &lt;&gt; ''
+begin
+	if @Where &lt;&gt; ''
+		set @Where = @Where + ' and '
+		
+	set @Where = @Where + ' ' + @FltOgolny	
+end	
+
+
+
+set @SQL = N'Select ' + @SelectFields + N' from ' + @From + N' where ' + @Where + N' group by ' + @GroupByFields + N' order by ' + @OrderByFields
+
+
+
+Exec sp_executeSQL @SQL,
+	N'@DataRozliczenia int, @DataRozliczeniaCalkowitego int, @DniZwlokiOd int, @DniZwlokiDo int, @VATZDGIDNumer int, @VATZDGIDLp smallint',
+	@DataRozliczenia=@DataRozliczenia, 
+	@DataRozliczeniaCalkowitego = @DataRozliczeniaCalkowitego,
+	@DniZwlokiOd = @DniZwlokiOd, 
+	@DniZwlokiDo = @DniZwlokiDo,
+	@VATZDGIDNumer = @VATZDGIDNumer,
+	@VATZDGIDLp = @VATZDGIDLp
+	
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

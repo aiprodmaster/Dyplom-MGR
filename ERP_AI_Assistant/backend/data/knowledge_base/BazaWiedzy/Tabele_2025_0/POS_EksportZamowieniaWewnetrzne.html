@@ -1,0 +1,109 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[POS_EksportZamowieniaWewnetrzne]"></A><PRE>
+          <FONT SIZE="2"><I>/* [POS_EksportZamowieniaWewnetrzne] */</I><BR>
+CREATE PROCEDURE [CDN].[POS_EksportZamowieniaWewnetrzne] 
+	@RowVersion BIGINT,
+	@PointOfSaleId INT
+AS
+BEGIN
+SET NOCOUNT ON;
+
+DECLARE /*@StampId int,*/ @NumeratorID int, @PckId int
+	
+	
+declare @LastMod bigint = isnull((select max(ZaN_LastMod) from cdn.ZamNag
+		where  (ZaN_LastMod &gt; @RowVersion)),@RowVersion)
+		 
+	declare @FrsId int = (select pck_centrumid from CDN.PicoKonfig join CDN.PicoStanowiska on PSa_PcKID=PcK_PicoID where PSa_ID = @pointOfSaleId)
+
+	declare @mag table(magGidNumer int)
+	insert into @mag select mag_gidnumer from cdn.Magazyny join cdn.PicoStanowiska on PSa_PcKID= MAG_PcKId where PSa_ID = @PointOfSaleId
+	
+	select /*@StampId = Frm_GidNumer,*/ @PckId = PcK_PicoId,@NumeratorID = Dok_Id from cdn.PicoStanowiska 
+	join cdn.PicoKonfig on PSa_PcKID = PcK_PicoID
+	join cdn.FrmStruktura on FRS_ID = PcK_CentrumID
+	join cdn.dokdefinicje on dok_frsid = frs_id and dok_gidtyp= 9473 
+	join cdn.Firma on Frm_GidNumer = FRS_FrmNumer
+	where PSa_ID = @PointOfSaleId
+
+	create table #TwrDoEksportu (TwrGidNumer int)
+	create clustered index TwrDoEksportuPrimary on #TwrDoEksportu (TwrGidNumer)
+	insert into #TwrDoEksportu
+	Select TwrGidNumer from CDN.POS_TwrDoEksportu(@PointOfSaleId,0)
+
+
+	create table #Mmw (ZaNGIDNumer int)
+	create clustered index MmwPrimary on #Mmw (ZaNGIDNumer)
+	insert into #Mmw select distinct ZaN_GIDNumer from cdn.TraNag mmw (NOLOCK)
+						left JOIN cdn.TraNag mmp (NOLOCK) on mmp.TrN_ZwrTyp = mmw.TrN_GIDTyp and mmp.TrN_ZwrNumer = mmw.TrN_GIDNumer 
+											join cdn.ZamNag (NOLOCK) on ZaN_GIDNumer = mmw.TrN_ZaNNumer --AND ZaN_GIDNumer = ZW.ZaN_GIDNumer
+											where ZaN_FrSID = @FrsId and mmw.TrN_GIDTyp = 1603 and
+											mmw.trn_guid &lt;&gt; '' and mmw.trn_guid is not null and mmw.TrN_stan = 5 and mmp.TrN_GIDNumer is null 
+
+	select 
+		@LastMod as [@RowVersion], (
+		select 
+			ZW.ZaN_GUID as [@GUID],
+			case when ZW.ZaN_Stan = 3 then 1 when ZW.ZaN_Stan = 32 or ZW.ZaN_Stan = 35 then 3 when ZW.ZaN_Stan = 5 then 6 when ZW.ZaN_Stan = 21 then 7 when ZW.ZaN_Stan = 51 or ZW.Zan_Stan = 53 then 5 when ZW.ZaN_Stan = 4 then 11 when ZW.Zan_Stan = 19 then 9 end as [@Status],	
+			ZW.ZaN_OperatorPOS as [@AssistantId],
+			@NumeratorID as [@DocumentTypeId],
+			0.00 as [@NetValue],
+			CONVERT(DATETIME,DATEADD(day,ZaN_DataRealizacji,CONVERT(DATETIME,'1800-12-28',120))) as [@ExpectedDate],
+			'true' as [@CanExceedExpectedDate],
+			ZW.ZaN_MagNumer as [@SourceWarehouseId],
+			ZW.ZaN_MagDNumer as [@TargetWarehouseId],
+			3 as [@InternalOrderTypeId],
+			0 as [@TransactionType],
+			DATEADD(second,ZaN_OstatniaModyfikacjaPOS,convert(datetime,'01-01-1990',120)) as [@ModificationDate],
+			DATEADD(second,ZaN_OstatniaModyfikacjaPOS,convert(datetime,'01-01-1990',120)) as [@DocumentDate],
+			'' as [@EAN],
+			ZaN_FrMNumer as [@StampId],
+			CDN.NumerDokumentu(CDN.DokMapTypDokumentu(ZW.ZaN_GIDTyp,ZW.ZaN_ZamTyp,ZW.ZaN_Rodzaj),0,0,ZW.ZaN_ZamNumer,ZW.ZaN_ZamRok,ZW.ZaN_ZamSeria,ZW.ZaN_ZamMiesiac) as [@NumberString],
+			(
+                select 
+				ZaE_GUID as [@GUID],
+				case when Twr_Typ = 4 then -elem.ZaE_TwrNumer else ISNULL((select top(1) tpa_id from cdn.TwrPartie where TPa_Cecha = elem.ZaE_Cecha and TPa_TwrNumer = elem.ZaE_TwrNumer),(select top(1) tpa_id from cdn.TwrPartie where TPa_TwrNumer = elem.ZaE_TwrNumer)) end as [@LotId],
+				Naz_GIDLp as [@UnitId],
+				(elem.ZaE_Ilosc*elem.ZaE_PrzeliczM/elem.ZaE_PrzeliczL) as [@Quantity],
+				ZaE_Ilosc as [@QuantityInBasicUnit],
+				ZaE_TwrKod as [@ProductCode],
+				Zae_GidLp as [@OrdinalNumber],
+				zae_TwrNumer as [@ProductId],
+				1 as [@ProductNameVersion],
+				ZaE_WartoscPoRabacie as [@NetValue]
+				FROM CDN.ZamElem elem
+                                join cdn.Nazwy on Naz_GIDTyp = 144 and Naz_Nazwa = zae_jmz
+								join cdn.TwrKarty on Twr_GIDNumer=ZaE_TwrNumer
+				where ZaE_GIDNumer = ZW.ZaN_GIDNumer
+				for xml path('Item'), root('Items'), type
+			)
+		
+		FROM CDN.ZamNag ZW
+		join @mag on magGidNumer = ZW.ZaN_MagDNumer
+		JOIN cdn.PicoStanowiska  on PSa_ID = @PointOfSaleId
+		left join #Mmw on ZaNGIDNumer = ZW.ZaN_GIDNumer
+                WHERE ((@RowVersion = 0 OR ZaN_LastMod &gt; @RowVersion) and ZaN_OperatorPOS != 0 and ZaN_GUID is not null and ZaN_ZamTyp = 1280 and PSa_Seria = ZW.ZaN_ZamSeria
+                or ZaNGIdNumer is not null)
+				AND not exists (select 1 FROM CDN.ZamElem elem left join #TwrDoEksportu on elem.ZaE_TwrNumer = TwrGidNumer where ZaE_GIDNumer = ZW.ZaN_GIDNumer and TwrGidNumer is NULL )
+		--where ZW.ZaN_GUID &lt;&gt; '' and ZW.ZaN_GUID is not null and ZW.ZaN_GIDTyp = 960 
+
+	for xml path('InternalOrder'), type)
+	for xml path('InternalOrders')
+	SET NOCOUNT OFF;	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

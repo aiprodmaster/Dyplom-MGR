@@ -1,0 +1,538 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="DokStanRezerwacjiWszystkich"></A><PRE>
+          <FONT SIZE="2"><I>/* DokStanRezerwacjiWszystkich */</I><BR>
+CREATE    function CDN.DokStanRezerwacjiWszystkich
+(@p_TwrTyp smallint,
+ @p_TwrFirma integer,
+ @p_TwrNumer integer,
+ @p_biezacadata integer,
+ @p_FrsId integer,
+ @p_FrsIdW integer,
+ @p_TypDok smallint,
+ @p_ZrdTyp smallint, -- jeżeli @p_FrsID,@p_FrsIDW,@pTypDok są zerami to
+ @p_ZrdNumer integer,-- w @p_ZrdTyp,@pZrdNumer przekazywany typ i numer magazynu
+ @p_FrsIDZrd integer,
+ @p_TypDokZrd smallint,
+ @p_RezTyp      smallint,  -- wer4.0
+ @p_RezNumer    integer,  -- wer4.0
+ @p_MagStan decimal(28,4),
+ @p_wersja smallint,
+ @p_typilosci  smallint,
+ @p_UwzgledniajChronologie integer
+)
+
+
+
+
+
+Returns decimal(28,4)
+AS
+BEGIN
+
+if not exists (select * from cdn.rezerwacje where rez_magnumer=0 and rez_twrnumer=@p_TwrNumer)
+        return  0
+
+
+
+declare @lWersja smallint
+declare @lmagWsz smallint
+
+declare @lRezNumer int
+declare @lIlosc    decimal(28,4)
+declare @lWlasny   int
+declare @lRezTyp smallint
+declare @lMagGidNumer int
+declare @lmagStan decimal(28,4)
+declare @lRezIlosc decimal(28,4)
+declare @lMagPozostalo decimal(28,4)
+
+
+set @lWersja = @p_wersja
+
+  declare @lIloscRez decimal(28,4);
+  declare @DostepneMagazyny table(Mag_GIDTyp smallint, Mag_GIDNumer int PRIMARY KEY)
+  declare @magazyny table (Mag_GidNumer int, Mag_Stan decimal(28,4)) ;
+  declare @Tab table (Mag_GidNumer int) ;
+  declare @Rezerwacje table (Rez_GIDNumer int, Rez_GIDTyp smallint, Rez_Ilosc decimal(28,4),Rez_Wlasny smallint )
+  declare @MagRezerwacje table (MaR_MagNumer int,
+                                MaR_Stan decimal(28,4),
+                                MaR_Wlasny smallint,
+                                Mar_Ilosc decimal(28,4),
+                                MaR_Pozostalo decimal(28,4),
+                                MaR_RezTyp smallint,
+                                MaR_RezNumer int,
+                                MaR_RezIlosc decimal(28,4),
+                                MaR_ID  int IDENTITY PRIMARY KEY
+ )
+
+declare @S_Priorytet    smallint;
+declare @S_DataRealizacji int;
+declare @S_DataWaznosci int;
+declare @S_DataRezerwacji int;
+declare @S_RezNumer int;
+
+
+
+
+if(@p_RezTyp&gt;0)
+        begin
+                select  @S_Priorytet = Rez_Priorytet, @S_DataRealizacji = Rez_DataRealizacji,
+                        @S_DataWaznosci = Rez_DataWaznosci, @S_RezNumer = Rez_GidNumer,
+                        @S_DataRezerwacji = Rez_DataRezerwacji
+                From    CDN.Rezerwacje
+                Where   Rez_GIDTyp = @p_RezTyp and Rez_GIDNumer = @p_RezNumer
+        end
+
+
+set @lMagWsz = 1
+
+if (@p_FrsID = 0 and @p_FrsIDW = 0 and @p_TypDok=0 and @p_ZrdTyp&lt;&gt;0 and @p_ZrdNumer&lt;&gt;0)
+   set @lMagWsz = 0
+
+
+insert into @DostepneMagazyny
+select Mag_GIDTyp,Mag_GIDNumer from Cdn.DokDostepneMagazyny(@p_FrSID,@p_FrSIDW,@p_typDok, @p_ZrdTyp, @p_ZrdNumer, @p_FrsIDZrd, @p_TypDokZrd)
+
+
+if (@lMagWsz =1)
+begin
+
+        if(@p_RezTyp&gt;0)
+        begin
+                -- lista magazynˇw na badanych rezerwacjach
+                insert into @tab
+                select distinct rem_magnumer as mag_GIDnumer
+                from cdn.rezmagazyny rem2
+                where rem2.rem_reztyp=2576 and
+                rem2.rem_rezNumer in
+                (
+                -- lista rezerwacji, na ktˇrych badane magazyny
+                Select Rez_GIDNumer
+                from cdn.rezerwacje join cdn.rezmagazyny on  Rem_RezNumer = Rez_GIDNumer and ReM_RezTyp = Rez_GIDTyp
+                join @DostepneMagazyny on Rem_MagNumer = Mag_GIDNumer
+
+                where   rez_magnumer=0 and rez_twrnumer=@p_TwrNumer
+                        and Rez_DataWaznosci&gt;=@p_biezacadata -- data waznosci &gt; dzis
+                        AND (   case when Rez_DstNumer&lt;&gt;0 then 1
+                          when Rez_DstNumer=0 and Rez_DataAktywacji &lt;= @p_biezacadata then 1
+                          else 0
+                        end ) =1
+                        and Rez_aktywna=1
+                        and Rez_Typ = 1
+                        and Rez_Ilosc&lt;&gt;0
+                        AND (   Rez_Priorytet &lt; @S_Priorytet OR
+                                @p_UwzgledniajChronologie = 1 AND Rez_Priorytet = @S_Priorytet AND REZ_DataRealizacji &lt; @S_DataRealizacji OR
+                                @p_UwzgledniajChronologie = 1 AND Rez_Priorytet = @S_Priorytet AND REZ_DataRealizacji = @S_DataRealizacji AND REZ_DataWaznosci &lt; @S_DataWaznosci OR
+                                @p_UwzgledniajChronologie = 1 AND Rez_Priorytet = @S_Priorytet AND REZ_DataRealizacji = @S_DataRealizacji AND REZ_DataWaznosci = @S_DataWaznosci AND REZ_DataRezerwacji &lt; @S_DataRezerwacji
+                                --OR
+                                --@p_UwzgledniajChronologie = 1 AND Rez_Priorytet = @S_Priorytet AND REZ_DataRealizacji = @S_DataRealizacji AND REZ_DataWaznosci = @S_DataWaznosci AND REZ_GIDNumer &lt; @S_RezNumer
+                                )
+                )
+        End
+        else
+        begin
+                -- lista magazynˇw na badanych rezerwacjach
+                insert into @tab
+                select distinct rem_magnumer as mag_GIDnumer
+                from cdn.rezmagazyny rem2
+                where rem2.rem_reztyp=2576 and
+                rem2.rem_rezNumer in
+                (
+                -- lista rezerwacji, na ktˇrych badane magazyny
+                Select Rez_GIDNumer
+                from cdn.rezerwacje join cdn.rezmagazyny on  Rem_RezNumer = Rez_GIDNumer and ReM_RezTyp = Rez_GIDTyp
+                join @DostepneMagazyny on Rem_MagNumer = Mag_GIDNumer
+
+                where   rez_magnumer=0 and rez_twrnumer=@p_TwrNumer
+                        and Rez_DataWaznosci&gt;=@p_biezacadata -- data waznosci &gt; dzis
+                        AND (   case when Rez_DstNumer&lt;&gt;0 then 1
+                          when Rez_DstNumer=0 and Rez_DataAktywacji &lt;= @p_biezacadata then 1
+                          else 0
+                        end ) =1
+                        and Rez_aktywna=1
+                        and Rez_Typ = 1
+                        and Rez_Ilosc&lt;&gt;0  -- aby nie brac anulowanych zamowien
+        --              and rem_magNumer in     (
+        --                                      select Mag_GIDNumer
+        --                                      from @DostepneMagazyny
+        --                                      )
+                )
+        End
+end
+else
+begin
+        -- lista magazynˇw na badanych rezerwacjach
+        insert into @tab
+        select distinct rem_magnumer as mag_GIDnumer
+        from cdn.rezmagazyny rem2
+        where rem2.rem_reztyp=2576 and
+        rem2.rem_rezNumer in
+        (
+        -- lista rezerwacji, na ktˇrych badane magazyny
+        Select Rez_GIDNumer
+        from cdn.rezerwacje join cdn.rezmagazyny on  Rem_RezNumer = Rez_GIDNumer and ReM_RezTyp = Rez_GIDTyp
+        where   rez_magnumer=0 and rez_twrnumer=@p_TwrNumer
+                and Rez_DataWaznosci&gt;=@p_biezacadata -- data waznosci &gt; dzis
+                AND (   case when Rez_DstNumer&lt;&gt;0 then 1
+                  when Rez_DstNumer=0 and Rez_DataAktywacji &lt;= @p_biezacadata then 1
+                  else 0
+                end ) =1
+                and Rez_aktywna=1
+                and Rez_Typ = 1
+                and Rez_Ilosc&lt;&gt;0  -- aby nie brac anulowanych zamowien
+                and rem_magNumer = @p_ZrdNumer
+        )
+end
+
+
+if not exists (select * from @tab)
+        return  0
+
+
+
+if(@p_RezTyp&gt;0)
+Begin
+        insert into @Rezerwacje
+        Select  DISTINCT Rez_GIDNumer, Rez_GIDTyp, Rez_Ilosc - Rez_Zrealizowano, 0
+        from cdn.RezMagazyny join cdn.rezerwacje on  Rem_RezNumer = Rez_GIDNumer and ReM_RezTyp = Rez_GIDTyp
+        join @Tab on Rem_MagNumer = Mag_GIDNumer
+        where rez_magnumer=0 and rez_twrnumer=@p_TwrNumer
+                and Rez_DataWaznosci&gt;=@p_biezacadata -- data waznosci &gt; dzis
+                AND (   case when Rez_DstNumer&lt;&gt;0 then 1
+                  when Rez_DstNumer=0 and Rez_DataAktywacji &lt;= @p_biezacadata then 1
+                  else 0
+                end ) =1
+                and Rez_aktywna=1
+                and Rez_Typ = 1
+                and Rez_Ilosc&lt;&gt;0
+                AND (   Rez_Priorytet &lt; @S_Priorytet OR
+                        @p_UwzgledniajChronologie = 1 AND Rez_Priorytet = @S_Priorytet AND REZ_DataRealizacji &lt; @S_DataRealizacji OR
+                        @p_UwzgledniajChronologie = 1 AND Rez_Priorytet = @S_Priorytet AND REZ_DataRealizacji = @S_DataRealizacji AND REZ_DataWaznosci &lt; @S_DataWaznosci OR
+                        @p_UwzgledniajChronologie = 1 AND Rez_Priorytet = @S_Priorytet AND REZ_DataRealizacji = @S_DataRealizacji AND REZ_DataWaznosci = @S_DataWaznosci AND REZ_DataRezerwacji &lt; @S_DataRezerwacji
+
+                        --OR
+                        --@p_UwzgledniajChronologie = 1 AND Rez_Priorytet = @S_Priorytet AND REZ_DataRealizacji = @S_DataRealizacji AND REZ_DataWaznosci = @S_DataWaznosci AND REZ_GIDNumer &lt; @S_RezNumer
+                        )
+
+                -- aby nie brac anulowanych zamowien
+        --      and rem_magNumer in (select t.Mag_GIDNumer from @tab t)
+        --group by Rez_GIDNumer,Rez_GIDTyp,Rez_Ilosc
+End
+else
+Begin
+        insert into @Rezerwacje
+        Select  DISTINCT Rez_GIDNumer, Rez_GIDTyp, Rez_Ilosc - Rez_Zrealizowano, 0
+        from cdn.RezMagazyny join cdn.rezerwacje on  Rem_RezNumer = Rez_GIDNumer and ReM_RezTyp = Rez_GIDTyp
+        join @Tab on Rem_MagNumer = Mag_GIDNumer
+        where rez_magnumer=0 and rez_twrnumer=@p_TwrNumer
+                and Rez_DataWaznosci&gt;=@p_biezacadata -- data waznosci &gt; dzis
+                AND (   case when Rez_DstNumer&lt;&gt;0 then 1
+                  when Rez_DstNumer=0 and Rez_DataAktywacji &lt;= @p_biezacadata then 1
+                  else 0
+                end ) =1
+                and Rez_aktywna=1
+                and Rez_Typ = 1
+                and Rez_Ilosc&lt;&gt;0  -- aby nie brac anulowanych zamowien
+        --      and rem_magNumer in (select t.Mag_GIDNumer from @tab t)
+        --group by Rez_GIDNumer,Rez_GIDTyp,Rez_Ilosc
+End
+
+
+if (@lWersja &gt; 2)
+        if (@lMagWsz =1)
+        begin
+                -- rezerwacje z magazynami w-asnymi zawsze na ko˝cu
+                update @rezerwacje
+                set Rez_Wlasny = Rez_Wlasny + 1
+                where exists (select *
+                                from CDN.rezMagazyny, @DostepneMagazyny
+                                where Rez_GIDNumer = Rem_RezNumer and Rez_GIDTyp=Rem_RezTyp and Rem_MagNumer=Mag_GIDNumer)
+        end
+        else
+                update @rezerwacje
+                set Rez_Wlasny = Rez_Wlasny + 1
+                where exists (select *
+                                from CDN.rezMagazyny
+                                where rez_GIDNumer = Rem_rezNumer
+                                and Rez_GIDTyp = Rem_RezTyp
+                                and Rem_magNumer =@p_ZrdNumer)
+
+
+
+Insert into @Magazyny
+select distinct rem_magnumer as Mag_GIDNumer,0 as Mag_Stan
+from cdn.rezmagazyny rem2 join @Rezerwacje on Rem_RezTyp = Rez_GIDTyp and Rem_RezNumer = Rez_GIDNumer
+where rem2.rem_reztyp=2576
+
+/*
+update @Magazyny set Mag_Stan=
+   CASE WHEN isnull
+        (isnull((SELECT     SUM(twz_ilspr)
+                 FROM         cdn.twrzasoby
+                 WHERE     TwZ_TwrTyp = @p_TwrTyp
+                        AND TwZ_TwrNumer = @p_TwrNumer
+                        AND TwZ_MagTyp = 208
+                        AND TwZ_MagNumer = Mag_GIDNumer
+                 GROUP BY mag_gidnumer),0) -
+          isnull((SELECT     SUM(rez_ilosc - rez_zrealizowano)
+            FROM          cdn.rezerwacje
+            WHERE      rez_gidtyp = 2576
+                        AND Rez_Twrtyp = @p_TwrTyp
+                        AND Rez_twrnumer = @p_TwrNumer
+                        AND Rez_MagTyp = 208
+                        AND Rez_MagNumer = Mag_Gidnumer
+                        AND Rez_DataWaznosci &gt;= @p_biezacadata
+                        AND Rez_DataAktywacji &lt;= @p_biezacadata
+                        AND Rez_aktywna = 1 AND Rez_Typ =1 AND Rez_Ilosc &lt;&gt; 0
+            GROUP BY mag_gidnumer),0), 0) &lt;= 0 THEN 0 ELSE isnull
+          (isnull((SELECT     SUM(twz_ilspr)
+              FROM         cdn.twrzasoby
+              WHERE     TwZ_TwrTyp = @p_TwrTyp AND  TwZ_TwrNumer = @p_TwrNumer AND TwZ_MagTyp = 208  AND
+                                    TwZ_MagNumer = Mag_GIDNumer
+              GROUP BY mag_gidnumer),0) -
+          isnull((SELECT     SUM(rez_ilosc - rez_zrealizowano)
+            FROM          cdn.rezerwacje
+            WHERE      rez_gidtyp = 2576 AND Rez_twrtyp = @p_TwrTyp  AND Rez_twrnumer = @p_TwrNumer AND Rez_MagTyp = 208 AND
+                                   Rez_MagNumer = Mag_Gidnumer AND Rez_DataWaznosci &gt;= @p_biezacadata  AND Rez_DataAktywacji &lt;= @p_biezacadata AND
+                                   Rez_aktywna = 1 AND Rez_Typ =1 AND Rez_Ilosc &lt;&gt; 0
+            GROUP BY mag_gidnumer),0), 0) END
+From @magazyny
+*/
+
+if(@p_RezTyp&gt;0)
+Begin
+update @Magazyny set Mag_Stan=
+         ((
+                IsNull(
+                (SELECT  IsNull(SUM(case when @p_typilosci=0 then twz_ilspr else twz_ilmag end),0)
+                FROM    cdn.twrzasoby
+                WHERE
+                --TwZ_TwrTyp = @p_TwrTyp
+                        --AND
+                        TwZ_TwrNumer = @p_TwrNumer
+                        --AND TwZ_MagTyp = 208
+                        AND TwZ_MagNumer = Mag_GIDNumer
+                GROUP BY TwZ_MagNumer),0)
+                )
+                -
+                (
+             IsNull(
+             (SELECT    IsNull(SUM(case when @p_typilosci=0 then rez_ilosc - rez_zrealizowano else rez_ilosc - rez_zrealizowano - rez_iloscmag end ),0)
+                FROM    cdn.rezerwacje
+                WHERE   rez_gidtyp = 2576
+                        AND Rez_twrnumer = @p_TwrNumer
+                        AND Rez_MagNumer = Mag_Gidnumer
+                        AND Rez_DataWaznosci &gt;= @p_biezacadata
+                        AND (   case when Rez_DstNumer&lt;&gt;0 then 1
+                          when Rez_DstNumer=0 and Rez_DataAktywacji &lt;= @p_biezacadata then 1
+                          else 0
+                        end ) =1
+                        AND Rez_aktywna = 1
+                        AND Rez_Typ =1
+                        AND Rez_Ilosc &lt;&gt; 0
+                        AND (   Rez_Priorytet &lt; @S_Priorytet OR
+                                @p_UwzgledniajChronologie = 1 AND Rez_Priorytet = @S_Priorytet AND REZ_DataRealizacji &lt; @S_DataRealizacji OR
+                                @p_UwzgledniajChronologie = 1 AND Rez_Priorytet = @S_Priorytet AND REZ_DataRealizacji = @S_DataRealizacji AND REZ_DataWaznosci &lt; @S_DataWaznosci OR
+                                @p_UwzgledniajChronologie = 1 AND Rez_Priorytet = @S_Priorytet AND REZ_DataRealizacji = @S_DataRealizacji AND REZ_DataWaznosci = @S_DataWaznosci AND REZ_DataRezerwacji &lt; @S_DataRezerwacji
+
+                                --OR
+                                --@p_UwzgledniajChronologie = 1 AND Rez_Priorytet = @S_Priorytet AND REZ_DataRealizacji = @S_DataRealizacji AND REZ_DataWaznosci = @S_DataWaznosci AND REZ_GIDNumer &lt; @S_RezNumer
+                                )
+                        GROUP BY Rez_MagNumer),0)
+                ))
+From @magazyny
+End
+else
+Begin
+update @Magazyny set Mag_Stan=
+         ((
+                IsNull(
+                (SELECT  IsNull(SUM(case when @p_typilosci=0 then twz_ilspr else twz_ilmag end),0)
+                FROM    cdn.twrzasoby
+                WHERE
+                        TwZ_TwrNumer = @p_TwrNumer
+                        AND TwZ_MagNumer = Mag_GIDNumer
+                GROUP BY TwZ_MagNumer),0)
+                )
+                -
+                (
+                        IsNull(
+            (SELECT     IsNull(SUM(case when @p_typilosci=0 then rez_ilosc - rez_zrealizowano else rez_ilosc - rez_zrealizowano - rez_iloscmag end),0)
+                FROM    cdn.rezerwacje
+                WHERE   rez_gidtyp = 2576
+                        AND Rez_twrnumer = @p_TwrNumer
+                        --AND Rez_MagTyp = 208
+                        AND Rez_MagNumer = Mag_Gidnumer
+                        AND Rez_DataWaznosci &gt;= @p_biezacadata
+                        AND (   case when Rez_DstNumer&lt;&gt;0 then 1
+                          when Rez_DstNumer=0 and Rez_DataAktywacji &lt;= @p_biezacadata then 1
+                          else 0
+                        end ) =1
+                        AND Rez_aktywna = 1
+                        AND Rez_Typ =1
+                        AND Rez_Ilosc &lt;&gt; 0
+                        GROUP BY Rez_MagNumer),0)
+                ))
+From @magazyny
+End
+
+
+if (@lWersja &gt; 1)
+begin
+        if (@lMagWsz =1)
+                insert into @MagRezerwacje
+                                (MaR_MagNumer ,
+                                MaR_Stan ,
+                                MaR_Wlasny,
+                                Mar_Ilosc,
+                                MaR_Pozostalo,
+                                MaR_RezTyp,
+                                MaR_RezNumer,
+                                MaR_RezIlosc)
+                select  Mag_GIDNumer,
+                        mag_stan,
+                        (case when @lWersja&gt;3
+                        then
+                                Rez_Wlasny + ( Select count(*)
+                                from @DostepneMagazyny
+                                where Mag_GIDNumer=Rem_MagNumer)
+                        else
+                                Rez_Wlasny
+                        end) as Wlasny,
+                        Rez_Ilosc,
+                        Mag_Stan as MaR_Pozostalo,
+                        Rez_GIDTyp,
+                        Rez_GIDNumer,
+                        Rez_Ilosc as MaR_RezIlosc
+                from CDN.RezMagazyny join @Rezerwacje on Rem_RezNumer = Rez_GIDNumer
+                                     and ReM_RezTyp = Rez_GIDTyp
+                join @magazyny on ReM_MagNumer=Mag_GIDNumer
+                order by Wlasny, Mag_Stan DESC, Rez_Ilosc DESC
+        else
+                insert into @MagRezerwacje
+                                (MaR_MagNumer ,
+                                MaR_Stan ,
+                                MaR_Wlasny,
+                                Mar_Ilosc,
+                                MaR_Pozostalo,
+                                MaR_RezTyp,
+                                MaR_RezNumer,
+                                MaR_RezIlosc)
+                select  Mag_GIDNumer,
+                        mag_stan,
+                        (case when ( @lWersja&gt;3 and  Mag_GIDNumer=@p_ZrdNumer )
+                        then
+                                Rez_Wlasny + 1
+                        else
+                                Rez_Wlasny
+                        end) as Wlasny,
+                        Rez_Ilosc,
+                        Mag_Stan as MaR_Pozostalo,
+                        Rez_GIDTyp,
+                        Rez_GIDNumer,
+                        Rez_Ilosc as MaR_RezIlosc
+                from CDN.RezMagazyny join @Rezerwacje on Rem_RezNumer = Rez_GIDNumer and ReM_RezTyp = Rez_GIDTyp
+                join @magazyny on ReM_MagNumer=Mag_GIDNumer
+                order by Wlasny, Mag_Stan DESC, Rez_Ilosc DESC
+
+			declare @Mag int, @Poz decimal(28,4), @Il decimal(28,4)
+			while 1=1
+			begin
+				select top 1 @Mag=Mar_MagNumer, @Poz=Mar_Pozostalo, @Il=sum(Mar_Ilosc)
+				from @MagRezerwacje
+				where MaR_Pozostalo&gt;0
+				group by Mar_MagNumer, Mar_Pozostalo
+				having sum(Mar_Ilosc)&gt;0
+				order by sum(Mar_Ilosc)/MaR_Pozostalo
+
+				if @@rowcount=0 break
+				if @Il&gt;@Poz set @Il=@Poz
+
+				update R set Mar_Ilosc=Ilosc
+				from (
+					select M.Mar_RezTyp, M.Mar_RezNumer, case when M.Mar_Ilosc+isnull(sum(I.Mar_Ilosc),0)&gt;@Il 
+						then M.Mar_Ilosc+isnull(sum(I.Mar_Ilosc),0)-@Il else 0 end Ilosc
+					from @MagRezerwacje M
+					left outer join @MagRezerwacje I on I.Mar_MagNumer=M.Mar_MagNumer and I.Mar_Id&lt;M.Mar_Id
+					where M.Mar_MagNumer=@Mag and M.Mar_Ilosc&gt;0
+					group by M.Mar_RezTyp, M.Mar_Reznumer, M.Mar_Ilosc
+					having isnull(sum(I.Mar_Ilosc),0)&lt;@Il
+				) M
+				inner join @MagRezerwacje R on R.Mar_RezTyp=M.Mar_RezTyp and R.Mar_RezNumer=M.Mar_RezNumer
+				update @MagRezerwacje set Mar_Pozostalo=Mar_Pozostalo-@Il where Mar_MagNumer=@Mag
+			end
+end
+
+if (@lWersja&gt;1)
+begin
+
+        if (@lMagWsz =1)
+        begin
+                select @lRezIlosc = sum(MaR_Ilosc)
+                from  ( select distinct Mar_RezTyp,Mar_RezNumer,Mar_Ilosc
+                        from @MagRezerwacje
+                        where exists (  Select *
+                                        from @DostepneMagazyny
+                                        where Mag_GIDNumer=Mar_MagNumer)
+                      ) as a
+
+
+                Select @lMagStan = sum(MaR_Stan -Mar_Pozostalo)
+                from (  select distinct Mar_MagNumer,Mar_Stan, Mar_Pozostalo
+                        from @MagRezerwacje
+                        where exists (  Select *
+                                from @DostepneMagazyny
+                                where Mag_GIDNumer=Mar_MagNumer )) as a
+        end
+        else
+        begin
+                select @lRezIlosc = sum(MaR_Ilosc)
+                from  ( select distinct Mar_RezTyp,Mar_RezNumer,Mar_Ilosc
+                        from @MagRezerwacje
+                        where Mar_MagNumer = @p_ZrdNumer
+                      ) as a
+
+
+                Select @lMagStan = sum(MaR_Stan -Mar_Pozostalo)
+                from (  select distinct Mar_MagNumer,Mar_Stan, Mar_Pozostalo
+                        from @MagRezerwacje
+                        where mar_MagNumer = @p_ZrdNumer) as a
+        end
+
+
+
+            set @lIloscRez = @lMagStan
+
+end
+else
+begin
+
+        select @lRezIlosc =  sum(Rez_Ilosc)
+        from  @Rezerwacje
+        set @lIloscRez =   @lRezIlosc
+
+end
+
+
+        set @lIloscRez = isnull(@lIloscRez, 0)
+        if ( @lIloscRez &lt; 0)
+                set @lIloscRez = 0
+
+  Return isnull(@lIloscRez,0)
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

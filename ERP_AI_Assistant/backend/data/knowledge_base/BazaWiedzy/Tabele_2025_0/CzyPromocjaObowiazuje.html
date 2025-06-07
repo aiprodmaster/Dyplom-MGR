@@ -1,0 +1,108 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[CzyPromocjaObowiazuje]"></A><PRE>
+          <FONT SIZE="2"><I>/* [CzyPromocjaObowiazuje] */</I><BR>
+CREATE  FUNCTION [CDN].[CzyPromocjaObowiazuje](@DataOd INT, @DataDo INT, @Cykl INT, @DataSprawdzana INT, @CyklRodzaj SMALLINT, @CyklCzestotliwosc SMALLINT, @CyklWystepowanie INT, @CyklDniOd SMALLINT, @CyklDniDo SMALLINT)
+RETURNS int
+AS
+BEGIN
+DECLARE @bPromocjaObowiazuje BIT
+DECLARE	@lWystepowanie INT
+    IF (@Cykl=0)-- e_PRM_CYKL_DATA
+    BEGIN
+        IF ((@DataOD&lt;=@DataSprawdzana) AND (@DataDo&gt;=@DataSprawdzana)) SET @bPromocjaObowiazuje = 1
+        ELSE SET @bPromocjaObowiazuje = 0
+    END
+    ELSE IF (@Cykl=1)-- e_PRM_CYKL_GODZ
+    BEGIN
+		DECLARE @Czas INT
+		SET @Czas=(@DataSprawdzana % 86400)
+		IF (@DataOd&lt;=@Czas) AND (@DataDo&gt;=@Czas) SET @bPromocjaObowiazuje = 1
+		ELSE SET @bPromocjaObowiazuje = 0
+    END
+    ELSE IF (@Cykl=2)-- e_PRM_CYKL_GODZDATA
+	BEGIN
+        DECLARE @CzasOd  INT
+        DECLARE @CzasDo  INT
+        SET @CzasOd=(@DataOd % 86400)
+        SET @CzasDo=(@DataDo % 86400)
+        IF (@DataOd&lt;=@DataSprawdzana) AND (@DataDo&gt;=@DataSprawdzana) AND (@CzasOd&lt;=@Czas) AND (@CzasDo&gt;=@Czas) SET @bPromocjaObowiazuje = 1
+        ELSE SET @bPromocjaObowiazuje = 0
+    END-- Nieznany identyfikator @Cykl
+    ELSE SET @bPromocjaObowiazuje = 0
+
+	IF (@bPromocjaObowiazuje = 1 AND @CyklRodzaj &gt; 0)
+	BEGIN 
+		IF @CyklRodzaj = 1	--dzien 
+		BEGIN
+			IF ((@DataSprawdzana / 86400) - (@DataOd/86400)) % @CyklCzestotliwosc = 0 SET @bPromocjaObowiazuje = 1
+			ELSE SET @bPromocjaObowiazuje = 0	
+		END
+		ELSE IF @CyklRodzaj = 2	--tydzien 
+		BEGIN
+			IF ((@DataSprawdzana / 604800) - (@DataOd/604800)) % @CyklCzestotliwosc = 0 
+            BEGIN
+                SET @lWystepowanie = (DATEPART(WEEKDAY,DATEADD( ss, @DataSprawdzana,CONVERT(DATETIME,'19900101')))+@@DATEFIRST)%7 
+
+				IF @lWystepowanie = 2 AND @CyklWystepowanie &amp; 1 &gt; 0                     SET @bPromocjaObowiazuje = 1--poniedzialek
+				ELSE IF @lWystepowanie = 3 AND @CyklWystepowanie &amp; 2 &gt; 0        SET @bPromocjaObowiazuje = 1--wtorek
+				ELSE IF @lWystepowanie = 4 AND @CyklWystepowanie &amp; 4 &gt; 0        SET @bPromocjaObowiazuje = 1--środa
+                ELSE IF @lWystepowanie = 5 AND @CyklWystepowanie &amp; 8 &gt; 0        SET @bPromocjaObowiazuje = 1--czwartek
+                ELSE IF @lWystepowanie = 6 AND @CyklWystepowanie &amp; 16 &gt; 0       SET @bPromocjaObowiazuje = 1--piatek
+                ELSE IF @lWystepowanie = 0 AND @CyklWystepowanie &amp; 32 &gt; 0       SET @bPromocjaObowiazuje = 1--sobota
+				ELSE IF @lWystepowanie = 1 AND @CyklWystepowanie &amp; 64 &gt; 0       SET @bPromocjaObowiazuje = 1--niedziela
+				ELSE                                                            SET @bPromocjaObowiazuje = 0
+            END
+            ELSE SET @bPromocjaObowiazuje = 0
+		END
+		ELSE IF @CyklRodzaj = 3	--miesiac 
+		BEGIN
+			IF (((YEAR(DATEADD( ss, @DataSprawdzana,CONVERT(DATETIME,'19900101'))) - YEAR(DATEADD( ss, @DataOd,CONVERT(DATETIME,'19900101')))) - 1) * 12
+				+ (12 - MONTH(DATEADD( ss, @DataOd,CONVERT(DATETIME,'19900101')))) + MONTH(DATEADD( ss, @DataSprawdzana,CONVERT(DATETIME,'19900101')))) % @CyklCzestotliwosc = 0
+				AND (DAY(DATEADD( ss, @DataSprawdzana,CONVERT(DATETIME,'19900101'))) BETWEEN @CyklDniOd and @CyklDniDo) 
+			BEGIN
+				SET @bPromocjaObowiazuje = 1
+			END
+			ELSE SET @bPromocjaObowiazuje = 0
+		END
+		IF @CyklRodzaj = 4	--rok 
+		BEGIN
+			IF (YEAR(DATEADD( ss, @DataSprawdzana,CONVERT(DATETIME,'19900101'))) - YEAR(DATEADD( ss, @DataOd,CONVERT(DATETIME,'19900101')))) % @CyklCzestotliwosc = 0 
+				AND (DAY(DATEADD( ss, @DataSprawdzana,CONVERT(DATETIME,'19900101'))) BETWEEN @CyklDniOd and @CyklDniDo)
+			BEGIN
+				SET @lWystepowanie = MONTH(DATEADD( ss, @DataSprawdzana,CONVERT(DATETIME,'19900101')))
+				IF @lWystepowanie = 1 AND @CyklWystepowanie &amp; 1 &gt; 0				SET @bPromocjaObowiazuje = 1--styczen
+				ELSE IF @lWystepowanie = 2 AND @CyklWystepowanie &amp; 2 &gt; 0		SET @bPromocjaObowiazuje = 1--luty
+				ELSE IF @lWystepowanie = 3 AND @CyklWystepowanie &amp; 4 &gt; 0		SET @bPromocjaObowiazuje = 1--marzec
+				ELSE IF @lWystepowanie = 4 AND @CyklWystepowanie &amp; 8 &gt; 0		SET @bPromocjaObowiazuje = 1--kwiecien
+				ELSE IF @lWystepowanie = 5 AND @CyklWystepowanie &amp; 16 &gt; 0		SET @bPromocjaObowiazuje = 1--maj
+				ELSE IF @lWystepowanie = 6 AND @CyklWystepowanie &amp; 32 &gt; 0		SET @bPromocjaObowiazuje = 1--czerwiec
+				ELSE IF @lWystepowanie = 7 AND @CyklWystepowanie &amp; 64 &gt; 0		SET @bPromocjaObowiazuje = 1--lipiec
+				ELSE IF @lWystepowanie = 8 AND @CyklWystepowanie &amp; 128 &gt; 0		SET @bPromocjaObowiazuje = 1--sierpien
+				ELSE IF @lWystepowanie = 9 AND @CyklWystepowanie &amp; 256 &gt; 0		SET @bPromocjaObowiazuje = 1--wrzesien
+				ELSE IF @lWystepowanie = 10 AND @CyklWystepowanie &amp; 512 &gt; 0		SET @bPromocjaObowiazuje = 1--pazdziernik
+				ELSE IF @lWystepowanie = 11 AND @CyklWystepowanie &amp; 1024 &gt; 0	SET @bPromocjaObowiazuje = 1--listopad
+				ELSE IF @lWystepowanie = 12 AND @CyklWystepowanie &amp; 2048 &gt; 0	SET @bPromocjaObowiazuje = 1--grudzien
+				ELSE															SET @bPromocjaObowiazuje = 0
+			END
+			ELSE SET @bPromocjaObowiazuje = 0	
+		END
+	END
+	
+	RETURN @bPromocjaObowiazuje
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

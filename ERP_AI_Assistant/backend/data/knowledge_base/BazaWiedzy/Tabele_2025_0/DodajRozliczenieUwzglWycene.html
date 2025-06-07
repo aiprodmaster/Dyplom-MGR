@@ -1,0 +1,566 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie procedury DodajRozliczenieUwzglWycene"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie procedury DodajRozliczenieUwzglWycene */</I><BR>
+if exists (select name from sysobjects where name = 'DodajRozliczenieUwzglWycene' and type = 'P')
+  drop procedure CDN.DodajRozliczenieUwzglWycene;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury DodajRozliczenieUwzglWycene"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury DodajRozliczenieUwzglWycene */</I><BR>
+CREATE PROCEDURE CDN.DodajRozliczenieUwzglWycene
+@GIDFirma int,
+@GIDTyp1 SMALLINT,
+@GIDNumer1 INT,
+@GIDLp1 SMALLINT,
+@GIDTyp2 SMALLINT,
+@GIDNumer2 INT,
+@GIDLp2 SMALLINT,
+@Kwota DECIMAL(15,2) OUTPUT,
+@UserID INT,
+@DataDzisiejsza INT,
+@R2ParID INT OUTPUT,	
+@D1Numer INT = 0,
+@D1Lp INT = 0,
+@D1DC SMALLINT = 0,
+@D2Numer INT = 0,
+@D2Lp INT = 0,
+@D2DC SMALLINT = 0
+
+
+AS
+
+declare @RozID int
+
+declare @ZnakKAZ1 smallint
+declare @ZnakKAZ2 smallint
+
+declare @KursWgKolejnosci1 smallint
+declare @KursWgKolejnosci2 smallint
+
+declare @PozostajeWal1 decimal(15,2)
+declare @PozostajeWal2 decimal(15,2)
+
+declare @PozostajeSys1 decimal(15,2)
+declare @PozostajeSys2 decimal(15,2)
+
+declare @Wyceniony1 smallint
+declare @Wyceniony2 smallint
+
+declare @KwotaWal decimal(15,2)
+declare @KwotaSys decimal(15,2)
+
+declare @KwotaWal1 decimal(15,2)
+declare @KwotaSys1 decimal(15,2)
+declare @KwotaWal2 decimal(15,2)
+declare @KwotaSys2 decimal(15,2)
+
+declare @PoWycenach smallint
+
+declare @DekretNumer int
+declare @DekretLp smallint
+
+
+declare @rv int
+set @rv = 0 
+
+declare @err int
+declare @Rcount int
+declare @BladWyceny smallint
+
+declare @szMsg1 varchar(30)
+declare @szMsg2 varchar(30)
+declare @szMsg3 varchar(30)
+
+declare @WycenaKolejnosc1 tinyint
+declare @WycenaKolejnosc2 tinyint
+declare @WycenaKolejnosc tinyint
+
+declare @GIDNumer int
+declare @KWWal decimal(15,2)
+declare @KWSys decimal(15,2)
+
+declare @SumaWycenaWal decimal(15,2)
+set @SumaWycenaWal = 0
+declare @SumaWycenaSys decimal(15,2)
+set @SumaWycenaSys = 0
+
+declare @KursL1 decimal(15,10)
+declare @KursM1 decimal(5)
+
+declare @bPozostajeWal2Zero bit
+set @bPozostajeWal2Zero = 0
+
+declare @RozliczenieWgPojedynczegoKursu bit
+set @RozliczenieWgPojedynczegoKursu = 0
+
+
+BEGIN TRAN
+
+if @GIDTyp1 = 784
+begin
+	select 
+		@ZnakKAZ1 = KAZ_Znak,
+		@KwotaWal1 = abs(KAZ_Kwota),
+		@KwotaSys1 = abs(KAZ_KwotaSys),
+		@PozostajeWal1 = abs(KAZ_PozostajeRoz),
+		@Wyceniony1 = KAZ_Wyceniony,
+		@WycenaKolejnosc1 = KAZ_WycenaKolejnosc,
+		@KursWgKolejnosci1 = KAZ_KursWgWyceny		
+	from cdn.Zapisy with(updlock) 
+	where KAZ_GIDNumer = @GIDNumer1	
+	
+	select @err = @@Error, @Rcount = @@RowCount
+	if @err&lt;&gt;0
+	begin
+		rollback tran
+		raiserror('201:Błąd pobrania rekordu z tabeli cdn.Zapisy',16,1)
+		return 201
+	end
+	if @RCount = 0
+	begin
+		rollback tran
+		raiserror('201:Podany do rozliczenia zapis KB nie istnieje (GIDNumer:%d)',16,1,@GIDNumer1)
+		return 201
+	end
+end
+else
+begin
+	select 
+		@ZnakKAZ1 = 0,
+		@KwotaWal1 = 0,
+		@KwotaSys1 = 0,
+		@PozostajeWal1 = TRP_Pozostaje,
+		@Wyceniony1 = 0,
+		@WycenaKolejnosc1 = 0,
+		@KursWgKolejnosci1 = 0
+	from cdn.TraPlat with(updlock) 
+	where Trp_GIDTyp = @GIDTyp1 and Trp_GIDNumer = @GIDNumer1 and Trp_GIDLp = @GIDLp1
+
+	select @err = @@Error, @Rcount = @@RowCount
+	if @err&lt;&gt;0
+	begin
+		rollback tran
+		raiserror('201:Błąd pobrania rekordu z tabeli cdn.TraPlat',16,1)
+		return 201
+	end
+	if @RCount = 0
+	begin
+		rollback tran
+		raiserror('201:Podana do rozliczenia płatność nie istnieje (%d:%d:%d)',16,1,@GIDTyp1,@GIDNumer1,@GIDLp1)
+		return 201
+	end
+end
+
+
+
+if @GIDTyp2 = 784
+begin
+	select 
+		@ZnakKAZ2 = KAZ_Znak,
+		@KwotaWal2 = abs(KAZ_Kwota),
+		@KwotaSys2 = abs(KAZ_KwotaSys),
+		@PozostajeWal2 = abs(KAZ_PozostajeRoz),
+		@Wyceniony2 = KAZ_Wyceniony,
+		@WycenaKolejnosc2 = KAZ_WycenaKolejnosc,
+		@KursWgKolejnosci2 = KAZ_KursWgWyceny
+	from cdn.Zapisy with(updlock) 
+	where KAZ_GIDNumer = @GIDNumer2
+	
+	select @err = @@Error, @Rcount = @@RowCount
+	if @err&lt;&gt;0
+	begin
+		rollback tran
+		raiserror('201:Błąd pobrania rekordu z tabeli cdn.Zapisy',16,1)
+		return 201
+	end
+	if @RCount = 0
+	begin	
+		rollback tran
+		raiserror('201:Podany do rozliczenia zapis KB nie istnieje (GIDNumer:%d)',16,1,@GIDNumer2)
+		return 201
+	end	
+end
+else
+begin
+	select 
+		@ZnakKAZ2 = 0,
+		@KwotaWal2 = 0,
+		@KwotaSys2 = 0,
+		@PozostajeWal2 = TRP_Pozostaje,
+		@Wyceniony2 = 0,
+		@WycenaKolejnosc2 = 0,
+		@KursWgKolejnosci2 = 0
+	from cdn.TraPlat with(updlock) 
+	where Trp_GIDTyp = @GIDTyp2 and Trp_GIDNumer = @GIDNumer2 and Trp_GIDLp = @GIDLp2
+
+	select @err = @@Error, @Rcount = @@RowCount
+	if @err&lt;&gt;0
+	begin		
+		rollback tran
+		raiserror('201:Błąd pobrania rekordu z tabeli cdn.TraPlat',16,1)
+		return 201
+	end
+	if @RCount = 0
+	begin		
+		rollback tran
+		raiserror('201:Podana do rozliczenia płatność nie istnieje (%d:%d:%d)',16,1,@GIDTyp2,@GIDNumer2,@GIDLp2)
+		return 201
+	end
+end
+
+
+
+if @ZnakKAZ1 = 1
+begin
+	set @PoWycenach = 1
+	set @GIDNumer = @GIDNumer1
+	set @KWWal = @KwotaWal1
+	set @KWSys = @KwotaSys1
+	set @DekretNumer = @D1Numer
+	set @DekretLp = @D1Lp
+
+
+	if @KursWgKolejnosci1 &lt;&gt; 0 and @Wyceniony1 = 0	-- brak wymaganej wyceny
+		set @BladWyceny = 1
+
+	if @KursWgKolejnosci1 = 0 --niepotrzebna wycena
+		set @PoWycenach = 0
+
+	set @WycenaKolejnosc = @WycenaKolejnosc1
+end
+else if @ZnakKAZ2 = 1
+begin
+	set @PoWycenach = 1
+	set @PozostajeWal2 = @PozostajeWal1
+	set @GIDNumer = @GIDNumer2
+	set @KWWal = @KwotaWal2
+	set @KWSys = @KwotaSys2
+	set @DekretNumer = @D2Numer
+	set @DekretLp = @D2Lp
+
+
+	if @KursWgKolejnosci2 &lt;&gt; 0 and @Wyceniony2 = 0	-- brak wymaganej wyceny
+		set @BladWyceny = 1
+
+	if @KursWgKolejnosci2 = 0 --niepotrzebna wycena
+		set @PoWycenach = 0
+
+	set @WycenaKolejnosc = @WycenaKolejnosc2
+end
+else
+begin
+	set @BladWyceny = 0
+	set @PoWycenach = 0
+end
+
+
+if @BladWyceny = 1
+begin
+	select 
+		@szMsg1 = CDN.NumerDokumentu(784,KAZ_KRPTyp,KAZ_RaportBO,KRP_Numer,KAZ_Rok,KAZ_Seria,KAZ_KrpLp)
+	from cdn.Zapisy with(nolock)
+		left join cdn.Raporty with(nolock)
+			on KRP_GIDTyp=KAZ_KRPTyp AND KRP_GIDNumer=KAZ_KRPNumer			
+	where KAZ_GIDNumer = @GIDNumer
+
+	
+	select @err = @@Error, @Rcount = @@RowCount
+	if @err&lt;&gt;0
+	begin
+		rollback tran
+		raiserror('201:Błąd pobrania rekordu z tabeli cdn.Zapisy',16,1)
+		return 201
+	end	
+
+	if @RCount = 0
+	begin	
+		rollback tran
+		raiserror('201:Podany do rozliczenia zapis KB nie istnieje (GIDNumer:%d)',16,1,@GIDNumer)
+		return 201
+	end
+
+	rollback tran
+	raiserror('201:Operacja anulowana. Zapis %s nie został poprawnie wyceniony',16,1, @szMsg1)
+	return 201
+end
+
+
+
+if @PoWycenach = 0
+begin
+
+	exec @rv = cdn.DodajRozliczenie
+		@GIDFirma = @GIDFirma,
+		@GIDTyp1 = @GIDTyp1,
+		@GIDNumer1 = @GIDNumer1,
+		@GIDLp1 = @GIDLp1,
+		@GIDTyp2 = @GIDTyp2,
+		@GIDNumer2 = @GIDNumer2,
+		@GIDLp2 = @GIDLp2,
+		@Kwota = @Kwota output,
+		@UserID = @UserID,		
+		@DataDzisiejsza = @DataDzisiejsza,
+		@R2ParID = @R2ParID OUTPUT,
+		@D1Numer = @D1Numer,
+		@D1Lp = @D1Lp,
+		@D1DC = @D1DC,
+		@D2Numer = @D2Numer,
+		@D2Lp = @D2Lp,
+		@D2DC = @D2DC
+
+
+
+
+	if @rv &lt;&gt; 0 or @@TRANCOUNT = 0
+		return @rv
+	else
+	begin
+		commit tran
+		return @rv
+	end
+end
+
+
+
+
+
+
+--ustalaj kurs wg wyceny
+declare cursWycena cursor static for  	
+select 
+	isnull(sum(KwotaWal),0) as KwotaWal,
+	isnull(sum(KwotaSys),0) as KwotaSys,
+	isnull(sum(PozostajeZWyc),0) as PozostajeZWyc,
+	isnull(sum(PozostajeZWycSys),0) as PozostajeZWycSys,
+	isnull(max(WycenaID),0) as WycenaID,
+	isnull(max(KursL),0) as KursL,
+	isnull(max(KursM),0) as KursM
+from (
+	select 
+		sum(R2_KwotaWal1) as KwotaWal,
+		sum(R2_KwotaSys) as KwotaSys,
+		sum(R2_PozostajeZWyc) as PozostajeZWyc,
+		sum(R2_PozostajeZWycSys) as PozostajeZWycSys,
+		R2_ParID as WycenaID,
+		max(isnull(KAZ_KursL,0)) as KursL,
+		max(isnull(KAZ_KursM,0)) as KursM
+	from cdn.Rozliczenia
+			left join cdn.Zapisy 
+				on R2_Dok2Typ = 784 and R2_Dok2Numer = KAZ_GIDNumer and R2_Dok2Lp = 0
+	where R2_Dok1Typ = 784 and R2_Dok1Numer = @GIDNumer and R2_Dok1Lp = 0 and R2_Wycena = 1
+	group by R2_ParID
+	union all
+	select 
+		sum(R2_KwotaWal2) as KwotaWal,
+		sum(R2_KwotaSys) as KwotaSys,
+		sum(R2_PozostajeZWyc) as PozostajeZWyc,
+		sum(R2_PozostajeZWycSys) as PozostajeZWycSys,
+		R2_ParID as WycenaID,
+		max(isnull(KAZ_KursL,0)) as KursL,
+		max(isnull(KAZ_KursM,0)) as KursM
+	from cdn.Rozliczenia
+			left join cdn.Zapisy 
+				on R2_Dok1Typ = 784 and R2_Dok1Numer = KAZ_GIDNumer and R2_Dok1Lp = 0
+	where R2_Dok2Typ = 784 and R2_Dok2Numer = @GIDNumer and R2_Dok2Lp = 0 and R2_Wycena = 1
+	group by R2_ParID
+	) a
+group by WycenaID
+--having isnull(sum(PozostajeZWyc),0) &gt; 0
+order by WycenaID asc
+
+
+
+if isnull(@Kwota,0) &lt;&gt; 0
+begin
+	if @PozostajeWal2 &gt; @Kwota
+		set @PozostajeWal2 = @Kwota
+end
+
+
+
+set @Kwota = 0
+open cursWycena
+
+fetch next from cursWycena into @KwotaWal1, @KwotaSys1, @PozostajeWal1, @PozostajeSys1, @RozID, @KursL1, @KursM1
+
+
+while @@fetch_Status = 0
+begin
+	if @DekretNumer &lt;&gt; 0
+	begin
+		if not exists(select 1 from cdn.DziennikElem where DEL_GIDNumer=@DekretNumer and DEL_GIDLp=@DekretLp and DEL_WycenaParID=@RozID)
+		begin
+			fetch next from cursWycena into @KwotaWal1, @KwotaSys1, @PozostajeWal1, @PozostajeSys1, @RozID, @KursL1, @KursM1
+			continue
+		end
+	end
+
+	
+	if @PozostajeWal1 &gt; 0 and @bPozostajeWal2Zero = 0
+	begin
+		if @PozostajeWal1 &gt; @PozostajeWal2
+		begin
+			set @KwotaWal = @PozostajeWal2				
+			set @PozostajeWal2 = 0
+		end
+		else if @PozostajeWal1 &lt; @PozostajeWal2
+		begin
+			set @KwotaWal = @PozostajeWal1		
+			set @PozostajeWal2 = @PozostajeWal2 - @KwotaWal
+		end
+		else
+		begin
+			set @KwotaWal = 0
+			set @PozostajeWal2 = 0
+		end
+		
+
+
+		exec @rv = cdn.DodajRozliczenie
+			@GIDFirma = @GIDFirma,
+			@GIDTyp1 = @GIDTyp1,
+			@GIDNumer1 = @GIDNumer1,
+			@GIDLp1 = @GIDLp1,
+			@GIDTyp2 = @GIDTyp2,
+			@GIDNumer2 = @GIDNumer2,
+			@GIDLp2 = @GIDLp2,
+			@Kwota = @KwotaWal output,
+			@UserID = @UserID,
+			@DataDzisiejsza = @DataDzisiejsza,
+			@R2ParID = @R2ParID OUTPUT,
+			@D1Numer = @D1Numer,
+			@D1Lp = @D1Lp,
+			@D1DC = @D1DC,
+			@D2Numer = @D2Numer,
+			@D2Lp = @D2Lp,
+			@D2DC = @D2DC,		
+			@Wycena = 0,	
+			@WycenaWskazanie = 0,		
+			@WycenaParID = @RozID,
+			@KWKursL = @KursL1,
+			@KWKursM = @KursM1,
+			@KWKwotaWal = @PozostajeWal1,
+			@KWKwotaSys = @PozostajeSys1		
+
+
+
+		if @rv &lt;&gt; 0 or @@TRANCOUNT = 0
+			goto lErr
+			
+		
+		set @Kwota = @Kwota + @KwotaWal
+	end
+	
+
+	set @SumaWycenaWal = @SumaWycenaWal + @KwotaWal1
+	set @SumaWycenaSys = @SumaWycenaSys + @KwotaSys1
+
+
+	if @PozostajeWal2 = 0
+		set @bPozostajeWal2Zero = 1	
+
+
+	if @R2ParID &lt;&gt; 0 and @DekretNumer &lt;&gt; 0
+	begin
+		set @RozliczenieWgPojedynczegoKursu = 1
+		break
+	end
+
+	fetch next from cursWycena into @KwotaWal1, @KwotaSys1, @PozostajeWal1, @PozostajeSys1, @RozID, @KursL1, @KursM1
+end
+
+
+
+if @RozliczenieWgPojedynczegoKursu = 0 and (@SumaWycenaWal &lt;&gt; @KWWal or @SumaWycenaSys &lt;&gt; @KWSys)
+begin
+	select 
+		@szMsg1 = CDN.NumerDokumentu(784,784,KAZ_RaportBO,KRP_Numer,KAZ_Rok,KAZ_Seria,KAZ_KrpLp)
+	from cdn.Zapisy with(nolock)
+		join cdn.Raporty with(nolock)
+			on KRP_GIDTyp=KAZ_KRPTyp AND KRP_GIDNumer=KAZ_KRPNumer			
+	where KAZ_GIDNumer = @GIDNumer
+
+	
+	select @err = @@Error, @Rcount = @@RowCount
+	if @err&lt;&gt;0
+	begin
+		rollback tran
+		raiserror('201:Błąd pobrania rekordu z tabeli cdn.Zapisy',16,1)
+		set @rv = 201
+		goto lErr
+	end		
+
+	if @RCount = 0
+	begin	
+		rollback tran
+		raiserror('201:Podany do rozliczenia zapis KB nie istnieje (GIDNumer:%d)',16,1,@GIDNumer)
+		set @rv = 201
+		goto lErr
+	end
+
+	
+	rollback tran
+	if @SumaWycenaWal &lt;&gt; @KWWal
+	begin
+		set @szMsg2 = convert(varchar, @SumaWycenaWal)
+		set @szMsg3 = convert(varchar, @KWWal)
+		raiserror('201:Operacja anulowana. Zapis %s nie został poprawnie wyceniony. Suma rozliczeń wyceny %s nie jest równa kwocie zapisu %s',16,1, @szMsg1, @szMsg2, @szMsg3 )
+		set @rv = 201
+	end
+	else
+	begin
+		set @szMsg2 = convert(varchar, @SumaWycenaSys)
+		set @szMsg3 = convert(varchar, @KWSys)
+		raiserror('201:Operacja anulowana. Zapis %s nie został poprawnie wyceniony. Suma rozliczeń wyceny w walucie systemowej %s nie jest równa kwocie zapisu %s',16,1, @szMsg1, @szMsg2, @szMsg3 )
+		set @rv = 201
+	end
+
+	goto lErr
+end
+
+
+
+
+COMMIT TRAN
+
+
+lExit:
+close cursWycena
+deallocate cursWycena
+SET NOCOUNT OFF
+
+
+return @rv
+
+lErr:
+	goto lExit
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury DodajRozliczenieUwzglWycene"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury DodajRozliczenieUwzglWycene */</I><BR>
+GRANT EXECUTE ON CDN.DodajRozliczenieUwzglWycene TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,77 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[ESKLEP_EksportTwrWartoscCechy]"></A><PRE>
+          <FONT SIZE="2"><I>/* [ESKLEP_EksportTwrWartoscCechy] */</I><BR>
+CREATE PROCEDURE [CDN].[ESKLEP_EksportTwrWartoscCechy]
+  @ID INT      -- ID e-sklepu
+ ,@TypExp INT  -- Typ eksportu stanów towaru (0 - różnicowy, 1 - pełny)
+AS
+
+DECLARE  @TypIlosci AS SMALLINT -- Typ zwracanej ilości: 0 - ilość do sprzedaży, 1 - ilość magazynowa, 2 - ilość dostępna do sprzedaży, 3 - ilość dostępna magazynowa
+                ,@UwzgledniajRezerwacje AS SMALLINT -- Sposób uwzględniania rezerwacji z zasobami 0 - uwzględniaj wszystkie rezerwacje (działanie domyślne)
+                                                                                                                                                 --               1 - uwzgędniaj tylko rezerwacje z zasobami
+                                                                                                                                                 --               2 - uwzględniaj tylko rezerwacje bez zasobów
+                ,@PcK_CentrumID INT
+                ,@PcK_TwGNumer INT
+                ,@PcK_TSSynchrPtw INT
+
+SELECT  @PcK_CentrumID = PcK_CentrumID, @PcK_TwGNumer = TWG_GIDNumer, @PcK_TSSynchrPtw = PcK_TSSynchrPtw FROM CDN.PicoKonfig JOIN CDN.TwrGrupy ON TwG_GIDTyp = -16 AND TwG_SyncID = PcK_TwgNumer WHERE PcK_PicoID = @ID
+SELECT  @TypIlosci = 0  , @UwzgledniajRezerwacje = 0
+
+SELECT distinct 1 AS TAG, NULL AS Parent
+        , TrS_CChNumer*100+case when TrS_CChLp=0 then TrS_GIDLp else TrS_CChLp end AS [CEA!1!ID], TrS_CChNumer AS [CEA!1!CechaID]
+        , 1 AS [CEA!1!JezykID], TrS_Cecha AS [CEA!1!Wartosc], TrS_CChLp AS [CEA!1!Lp]
+FROM CDN.TwrKarty
+INNER JOIN CDN.TwrZasoby ON Twr_GIDNumer=TwZ_TwrNumer
+INNER JOIN CDN.Dostawy ON TwZ_DstTyp=Dst_GIDTyp AND TwZ_DstNumer=Dst_GIDNumer AND TwZ_DstLp=Dst_GIDLp
+LEFT OUTER JOIN CDN.TraSElem ON Dst_TrnTyp=TrS_GIDTyp AND Dst_TrnNumer=TrS_GIDNumer AND Dst_TrnLp=TrS_GIDLp AND Dst_SubTrnLp=TrS_SubGIDLp
+JOIN CDN.CechyKlasy ON TrS_CChNumer=CCK_GIDNumer
+JOIN cdn.Cechy on CCK_GIDNumer=CCh_GIDNumer AND TrS_Cecha = CCh_Cecha AND TrS_CChLp &lt;&gt; 0
+WHERE Twr_GIDNumer &gt; 0 AND Twr_eSklep = 1 AND Twr_Archiwalny = 0 and CCh_iSklep = 1
+          AND EXISTS(SELECT TwL_GrONumer FROM CDN.TwrLinki WHERE Twr_GIDTyp = TwL_GIDTyp AND Twr_GIDNumer = TwL_GIDNumer AND TwL_GrONumer = @PcK_TwGNumer )
+          AND (@TypExp = 1 OR EXISTS(SELECT TrE_TwrNumer FROM CDN.TraElem JOIN CDN.TraSElem ON TrE_GIDNumer = TrS_GIDNumer AND TrE_GIDLp = TrS_GIDLp WHERE TrE_TwrNumer = Twr_GIDNumer AND TrE_TrNTStamp &gt; @PcK_TSSynchrPtw)
+                                           OR EXISTS(SELECT ReZ_TwrNumer FROM CDN.Rezerwacje WHERE ReZ_TwrNumer = Twr_GIDNumer AND ReZ_TStamp &gt; @PcK_TSSynchrPtw)
+                                           OR EXISTS(SELECT MaE_GIDNumer FROM CDN.MagElem JOIN CDN.MagSElem ON MaE_GIDNumer = MaS_GIDNumer AND MaE_GIDLp = MaS_GIDLp WHERE MaE_TwrNumer = Twr_GIDNumer AND MaS_TrNTStamp &gt; @PcK_TSSynchrPtw)
+                   )
+
+UNION ALL
+
+SELECT distinct 1 AS TAG, NULL AS Parent
+        , TrS_CChNumer*100+case when TrS_CChLp=0 then TrS_GIDLp else TrS_CChLp end AS [CEA!1!ID], TrS_CChNumer AS [CEA!1!CechaID]
+        , coalesce(SLW_WartoscL3,1) AS [CEA!1!JezykID]
+        , case when coalesce(SLW_WartoscL3,1) = 1 then TrS_Cecha else TLM_Tekst end AS [CEA!1!Wartosc]
+        , TrS_CChLp AS [CEA!1!Lp]
+FROM CDN.TwrKarty
+INNER JOIN CDN.TwrZasoby ON Twr_GIDNumer=TwZ_TwrNumer
+INNER JOIN CDN.Dostawy ON TwZ_DstTyp=Dst_GIDTyp AND TwZ_DstNumer=Dst_GIDNumer AND TwZ_DstLp=Dst_GIDLp
+LEFT OUTER JOIN CDN.TraSElem ON Dst_TrnTyp=TrS_GIDTyp AND Dst_TrnNumer=TrS_GIDNumer AND Dst_TrnLp=TrS_GIDLp AND Dst_SubTrnLp=TrS_SubGIDLp
+JOIN CDN.CechyKlasy ON TrS_CChNumer=CCK_GIDNumer
+JOIN cdn.Cechy on CCK_GIDNumer=CCh_GIDNumer AND TrS_Cecha = CCh_Cecha
+JOIN CDN.Tlumaczenia ON TrS_CChTyp = TLM_Typ and TrS_CChNumer = TLM_Numer and TrS_CChLp = TLM_Lp
+JOIN CDN.Slowniki SlwJezyk ON SlwJezyk.SLW_ID = TLM_Jezyk AND SlwJezyk.SLW_WartoscL2 in (2,3) -- parametr isklep24
+WHERE coalesce(TLM_Tekst,'') &lt;&gt; '' and CCh_iSklep = 1 AND
+          Twr_GIDNumer &gt; 0 AND Twr_eSklep = 1 AND Twr_Archiwalny = 0
+          AND EXISTS(SELECT TwL_GrONumer FROM CDN.TwrLinki WHERE Twr_GIDTyp = TwL_GIDTyp AND Twr_GIDNumer = TwL_GIDNumer AND TwL_GrONumer = @PcK_TwGNumer )
+          AND (@TypExp = 1 OR EXISTS(SELECT TrE_TwrNumer FROM CDN.TraElem JOIN CDN.TraSElem ON TrE_GIDNumer = TrS_GIDNumer AND TrE_GIDLp = TrS_GIDLp WHERE TrE_TwrNumer = Twr_GIDNumer AND TrE_TrNTStamp &gt; @PcK_TSSynchrPtw)
+                                           OR EXISTS(SELECT ReZ_TwrNumer FROM CDN.Rezerwacje WHERE ReZ_TwrNumer = Twr_GIDNumer AND ReZ_TStamp &gt; @PcK_TSSynchrPtw)
+                                           OR EXISTS(SELECT MaE_GIDNumer FROM CDN.MagElem JOIN CDN.MagSElem ON MaE_GIDNumer = MaS_GIDNumer AND MaE_GIDLp = MaS_GIDLp WHERE MaE_TwrNumer = Twr_GIDNumer AND MaS_TrNTStamp &gt; @PcK_TSSynchrPtw)
+                   )
+
+ORDER BY [CEA!1!ID]
+FOR XML EXPLICIT, ROOT('CECA')
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

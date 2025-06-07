@@ -1,0 +1,219 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="AktualizujProjekt4"></A><PRE>
+          <FONT SIZE="2"><I>/* AktualizujProjekt4 */</I><BR>
+CREATE PROCEDURE CDN.AktualizujProjekt4 
+	@OptimaID INT,			-- ID rekordu projektu w bazie Optimy
+	@ParentID INT, 			-- ID rodzica projektu w bazie Optimy
+	@Kod VARCHAR(40),		-- kod projektu
+	@Nazwa VARCHAR(255), 	-- nazwa projektu
+	@Nieaktywny TINYINT,	-- u nas Archiwalny
+	@Konto NVARCHAR(51)		-- konto księgowe
+AS SET NOCOUNT ON
+
+if  @OptimaID=0
+begin
+	RAISERROR('OptimaID nie może byc zerowy.',16,1)
+	return
+end
+
+if  @OptimaID=1  -- nie aktualizujemy roota
+	return
+
+DECLARE
+	@XLParentNumer	INT,
+	@XLParentID INT
+
+if @ParentID=1
+	set @ParentID=0
+
+if @ParentID&lt;&gt;0	-- nie jest to najwyższy poziom
+begin
+	select @XLParentNumer=PRJ_GIDNumer,@XLParentID=PRJ_ID from CDN.PrjStruktura where PRJ_OptimaID=@ParentID -- pobranie XLowego ID rodzica
+	if  @XLParentID is NULL -- sprawdzenie czy rodzic istnieje w XL
+	begin
+		RAISERROR('Brak rodzica.',16,1)
+		return
+	end
+end
+else
+begin
+	SET @XLParentNumer = 0
+	SET @XLParentID = 0
+end
+
+DECLARE	
+	@DataWystawienia INT,
+	@DataZamkniecia int
+SET @DataZamkniecia = 0
+
+SELECT @DataWystawienia =DATEDIFF(day,'18001228',GETDATE()) -- data wystawienia ustawiona na datę synchronizacji
+
+if  @Nieaktywny&lt;&gt;0	-- jeśli archiwalny
+	SET @DataZamkniecia = @DataWystawienia -- data zamknięcia ustawiana na datę wystawienia; jeśli nie archiwalny - pozostaje 0
+
+begin try
+
+DECLARE
+	@PrjID		INT,
+	@XLOldKod		VARCHAR(40),
+	@XLOptimaID 	INT,
+	@XLOldParentID 	INT
+
+select @PrjID=PRJ_ID, @XLOldKod=PRJ_Kod from CDN.PrjStruktura where PRJ_GROID=@XLParentID and PRJ_OptimaID=@OptimaID
+
+if not @XLOldKod is NULL -- w tej gałęzi jest rekord o podanym OptimaID
+	if  @XLOldKod&lt;&gt;@Kod  -- ale kody są różne
+		if  exists (select PRJ_ID from CDN.PrjStruktura where PRJ_GROID=@XLParentID and PRJ_Kod=@Kod) -- Zmiana kodu. Sprawdzić czy w gałęzi nie istnieje już rekord o żądanym kodzie
+		begin
+			RAISERROR('Duplikacja: W tej gałęzi istnieje już projekt o takim kodzie.',16,1)
+			return
+		end
+		else
+		begin
+			if @Konto &lt;&gt; ''
+				update CDN.PrjStruktura
+				set 
+					PRJ_Kod=@Kod,
+					PRJ_Nazwa=@Nazwa,
+					PRJ_Konto=@Konto,
+					PRJ_Archiwalny=@Nieaktywny,
+					PRJ_DataZamkniecia=@DataZamkniecia
+				where PRJ_ID=@PrjID
+		    else
+		        update CDN.PrjStruktura
+				set 
+					PRJ_Kod=@Kod,
+					PRJ_Nazwa=@Nazwa,					
+					PRJ_Archiwalny=@Nieaktywny,
+					PRJ_DataZamkniecia=@DataZamkniecia
+				where PRJ_ID=@PrjID		
+		end
+	else
+	begin
+		if @Konto &lt;&gt; ''
+			update CDN.PrjStruktura
+			set 
+				PRJ_Kod=@Kod,
+				PRJ_Nazwa=@Nazwa,
+				PRJ_Konto=@Konto,
+				PRJ_Archiwalny=@Nieaktywny,
+				PRJ_DataZamkniecia=@DataZamkniecia
+			where PRJ_ID=@PrjID
+	    else
+	        update CDN.PrjStruktura
+			set 
+				PRJ_Kod=@Kod,
+				PRJ_Nazwa=@Nazwa,				
+				PRJ_Archiwalny=@Nieaktywny,
+				PRJ_DataZamkniecia=@DataZamkniecia
+			where PRJ_ID=@PrjID 		
+	end
+else
+	begin
+		if not exists (select PRJ_ID from CDN.PrjStruktura where PRJ_OptimaID=@OptimaID) -- w całej bazie nie ma żadnego rekordu o podanym OptimaID
+		begin
+			select @PrjID=PRJ_ID, @XLOptimaID=PRJ_OptimaID from CDN.PrjStruktura where PRJ_GROID=@XLParentID and PRJ_Kod=@Kod -- ale jest o tym samym rodzicu i kodzie
+			if not @PrjID is NULL
+			begin
+				if @XLOptimaID=0  -- nie podpięty do żadnego projektu w Optimie
+				begin
+					if @Konto &lt;&gt; ''
+						update CDN.PrjStruktura
+						set 
+							PRJ_Kod=@Kod,
+							PRJ_Nazwa=@Nazwa,
+							PRJ_OptimaID=@OptimaID,
+							PRJ_Konto=@Konto,
+							PRJ_Archiwalny=@Nieaktywny,
+							PRJ_DataZamkniecia=@DataZamkniecia
+						where PRJ_ID=@PrjID
+					else
+					    update CDN.PrjStruktura
+						set 
+							PRJ_Kod=@Kod,
+							PRJ_Nazwa=@Nazwa,
+							PRJ_OptimaID=@OptimaID,							
+							PRJ_Archiwalny=@Nieaktywny,
+							PRJ_DataZamkniecia=@DataZamkniecia
+						where PRJ_ID=@PrjID						
+				end
+				else
+				begin
+					RAISERROR('Duplikacja: obiekt o podanym kodzie (wartości) istnieje już w strukturze projektów w zsynchronizowanej bazie danych. Nie można zapisać danych. Aby w przyszłości uniknąć podobnych sytuacji należy w Comarch ERP XL uruchomić funkcję specjalną: Synchronizacja struktury organizacyjnej.',16,1)
+					return
+				end
+			end
+			else	
+			begin -- dodawanie nowego rekordu
+				DECLARE
+					@GIDFirma INT,
+					@GIDNumer INT
+				select top 1 @GIDFirma=FRS_GIDFirma from CDN.FrmStruktura -- lepiej pobrać GIDFirma z CDN.FrmStruktura bo tam NA PEWNO będą co najmniej trzy rekordy (rooty)
+				select @PrjID=IsNull(Max(PRJ_ID),0)+1, @GIDNumer=IsNull(Max(PRJ_GIDNumer),0)+1 from CDN.PrjStruktura -- autonumeracja RPJ_ID i PRJ_GIDNumer
+
+				DECLARE
+					@PrjRok SMALLINT,
+					@PrjSeria varchar(6),
+					@PrjNumer INT
+					
+				select @PrjRok=year(GETDATE()) -- bieżący rok
+
+				select @PrjSeria=SER_Nazwa from Cdn.Serie 
+				inner join Cdn.DokDefinicje on Dok_SerTyp=SER_GIDTyp and Dok_SerFirma=SER_GIDFirma and Dok_SerNumer=SER_GIDNumer and Dok_SerLp=SER_GIDLp
+				where Dok_GIDTyp=4592 AND Dok_FrsId = 1 -- pobranie nazwy serii dla definicji dokumentu projektu
+					
+				select @PrjNumer=IsNull(max(Prj_Numer),0)+1 from Cdn.PrjStruktura  -- autonumeracja 
+				where Prj_Seria=@PrjSeria and Prj_Rok=@PrjRok
+
+				insert into CDN.PrjStruktura
+					(PRJ_ID,PRJ_GIDTyp,PRJ_GIDFirma,PRJ_GIDNumer,PRJ_GIDLp, PRJ_GROID,PRJ_GROTyp,PRJ_GROFirma,PRJ_GRONumer,PRJ_GROLp, PRJ_Kod,PRJ_Nazwa,PRJ_Symbol,
+					PRJ_DataOtwarcia,PRJ_DataZamkniecia, PRJ_URL,PRJ_Konto,PRJ_Opis, PRJ_OptimaID, PRJ_KntTyp,PRJ_KntNumer,PRJ_KndTyp,PRJ_KndNumer,
+					PRJ_Rok,PRJ_Miesiac,PRJ_Seria,PRJ_Numer,PRJ_Lp, PRJ_DokumentObcy,PRJ_DataWystawienia,PRJ_OpWNumer,PRJ_FrsId, PRJ_Archiwalny)
+				values 
+					(@PrjID,-4592,@GIDFirma,@GIDNumer,0, @XLParentID,-4592,@GIDFirma,@XLParentNumer,0, @Kod,@Nazwa,'',
+					0,@DataZamkniecia, '',@Konto,'', @OptimaID, 0,0,0,0,
+					@PrjRok,0,@PrjSeria,@PrjNumer,0, '',@DataWystawienia,0,1, @Nieaktywny)
+			end
+		end
+		else
+		begin
+			RAISERROR('Duplikacja: obiekt o podanym kodzie (wartości) istnieje już w strukturze projektów w zsynchronizowanej bazie danych. Nie  
+                               można zapisać danych. Aby w przyszłości uniknąć podobnych sytuacji należy w Comarch ERP XL uruchomić funkcję specjalną:   
+                               Synchronizacja struktury organizacyjnej.',16,1)
+			return
+		end
+	end
+	
+end try
+
+begin catch
+
+  DECLARE
+    @ErrorMessage     NVARCHAR(4000),
+    @ErrorSeverity    INT,
+    @ErrorState       INT
+
+  SELECT 
+    @ErrorMessage = ERROR_MESSAGE(),
+    @ErrorSeverity = ERROR_SEVERITY(),
+    @ErrorState = ERROR_STATE();
+
+  RAISERROR(@ErrorMessage,@ErrorSeverity,@ErrorState);
+
+end catch
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

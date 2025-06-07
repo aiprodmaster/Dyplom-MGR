@@ -1,0 +1,196 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[UpdatePotomne]"></A><PRE>
+          <FONT SIZE="2"><I>/* [UpdatePotomne] */</I><BR>
+CREATE PROCEDURE [CDN].[UpdatePotomne] (@ID int, @Typ int) AS
+BEGIN
+	SET NOCOUNT ON
+	CREATE TABLE #potomne (FRS_ID INT UNIQUE)
+	CREATE TABLE #magpotomne (Dok_FrsID INT, Dok_GIDTyp INT, Frs_MagSerTyp INT, Frs_MagSerFirma INT, Frs_MagSerNumer INT,
+							  MagSerTyp INT, MagSerFirma INT, MagSerNumer INT,MagSerOddzial INT)
+	INSERT INTO #potomne EXECUTE cdn.frmpotomne @ID
+	
+	IF @Typ=208 OR @Typ=1
+	BEGIN
+	    --magazyn domyślny na centrach
+		UPDATE CDN.FrmStruktura
+		SET Frs_MagTyp=isnull(isnull(N.Frs_MagTyp,fro_gidtyp),0),
+			Frs_MagFirma=isnull(isnull(N.Frs_MagFirma,fro_gidfirma),0), 
+			Frs_MagNumer=isnull(isnull(N.Frs_MagNumer,fro_gidnumer),0)
+		FROM CDN.FrmStruktura AS P
+		INNER JOIN CDN.FrmObiekty ON Fro_FrmID = P.FRS_ID AND Fro_GIDTyp = 208
+		LEFT OUTER JOIN (
+					SELECT Frs_ID,Frs_MagTyp,Frs_MagFirma,Frs_MagNumer FROM CDN.FrmStruktura
+				   )N ON N.Frs_ID = P.Frs_GRONumer AND N.Frs_MagNumer = Fro_GIDNumer
+		WHERE (P.Frs_Id IN (SELECT FRS_ID FROM #potomne) OR P.Frs_Id = @ID)
+			  AND P.Frs_MagTyp=0 AND P.Frs_MagFirma=0 AND P.Frs_MagNumer=0
+
+		--magazyn źródłowy na definicjach ( najpierw update tych którym można podstawić domyślne z centum
+		-- a później dla tych dokumentów dla których pierwszy z listy )
+		INSERT INTO #magpotomne 
+		SELECT Z.Dok_FrsID, Z.Dok_GIDTyp, isnull(frs_magtyp,0),isnull(frs_magfirma,0),isnull(frs_magnumer,0),
+			   isnull(isnull(fro_gidtyp,dor_mstyp),0),isnull(isnull(fro_gidfirma,dor_msfirma),0),isnull(isnull(fro_gidnumer,dor_msnumer),0),
+			   Mag_Pico 
+		FROM CDN.DokDefinicje Z
+		INNER JOIN CDN.FrmObiekty ON Fro_FrmID = Dok_FrsId AND Fro_GIDTyp = 208
+		INNER JOIN (
+					SELECT * FROM CDN.DokDefinicje INNER JOIN CDN.DokRelacje ON Dor_Id = Dok_ID 
+					AND Dor_Mstyp = 208 WHERE Dok_FrsID=1
+				   )W ON Z.Dok_GIDTyp = W.Dok_GIDTyp AND Fro_GIDNumer = W.Dor_MSNumer
+		LEFT OUTER JOIN CDN.FrmStruktura ON FRS_ID = Z.Dok_FrsID and Frs_MagNumer = Dor_MSNumer
+		LEFT OUTER JOIN CDN.Magazyny ON Mag_GIDNumer = Dor_MsNumer
+		WHERE Z.Dok_DefZNadrzednego=0 AND (Z.Dok_FrsId IN (SELECT FRS_ID FROM #potomne) OR Z.Dok_FrsId=@ID)
+			  AND( (Z.Dok_MagZTyp=0 AND Z.Dok_MagZFirma=0 AND Z.Dok_MagZNumer=0) OR
+				   (Z.Dok_MagDTyp=0 AND Z.Dok_MagDFirma=0 AND Z.Dok_MagDNumer=0) OR
+				   (Z.Dok_MagKTyp=0 AND Z.Dok_MagKFirma=0 AND Z.Dok_MagKNumer=0)
+				 )
+
+		UPDATE CDN.DokDefinicje 
+		SET Dok_MagZTyp=isnull(frs_magsertyp,0),
+			Dok_MagZFirma=isnull(frs_magserfirma,0),
+			Dok_MagZNumer=isnull(frs_magsernumer,0)
+		FROM CDN.DokDefinicje Z
+		INNER JOIN #magpotomne P ON Z.Dok_FrsID = P.Dok_FrsID AND Z.Dok_GIDTyp = P.Dok_GIDTyp
+		WHERE Z.Dok_DefZNadrzednego=0 AND (Z.Dok_FrsId IN (SELECT FRS_ID FROM #potomne) OR Z.Dok_FrsId=@ID)
+			  AND Z.Dok_MagZTyp=0 AND Z.Dok_MagZFirma=0 AND Z.Dok_MagZNumer=0 AND P.Frs_MagSerNumer &lt;&gt; 0
+
+		UPDATE CDN.DokDefinicje 
+		SET Dok_MagZTyp=isnull(MagSerTyp,0),
+			Dok_MagZFirma=isnull(MagSerFirma,0),
+			Dok_MagZNumer=isnull(MagSerNumer,0)
+		FROM CDN.DokDefinicje Z
+		INNER JOIN #magpotomne P ON Z.Dok_FrsID = P.Dok_FrsID AND Z.Dok_GIDTyp = P.Dok_GIDTyp
+		WHERE Z.Dok_DefZNadrzednego=0 AND (Z.Dok_FrsId IN (SELECT FRS_ID FROM #potomne) OR Z.Dok_FrsId=@ID)
+			  AND Z.Dok_MagZTyp=0 AND Z.Dok_MagZFirma=0 AND Z.Dok_MagZNumer=0 AND P.Frs_MagSerNumer = 0
+
+		--magazyn docelowy na definicjach
+		UPDATE CDN.DokDefinicje 
+		SET Dok_MagDTyp=isnull(frs_magsertyp,0),
+			Dok_MagDFirma=isnull(frs_magserfirma,0),
+			Dok_MagDNumer=isnull(frs_magsernumer,0)
+		FROM CDN.DokDefinicje Z
+		INNER JOIN #magpotomne P ON Z.Dok_FrsID = P.Dok_FrsID AND Z.Dok_GIDTyp = P.Dok_GIDTyp
+		WHERE Z.Dok_DefZNadrzednego=0 AND (Z.Dok_FrsId IN (SELECT FRS_ID FROM #potomne) OR Z.Dok_FrsId=@ID)
+			  AND Z.Dok_MagDTyp=0 AND Z.Dok_MagDFirma=0 AND Z.Dok_MagDNumer=0 AND P.Frs_MagSerNumer &lt;&gt; 0
+
+		UPDATE CDN.DokDefinicje 
+		SET Dok_MagDTyp=isnull(MagSerTyp,0),
+			Dok_MagDFirma=isnull(MagSerFirma,0),
+			Dok_MagDNumer=isnull(MagSerNumer,0)
+		FROM CDN.DokDefinicje Z
+		INNER JOIN #magpotomne P ON Z.Dok_FrsID = P.Dok_FrsID AND Z.Dok_GIDTyp = P.Dok_GIDTyp
+		WHERE Z.Dok_DefZNadrzednego=0 AND (Z.Dok_FrsId IN (SELECT FRS_ID FROM #potomne) OR Z.Dok_FrsId=@ID)
+			  AND Z.Dok_MagDTyp=0 AND Z.Dok_MagDFirma=0 AND Z.Dok_MagDNumer=0 AND P.Frs_MagSerNumer = 0
+
+		--magazyn korekty na definicjach
+		UPDATE CDN.DokDefinicje 
+		SET Dok_MagKTyp=isnull(frs_magsertyp,0),
+			Dok_MagKFirma=isnull(frs_magserfirma,0),
+			Dok_MagKNumer=isnull(frs_magsernumer,0)
+		FROM CDN.DokDefinicje Z
+		INNER JOIN #magpotomne P ON Z.Dok_FrsID = P.Dok_FrsID AND Z.Dok_GIDTyp = P.Dok_GIDTyp
+		WHERE Z.Dok_DefZNadrzednego=0 AND (Z.Dok_FrsId IN (SELECT FRS_ID FROM #potomne) OR Z.Dok_FrsId=@ID)
+			  AND Z.Dok_MagKTyp=0 AND Z.Dok_MagKFirma=0 AND Z.Dok_MagKNumer=0 AND P.Frs_MagSerNumer &lt;&gt; 0
+
+		UPDATE CDN.DokDefinicje 
+		SET Dok_MagKTyp=isnull(MagSerTyp,0),
+			Dok_MagKFirma=isnull(MagSerFirma,0),
+			Dok_MagKNumer=isnull(MagSerNumer,0)
+		FROM CDN.DokDefinicje Z
+		INNER JOIN #magpotomne P ON Z.Dok_FrsID = P.Dok_FrsID AND Z.Dok_GIDTyp = P.Dok_GIDTyp
+		WHERE Z.Dok_DefZNadrzednego=0 AND (Z.Dok_FrsId IN (SELECT FRS_ID FROM #potomne) OR Z.Dok_FrsId=@ID)
+			  AND Z.Dok_MagKTyp=0 AND Z.Dok_MagKFirma=0 AND Z.Dok_MagKNumer=0 AND P.Frs_MagSerNumer = 0
+	  END
+
+	--uaktualnienie domyślnych serii
+	IF @Typ=272 OR @Typ=1
+	BEGIN
+		--seria domyślna na centrach
+		UPDATE CDN.FrmStruktura 
+		SET Frs_SerTyp=isnull(isnull(N.Frs_SerTyp,fro_gidtyp),0),
+			Frs_SerFirma=isnull(isnull(N.Frs_SerFirma,fro_gidfirma),0),
+			Frs_SerNumer=isnull(isnull(N.Frs_SerNumer,fro_gidnumer),0)
+		FROM CDN.FrmStruktura AS P
+		INNER JOIN CDN.FrmObiekty ON Fro_FrmID = P.FRS_ID AND Fro_GIDTyp = 272
+		LEFT OUTER JOIN (
+					SELECT Frs_ID,Frs_SerTyp,Frs_SerFirma,Frs_SerNumer FROM CDN.FrmStruktura
+				   )N ON N.Frs_ID = P.Frs_GRONumer AND N.Frs_SerNumer = Fro_GIDNumer
+		WHERE (P.Frs_Id IN (SELECT FRS_ID FROM #potomne) OR P.Frs_Id = @ID)
+			  AND P.Frs_SerTyp=0 AND P.Frs_SerFirma=0 AND P.Frs_SerNumer=0
+		--seria domyślna na definicjach ( najpierw update tych którym można podstawić domyślne z centum
+		-- a później dla tych dokumentów dla których pierwsza z listy )
+		INSERT INTO #magpotomne 
+		SELECT Z.Dok_FrsID, Z.Dok_GIDTyp, isnull(Frs_SerTyp,0), isnull(Frs_SerFirma,0), isnull(Frs_SerNumer,0),
+			   isnull(isnull(fro_gidtyp,dor_mstyp),0), isnull(isnull(fro_gidfirma,dor_msfirma),0), isnull(isnull(fro_gidnumer,dor_msnumer),0),
+			   Ser_Oddzial
+		FROM CDN.DokDefinicje Z
+		INNER JOIN CDN.FrmObiekty ON Fro_FrmID = Dok_FrsId AND Fro_GIDTyp = 272
+		INNER JOIN (
+					SELECT * FROM CDN.DokDefinicje INNER JOIN CDN.DokRelacje ON Dor_Id = Dok_ID 
+					AND Dor_Mstyp = 272 WHERE Dok_FrsID=1
+				   )W ON Z.Dok_GIDTyp = W.Dok_GIDTyp AND Fro_GIDNumer = W.Dor_MSNumer
+		LEFT OUTER JOIN CDN.FrmStruktura ON FRS_ID = Z.Dok_FrsID and Frs_SerNumer = Dor_MSNumer
+		LEFT OUTER JOIN CDN.Serie ON Ser_GIDNumer = Dor_MsNumer
+		WHERE Z.Dok_DefZNadrzednego=0 AND (Z.Dok_FrsId IN (SELECT FRS_ID FROM #potomne) OR Z.Dok_FrsId=@ID)
+			  AND( (Z.Dok_SerTyp=0 AND Z.Dok_SerFirma=0 AND Z.Dok_SerNumer=0) OR
+				   (Z.Dok_SerKTyp=0 AND Z.Dok_SerKFirma=0 AND Z.Dok_SerKNumer=0)
+				 )
+			
+		UPDATE CDN.DokDefinicje 
+		SET Dok_SerTyp=isnull(Frs_MagSerTyp,0),
+			Dok_SerFirma=isnull(Frs_MagSerFirma,0),
+			Dok_SerNumer=isnull(Frs_MagSerNumer,0)
+		FROM CDN.DokDefinicje Z
+		INNER JOIN #magpotomne P ON Z.Dok_FrsID = P.Dok_FrsID AND Z.Dok_GIDTyp = P.Dok_GIDTyp
+		WHERE Z.Dok_DefZNadrzednego=0 AND (Z.Dok_FrsId IN (SELECT FRS_ID FROM #potomne) OR Z.Dok_FrsId=@ID)
+			  AND Z.Dok_SerTyp=0 AND Z.Dok_SerFirma=0 AND Z.Dok_SerNumer=0 AND P.Frs_MagSerNumer &lt;&gt; 0
+
+		UPDATE CDN.DokDefinicje 
+		SET Dok_SerTyp=isnull(MagSerTyp,0),
+			Dok_SerFirma=isnull(MagSerFirma,0),
+			Dok_SerNumer=isnull(MagSerNumer,0)
+		FROM CDN.DokDefinicje Z
+		INNER JOIN #magpotomne P ON Z.Dok_FrsID = P.Dok_FrsID AND Z.Dok_GIDTyp = P.Dok_GIDTyp
+		INNER JOIN CDN.FrmStruktura ON Frs_ID = Z.Dok_FrsId AND Frs_Oddzial = MagSerOddzial
+		WHERE Z.Dok_DefZNadrzednego=0 AND (Z.Dok_FrsId IN (SELECT FRS_ID FROM #potomne) OR Z.Dok_FrsId=@ID)
+			  AND Z.Dok_SerTyp=0 AND Z.Dok_SerFirma=0 AND Z.Dok_SerNumer=0 AND P.Frs_MagSerNumer = 0
+
+		--seria korekty na definicjach
+		UPDATE CDN.DokDefinicje 
+		SET Dok_SerKTyp=isnull(Frs_MagSerTyp,0),
+			Dok_SerKFirma=isnull(Frs_MagSerFirma,0),
+			Dok_SerKNumer=isnull(Frs_MagSerNumer,0)
+		FROM CDN.DokDefinicje Z
+		INNER JOIN #magpotomne P ON Z.Dok_FrsID = P.Dok_FrsID AND Z.Dok_GIDTyp = P.Dok_GIDTyp
+		WHERE Z.Dok_DefZNadrzednego=0 AND (Z.Dok_FrsId IN (SELECT FRS_ID FROM #potomne) OR Z.Dok_FrsId=@ID)
+			  AND Z.Dok_SerKTyp=0 AND Z.Dok_SerKFirma=0 AND Z.Dok_SerKNumer=0 AND P.Frs_MagSerNumer &lt;&gt; 0
+
+		UPDATE CDN.DokDefinicje 
+		SET Dok_SerKTyp=isnull(MagSerTyp,0),
+			Dok_SerKFirma=isnull(MagSerFirma,0),
+			Dok_SerKNumer=isnull(MagSerNumer,0)
+		FROM CDN.DokDefinicje Z
+		INNER JOIN #magpotomne P ON Z.Dok_FrsID = P.Dok_FrsID AND Z.Dok_GIDTyp = P.Dok_GIDTyp
+		INNER JOIN CDN.FrmStruktura ON Frs_ID = Z.Dok_FrsId AND Frs_Oddzial = MagSerOddzial
+		WHERE Z.Dok_DefZNadrzednego=0 AND (Z.Dok_FrsId IN (SELECT FRS_ID FROM #potomne) OR Z.Dok_FrsId=@ID)
+			  AND Z.Dok_SerKTyp=0 AND Z.Dok_SerKFirma=0 AND Z.Dok_SerKNumer=0 AND P.Frs_MagSerNumer = 0
+	END
+	DROP TABLE #potomne
+	DROP TABLE #magpotomne
+	SET NOCOUNT OFF
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

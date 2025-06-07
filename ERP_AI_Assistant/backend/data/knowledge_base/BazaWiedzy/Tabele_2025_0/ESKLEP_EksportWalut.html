@@ -1,0 +1,101 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[ESKLEP_EksportWalut]"></A><PRE>
+          <FONT SIZE="2"><I>/* [ESKLEP_EksportWalut] */</I><BR>
+CREATE PROCEDURE [CDN].[ESKLEP_EksportWalut]
+  @ID INT      -- ID e-sklepu
+ AS
+	DECLARE @TS			INT
+			,@Typ_Wal		SMALLINT
+			
+	SELECT @TS = DATEDIFF(SS,CONVERT(DATETIME,'1990-01-01',120),CONVERT(DATETIME,GETDATE(),120))
+	  	   ,@Typ_Wal = 96
+
+  	CREATE TABLE #tmpRecordSet
+  	(
+  		ID	INT	-- To jest odpowiednik pola PwL_ID i taka wartość powinna być tutaj zapisana
+  		, Waluta varchar(3)
+  		, Domyslna tinyint
+  		, KursL decimal(15,10)
+  		, KursM decimal (9,2)
+  		, Data varchar(24) -- Data kursu
+  	)
+
+
+	declare @PCKIDWaluta varchar(3);
+	select @PCKIDWaluta=PcK_Waluta from cdn.PicoKonfig where PcK_PicoID = @ID
+
+	-- Aktualizacja kursów
+	EXEC CDN.AktualizujPicoWaluty @ID = @ID
+
+	insert into #tmpRecordSet
+	select [ID] = Pwl_id
+		, [Waluta] = pwl_symbolM
+		, [Domyslna] = 0
+		, [KursL] = ROUND(pwl_kursl,4)
+		, [KursM] = pwl_kursm 
+		, [Data] = cast(year(convert(datetime,DATEADD(second,pwl_kursts,CONVERT(DATETIME,'1990-01-01',120)))) as varchar(4))+'-'+
+				cast(month(convert(datetime,DATEADD(second,pwl_kursts,CONVERT(DATETIME,'1990-01-01',120)))) as varchar(2))+'-'+
+				cast(day(convert(datetime,DATEADD(second,pwl_kursts,CONVERT(DATETIME,'1990-01-01',120)))) as varchar(2))
+		from cdn.PicoWaluty
+		where pwl_pckid=@ID AND PwL_TSArchiwizacji = 0
+	UNION ALL
+	select 0,@PCKIDWaluta, 1, 1, 1, 
+		cast(year(cast(convert(datetime,getdate()) as varchar(24))) as varchar(4))+'-'+
+		cast(month(cast(convert(datetime,getdate()) as varchar(24))) as varchar(2))+'-'+
+		cast(day(cast(convert(datetime,getdate()) as varchar(24))) as varchar(2))
+
+	-- Po wybraniu kursów do wysłania należy dodać odpowiednie wpisy do tabeli CDN.PicoLog
+	-- Najpierw aktualizujemy datę synchronizacji dla tych, które się nie zmieniły
+	UPDATE CDN.PicoLog
+	SET PcL_TStamp = @TS
+	FROM CDN.PicoLog
+		INNER JOIN #tmpRecordSet ON PcL_PcKID = @ID AND PcL_ObiNumer = ID AND PcL_ObiTyp = @Typ_Wal
+		
+	-- Dodajemy te, które jeszcze nie zostały wysłane
+	INSERT INTO CDN.PicoLog
+	(
+		PcL_PcKID
+		,PcL_ObiTyp
+		,PcL_ObiNumer
+		,PcL_ObiektID
+		,PcL_ObiektTyp
+		,PcL_Komentarz
+		,PcL_Info
+		,PcL_TStamp
+	)
+	SELECT 
+		@ID						-- PcL_PcKID
+		,@Typ_Wal				-- PcL_ObiTyp
+		,ID						-- PcL_ObiNumer
+		,0						-- PcL_ObiektID
+		,0						-- PcL_ObiektTyp
+		,'Waluta - ' + Waluta	-- PcL_Komentarz
+		,''						-- PcL_Info
+		,@TS					-- PcL_TStamp
+	FROM #tmpRecordSet
+	WHERE NOT EXISTS
+	(
+		SELECT * 
+		FROM CDN.PicoLog 
+		WHERE PcL_PcKID = @ID AND PcL_ObiNumer = ID AND PcL_ObiTyp = @Typ_Wal
+	)
+
+	-- Wybranie walut do eksportu
+	select * from #tmpRecordSet WAL
+	FOR XML AUTO, ROOT('WALK')
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

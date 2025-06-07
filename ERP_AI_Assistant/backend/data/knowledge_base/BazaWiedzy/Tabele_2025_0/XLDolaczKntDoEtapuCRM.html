@@ -1,0 +1,538 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[XLDolaczKntDoEtapuCRM]"></A><PRE>
+          <FONT SIZE="2"><I>/* [XLDolaczKntDoEtapuCRM] */</I><BR>
+CREATE PROCEDURE [CDN].[XLDolaczKntDoEtapuCRM] 
+	@KntNumer			int,						
+	@KampNumer			int,				
+	@EtapNumer			smallint, --lp etapu w kampanii															
+	@OsobaOdp			int, --osoba odpowiedzialna: -1 z karty akwizytora, 0 z karty kontrahenta, &gt;0 konkretny operator
+	@OpeNumerM			int, --operator dodający knt do etapu (będzie modyfikującym i dodającym)
+
+	@KntOsobaLp			smallint = NULL, --osoba kontrahenta
+	@AkwNumer			int = NULL, --numer akwizytora
+	@AkwOsobaLp			smallint = NULL, --osoba akwizytora
+	@AkwKoniecLp	    smallint = NULL,
+	@Szansa				int = NULL,
+	@Kwota				decimal(15,2) = NULL,
+	@Notatki			varchar(1999) = NULL,
+	@Url				varchar(255) = NULL,
+	@OpeNumerA			int = NULL, --operator wykonujacy akcje
+	@DataAkcji			int = NULL,	
+	@Akcja				varchar(2000) = NULL,
+	@AkcjaWykonana		smallint = NULL,
+	@Cykliczna			smallint = NULL,
+	@CyklTyp			smallint = NULL,
+	@CyklKoniec			int = NULL,
+	@IloscCykli			smallint = NULL,
+	@Interwal			smallint = NULL,
+	@DataZakonczenia	int = NULL,
+	@KopiujAtrybuty		tinyint = NULL,
+	@Terminarz			tinyint = NULL,
+	@KnANumer			int = NULL,
+	@KnATyp				smallint = NULL,	
+	@Przypomnienie		tinyint = NULL,
+	@CzasPrzypomnienia	int = NULL,
+	@CzasPrzypomnieniaJedn	tinyint = NULL,
+	@KopiujBinarne		tinyint = NULL,
+	@PrzychodIlosc		decimal(15,4) = NULL,
+	@AntId				int = NULL,
+	@AntZadId			int = NULL,
+	@DataStart			int  = NULL, --nie używać ręcznie, wykorzystywane dla cykliczności podczas zakańczania knt
+	@CZKZrdID			int = NULL, --nie używać ręcznie, trafił podczas dodawania w wyniku powiązania kampanii
+	@NumerCyklu			smallint = NULL, --nie używać ręcznie, wykorzystywane podczas zamykania knt 
+	@KntLp				smallint = NULL, --nie używać ręcznie, wykorzystywane podczas zamykania knt
+	@CzkWarunek			tinyint  = NULL, --nie używać ręcznie, wykorzystywane podczas zamykania knt i cykliczności
+	@CzkFiaskoId		int = NULL, --nie używać ręcznie, wykorzystywane podczas zamykania knt i cykliczności
+	@KntKoszt			DECIMAL(8,2) = NULL,
+	@WyliczKwote		tinyint = NULL,
+	@IgnorujBledy		tinyint = NULL --nie używać ręcznie, wykorzystywane podczas dołączania knt do kamp powiązanej i cyklicznosci
+				
+AS
+declare @GIDFirma		int
+declare @PrcNumer		int --numer pracownika na podstawie którego będzie ustalany operator prowadzący
+declare @OpeNumer		int --operator prowadzacy etap
+declare @CekId			int													
+declare @TStampAkt		int
+declare @CzkTermin		int --knt trafił przez kampanie powiazane, ilość dni jaką trzeba dodać do dat
+declare @Today			int --clarionowa data
+declare @CzkId			int --id kampanii związanej do której dodamy knt w wyniku powiązań między kamp	
+declare @AntKod			varchar(40)
+declare @AntNazwa		varchar(100)
+declare @AkcjaKod		varchar(40)
+declare @AkcjaTerminOd  int
+declare @CdzId			int
+
+
+if @KntNumer is null
+	set @KntNumer = 0
+if @KampNumer is null
+	set @KampNumer = 0
+if @EtapNumer is null
+	set @EtapNumer = 0
+if @OsobaOdp is null
+	set @OsobaOdp = 0
+if @OpeNumerM is null
+	set @OpeNumerM = 0
+SET NOCOUNT ON
+select @GIDFirma = frs_GIDFirma from cdn.frmstruktura where frs_id = 1
+
+select @TStampAkt = DATEDIFF(s,'19900101',GETDATE())
+
+select @Today = datediff(d,'18001228',getdate())
+
+if @KntLp is null 
+	set @KntLp = isnull((select max(CEK_KntLp)+1 from cdn.CrmKntEtapy where CEK_CkeNumer = @KampNumer),1)
+
+	set @CekId = isnull((select max(CEK_id)+1 from cdn.CrmKntEtapy),1)
+BEGIN TRAN XLDolaczKntDoEtapuCRM
+if not exists(select * from cdn.KntKarty where Knt_GIDNumer = @KntNumer)
+	begin
+		rollback tran XLDolaczKntDoEtapuCRM
+		if @IgnorujBledy is null
+			raiserror('Nie znaleziono kontrahenta - (-1)',16,1)
+		return -1
+	end
+else
+	if @KntOsobaLp &lt; 0 or @KntOsobaLp is null or not exists(select * from cdn.KntOsoby where KnS_KntNumer = @KntNumer
+															and KnS_KntLp = @KntOsobaLp and KnS_KntTyp=32)
+		select @KntOsobaLp=ISNULL(Knt_Osoba,0) from cdn.KntKarty where Knt_GIDNumer = @KntNumer	
+		
+
+if @AkwNumer &lt; 0 or @AkwNumer is null or not exists(select * from cdn.KntKarty where Knt_GIDNumer = @AkwNumer)
+	select @AkwNumer = 0, @AkwOsobaLp = 0
+else
+	if @AkwOsobaLp &lt; 0 or @AkwOsobaLp is null or not exists(select * from cdn.KntOsoby where KnS_KntNumer = @AkwNumer
+															and KnS_KntLp = @AkwOsobaLp and KnS_KntTyp=32)
+		set @AkwOsobaLp = 0
+if not exists(select * from cdn.CrmKampnag where CKN_GidNumer = @KampNumer and CKN_Zakonczona = 0)
+	begin 
+		rollback tran XLDolaczKntDoEtapuCRM
+		if @IgnorujBledy is null
+			raiserror('Nie znaleziono kampanii lub jest ona zakończona - (-2)',16,1)
+		return -2
+	end
+if not exists(select * from cdn.CrmKampEtapy where CKE_GIDNumer = @KampNumer and CKE_GIDLp = @EtapNumer
+				and CKE_Archiwalny = 0 and CKE_EtapBezKnt = 0)
+	begin
+		rollback tran XLDolaczKntDoEtapuCRM
+		if @IgnorujBledy is null
+			raiserror('Nie znaleziono etapu kampanii, jest on archiwalny lub nie można dodawać do niego kontrahentów - (-2)',16,1)
+		return -2
+	end
+
+if @OsobaOdp &gt; 0 and not exists (select * from cdn.opekarty where Ope_GIDNumer = @OsobaOdp and Ope_Zablokowane &lt;&gt; 1)
+	begin
+		rollback tran XLDolaczKntDoEtapuCRM
+		if @IgnorujBledy is null
+			raiserror('Nie znaleziono operatora prowadzącego - (-3)',16,1)
+		return -3
+	end
+
+if @OpeNumerM = 0 or not exists (select * from cdn.opekarty where Ope_GIDNumer = @OpeNumerM and Ope_Zablokowane &lt;&gt; 1)
+	begin
+		rollback tran XLDolaczKntDoEtapuCRM
+		if @IgnorujBledy is null
+			raiserror('Nie znaleziono operatora dodajacego kontrahenta - (-3)',16,1)
+		return -3
+	end
+
+if exists(select * from cdn.CrmKntEtapy where CEK_KntNumer = @KntNumer and CEK_Status = 0 and CEK_CKENumer = @KampNumer)
+	if exists(select * from cdn.CrmKampNag where CKN_GIDNumer = @KampNumer and CKN_WielokrotneDodawanie = 0 )
+	begin
+		rollback tran XLDolaczKntDoEtapuCRM
+		if @IgnorujBledy is null
+			raiserror('Istnieje aktywny kontrahent, a parametr "Wielokrotne dodawanie kontrahenta" nie jest zaznaczony dla tej kampanii - (-5)',16,1)
+		return -5
+	end
+
+if @OsobaOdp = 0 
+	select @PrcNumer = Knt_PrcNumer from cdn.KntKarty where Knt_GIDNumer = @KntNumer --opiekun z karty kontrahenta
+	
+if @OsobaOdp = -1
+	if exists(select * from cdn.KntKarty where Knt_GIDNumer = @KntNumer and Knt_AkwTyp = 32) 
+		select @AkwNumer = case when @AkwNumer = 0 then Knt_GIDNumer else @AkwNumer end, @PrcNumer = Knt_PrcNumer from cdn.KntKarty where Knt_GIDNumer = (select a.Knt_AkwNumer
+		from cdn.KntKarty a where a.Knt_GIDNumer = @KntNumer) --opiekun z karyt akwizytora u kontrahenta
+	else
+		if exists(select * from cdn.KntKarty where Knt_GIDNumer = @KntNumer and Knt_AkwTyp = 944)
+			select @PrcNumer = Knt_AkwNumer from cdn.KntKarty where Knt_GIDNumer = @KntNumer --pracownik to akwizytor u kontrahenta
+		else
+			set @PrcNumer = 0
+
+if (@OsobaOdp = 0 or  @OsobaOdp = -1)
+begin 
+	if @PrcNumer &lt;&gt; 0 and (select count(*) from cdn.OpeKarty where Ope_PrcNumer = @PrcNumer) = 1 
+		select @OpeNumer = Ope_GIDNumer	 from cdn.OpeKarty where Ope_PrcNumer = @PrcNumer
+	else --gdy dany pracownik będzie miał więcej niż jeden login to nie będziemy w ogóle brać operatora (top 1 nie ma sensu)
+		select @OpeNumer = 0, @PrcNumer = 0
+end
+else
+	set @OpeNumer = @OsobaOdp
+if @CzkZrdId &lt;&gt; 0 and exists(select * from cdn.CRMZwiazaneKamp where CZK_Id = @CzkZrdId and 
+							CZK_CKNZwNumer = @KampNumer and CZK_CKNZwLp = @EtapNumer)
+	select @CzkTermin = isnull((select CZK_Termin from cdn.CRMZwiazaneKamp where CZK_Id = @CzkZrdId),0)
+else
+	select @CzkTermin = 0, @CzkZrdId = 0
+
+declare @CKETerminarz tinyint
+declare @CKEPrzypomnienie tinyint
+declare @CKECzasPrzypomnienia int
+declare @CKECzasPrzypomnieniaJedn tinyint
+declare @CKESzansa smallint
+declare @CKEKntKoszt decimal(8,2)
+declare @CKEKwotaKontraktu decimal(15,2)
+declare @CKEPrzychodIlosc decimal(15,4)
+declare @CKEOpeNumerA int
+declare @CKEAkcjaZa smallint 
+declare @CKEDataKoniec int
+declare @CKEAkcja varchar(2000)
+declare @CKEWyliczKontrakt tinyint
+
+select 
+	@CKETerminarz = CKE_Terminarz,
+	@CKEPrzypomnienie = CKE_Przypomnienie,
+	@CKECzasPrzypomnienia = CKE_CzasPrzypomnienia,
+	@CKECzasPrzypomnieniaJedn = CKE_CzasPrzypomnieniaJedn,
+	@CKESzansa = CKE_Szansa,
+	@CKEKntKoszt = CKE_KntKoszt,
+	@CKEKwotaKontraktu = CKE_KwotaKontraktu,
+	@CKEPrzychodIlosc = CKE_PrzychodIlosc,
+	@CKEOpeNumerA = CKE_OpeNumerA,
+	@CKEAkcjaZa = CKE_AkcjaZa,
+	@CKEDataKoniec = CKE_DataKoniec,
+	@CKEAkcja = CKE_Akcja,
+	@CKEWyliczKontrakt = CKE_WyliczKontrakt
+from CDN.CRMKampEtapy
+where CKE_GIDNumer = @KampNumer and CKE_GIDLp = @EtapNumer
+if @Szansa is null or @Szansa &lt; 0 or @Szansa &gt; 100 
+	set @Szansa = @CKESzansa
+if @KntKoszt is null or @KntKoszt &lt; 0 or @KntKoszt &gt; 999999.99 
+	set @KntKoszt = @CKEKntKoszt
+if @Kwota is null or @Kwota &lt; 0 or @Kwota &gt; 999999999.99 
+	set @Kwota = @CKEKwotaKontraktu
+if @PrzychodIlosc is null or @PrzychodIlosc &lt; 0 or @PrzychodIlosc &gt; 99999999999.9999 
+	set @PrzychodIlosc = @CKEPrzychodIlosc
+if @WyliczKwote is null
+	set @WyliczKwote = IsNull(@CKEWyliczKontrakt,0)
+if @DataStart is null
+	set @DataStart = @Today + @CzkTermin
+if @OpeNumerA is null or not exists(select * from cdn.OpeKarty where Ope_GIDNumer = @OpeNumerA and Ope_Zablokowane &lt;&gt; 1)
+	set @OpeNumerA = IsNull(@CKEOpeNumerA,0)
+if @DataAkcji is null or @DataAkcji &gt; 93890 or @DataAkcji &lt; @Today
+	select @DataAkcji = @DataStart + @CKEAkcjaZa
+if @DataZakonczenia is null or @DataZakonczenia &gt; 93890
+	set @DataZakonczenia = ISNULL(@CKEDataKoniec,93890)
+
+if @DataZakonczenia &lt; @DataAkcji
+	set @DataZakonczenia = @DataAkcji
+if @Cykliczna is null
+	begin
+		select @CyklTyp = CKN_CyklTyp, @Interwal = CKN_Interwal, @CyklKoniec = CKN_CyklKoniec,
+		@IloscCykli = CKN_IloscCykli, @Cykliczna = CKN_Cykliczna from cdn.CrmKampNag
+		where CKN_GIDNumer = @KampNumer
+		 
+		select @CyklTyp = ISNULL(@CyklTyp,0),@Interwal = ISNULL(@Interwal,0),@CyklKoniec = ISNULL(@CyklKoniec,0),@IloscCykli = ISNULL(@IloscCykli,0),@Cykliczna = ISNULL(@Cykliczna,0)
+	end
+else
+	if @Cykliczna = 1
+		begin
+			if @CyklTyp is null or @CyklTyp not in (1,2,3,4)
+				set @CyklTyp = 1
+			if @Interwal is null or @Interwal &lt; 1
+				set @Interwal = 1
+			if @CyklKoniec is null or @CyklKoniec &lt; 4
+				set @CyklKoniec = 0
+			if @IloscCykli is null or @IloscCykli &lt; 1 or @CyklKoniec &lt;&gt; 0
+				set @IloscCykli = 0
+		end
+	else
+		select @CyklTyp = 0, @Interwal = 0, @CyklKoniec = 0, @IloscCykli = 0, @Cykliczna = 0
+
+if @NumerCyklu is null or @NumerCyklu &lt; 1
+	set @NumerCyklu = 1
+
+if @CzkWarunek is null or @CzkWarunek not in (1,2,3)
+	set @CzkWarunek = 1
+
+if @CzkFiaskoId is null
+	set @CzkFiaskoId = 0
+
+if @Terminarz is null or @Terminarz not in (1,2)
+	select @Terminarz = @CKETerminarz, @Przypomnienie = @CKEPrzypomnienie, @CzasPrzypomnienia = @CKECzasPrzypomnienia, @CzasPrzypomnieniaJedn = @CKECzasPrzypomnieniaJedn
+else
+	if @Przypomnienie is null or @Przypomnienie &lt;&gt; 1
+		select @Przypomnienie = 0, @CzasPrzypomnienia = 0, @CzasPrzypomnieniaJedn = 0	
+	else
+		begin 
+			if @CzasPrzypomnienia is null or @CzasPrzypomnienia &lt; 0
+				set @CzasPrzypomnienia = 0
+			if @CzasPrzypomnieniaJedn is null or @CzasPrzypomnieniaJedn not in (1,2,3,4)
+				set @CzasPrzypomnieniaJedn = 0
+		end
+
+if @KnANumer is null or not exists(select * from cdn.KntAdresy where KnA_GIDNumer = @KnANumer 
+								and KnA_GIDTyp = @KnATyp)
+	select @KnATyp = 864, @KnANumer = KnA_GIDNumer from cdn.KntAdresy where KnA_KntNumer = @KntNumer 
+	and KnA_DataArc = 0 and KnA_GIDTyp = 864
+
+if @AntZadId is null
+	set @AntZadId = 0
+
+if @AntId is null or not exists(select * from cdn.Ankiety where Ant_Id = @AntId and Ant_Aktywna = 1)
+	set @AntId = ISNULL((select CKN_AntId from CDN.CRMKampNag join CDN.Ankiety on CKN_GIDNumer = @KampNumer
+	and CKN_AntId = ANT_Id and ANT_Aktywna = 1),0)
+
+if @AntId &gt; 0
+	select @AntKod = Ant_Kod, @AntNazwa = Ant_Nazwa from cdn.Ankiety where Ant_Id = @AntId
+
+if @KopiujBinarne is null or @KopiujBinarne not in (0,1)
+	set @KopiujBinarne = 0
+
+if @KopiujAtrybuty is null or @KopiujAtrybuty not in (0,1)
+	set @KopiujAtrybuty = 0
+
+if @AkcjaWykonana is null or @AkcjaWykonana not in (0,1)
+	set @AkcjaWykonana = 0
+	
+if @Akcja is null
+	set @Akcja = ISNULL(@CKEAkcja,'')
+
+insert into cdn.CrmKntEtapy(
+CEK_Id,
+CEK_CKETyp,
+CEK_CKEFirma,
+CEK_CKENumer,
+CEK_CKELp,
+CEK_KntTyp,
+CEK_KntFirma,
+CEK_KntNumer,
+CEK_KntLp,
+CEK_KntOsobaLp,
+CEK_Szansa,
+CEK_Kwota,
+CEK_Status,
+CEK_SaZadania,
+CEK_FiaskoID,
+CEK_DataStart,
+CEK_DataKoniec,
+CEK_TStampAkt,
+CEK_Notatki,
+CEK_Url,
+CEK_OpeTyp,
+CEK_OpeFirma,
+CEK_OpeNumer,
+CEK_OpeLp,
+CEK_OpeNumerD,
+CEK_OpeTypM,
+CEK_OpeFirmaM,
+CEK_OpeNumerM,
+CEK_OpeLpM,
+CEK_AkwTyp,
+CEK_AkwFirma,
+CEK_AkwNumer,
+CEK_AkwLp,
+CEK_AkwOsobaLp,
+CEK_AkwLpKoniec,
+CEK_OpeTypA,
+CEK_OpeFirmaA,
+CEK_OpeNumerA,
+CEK_OpeLpA,
+CEK_DataAkcji,
+CEK_Akcja,
+CEK_AkcjaWykonana,
+CEK_NumerCyklu,
+CEK_Cykliczna,
+CEK_CyklTyp,
+CEK_CyklKoniec,
+CEK_IloscCykli,
+CEK_Interwal,
+CEK_DataZakonczenia,
+CEK_KopiujAtrybuty,
+CEK_CZKZrdID,
+CEK_Terminarz,
+CEK_KnATyp,
+CEK_KnANumer,
+CEK_Przypomnienie,
+CEK_CzasPrzypomnienia,
+CEK_CzasPrzypomnieniaJedn,
+CEK_KopiujBinarne,
+CEK_PrzychodIlosc,
+CEK_AntId,
+CEK_AntZadId,
+CEK_KntKoszt,
+CEK_PrzeniesionyZ,
+CEK_TypKnt,
+CEK_WyliczKwote
+)values(
+@CekId,
+4176,--CEK_CKETyp
+@GIDFirma,--CEK_CKEFirma
+@KampNumer,--CEK_CKENumer
+@EtapNumer,--CEK_CKELp
+32,--CEK_KntTyp
+@GIDFirma,--CEK_KntFirma
+@KntNumer,--CEK_KntNumer
+@KntLp,--CEK_KntLp
+@KntOsobaLp,--CEK_KntOsobaLp
+@Szansa,--CEK_Szansa
+@Kwota,--CEK_Kwota
+0,--CEK_Status
+0,--CEK_SaZadania
+0,--CEK_FiaskoID
+@DataStart,--CEK_DataStart
+0,--CEK_DataKoniec
+@TStampAkt,--CEK_TStampAkt
+isnull(@Notatki,''),--CEK_Notatki
+isnull(@Url,''),--CEK_Url
+case when @OpeNumer &lt;&gt; 0 then 128 else 0 end,--CEK_OpeTyp
+case when @OpeNumer &lt;&gt; 0 then @GIDFirma else 0 end,--CEK_OpeFirma
+@OpeNumer,--CEK_OpeNumer
+0,--CEK_OpeLp
+@OpeNumerM,--CEK_OpeNumerD
+128,--CEK_OpeTypM
+@GIDFirma,--CEK_OpeFirmaM
+@OpeNumerM,--CEK_OpeNumerM
+0,--CEK_OpeLpM
+case when @AkwNumer &lt;&gt; 0 then 128 else 0 end,--CEK_AkwTyp
+case when @AkwNumer &lt;&gt; 0 then @GIDFirma else 0 end,--CEK_AkwFirma
+@AkwNumer,--CEK_AkwNumer
+0,--CEK_AkwLp
+@AkwOsobaLp,--CEK_AkwOsobaLp
+0,--CEK_AkwLpKoniec
+case when @OpeNumerA &lt;&gt; 0 then 128 else 0 end,--CEK_OpeTypA
+case when @OpeNumerA &lt;&gt; 0 then @GIDFirma else 0 end,--CEK_OpeFirmaA
+@OpeNumerA,--CEK_OpeNumerA
+0,--CEK_OpeLpA
+@DataAkcji,--CEK_DataAkcji
+@Akcja,--CEK_Akcja
+@AkcjaWykonana,--CEK_AkcjaWykonana
+@NumerCyklu,--CEK_NumerCyklu
+@Cykliczna,--CEK_Cykliczna
+@CyklTyp,--CEK_CyklTyp
+@CyklKoniec,--CEK_CyklKoniec
+@IloscCykli,--CEK_IloscCykli
+@Interwal,--CEK_Interwal
+@DataZakonczenia,--CEK_DataZakonczenia
+@KopiujAtrybuty,--CEK_KopiujAtrybuty
+@CZKZrdID,--CEK_CZKZrdID
+@Terminarz,--CEK_Terminarz
+@KnATyp,--CEK_KnATyp
+@KnANumer,--CEK_KnANumer
+@Przypomnienie,--CEK_Przypomnienie
+@CzasPrzypomnienia,--CEK_CzasPrzypomnienia
+@CzasPrzypomnieniaJedn,--CEK_CzasPrzypomnieniaJedn
+@KopiujBinarne,--CEK_KopiujBinarne
+@PrzychodIlosc,--CEK_PrzychodIlosc
+@AntId,--CEK_AntId
+@AntZadId,--CEK_AntZadId
+@KntKoszt,
+0,--CEK_PrzeniesionyZ,
+0,--CEK_TypKnt
+@WyliczKwote--CEK_WyliczKwote
+)
+if @@error &lt;&gt; 0  
+	begin
+		rollback tran XLDolaczKntDoEtapuCRM
+		if @IgnorujBledy is null
+			raiserror('Błąd podczas dodawania kontrahenta do etapu - (-33)', 16, 1)
+		return -33
+	end	
+
+COMMIT TRAN XLDolaczKntDoEtapuCRM
+exec CDN.AtrKopiujAtrybuty @ZrdTyp=32,@ZrdFirma=@GIDFirma,@ZrdNumer=@KntNumer,@ZrdLp=0,@ZrdSubLp=0,
+@DocTyp=4176,@DocFirma=@GIdFirma,@DocNumer=@CekId,@DocLp=0,@DocSubLp=32,@OpeTyp=128,@OpeFirma=@GIdFirma,@OpeNumer=@OpeNumerM,@OpeLp=0,@Blad=0
+
+INSERT INTO CDN.CRMKntEtapyTwr(CPT_CEKId,CPT_CKTId,CPT_PrzychodIlosc)
+SELECT @CekId,CET_CKTId,CET_PrzychodIlosc FROM CDN.CRMEtapyTwr WHERE CET_CKENumer=@KampNumer AND CET_CKELp=@EtapNumer AND CET_PrzychodIlosc&lt;&gt;0
+
+IF @WyliczKwote&gt;0 
+BEGIN				
+	SELECT @Kwota=IsNull(Sum(CDN.WartoscWWalucieSys(TwC_Wartosc,TwC_Waluta,TwC_NrKursu,DATEDIFF(S,'19900101',GETDATE()))*CPT_PrzychodIlosc),0)
+	FROM CDN.CRMKntEtapyTwr
+	JOIN CDN.CRMKampTwr ON CKT_ID=CPT_CKTId
+	JOIN CDN.TwrKarty ON Twr_GIDNumer=CKT_TwrNumer AND Twr_GIDTyp=CKT_TwrTyp
+	JOIN CDN.TwrCeny ON TwC_TwrNumer=Twr_GIDNumer AND TwC_TwrTyp=Twr_GIDTyp AND TwC_TwrLp=Twr_CenaSpr
+	WHERE CPT_CEKId=@CekId
+					
+	UPDATE CDN.CRMKntEtapy SET CEK_Kwota=@Kwota WHERE CEK_Id=@CekId					
+END
+if @AntId &lt;&gt; 0 and @AntZadId = 0
+	exec @AntZadId = CDN.XLNoweZadanieTERMINARZ @Kod=@AntKod,@Nazwa=@AntNazwa,@OpeTyp=128,@OpeNumer=@OpeNumerM,@ObiTyp=32,@ObiNumer=@KntNumer,@ZrdTyp=14460,@ZrdNumer=@AntId,@ZrdLp=0,@ZrdPytania = -1
+if @AntZadId &gt; 0
+	update CDN.CRMKntEtapy set CEK_AntZadId = @AntZadId where CEK_ID = @CekId
+
+if @Terminarz &lt;&gt; 0
+	begin
+		select @AkcjaKod = Knt_Akronim+'/'+CKN_Kod+'/'+CKE_Kod, @AkcjaTerminOd = CKE_AkcjaZa*86400+@TStampAkt from CDN.CRMKntEtapy 
+		join CDN.KntKarty on CEK_ID = @CekId and CEK_KntNumer = Knt_GIDNumer
+		join CDN.CRMKampNag on CEK_CKENumer = CKN_GIDNumer 
+		join CDN.CRMKampEtapy on CEK_CKENumer = CKE_GIDNumer and CEK_CKELp = CKE_GIDLp
+		
+		exec CDN.XLNoweZadanieTERMINARZ @Kod=@AkcjaKod,@Nazwa='Wykonanie akcji na kontrahencie w etapie',@OpeTyp=128,@OpeNumer=@OpeNumerM,@ObiTyp=32,@ObiNumer=@KntNumer,
+		@ZrdTyp=341,@ZrdNumer=@CekId,@ZrdLp=0,@Przypomnienie=@Przypomnienie,@CzasPrzypomnienia=@CzasPrzypomnienia,@CzasPrzypomnieniaJedn=@CzasPrzypomnieniaJedn,
+		@TerminOd=@AkcjaTerminOd,@Opis=@Akcja,@OpePrcJakoObiekt=1
+	end
+
+declare cursorZadaniaCrm cursor fast_forward for
+	select CDZ_Id from cdn.CrmDefZadania where CDZ_CKENumer = @KampNumer and CDZ_CKELp = @EtapNumer and CDZ_CkeTyp=4176
+open cursorZadaniaCrm
+	while 1=1
+	begin
+		fetch NEXT from cursorZadaniaCrm into @CdzId
+		if @@fetch_status &lt;&gt; 0 break
+		execute CDN.XLDodajElementDoWatkuCRM @Tytul='',@ElementTyp=2,@opeStartNumer=@OpeNumerM,@CdzId=@CdzId,@Opis='',
+				@SsNNumer=0,@KntNumer=@KntNumer,@KntLp=@KntLp,@KntOsobaLp=@KntOsobaLp,@CkeNumer=@KampNumer,@CkeLp=@EtapNumer
+	end
+close cursorZadaniaCrm
+deallocate cursorZadaniaCrm
+
+if exists(select * from cdn.CRMZwiazaneKamp where CZK_Status = 1 and CZK_Warunek = @CzkWarunek and CZK_FiaskoId = @CzkFiaskoId and
+((CZK_CKNNumer = @KampNumer and CZK_CKNLp = 0) or (CZK_CKNNumer = @KampNumer and CZK_CKNLp = @EtapNumer)))
+	if (select count(*) from cdn.CRMZwiazaneKamp where CZK_Status = 1 and CZK_Warunek = @CzkWarunek and CZK_FiaskoId = @CzkFiaskoId and
+	((CZK_CKNNumer = @KampNumer and CZK_CKNLp = 0) or (CZK_CKNNumer = @KampNumer and CZK_CKNLp = @EtapNumer))) = 1
+		begin
+			select @CzkId = CZK_Id, @KampNumer = CZK_CKNZwNumer, @EtapNumer = CZK_CKNZwLp from cdn.CRMZwiazaneKamp
+			where CZK_Status = 1 and CZK_Warunek = @CzkWarunek and CZK_FiaskoId = @CzkFiaskoId and
+			((CZK_CKNNumer = @KampNumer and CZK_CKNLp = 0) or (CZK_CKNNumer = @KampNumer and CZK_CKNLp = @EtapNumer))
+
+			execute cdn.XLDolaczKntDoEtapuCRM @KntNumer = @KntNumer, @KampNumer = @KampNumer, @EtapNumer = @EtapNumer, 
+			@OsobaOdp = @OsobaOdp, @OpeNumerM = @OpeNumerM, @CZKZrdID = @CzkId, @IgnorujBledy = 0
+			 
+		end
+	else --kursor tylko gdy musimy go użyć
+		begin
+			declare cursorKampZwiaz cursor fast_forward for
+				select CZK_Id, CZK_CKNZwNumer, CZK_CKNZwLp from cdn.CRMZwiazaneKamp
+				where CZK_Status = 1 and CZK_Warunek = @CzkWarunek and CZK_FiaskoId = @CzkFiaskoId and
+				((CZK_CKNNumer = @KampNumer and CZK_CKNLp = 0) or (CZK_CKNNumer = @KampNumer and CZK_CKNLp = @EtapNumer))
+			open cursorKampZwiaz
+				while 1=1
+				begin
+					fetch NEXT from cursorKampZwiaz into @CzkId, @KampNumer, @EtapNumer
+					if @@fetch_status &lt;&gt; 0 break
+
+					execute cdn.XLDolaczKntDoEtapuCRM @KntNumer = @KntNumer, @KampNumer = @KampNumer, @EtapNumer = @EtapNumer, 
+						@OsobaOdp = @OsobaOdp, @OpeNumerM = @OpeNumerM, @CZKZrdID = @CzkId, @IgnorujBledy = 0
+				end
+			close cursorKampZwiaz
+			deallocate cursorKampZwiaz
+		end
+
+select CekId = @CekId
+SET NOCOUNT OFF
+RETURN @CekId
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

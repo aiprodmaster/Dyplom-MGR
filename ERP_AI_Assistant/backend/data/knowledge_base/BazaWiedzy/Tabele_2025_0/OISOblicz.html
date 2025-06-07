@@ -1,0 +1,280 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie procedury OISOblicz_WPaczkach"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie procedury OISOblicz_WPaczkach */</I><BR>
+IF EXISTS (SELECT name  FROM sysobjects WHERE name = 'OISOblicz_WPaczkach' AND type = 'P')
+  DROP PROCEDURE CDN.OISOblicz_WPaczkach;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury OISOblicz_WPaczkach"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury OISOblicz_WPaczkach */</I><BR>
+CREATE PROCEDURE CDN.OISOblicz_WPaczkach
+  @CDN_Data_od INTEGER,
+  @CDN_Data_do  INTEGER,
+  @CDN_Bufor smallint,  
+  @Konto varchar(50)='',
+  @OkresID INTEGER,
+  @CDN_FiltrWybraneKonta tinyint=0,
+  @CDN_FiltrUsera1 nvarchar(3000) = '',
+  @CDN_FiltrUsera2 nvarchar(3000) = '',
+  @CDN_FiltrUsera3 nvarchar(3000) = '',
+  @BezStanow smallint = 0,--??  
+  @CDN_FiltrDekrety nvarchar(max) = '',
+  @CDN_FiltrDekretyID int = 0,
+  @CDN_KwotyWmr tinyint = 0,
+  @CDN_FiltrWmr nvarchar(max) = '', 
+  @CDN_OpeNumer int=0,  
+  @CDN_ZestawieniaTakNie tinyint=0,
+  @CDN_TypZestawienia tinyint=100   
+
+  ,@_NazwaTabeliOIS NVARCHAR(31)
+  ,@PrzeliczNaNowo TINYINT=1 --gdy 0 to w @Konto jest konto do odswiezenia
+AS
+begin
+declare @OkresIDKoniec int
+declare @KoniecC int
+set @KoniecC = @CDN_Data_do
+declare @KontoSyn varchar(50)
+declare @KontoSynOrd varchar(50)
+declare @PoprzednieKontoSynOrd varchar(50)=''
+declare @Ilosc int
+declare @IloscWOkresie int
+declare @KontoOrd VARCHAR(30)=''
+declare @Analityka tinyint
+--set nocount on 
+
+		declare @sSQL nvarchar(max)
+
+		select 
+			@OkresIDKoniec = Okr_ID
+		from cdn.Okresy
+		where Okr_Poczatek &lt;= @KoniecC and Okr_Koniec &gt;= @KoniecC
+		
+		
+		IF OBJECT_ID('tempdb..'+@_NazwaTabeliOIS) is null
+		BEGIN
+			RAISERROR('Nie istnieje wskazana tabela wynikowa %s',16,1, @_NazwaTabeliOIS)
+			RETURN
+		END
+
+		IF @PrzeliczNaNowo=1		
+		BEGIN
+			set @sSQL = N'TRUNCATE TABLE '+@_NazwaTabeliOIS;				
+			EXEC sp_executeSQL @sSQL;
+			declare cursKonta cursor static for  	
+				select KKS_Konto, KKS_KontoOrd, count(1) Ilosc
+				from cdn.Konta left join cdn.KontaLinki on KKS_GIDNumer=KKL_SynNumer and KKL_Analityka=1
+				where KKS_OkresID = @OkresIDKoniec and KKS_Poziom=0
+				group by KKS_Konto, KKS_KontoOrd
+				order by KKS_KontoOrd
+		END
+		ELSE		
+		BEGIN
+			SELECT @KontoOrd = KKS_KontoOrd FROM cdn.Konta where KKS_OkresID = @OkresIDKoniec AND KKS_Konto = @Konto
+			set @sSQL = N'DELETE FROM '+@_NazwaTabeliOIS+N' WHERE OIS_KontoOrd LIKE '''+CONVERT(NVARCHAR,@KontoOrd)+N' %''';
+			EXEC sp_executeSQL @sSQL;
+
+			set @sSQL = N'DELETE FROM '+@_NazwaTabeliOIS+N' WHERE OIS_KontoOrd = '''+CONVERT(NVARCHAR,@KontoOrd)+'''';
+			EXEC sp_executeSQL @sSQL;
+
+			declare cursKonta cursor static for  	
+				select KKS_Konto, KKS_KontoOrd, count(1) Ilosc
+				from cdn.Konta left join cdn.KontaLinki on KKS_GIDNumer=KKL_SynNumer and KKL_Analityka=1
+				where KKS_OkresID = @OkresIDKoniec and KKS_Konto = @Konto
+				group by KKS_Konto, KKS_KontoOrd
+				order by KKS_KontoOrd
+		END
+						
+
+		open cursKonta
+		fetch next from cursKonta into @KontoSyn, @KontoSynOrd, @Ilosc
+		while @@fetch_Status = 0
+		begin
+			IF @PoprzednieKontoSynOrd+'.' &lt;&gt; LEFT(@KontoSynOrd,LEN(@PoprzednieKontoSynOrd)+1)
+			BEGIN
+				--waitfor delay '00:00:00:300'			
+				exec CDN.OISOblicz_Analityki
+					  @CDN_Data_od =@CDN_Data_od,
+					  @CDN_Data_do  =@CDN_Data_do,
+					  @CDN_Bufor =@CDN_Bufor,
+					  @Konto =@KontoSyn,
+					  @OkresID=@OkresID,
+					  @CDN_FiltrWybraneKonta =@CDN_FiltrWybraneKonta,
+					  @CDN_FiltrUsera1 =@CDN_FiltrUsera1,
+					  @CDN_FiltrUsera2 =@CDN_FiltrUsera2,
+					  @CDN_FiltrUsera3 =@CDN_FiltrUsera3,				  
+					  @BezStanow =@BezStanow,				  
+					  @CDN_FiltrDekrety =@CDN_FiltrDekrety,
+					  @CDN_FiltrDekretyID =@CDN_FiltrDekretyID,
+					  @CDN_KwotyWmr =@CDN_KwotyWmr,
+					  @CDN_FiltrWmr =@CDN_FiltrWmr, 
+					  @CDN_OpeNumer =@CDN_OpeNumer,				  
+					  @CDN_ZestawieniaTakNie =@CDN_ZestawieniaTakNie,
+					  @CDN_TypZestawienia =@CDN_TypZestawienia   
+
+					  ,@_NazwaTabeliOIS =@_NazwaTabeliOIS
+					  ,@PrzeliczNaNowo =0
+		
+				EXEC cdn.OISOblicz_Syntetyki @KontoSynOrd, @OkresIDKoniec, @_NazwaTabeliOIS
+				SET @PoprzednieKontoSynOrd = @KontoSynOrd
+			END
+			fetch next from cursKonta into @KontoSyn, @KontoSynOrd, @Ilosc
+		end
+
+		close cursKonta
+		deallocate cursKonta
+--set nocount off		
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury OISOblicz_WPaczkach"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury OISOblicz_WPaczkach */</I><BR>
+GRANT EXECUTE ON CDN.OISOblicz_WPaczkach TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie procedury OISOblicz_ZListy"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie procedury OISOblicz_ZListy */</I><BR>
+IF EXISTS (SELECT name  FROM sysobjects WHERE name = 'OISOblicz_ZListy' AND type = 'P')
+  DROP PROCEDURE CDN.OISOblicz_ZListy;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury OISOblicz_ZListy"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury OISOblicz_ZListy */</I><BR>
+CREATE PROCEDURE CDN.OISOblicz_ZListy
+  @CDN_Data_od INTEGER,
+  @CDN_Data_do  INTEGER,
+  @CDN_Bufor smallint,
+  @Konto varchar(50)='',
+  @OkresID INTEGER,
+  @CDN_FiltrWybraneKonta tinyint=0,
+  @CDN_FiltrUsera1 nvarchar(3000) = '',
+  @CDN_FiltrUsera2 nvarchar(3000) = '',
+  @CDN_FiltrUsera3 nvarchar(3000) = '',
+  @BezStanow smallint = 0,--??  
+  @CDN_FiltrDekrety nvarchar(max) = '',
+  @CDN_FiltrDekretyID int = 0,
+  @CDN_KwotyWmr tinyint = 0,
+  @CDN_FiltrWmr nvarchar(max) = '', 
+  @CDN_OpeNumer int=0,  
+  @CDN_ZestawieniaTakNie tinyint=0,
+  @CDN_TypZestawienia tinyint=100   
+
+  ,@_NazwaTabeliOIS NVARCHAR(31) = ''
+  ,@PrzeliczNaNowo TINYINT=1 --1 licz wszystko od poczatku, 0 przeliczaj dla wybranego konta (z syntetyka)
+AS
+begin
+declare @OkresIDKoniec int
+declare @KoniecC int
+set @KoniecC = @CDN_Data_do
+declare @KontoSyn varchar(50)
+declare @Ilosc int
+declare @IloscWOkresie int
+	--waitfor delay '00:00:05'
+	IF @_NazwaTabeliOIS&lt;&gt;'' 
+		AND ((@Konto='' OR @Konto ='%') 
+				AND @CDN_FiltrUsera1='' 
+				AND @CDN_FiltrWybraneKonta=0)
+		OR @PrzeliczNaNowo = 0
+	BEGIN		
+		declare @sSQL nvarchar(max)
+
+		select 
+			@OkresIDKoniec = Okr_ID
+		from cdn.Okresy
+		where Okr_Poczatek &lt;= @KoniecC and Okr_Koniec &gt;= @KoniecC
+
+		IF @PrzeliczNaNowo=1
+			select @IloscWOkresie = count(1) from cdn.Konta where KKS_OkresID = @OkresIDKoniec;
+
+		IF @PrzeliczNaNowo = 0 OR @IloscWOkresie &gt; 1000000
+		BEGIN
+			exec CDN.OISOblicz_WPaczkach
+				  @CDN_Data_od =@CDN_Data_od,
+				  @CDN_Data_do  =@CDN_Data_do,
+				  @CDN_Bufor =@CDN_Bufor,
+				  @Konto =@Konto,
+				  @OkresID=@OkresID,
+				  @CDN_FiltrWybraneKonta =@CDN_FiltrWybraneKonta,
+				  @CDN_FiltrUsera1 =@CDN_FiltrUsera1,
+				  @CDN_FiltrUsera2 =@CDN_FiltrUsera2,
+				  @CDN_FiltrUsera3 =@CDN_FiltrUsera3,				  
+				  @BezStanow =@BezStanow,				  
+				  @CDN_FiltrDekrety =@CDN_FiltrDekrety,
+				  @CDN_FiltrDekretyID =@CDN_FiltrDekretyID,
+				  @CDN_KwotyWmr =@CDN_KwotyWmr,
+				  @CDN_FiltrWmr =@CDN_FiltrWmr, 
+				  @CDN_OpeNumer =@CDN_OpeNumer,				  
+				  @CDN_ZestawieniaTakNie =@CDN_ZestawieniaTakNie,
+				  @CDN_TypZestawienia =@CDN_TypZestawienia   
+
+				  ,@_NazwaTabeliOIS =@_NazwaTabeliOIS
+				  ,@PrzeliczNaNowo =@PrzeliczNaNowo
+
+			RETURN
+		END		
+	END
+	
+	EXEC CDN.OISOblicz_Analityki
+				@CDN_Data_od =@CDN_Data_od,
+				@CDN_Data_do  =@CDN_Data_do,
+				@CDN_Bufor =@CDN_Bufor,
+				@Konto =@Konto,
+				@OkresID =@OkresID,
+				@CDN_FiltrWybraneKonta =@CDN_FiltrWybraneKonta,
+				@CDN_FiltrUsera1 =@CDN_FiltrUsera1,
+				@CDN_FiltrUsera2 =@CDN_FiltrUsera2,
+				@CDN_FiltrUsera3 =@CDN_FiltrUsera3,				
+				@BezStanow =@BezStanow,				
+				@CDN_FiltrDekrety =@CDN_FiltrDekrety,
+				@CDN_FiltrDekretyID =@CDN_FiltrDekretyID,
+				@CDN_KwotyWmr =@CDN_KwotyWmr,
+				@CDN_FiltrWmr =@CDN_FiltrWmr, 
+				@CDN_OpeNumer =@CDN_OpeNumer,				
+				@CDN_ZestawieniaTakNie =@CDN_ZestawieniaTakNie,
+				@CDN_TypZestawienia =@CDN_TypZestawienia   
+
+				,@_NazwaTabeliOIS =@_NazwaTabeliOIS
+				,@PrzeliczNaNowo =@PrzeliczNaNowo
+	
+	EXEC cdn.OISOblicz_Syntetyki '', 0, @_NazwaTabeliOIS
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury OISOblicz_ZListy"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury OISOblicz_ZListy */</I><BR>
+GRANT EXECUTE ON CDN.OISOblicz_ZListy TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,202 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="UaktualnijStanyHistoryczne"></A><PRE>
+          <FONT SIZE="2"><I>/* UaktualnijStanyHistoryczne */</I><BR>
+CREATE PROCEDURE CDN.UaktualnijStanyHistoryczne
+@DATA                   int, 
+@TWRTYP                 smallint, 
+@TWRFIRMA               int, 
+@TWRNUMER               int, 
+@TWRLP                  smallint, 
+@MAGTYP                 smallint, 
+@MAGFIRMA               int, 
+@MAGNUMER               int, 
+@MAGLP                  smallint, 
+@KSIEGOWANETTO          DECIMAL(18,2), 
+@RZECZYWISTANETTO       DECIMAL(18,2), 
+@ILSPR                  DECIMAL(14,4), 
+@ILMAG                  DECIMAL(14,4) 
+AS 
+	INSERT INTO cdn.TwrStanyBufor (TSB_Data,TSB_TwrTyp,TSB_TwrFirma,TSB_TwrNumer,
+		TSB_TwrLp,TSB_MagTyp,TSB_MagFirma,TSB_MagNumer,TSB_MagLp,
+		TSB_KsiegowaNetto,TSB_RzeczywistaNetto,
+		TSB_IlSpr,TSB_IlMag)
+		VALUES(@DATA,@TWRTYP,@TWRFIRMA,@TWRNUMER,@TWRLP,
+		@MAGTYP,@MAGFIRMA,@MAGNUMER,@MAGLP,@KSIEGOWANETTO,
+		@RZECZYWISTANETTO,@ILSPR,@ILMAG)
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="PrzetworzStanyHistoryczne"></A><PRE>
+          <FONT SIZE="2"><I>/* PrzetworzStanyHistoryczne */</I><BR>
+CREATE PROCEDURE CDN.PrzetworzStanyHistoryczne
+AS 
+BEGIN 
+	DECLARE @DATA                   int, 
+		@DATAORG                int, 
+		@TWRTYP                 smallint, 
+		@TWRFIRMA               int, 
+		@TWRNUMER               int, 
+		@TWRLP                  smallint, 
+		@MAGTYP                 smallint, 
+		@MAGNUMER               int, 
+		@MAGLP                  smallint, 
+		@KSIEGOWANETTO          DECIMAL(24,2), 
+		@RZECZYWISTANETTO       DECIMAL(24,2), 
+		@ILSPR                  DECIMAL(20,4), 
+		@ILMAG                  DECIMAL(20,4),
+		@TYP int,
+		@DATASQL      DATETIME,
+		@ROK          INT,
+		@MIESIAC      INT
+	SET @TYP=(SELECT KON_WARTOSC FROM CDN.Konfig WHERE KON_NUMER=9938)
+	IF @TYP=2 
+	BEGIN 
+	  --historyczne stany towarow wylaczone 
+	  RETURN 
+	END 
+	BEGIN TRANSACTION
+	DECLARE StanyBufor  CURSOR LOCAL FAST_FORWARD FOR SELECT TSB_Data,TSB_TwrTyp,TSB_TwrFirma,TSB_TwrNumer,
+					TSB_TwrLp,TSB_MagTyp,TSB_MagNumer,TSB_MagLp,
+					SUM(TSB_KsiegowaNetto),SUM(TSB_RzeczywistaNetto),
+					SUM(TSB_IlSpr),SUM(TSB_IlMag) FROM cdn.TwrStanyBufor WITH(SERIALIZABLE) GROUP BY TSB_Data,TSB_TwrTyp,TSB_TwrFirma,TSB_TwrNumer,
+					TSB_TwrLp,TSB_MagTyp,TSB_MagNumer,TSB_MagLp ORDER BY TSB_Data
+	OPEN StanyBufor
+	FETCH NEXT FROM StanyBufor INTO @DATAORG,@TWRTYP,@TWRFIRMA,@TWRNUMER,@TWRLP,@MAGTYP,@MAGNUMER,@MAGLP,
+					@KSIEGOWANETTO,@RZECZYWISTANETTO,@ILSPR,@ILMAG 
+	WHILE @@FETCH_STATUS = 0
+	BEGIN	
+		IF @TYP=0 
+		BEGIN 
+		  --okres jednodniowy 
+		  SET @DATA=@DATAORG-@DATAORG%86400 
+		END 
+		IF @TYP=1
+		BEGIN 
+		  --okres miesieczny 
+		  SET @DATASQL=DATEADD(second,@DATAORG,'1990-01-01 00:00:00.000') 
+		  SET @ROK=YEAR(@DATASQL) 
+		  SET @MIESIAC=MONTH(@DATASQL) 
+		  SET @DATA=DATEDIFF(second,CONVERT(DATETIME,'1990-01-01 00:00:00.000',121),CONVERT(DATETIME, 
+        		CAST(YEAR(@DATASQL) AS VARCHAR(5))+'-'+CAST(MONTH(@DATASQL) AS VARCHAR(3)) 
+	        	+'-01 00:00:00.00',121))  
+		END 
+		IF @@ERROR&lt;&gt;0 
+		BEGIN
+			ROLLBACK
+			RETURN
+		END
+		IF NOT EXISTS(SELECT * FROM CDN.TwrStany WHERE TWS_TWRTYP=@TWRTYP AND 
+	               	TWS_TWRNUMER=@TWRNUMER AND 
+		        TWS_TWRLP=@TWRLP AND 
+        		TWS_MAGTYP=@MAGTYP AND 
+			TWS_MAGNUMER=@MAGNUMER AND 
+	        	TWS_MAGLP=@MAGLP AND 
+	        	TWS_DATA&gt;=@DATA)
+		BEGIN
+			DECLARE @INSKSIEGOWANETTO          DECIMAL(18,2), 
+				@INSRZECZYWISTANETTO       DECIMAL(18,2), 
+				@INSILSPR                  DECIMAL(14,4), 
+				@INSILMAG                  DECIMAL(14,4)
+
+			SELECT @INSKSIEGOWANETTO=TWS_KsiegowaNetto,@INSRZECZYWISTANETTO=TWS_RzeczywistaNetto,
+				@INSILSPR=TWS_IlSpr,@INSILMAG=TWS_IlMag
+			FROM CDN.TwrStany AS B WHERE
+				B.TWS_TWRTYP=@TWRTYP AND 
+			        B.TWS_TWRNUMER=@TWRNUMER AND 
+			        B.TWS_TWRLP=@TWRLP AND 
+			        B.TWS_MAGTYP=@MAGTYP AND 
+			        B.TWS_MAGNUMER=@MAGNUMER AND 
+			        B.TWS_MAGLP=@MAGLP AND 
+			        B.TWS_DATA=(SELECT MAX(TWS_DATA) FROM CDN.TwrStany WHERE
+				        TWS_TWRTYP=@TWRTYP AND 
+				        TWS_TWRNUMER=@TWRNUMER AND 
+				        TWS_TWRLP=@TWRLP AND 
+				        TWS_MAGTYP=@MAGTYP AND 
+		        		TWS_MAGNUMER=@MAGNUMER AND 
+				        TWS_MAGLP=@MAGLP AND 
+				        TWS_DATA&lt;@DATA)
+			INSERT INTO cdn.TwrStany (TWS_Data,TWS_TwrTyp,TWS_TwrFirma,TWS_TwrNumer,
+				TWS_TwrLp,TWS_MagTyp,TWS_MagFirma,TWS_MagNumer,TWS_MagLp,
+				TWS_KsiegowaNetto,TWS_RzeczywistaNetto,
+				TWS_IlSpr,TWS_IlMag) 
+			SELECT @DATA,@TWRTYP,@TWRFIRMA,@TWRNUMER,
+				@TWRLP,@MAGTYP,@TWRFIRMA,@MAGNUMER,@MAGLP,
+				ISNULL(@INSKSIEGOWANETTO,0),ISNULL(@INSRZECZYWISTANETTO,0),
+				ISNULL(@INSILSPR,0),ISNULL(@INSILMAG,0)
+		END
+
+		IF @@ERROR&lt;&gt;0 
+		BEGIN
+			ROLLBACK
+			RETURN
+		END
+
+	        UPDATE CDN.TwrStany WITH(SERIALIZABLE)
+		SET 
+	        	TWS_KSIEGOWANETTO=TWS_KSIEGOWANETTO+@KSIEGOWANETTO, 
+		        TWS_RZECZYWISTANETTO=TWS_RZECZYWISTANETTO+@RZECZYWISTANETTO, 
+			TWS_ILSPR=TWS_ILSPR+@ILSPR, 
+        		TWS_ILMAG=TWS_ILMAG+@ILMAG 
+		WHERE 
+        		TWS_TWRTYP=@TWRTYP AND 
+	        	TWS_TWRNUMER=@TWRNUMER AND 
+		        TWS_TWRLP=@TWRLP AND 
+        		TWS_MAGTYP=@MAGTYP AND 
+        		TWS_MAGNUMER=@MAGNUMER AND 
+		       	TWS_MAGLP=@MAGLP AND 
+		       	TWS_DATA&gt;=@DATA 
+
+		IF @@ERROR&lt;&gt;0 
+		BEGIN
+			ROLLBACK
+			RETURN
+		END
+
+
+		DELETE FROM cdn.TwrStanyBufor WHERE
+        		TSB_TWRTYP=@TWRTYP AND 
+	        	TSB_TWRNUMER=@TWRNUMER AND 
+		        TSB_TWRLP=@TWRLP AND 
+        		TSB_MAGTYP=@MAGTYP AND 
+        		TSB_MAGNUMER=@MAGNUMER AND 
+		       	TSB_MAGLP=@MAGLP AND 
+			TSB_DATA=@DATAORG
+
+		IF @@ERROR&lt;&gt;0 
+		BEGIN
+			ROLLBACK
+			RETURN
+		END
+
+		FETCH NEXT FROM StanyBufor INTO @DATAORG,@TWRTYP,@TWRFIRMA,@TWRNUMER,@TWRLP,@MAGTYP,@MAGNUMER,@MAGLP,
+				@KSIEGOWANETTO,@RZECZYWISTANETTO,@ILSPR,@ILMAG 
+		IF @@ERROR&lt;&gt;0 
+		BEGIN
+			ROLLBACK
+			RETURN
+		END
+
+	END
+	CLOSE StanyBufor
+	DEALLOCATE StanyBufor
+	COMMIT
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

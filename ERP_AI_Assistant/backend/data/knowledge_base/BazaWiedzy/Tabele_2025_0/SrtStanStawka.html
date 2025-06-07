@@ -1,0 +1,1307 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Usuwanie funkcji SrtStanStawka"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Usuwanie funkcji SrtStanStawka */</I><BR>
+IF EXISTS (SELECT name  FROM sysobjects WHERE name = 'SrtStanStawka' AND type = 'FN')
+ drop function CDN.SrtStanStawka;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie funkcji SrtStanStawka"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie funkcji SrtStanStawka */</I><BR>
+
+CREATE function CDN.SrtStanStawka(@Srt_GIDNumer int, @Tor smallint = 0, @Rodzaj smallint = 0, @DataNaDzienC int = null, @DataDok int = null, @ZestTryb tinyint = 0, @ZPAPlusNumer int = 0) 
+returns decimal(7,2)
+AS 
+BEGIN 
+--zwraca stawki/wspolczynniki dla srodka na podany dzien uwzgledniajac date zapisu dokumentu
+
+--Rodzaj :
+-- 0 - zwraca wartosc stawki na podany dzien (z uwzglednieniem wspolczynnika ) = stawka * wspolczynnik
+-- 1 - zwraca wartosc stawki na podany dzien (sama stawka)
+-- 2 - zwraca wartosc wspolczynnika na podany dzien
+
+--Tor :
+-- 0 - umorzenie
+-- 1 - amortyzacja
+
+--ZestTryb:
+--	0 - szukaj dla środka trwałego
+--	2 - szukaj dla elementu zestawu
+--	1 - szukaj dla zestawu
+
+--@PrzylaczenieNumer - GIDNumer dokumentu przyłączenia, jeśli podany wtedy zwróć wartości jakie miał podany środek przed przyłączeniem do zestawu, dotyczy tylko opcji @ZestTryb = 0 (środek trwały)
+--@ZPAPlusSrtLp - SHE_SrtLp z dokumentu przyłączenia, jeśli podany wtedy zwróć wartości jakie miał podany środek przed przyłączeniem do zestawu, dotyczy tylko opcji @ZestTryb = 0 (środek trwały)
+
+	declare @_rv decimal(7,2)  
+
+	declare @ZPA  smallint
+	declare @ZPK  smallint
+	declare @OT   smallint
+	declare @ZSA  smallint
+	declare @ZMT  smallint
+	declare @ZW   smallint
+	declare @NT	  smallint = 2536
+	
+	set @ZPA  = 2050
+	set @ZPK  = 2051	
+	set @OT   = 2048
+	set @ZSA  = 2556
+	set @ZMT  = 2548
+	set @ZW   = 2288
+	
+	declare @ZestTrybSrodek  tinyint = 0	
+	declare @ZestTrybZestaw  tinyint = 1
+	declare @ZestTrybElement tinyint = 2
+    
+	declare @ZestOdlaczenie	tinyint = 1
+	declare @ZestPrzylaczenie	tinyint = 2
+  
+	if (@ZestTryb not in (@ZestTrybElement, @ZestTrybZestaw) ) set @ZestTryb = @ZestTrybSrodek
+
+
+	if @Tor = 0
+	begin
+		select @_rv =
+			case @Rodzaj
+			when 0 then --stawka * wsp
+				case when Metoda = 2 then --degresywna 
+					round(Stawka * WspDegr,2)
+				else					
+					round(Stawka * Wsp,2)
+				end
+			when 1 then --stawka
+				Stawka
+			when 2 then --wsp
+				case when Metoda = 2 then --degresywna 
+					WspDegr
+				else					
+					Wsp
+				end
+			end
+		from
+		(
+			select
+				case when pOT.she_gidtyp is null then
+					Srodek.Srt_Stawka
+				else
+					case when oZS2.she_Gidtyp is null and oZMT1.she_Gidtyp is null and pNT.SHE_GIDTyp is null then
+						pOT.She_Stawka
+					else
+						iif(	
+							isnull(oZS2.she_Data,0) - isnull(oZMT1.she_Data,0) &lt;= 0, 
+							iif(isnull(pNT.she_Data,0) - isnull(oZMT1.she_Data,0) &lt;= 0, oZMT1.SHE_Stawka, pNT.SHE_Stawka), 
+							iif(isnull(pNT.she_Data,0) - isnull(oZS2.she_Data,0) &lt;=0, oZS2.SHE_Stawka , pNT.SHE_Stawka)
+						)
+					end
+				end as Stawka,
+			
+				case when pOT.she_gidtyp is null then
+						Srodek.Srt_WspUmAm				
+				else
+					case when oZW2.she_Gidtyp is null and oZMT1.she_Gidtyp is null and pNT.SHE_GIDTyp is null then
+						pOT.She_WspUmAm
+					else
+						iif(	
+							isnull(oZW2.she_Data,0) - isnull(oZMT1.she_Data,0) &lt;= 0, 
+							iif(isnull(pNT.she_Data,0) - isnull(oZMT1.she_Data,0) &lt;= 0, oZMT1.She_WspUmAm, pNT.She_WspUmAm), 
+							iif(isnull(pNT.she_Data,0) - isnull(oZW2.she_Data,0) &lt;=0, oZW2.She_WspUmAm , pNT.She_WspUmAm)
+						)
+					end
+				end as Wsp,
+			
+				case when pOT.she_gidtyp is null then
+					Srodek.Srt_WspDegr
+				else
+					case when oZW2.she_Gidtyp is null and oZMT1.she_Gidtyp is null and pNT.SHE_GIDTyp is null then
+						pOT.She_WspDegr
+					else
+						iif(	
+							isnull(oZW2.she_Data,0) - isnull(oZMT1.she_Data,0) &lt;= 0, 
+							iif(isnull(pNT.she_Data,0) - isnull(oZMT1.she_Data,0) &lt;= 0, oZMT1.She_WspDegr, pNT.She_WspDegr), 
+							iif(isnull(pNT.she_Data,0) - isnull(oZW2.she_Data,0) &lt;=0, oZW2.She_WspDegr , pNT.She_WspDegr)
+						)
+					end
+				end as WspDegr,
+					
+				case when pOT.she_gidtyp is null then
+					Srodek.Srt_MetodaUm
+				else
+					case when oZMT2.she_Gidtyp is null and oZMT1.she_Gidtyp is null and pNT.SHE_GIDTyp is null then
+						pOT.She_MetodaUm
+					else
+						iif(	
+							isnull(oZMT2.she_Data,0) - isnull(oZMT1.she_Data,0) &lt;= 0, 
+							iif(isnull(pNT.she_Data,0) - isnull(oZMT1.she_Data,0) &lt;= 0, oZMT1.She_MetodaUm, pNT.She_MetodaUm), 
+							iif(isnull(pNT.she_Data,0) - isnull(oZMT2.she_Data,0) &lt;=0, oZMT2.She_MetodaUm , pNT.She_MetodaUm)
+						)
+					end
+				end as Metoda
+			
+			from cdn.SrtKarty Srodek
+			left outer join 
+					(select E1.*
+					from cdn.SrtHistElem as E1
+					where E1.SHE_GIDTyp = @OT
+						and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E1.SHE_Data &lt;= @DataNaDzienC))
+						and (@DataDok is null or not @DataDok is null and E1.SHE_DataZap &lt;= @DataDok)
+						and E1.SHE_Data = ( select min(E2.SHE_Data) from cdn.SrtHistElem as E2
+											where E2.SHE_SrtNumer = E1.She_SrtNumer 
+												and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E2.SHE_Data &lt;= @DataNaDzienC))
+												and (@DataDok is null or not @DataDok is null and E2.SHE_DataZap &lt;= @DataDok)
+												and E2.SHE_GIDTyp = @OT
+										)
+						and E1.SHE_SrtLp = (select min(E3.SHE_SrtLp) from cdn.SrtHistElem as E3
+											where E3.SHE_SrtNumer = E1.She_SrtNumer 
+												and E3.SHE_GIDTyp = @OT
+												and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E3.SHE_Data &lt;= @DataNaDzienC))
+												and (@DataDok is null or not @DataDok is null and E3.SHE_DataZap &lt;= @DataDok)
+												and E3.SHE_Data = ( select min(E4.SHE_Data) from cdn.SrtHistElem as E4
+																	where E4.SHE_SrtNumer = E1.She_SrtNumer 
+																		and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E4.SHE_Data &lt;= @DataNaDzienC))
+																		and (@DataDok is null or not @DataDok is null and E4.SHE_DataZap &lt;= @DataDok)
+																		and E4.SHE_GIDTyp = @OT
+														)
+											)
+					) as pOT on Srodek.srt_gidnumer = pOT.She_SrtNumer
+				
+			left outer join 
+					(	select E1.*
+						from cdn.SrtHistElem as E1               
+						where   (E1.SHE_GIDTyp = @ZSA or (E1.SHE_GIDTyp = @ZMT and E1.SHE_MsObow = 2 and E1.SHE_TorUm_Lp&gt;0))
+		        			and (@DataDok is null or not @DataDok is null and E1.SHE_DataZap &lt;= @DataDok)
+							and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E1.SHE_Data &lt;= @DataNaDzienC))
+							and E1.SHE_Data = ( select max(E3.SHE_Data) from cdn.SrtHistElem as E3
+												where SHE_SrtNumer = E1.She_SrtNumer
+													and (E3.SHE_GIDTyp = @ZSA or (E3.SHE_GIDTyp = @ZMT and E3.SHE_MsObow = 2 and E3.SHE_TorUm_Lp&gt;0))
+													and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E3.SHE_Data &lt;= @DataNaDzienC))
+													and (@DataDok is null or not @DataDok is null and E3.SHE_DataZap &lt;= @DataDok)
+									
+											)
+							and E1.SHE_SrtLp = ( select max(E4.SHE_SrtLp) from cdn.SrtHistElem as E4
+												 where E4.SHE_SrtNumer = E1.She_SrtNumer
+													and (E4.SHE_GIDTyp = @ZSA or (E4.SHE_GIDTyp = @ZMT and E4.SHE_MsObow = 2 and E4.SHE_TorUm_Lp&gt;0))
+													and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E4.SHE_Data &lt;= @DataNaDzienC))
+													and (@DataDok is null or not @DataDok is null and E4.SHE_DataZap &lt;= @DataDok)
+													and E4.SHE_Data = ( select max(E5.SHE_Data) from cdn.SrtHistElem as E5
+																		where E5.SHE_SrtNumer = E1.She_SrtNumer
+																			and (E5.SHE_GIDTyp = @ZSA or (E5.SHE_GIDTyp = @ZMT and E5.SHE_MsObow = 2 and E5.SHE_TorUm_Lp&gt;0))
+																			and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E5.SHE_Data &lt;= @DataNaDzienC))
+																			and (@DataDok is null or not @DataDok is null and E5.SHE_DataZap &lt;= @DataDok)
+																	)
+											)
+					) as oZS2 on Srodek.srt_gidnumer = oZS2.She_SrtNumer
+				
+			left outer join 
+					(	select E1.*
+						from cdn.SrtHistElem as E1               
+						where   (E1.SHE_GIDTyp = @ZMT and E1.SHE_MsObow = 1 and E1.SHE_TorUm_Lp&gt;0)
+		        			and (@DataDok is null or not @DataDok is null and E1.SHE_DataZap &lt;= @DataDok)
+							and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E1.SHE_Data &lt;= @DataNaDzienC))
+							and E1.SHE_Data = ( select max(E3.SHE_Data) from cdn.SrtHistElem as E3
+												where SHE_SrtNumer = E1.She_SrtNumer
+													and (E3.SHE_GIDTyp = @ZMT and E3.SHE_MsObow = 1 and E3.SHE_TorUm_Lp&gt;0)
+													and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E3.SHE_Data &lt;= @DataNaDzienC))
+													and (@DataDok is null or not @DataDok is null and E3.SHE_DataZap &lt;= @DataDok)
+											)
+							and E1.SHE_SrtLp = ( select max(E4.SHE_SrtLp) from cdn.SrtHistElem as E4
+												 where E4.SHE_SrtNumer = E1.She_SrtNumer
+													and (E4.SHE_GIDTyp = @ZMT and E4.SHE_MsObow = 1 and E4.SHE_TorUm_Lp&gt;0)
+													and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E4.SHE_Data &lt;= @DataNaDzienC))
+													and (@DataDok is null or not @DataDok is null and E4.SHE_DataZap &lt;= @DataDok)
+													and E4.SHE_Data = ( select max(E5.SHE_Data) from cdn.SrtHistElem as E5
+																		where E5.SHE_SrtNumer = E1.She_SrtNumer
+																			and (E5.SHE_GIDTyp = @ZMT and E5.SHE_MsObow = 1 and E5.SHE_TorUm_Lp&gt;0)
+																			and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E5.SHE_Data &lt;= @DataNaDzienC))
+																			and (@DataDok is null or not @DataDok is null and E5.SHE_DataZap &lt;= @DataDok)
+																		)
+												)
+					) as oZMT1 on Srodek.srt_gidnumer = oZMT1.She_SrtNumer
+				
+			left outer join 
+					(	select E1.*
+						from cdn.SrtHistElem as E1               
+						where   (E1.SHE_GIDTyp = @ZW or (E1.SHE_GIDTyp = @ZMT and E1.SHE_MsObow = 2 and E1.SHE_TorUm_Lp&gt;0))
+		        			and (@DataDok is null or not @DataDok is null and E1.SHE_DataZap &lt;= @DataDok)
+							and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E1.SHE_Data &lt;= @DataNaDzienC))
+							and E1.SHE_Data = (select max(E3.SHE_Data) from cdn.SrtHistElem as E3
+												where SHE_SrtNumer = E1.She_SrtNumer
+													and (E3.SHE_GIDTyp = @ZW or (E3.SHE_GIDTyp = @ZMT and E3.SHE_MsObow = 2 and E3.SHE_TorUm_Lp&gt;0))
+													and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E3.SHE_Data &lt;= @DataNaDzienC))
+													and (@DataDok is null or not @DataDok is null and E3.SHE_DataZap &lt;= @DataDok)
+												)
+							and E1.SHE_SrtLp = (select max(E4.SHE_SrtLp) from cdn.SrtHistElem as E4
+												where E4.SHE_SrtNumer = E1.She_SrtNumer
+													and (E4.SHE_GIDTyp = @ZW or (E4.SHE_GIDTyp = @ZMT and E4.SHE_MsObow = 2 and E4.SHE_TorUm_Lp&gt;0))
+													and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E4.SHE_Data &lt;= @DataNaDzienC))
+													and (@DataDok is null or not @DataDok is null and E4.SHE_DataZap &lt;= @DataDok)
+													and E4.SHE_Data = (select max(E5.SHE_Data) from cdn.SrtHistElem as E5
+																		where E5.SHE_SrtNumer = E1.She_SrtNumer
+																			and (E5.SHE_GIDTyp = @ZW or (E5.SHE_GIDTyp = @ZMT and E5.SHE_MsObow = 2 and E5.SHE_TorUm_Lp&gt;0))
+																			and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E5.SHE_Data &lt;= @DataNaDzienC))
+																			and (@DataDok is null or not @DataDok is null and E5.SHE_DataZap &lt;= @DataDok)
+																		)
+												)
+					) as oZW2 on Srodek.srt_gidnumer = oZW2.She_SrtNumer
+			left outer join 
+					(	select E1.*
+						from cdn.SrtHistElem as E1               
+						where   (E1.SHE_GIDTyp = @ZMT and E1.SHE_MsObow = 2 and E1.SHE_TorUm_Lp&gt;0)
+		        			and (@DataDok is null or not @DataDok is null and E1.SHE_DataZap &lt;= @DataDok)
+							and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E1.SHE_Data &lt;= @DataNaDzienC))
+							and E1.SHE_Data = (select max(E3.SHE_Data) from cdn.SrtHistElem as E3
+												where SHE_SrtNumer = E1.She_SrtNumer
+													and (E3.SHE_GIDTyp = @ZMT and E3.SHE_MsObow = 2 and E3.SHE_TorUm_Lp&gt;0)
+													and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E3.SHE_Data &lt;= @DataNaDzienC))
+													and (@DataDok is null or not @DataDok is null and E3.SHE_DataZap &lt;= @DataDok)
+												)
+							and E1.SHE_SrtLp = (select max(E4.SHE_SrtLp) from cdn.SrtHistElem as E4
+												where E4.SHE_SrtNumer = E1.She_SrtNumer
+													and (E4.SHE_GIDTyp = @ZMT and E4.SHE_MsObow = 2 and E4.SHE_TorUm_Lp&gt;0)
+													and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E4.SHE_Data &lt;= @DataNaDzienC))
+													and (@DataDok is null or not @DataDok is null and E4.SHE_DataZap &lt;= @DataDok)
+													and E4.SHE_Data = (select max(E5.SHE_Data) from cdn.SrtHistElem as E5
+																		where E5.SHE_SrtNumer = E1.She_SrtNumer
+																			and (E5.SHE_GIDTyp = @ZMT and E5.SHE_MsObow = 2 and E5.SHE_TorUm_Lp&gt;0)
+																			and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E5.SHE_Data &lt;= @DataNaDzienC))
+																			and (@DataDok is null or not @DataDok is null and E5.SHE_DataZap &lt;= @DataDok)
+																		)
+												)
+					) as oZMT2 on Srodek.srt_gidnumer = oZMT2.She_SrtNumer
+
+			left outer join 
+					(select E1.*
+					from cdn.SrtHistElem as E1
+					where E1.SHE_GIDTyp = @NT  and E1.SHE_TorUm_Lp&gt;0
+						and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E1.SHE_Data &lt;= @DataNaDzienC))
+						and (@DataDok is null or not @DataDok is null and E1.SHE_DataZap &lt;= @DataDok)
+						and E1.SHE_Data = ( select min(E2.SHE_Data) from cdn.SrtHistElem as E2
+											where E2.SHE_SrtNumer = E1.She_SrtNumer 
+												and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E2.SHE_Data &lt;= @DataNaDzienC))
+												and (@DataDok is null or not @DataDok is null and E2.SHE_DataZap &lt;= @DataDok)
+												and E2.SHE_GIDTyp = @NT and E2.SHE_TorUm_Lp&gt;0
+										)
+						and E1.SHE_SrtLp = (select min(E3.SHE_SrtLp) from cdn.SrtHistElem as E3
+											where E3.SHE_SrtNumer = E1.She_SrtNumer 
+												and E3.SHE_GIDTyp = @NT and E3.SHE_TorUm_Lp&gt;0
+												and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E3.SHE_Data &lt;= @DataNaDzienC))
+												and (@DataDok is null or not @DataDok is null and E3.SHE_DataZap &lt;= @DataDok)
+												and E3.SHE_Data = ( select min(E4.SHE_Data) from cdn.SrtHistElem as E4
+																	where E4.SHE_SrtNumer = E1.She_SrtNumer 
+																		and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E4.SHE_Data &lt;= @DataNaDzienC))
+																		and (@DataDok is null or not @DataDok is null and E4.SHE_DataZap &lt;= @DataDok)
+																		and E4.SHE_GIDTyp = @NT and E4.SHE_TorUm_Lp&gt;0
+														)
+											)
+					) as pNT on Srodek.srt_gidnumer = pNT.She_SrtNumer
+												
+			where Srodek.Srt_GIDNumer = @Srt_GIDNumer
+				and (@DataDok is null or not @DataDok is null and Srodek.Srt_Data &lt;= @DataDok)
+		) as a1
+	end
+
+	else if @Tor=1
+	begin	
+	
+		select @_rv =
+			case @Rodzaj
+			when 0 then --stawka * wsp
+				case when Metoda = 2 then --degresywna 
+					round(Stawka * WspDegr,2)
+				else					
+					round(Stawka * Wsp,2)
+				end
+			when 1 then --stawka
+				Stawka
+			when 2 then --wsp
+				case when Metoda = 2 then --degresywna 
+					WspDegr
+				else					
+					Wsp
+				end
+			end
+		from
+		(
+			select			
+				case when pOT.she_gidtyp is null then
+					Srodek.Srt_StawkaAm
+				else
+					case when oZS2.she_Gidtyp is null and oZMT1.she_Gidtyp is null and pnt.SHE_GIDTyp is null then
+						pOT.SHE_StawkaAm
+					else
+						iif(
+							isnull(oZS2.she_Data,0) - isnull(oZMT1.she_Data,0) &lt;= 0, 
+							iif(isnull(pNT.she_Data,0) - isnull(oZMT1.she_Data,0) &lt;= 0, oZMT1.SHE_StawkaAm, pNT.SHE_StawkaAm), 
+							iif(isnull(pNT.she_Data,0) - isnull(oZS2.she_Data,0) &lt;=0, oZS2.SHE_StawkaAm , pNT.SHE_StawkaAm)
+						)
+					end
+				end as Stawka,
+			
+				case when pOT.she_gidtyp is null then
+						Srodek.Srt_WspAm
+				else
+					case when oZW2.she_Gidtyp is null and oZMT1.she_Gidtyp is null and pnt.SHE_GIDTyp is null then
+						pOT.She_WspAm
+					else
+						iif(	
+							isnull(oZW2.she_Data,0) - isnull(oZMT1.she_Data,0) &lt;= 0, 
+							iif(isnull(pNT.she_Data,0) - isnull(oZMT1.she_Data,0) &lt;= 0, oZMT1.She_WspAm, pNT.She_WspAm), 
+							iif(isnull(pNT.she_Data,0) - isnull(oZW2.she_Data,0) &lt;=0, oZW2.She_WspAm , pNT.She_WspAm)
+						)
+					end
+				end as Wsp,
+			
+				case when pOT.she_gidtyp is null then
+					Srodek.Srt_WspDegrAm
+				else
+					case when oZW2.she_Gidtyp is null and oZMT1.she_Gidtyp is null and pnt.SHE_GIDTyp is null then
+						pOT.SHE_WspDegrAm
+					else
+						iif(	
+							isnull(oZW2.she_Data,0) - isnull(oZMT1.she_Data,0) &lt;= 0, 
+							iif(isnull(pNT.she_Data,0) - isnull(oZMT1.she_Data,0) &lt;= 0, oZMT1.SHE_WspDegrAm, pNT.SHE_WspDegrAm), 
+							iif(isnull(pNT.she_Data,0) - isnull(oZW2.she_Data,0) &lt;=0, oZW2.SHE_WspDegrAm , pNT.SHE_WspDegrAm)
+						)
+					end
+				end as WspDegr,
+					
+				case when pOT.she_gidtyp is null then
+					Srodek.Srt_MetodaAm
+				else
+					case when oZMT2.she_Gidtyp is null and oZMT1.she_Gidtyp is null and pnt.SHE_GIDTyp is null then
+						pOT.She_MetodaAm
+					else
+						iif(	
+							isnull(oZMT2.she_Data,0) - isnull(oZMT1.she_Data,0) &lt;= 0, 
+							iif(isnull(pNT.she_Data,0) - isnull(oZMT1.she_Data,0) &lt;= 0, oZMT1.She_MetodaAm, pNT.She_MetodaAm), 
+							iif(isnull(pNT.she_Data,0) - isnull(oZMT2.she_Data,0) &lt;=0, oZMT2.She_MetodaAm , pNT.She_MetodaAm)
+						)
+					end
+				end as Metoda
+			
+			from cdn.SrtKarty Srodek
+			left outer join 
+					(select E1.*
+					from cdn.SrtHistElem as E1
+					where E1.SHE_GIDTyp = @OT
+						and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E1.SHE_Data &lt;= @DataNaDzienC))
+						and (@DataDok is null or not @DataDok is null and E1.SHE_DataZap &lt;= @DataDok)
+						and E1.SHE_Data = ( select min(E2.SHE_Data) from cdn.SrtHistElem as E2
+											where E2.SHE_SrtNumer = E1.She_SrtNumer 
+												and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E2.SHE_Data &lt;= @DataNaDzienC))
+												and (@DataDok is null or not @DataDok is null and E2.SHE_DataZap &lt;= @DataDok)
+												and E2.SHE_GIDTyp = @OT
+										)
+						and E1.SHE_SrtLp = (select min(E3.SHE_SrtLp) from cdn.SrtHistElem as E3
+											where E3.SHE_SrtNumer = E1.She_SrtNumer 
+												and E3.SHE_GIDTyp = @OT
+												and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E3.SHE_Data &lt;= @DataNaDzienC))
+												and (@DataDok is null or not @DataDok is null and E3.SHE_DataZap &lt;= @DataDok)
+												and E3.SHE_Data = ( select min(E4.SHE_Data) from cdn.SrtHistElem as E4
+																	where E4.SHE_SrtNumer = E1.She_SrtNumer 
+																		and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E4.SHE_Data &lt;= @DataNaDzienC))
+																		and (@DataDok is null or not @DataDok is null and E4.SHE_DataZap &lt;= @DataDok)
+																		and E4.SHE_GIDTyp = @OT
+														)
+											)
+					) as pOT on Srodek.srt_gidnumer = pOT.She_SrtNumer
+				
+			left outer join 
+					(	select E1.*
+						from cdn.SrtHistElem as E1               
+						where   (E1.SHE_GIDTyp = @ZSA or (E1.SHE_GIDTyp = @ZMT and E1.SHE_MsObowAm = 2 and E1.SHE_TorAm_Lp&gt;0))
+		        			and (@DataDok is null or not @DataDok is null and E1.SHE_DataZap &lt;= @DataDok)
+							and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E1.SHE_Data &lt;= @DataNaDzienC))
+							and E1.SHE_Data = ( select max(E3.SHE_Data) from cdn.SrtHistElem as E3
+												where SHE_SrtNumer = E1.She_SrtNumer
+													and (E3.SHE_GIDTyp = @ZSA or (E3.SHE_GIDTyp = @ZMT and E3.SHE_MsObowAm = 2 and E3.SHE_TorAm_Lp&gt;0))
+													and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E3.SHE_Data &lt;= @DataNaDzienC))
+													and (@DataDok is null or not @DataDok is null and E3.SHE_DataZap &lt;= @DataDok)
+									
+											)
+							and E1.SHE_SrtLp = ( select max(E4.SHE_SrtLp) from cdn.SrtHistElem as E4
+												 where E4.SHE_SrtNumer = E1.She_SrtNumer
+													and (E4.SHE_GIDTyp = @ZSA or (E4.SHE_GIDTyp = @ZMT and E4.SHE_MsObowAm = 2 and E4.SHE_TorAm_Lp&gt;0))
+													and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E4.SHE_Data &lt;= @DataNaDzienC))
+													and (@DataDok is null or not @DataDok is null and E4.SHE_DataZap &lt;= @DataDok)
+													and E4.SHE_Data = ( select max(E5.SHE_Data) from cdn.SrtHistElem as E5
+																		where E5.SHE_SrtNumer = E1.She_SrtNumer
+																			and (E5.SHE_GIDTyp = @ZSA or (E5.SHE_GIDTyp = @ZMT and E5.SHE_MsObowAm = 2 and E5.SHE_TorAm_Lp&gt;0))
+																			and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E5.SHE_Data &lt;= @DataNaDzienC))
+																			and (@DataDok is null or not @DataDok is null and E5.SHE_DataZap &lt;= @DataDok)
+																	)
+											)
+					) as oZS2 on Srodek.srt_gidnumer = oZS2.She_SrtNumer
+				
+			left outer join 
+					(	select E1.*
+						from cdn.SrtHistElem as E1               
+						where   (E1.SHE_GIDTyp = @ZMT and E1.SHE_MsObowAm = 1 and E1.SHE_TorAm_Lp&gt;0)
+		        			and (@DataDok is null or not @DataDok is null and E1.SHE_DataZap &lt;= @DataDok)
+							and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E1.SHE_Data &lt;= @DataNaDzienC))
+							and E1.SHE_Data = ( select max(E3.SHE_Data) from cdn.SrtHistElem as E3
+												where SHE_SrtNumer = E1.She_SrtNumer
+													and (E3.SHE_GIDTyp = @ZMT and E3.SHE_MsObowAm = 1 and E3.SHE_TorAm_Lp&gt;0)
+													and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E3.SHE_Data &lt;= @DataNaDzienC))
+													and (@DataDok is null or not @DataDok is null and E3.SHE_DataZap &lt;= @DataDok)
+											)
+							and E1.SHE_SrtLp = ( select max(E4.SHE_SrtLp) from cdn.SrtHistElem as E4
+												 where E4.SHE_SrtNumer = E1.She_SrtNumer
+													and (E4.SHE_GIDTyp = @ZMT and E4.SHE_MsObowAm = 1 and E4.SHE_TorAm_Lp&gt;0)
+													and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E4.SHE_Data &lt;= @DataNaDzienC))
+													and (@DataDok is null or not @DataDok is null and E4.SHE_DataZap &lt;= @DataDok)
+													and E4.SHE_Data = ( select max(E5.SHE_Data) from cdn.SrtHistElem as E5
+																		where E5.SHE_SrtNumer = E1.She_SrtNumer
+																			and (E5.SHE_GIDTyp = @ZMT and E5.SHE_MsObowAm = 1 and E5.SHE_TorAm_Lp&gt;0)
+																			and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E5.SHE_Data &lt;= @DataNaDzienC))
+																			and (@DataDok is null or not @DataDok is null and E5.SHE_DataZap &lt;= @DataDok)
+																		)
+												)
+					) as oZMT1 on Srodek.srt_gidnumer = oZMT1.She_SrtNumer
+				
+			left outer join 
+					(	select E1.*
+						from cdn.SrtHistElem as E1               
+						where   (E1.SHE_GIDTyp = @ZW or (E1.SHE_GIDTyp = @ZMT and E1.SHE_MsObowAm = 2 and E1.SHE_TorAm_Lp&gt;0))
+		        			and (@DataDok is null or not @DataDok is null and E1.SHE_DataZap &lt;= @DataDok)
+							and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E1.SHE_Data &lt;= @DataNaDzienC))
+							and E1.SHE_Data = (select max(E3.SHE_Data) from cdn.SrtHistElem as E3
+												where SHE_SrtNumer = E1.She_SrtNumer
+													and (E3.SHE_GIDTyp = @ZW or (E3.SHE_GIDTyp = @ZMT and E3.SHE_MsObowAm = 2 and E3.SHE_TorAm_Lp&gt;0))
+													and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E3.SHE_Data &lt;= @DataNaDzienC))
+													and (@DataDok is null or not @DataDok is null and E3.SHE_DataZap &lt;= @DataDok)
+												)
+							and E1.SHE_SrtLp = (select max(E4.SHE_SrtLp) from cdn.SrtHistElem as E4
+												where E4.SHE_SrtNumer = E1.She_SrtNumer
+													and (E4.SHE_GIDTyp = @ZW or (E4.SHE_GIDTyp = @ZMT and E4.SHE_MsObowAm = 2 and E4.SHE_TorAm_Lp&gt;0))
+													and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E4.SHE_Data &lt;= @DataNaDzienC))
+													and (@DataDok is null or not @DataDok is null and E4.SHE_DataZap &lt;= @DataDok)
+													and E4.SHE_Data = (select max(E5.SHE_Data) from cdn.SrtHistElem as E5
+																		where E5.SHE_SrtNumer = E1.She_SrtNumer
+																			and (E5.SHE_GIDTyp = @ZW or (E5.SHE_GIDTyp = @ZMT and E5.SHE_MsObowAm = 2 and E5.SHE_TorAm_Lp&gt;0))
+																			and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E5.SHE_Data &lt;= @DataNaDzienC))
+																			and (@DataDok is null or not @DataDok is null and E5.SHE_DataZap &lt;= @DataDok)
+																		)
+												)
+					) as oZW2 on Srodek.srt_gidnumer = oZW2.She_SrtNumer
+			left outer join 
+					(	select E1.*
+						from cdn.SrtHistElem as E1               
+						where   (E1.SHE_GIDTyp = @ZMT and E1.SHE_MsObowAm = 2 and E1.SHE_TorAm_Lp&gt;0)
+		        			and (@DataDok is null or not @DataDok is null and E1.SHE_DataZap &lt;= @DataDok)
+							and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E1.SHE_Data &lt;= @DataNaDzienC))
+							and E1.SHE_Data = (select max(E3.SHE_Data) from cdn.SrtHistElem as E3
+												where SHE_SrtNumer = E1.She_SrtNumer
+													and (E3.SHE_GIDTyp = @ZMT and E3.SHE_MsObowAm = 2 and E3.SHE_TorAm_Lp&gt;0)
+													and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E3.SHE_Data &lt;= @DataNaDzienC))
+													and (@DataDok is null or not @DataDok is null and E3.SHE_DataZap &lt;= @DataDok)
+												)
+							and E1.SHE_SrtLp = (select max(E4.SHE_SrtLp) from cdn.SrtHistElem as E4
+												where E4.SHE_SrtNumer = E1.She_SrtNumer
+													and (E4.SHE_GIDTyp = @ZMT and E4.SHE_MsObowAm = 2 and E4.SHE_TorAm_Lp&gt;0)
+													and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E4.SHE_Data &lt;= @DataNaDzienC))
+													and (@DataDok is null or not @DataDok is null and E4.SHE_DataZap &lt;= @DataDok)
+													and E4.SHE_Data = (select max(E5.SHE_Data) from cdn.SrtHistElem as E5
+																		where E5.SHE_SrtNumer = E1.She_SrtNumer
+																			and (E5.SHE_GIDTyp = @ZMT and E5.SHE_MsObowAm = 2 and E5.SHE_TorAm_Lp&gt;0)
+																			and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E5.SHE_Data &lt;= @DataNaDzienC))
+																			and (@DataDok is null or not @DataDok is null and E5.SHE_DataZap &lt;= @DataDok)
+																		)
+												)
+					) as oZMT2 on Srodek.srt_gidnumer = oZMT2.She_SrtNumer
+						
+			left outer join 
+					(select E1.*
+					from cdn.SrtHistElem as E1
+					where E1.SHE_GIDTyp = @NT  and E1.SHE_TorAm_Lp&gt;0
+						and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E1.SHE_Data &lt;= @DataNaDzienC))
+						and (@DataDok is null or not @DataDok is null and E1.SHE_DataZap &lt;= @DataDok)
+						and E1.SHE_Data = ( select min(E2.SHE_Data) from cdn.SrtHistElem as E2
+											where E2.SHE_SrtNumer = E1.She_SrtNumer 
+												and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E2.SHE_Data &lt;= @DataNaDzienC))
+												and (@DataDok is null or not @DataDok is null and E2.SHE_DataZap &lt;= @DataDok)
+												and E2.SHE_GIDTyp = @NT and E2.SHE_TorAm_Lp&gt;0
+										)
+						and E1.SHE_SrtLp = (select min(E3.SHE_SrtLp) from cdn.SrtHistElem as E3
+											where E3.SHE_SrtNumer = E1.She_SrtNumer 
+												and E3.SHE_GIDTyp = @NT and E3.SHE_TorAm_Lp&gt;0
+												and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E3.SHE_Data &lt;= @DataNaDzienC))
+												and (@DataDok is null or not @DataDok is null and E3.SHE_DataZap &lt;= @DataDok)
+												and E3.SHE_Data = ( select min(E4.SHE_Data) from cdn.SrtHistElem as E4
+																	where E4.SHE_SrtNumer = E1.She_SrtNumer 
+																		and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E4.SHE_Data &lt;= @DataNaDzienC))
+																		and (@DataDok is null or not @DataDok is null and E4.SHE_DataZap &lt;= @DataDok)
+																		and E4.SHE_GIDTyp = @NT and E4.SHE_TorAm_Lp&gt;0
+														)
+											)
+					) as pNT on Srodek.srt_gidnumer = pNT.She_SrtNumer
+
+			where Srodek.Srt_GIDNumer = @Srt_GIDNumer
+				and (@DataDok is null or not @DataDok is null and Srodek.Srt_Data &lt;= @DataDok)
+		) as a1
+	
+	end
+	else if @Tor = 2
+	begin	
+	
+		select @_rv =
+			case @Rodzaj
+			when 0 then --stawka * wsp
+				case when Metoda = 2 then --degresywna 
+					round(Stawka * WspDegr,2)
+				else					
+					round(Stawka * Wsp,2)
+				end
+			when 1 then --stawka
+				Stawka
+			when 2 then --wsp
+				case when Metoda = 2 then --degresywna 
+					WspDegr
+				else					
+					Wsp
+				end
+			end
+		from
+		(
+			select			
+				case when pOT.she_gidtyp is null then
+					Srodek.Srt_StawkaTor3
+				else
+					case when oZS2.she_Gidtyp is null and oZMT1.she_Gidtyp is null and pNT.SHE_GIDTyp is null then
+						pOT.SHE_StawkaAmTor3
+					else
+						iif(	
+							isnull(oZS2.she_Data,0) - isnull(oZMT1.she_Data,0) &lt;= 0, 
+							iif(isnull(pNT.she_Data,0) - isnull(oZMT1.she_Data,0) &lt;= 0, oZMT1.SHE_StawkaAmTor3, pNT.SHE_StawkaAmTor3), 
+							iif(isnull(pNT.she_Data,0) - isnull(oZS2.she_Data,0) &lt;=0, oZS2.SHE_StawkaAmTor3 , pNT.SHE_StawkaAmTor3)
+						)
+					end
+				end as Stawka,
+			
+				case when pOT.she_gidtyp is null then
+						Srodek.Srt_WspAmTor3
+				else
+					case when oZW2.she_Gidtyp is null and oZMT1.she_Gidtyp is null and pNT.SHE_GIDTyp is null then
+						pOT.SHE_WspAmTor3
+					else
+						iif(	
+							isnull(oZW2.she_Data,0) - isnull(oZMT1.she_Data,0) &lt;= 0, 
+							iif(isnull(pNT.she_Data,0) - isnull(oZMT1.she_Data,0) &lt;= 0, oZMT1.SHE_WspAmTor3, pNT.SHE_WspAmTor3), 
+							iif(isnull(pNT.she_Data,0) - isnull(oZW2.she_Data,0) &lt;=0, oZW2.SHE_WspAmTor3 , pNT.SHE_WspAmTor3)
+						)						
+					end
+				end as Wsp,
+			
+				case when pOT.she_gidtyp is null then
+					Srodek.Srt_WspDegrTor3
+				else
+					case when oZW2.she_Gidtyp is null and oZMT1.she_Gidtyp is null and pNT.SHE_GIDTyp is null then
+						pOT.SHE_WspDegrTor3
+					else
+
+						iif(	
+							isnull(oZW2.she_Data,0) - isnull(oZMT1.she_Data,0) &lt;= 0, 
+							iif(isnull(pNT.she_Data,0) - isnull(oZMT1.she_Data,0) &lt;= 0, oZMT1.SHE_WspDegrTor3, pNT.SHE_WspDegrTor3), 
+							iif(isnull(pNT.she_Data,0) - isnull(oZW2.she_Data,0) &lt;=0, oZW2.SHE_WspDegrTor3 , pNT.SHE_WspDegrTor3)
+						)
+					end
+				end as WspDegr,
+					
+				case when pOT.she_gidtyp is null then
+					Srodek.Srt_MetodaTor3
+				else
+					case when oZMT2.she_Gidtyp is null and oZMT1.she_Gidtyp is null and pNT.SHE_GIDTyp is null then
+						pOT.SHE_MetodaAmTor3
+					else
+
+						iif(	
+							isnull(oZMT2.she_Data,0) - isnull(oZMT1.she_Data,0) &lt;= 0, 
+							iif(isnull(pNT.she_Data,0) - isnull(oZMT1.she_Data,0) &lt;= 0, oZMT1.SHE_MetodaAmTor3, pNT.SHE_MetodaAmTor3), 
+							iif(isnull(pNT.she_Data,0) - isnull(oZMT2.she_Data,0) &lt;=0, oZMT2.SHE_MetodaAmTor3 , pNT.SHE_MetodaAmTor3)
+						)
+					end
+				end as Metoda
+			
+			from cdn.SrtKarty Srodek
+			left outer join 
+					(select E1.*
+					from cdn.SrtHistElem as E1
+					where E1.SHE_GIDTyp = @OT 
+						and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E1.SHE_Data &lt;= @DataNaDzienC))
+						and (@DataDok is null or not @DataDok is null and E1.SHE_DataZap &lt;= @DataDok)
+						and E1.SHE_Data = ( select min(E2.SHE_Data) from cdn.SrtHistElem as E2
+											where E2.SHE_SrtNumer = E1.She_SrtNumer 
+												and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E2.SHE_Data &lt;= @DataNaDzienC))
+												and (@DataDok is null or not @DataDok is null and E2.SHE_DataZap &lt;= @DataDok)
+												and E2.SHE_GIDTyp = @OT
+										)
+						and E1.SHE_SrtLp = (select min(E3.SHE_SrtLp) from cdn.SrtHistElem as E3
+											where E3.SHE_SrtNumer = E1.She_SrtNumer 
+												and E3.SHE_GIDTyp = @OT
+												and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E3.SHE_Data &lt;= @DataNaDzienC))
+												and (@DataDok is null or not @DataDok is null and E3.SHE_DataZap &lt;= @DataDok)
+												and E3.SHE_Data = ( select min(E4.SHE_Data) from cdn.SrtHistElem as E4
+																	where E4.SHE_SrtNumer = E1.She_SrtNumer 
+																		and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E4.SHE_Data &lt;= @DataNaDzienC))
+																		and (@DataDok is null or not @DataDok is null and E4.SHE_DataZap &lt;= @DataDok)
+																		and E4.SHE_GIDTyp = @OT
+														)
+											)
+					) as pOT on Srodek.srt_gidnumer = pOT.She_SrtNumer
+				
+			left outer join 
+					(	select E1.*
+						from cdn.SrtHistElem as E1               
+						where   (E1.SHE_GIDTyp = @ZSA or (E1.SHE_GIDTyp = @ZMT and E1.SHE_MsObowAmTor3 = 2 and E1.SHE_Tor3_Lp&gt;0))
+		        			and (@DataDok is null or not @DataDok is null and E1.SHE_DataZap &lt;= @DataDok)
+							and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E1.SHE_Data &lt;= @DataNaDzienC))
+							and E1.SHE_Data = ( select max(E3.SHE_Data) from cdn.SrtHistElem as E3
+												where SHE_SrtNumer = E1.She_SrtNumer
+													and (E3.SHE_GIDTyp = @ZSA or (E3.SHE_GIDTyp = @ZMT and E3.SHE_MsObowAmTor3 = 2 and E3.SHE_Tor3_Lp&gt;0))
+													and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E3.SHE_Data &lt;= @DataNaDzienC))
+													and (@DataDok is null or not @DataDok is null and E3.SHE_DataZap &lt;= @DataDok)
+									
+											)
+							and E1.SHE_SrtLp = ( select max(E4.SHE_SrtLp) from cdn.SrtHistElem as E4
+												 where E4.SHE_SrtNumer = E1.She_SrtNumer
+													and (E4.SHE_GIDTyp = @ZSA or (E4.SHE_GIDTyp = @ZMT and E4.SHE_MsObowAmTor3 = 2 and E4.SHE_Tor3_Lp&gt;0))
+													and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E4.SHE_Data &lt;= @DataNaDzienC))
+													and (@DataDok is null or not @DataDok is null and E4.SHE_DataZap &lt;= @DataDok)
+													and E4.SHE_Data = ( select max(E5.SHE_Data) from cdn.SrtHistElem as E5
+																		where E5.SHE_SrtNumer = E1.She_SrtNumer
+																			and (E5.SHE_GIDTyp = @ZSA or (E5.SHE_GIDTyp = @ZMT and E5.SHE_MsObowAmTor3 = 2 and E5.SHE_Tor3_Lp&gt;0))
+																			and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E5.SHE_Data &lt;= @DataNaDzienC))
+																			and (@DataDok is null or not @DataDok is null and E5.SHE_DataZap &lt;= @DataDok)
+																	)
+											)
+					) as oZS2 on Srodek.srt_gidnumer = oZS2.She_SrtNumer
+				
+			left outer join 
+					(	select E1.*
+						from cdn.SrtHistElem as E1               
+						where   (E1.SHE_GIDTyp = @ZMT and E1.SHE_MsObowAmTor3 = 1 and E1.SHE_Tor3_Lp&gt;0)
+		        			and (@DataDok is null or not @DataDok is null and E1.SHE_DataZap &lt;= @DataDok)
+							and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E1.SHE_Data &lt;= @DataNaDzienC))
+							and E1.SHE_Data = ( select max(E3.SHE_Data) from cdn.SrtHistElem as E3
+												where SHE_SrtNumer = E1.She_SrtNumer
+													and (E3.SHE_GIDTyp = @ZMT and E3.SHE_MsObowAmTor3 = 1 and E3.SHE_Tor3_Lp&gt;0)
+													and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E3.SHE_Data &lt;= @DataNaDzienC))
+													and (@DataDok is null or not @DataDok is null and E3.SHE_DataZap &lt;= @DataDok)
+											)
+							and E1.SHE_SrtLp = ( select max(E4.SHE_SrtLp) from cdn.SrtHistElem as E4
+												 where E4.SHE_SrtNumer = E1.She_SrtNumer
+													and (E4.SHE_GIDTyp = @ZMT and E4.SHE_MsObowAmTor3 = 1 and E4.SHE_Tor3_Lp&gt;0)
+													and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E4.SHE_Data &lt;= @DataNaDzienC))
+													and (@DataDok is null or not @DataDok is null and E4.SHE_DataZap &lt;= @DataDok)
+													and E4.SHE_Data = ( select max(E5.SHE_Data) from cdn.SrtHistElem as E5
+																		where E5.SHE_SrtNumer = E1.She_SrtNumer
+																			and (E5.SHE_GIDTyp = @ZMT and E5.SHE_MsObowAmTor3 = 1 and E5.SHE_Tor3_Lp&gt;0)
+																			and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E5.SHE_Data &lt;= @DataNaDzienC))
+																			and (@DataDok is null or not @DataDok is null and E5.SHE_DataZap &lt;= @DataDok)
+																		)
+												)
+					) as oZMT1 on Srodek.srt_gidnumer = oZMT1.She_SrtNumer
+				
+			left outer join 
+					(	select E1.*
+						from cdn.SrtHistElem as E1               
+						where   (E1.SHE_GIDTyp = @ZW or (E1.SHE_GIDTyp = @ZMT and E1.SHE_MsObowAmTor3 = 2 and E1.SHE_Tor3_Lp&gt;0))
+		        			and (@DataDok is null or not @DataDok is null and E1.SHE_DataZap &lt;= @DataDok)
+							and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E1.SHE_Data &lt;= @DataNaDzienC))
+							and E1.SHE_Data = (select max(E3.SHE_Data) from cdn.SrtHistElem as E3
+												where SHE_SrtNumer = E1.She_SrtNumer
+													and (E3.SHE_GIDTyp = @ZW or (E3.SHE_GIDTyp = @ZMT and E3.SHE_MsObowAmTor3 = 2 and E3.SHE_Tor3_Lp&gt;0))
+													and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E3.SHE_Data &lt;= @DataNaDzienC))
+													and (@DataDok is null or not @DataDok is null and E3.SHE_DataZap &lt;= @DataDok)
+												)
+							and E1.SHE_SrtLp = (select max(E4.SHE_SrtLp) from cdn.SrtHistElem as E4
+												where E4.SHE_SrtNumer = E1.She_SrtNumer
+													and (E4.SHE_GIDTyp = @ZW or (E4.SHE_GIDTyp = @ZMT and E4.SHE_MsObowAmTor3 = 2 and E4.SHE_Tor3_Lp&gt;0))
+													and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E4.SHE_Data &lt;= @DataNaDzienC))
+													and (@DataDok is null or not @DataDok is null and E4.SHE_DataZap &lt;= @DataDok)
+													and E4.SHE_Data = (select max(E5.SHE_Data) from cdn.SrtHistElem as E5
+																		where E5.SHE_SrtNumer = E1.She_SrtNumer
+																			and (E5.SHE_GIDTyp = @ZW or (E5.SHE_GIDTyp = @ZMT and E5.SHE_MsObowAmTor3 = 2 and E5.SHE_Tor3_Lp&gt;0))
+																			and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E5.SHE_Data &lt;= @DataNaDzienC))
+																			and (@DataDok is null or not @DataDok is null and E5.SHE_DataZap &lt;= @DataDok)
+																		)
+												)
+					) as oZW2 on Srodek.srt_gidnumer = oZW2.She_SrtNumer
+			left outer join 
+					(	select E1.*
+						from cdn.SrtHistElem as E1               
+						where   (E1.SHE_GIDTyp = @ZMT and E1.SHE_MsObowAmTor3 = 2 and E1.SHE_Tor3_Lp&gt;0)
+		        			and (@DataDok is null or not @DataDok is null and E1.SHE_DataZap &lt;= @DataDok)
+							and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E1.SHE_Data &lt;= @DataNaDzienC))
+							and E1.SHE_Data = (select max(E3.SHE_Data) from cdn.SrtHistElem as E3
+												where SHE_SrtNumer = E1.She_SrtNumer
+													and (E3.SHE_GIDTyp = @ZMT and E3.SHE_MsObowAmTor3 = 2 and E3.SHE_Tor3_Lp&gt;0)
+													and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E3.SHE_Data &lt;= @DataNaDzienC))
+													and (@DataDok is null or not @DataDok is null and E3.SHE_DataZap &lt;= @DataDok)
+												)
+							and E1.SHE_SrtLp = (select max(E4.SHE_SrtLp) from cdn.SrtHistElem as E4
+												where E4.SHE_SrtNumer = E1.She_SrtNumer
+													and (E4.SHE_GIDTyp = @ZMT and E4.SHE_MsObowAmTor3 = 2 and E4.SHE_Tor3_Lp&gt;0)
+													and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E4.SHE_Data &lt;= @DataNaDzienC))
+													and (@DataDok is null or not @DataDok is null and E4.SHE_DataZap &lt;= @DataDok)
+													and E4.SHE_Data = (select max(E5.SHE_Data) from cdn.SrtHistElem as E5
+																		where E5.SHE_SrtNumer = E1.She_SrtNumer
+																			and (E5.SHE_GIDTyp = @ZMT and E5.SHE_MsObowAmTor3 = 2 and E5.SHE_Tor3_Lp&gt;0)
+																			and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E5.SHE_Data &lt;= @DataNaDzienC))
+																			and (@DataDok is null or not @DataDok is null and E5.SHE_DataZap &lt;= @DataDok)
+																		)
+												)
+					) as oZMT2 on Srodek.srt_gidnumer = oZMT2.She_SrtNumer
+						
+			left outer join 
+					(select E1.*
+					from cdn.SrtHistElem as E1
+					where E1.SHE_GIDTyp = @NT  and E1.SHE_Tor3_Lp&gt;0
+						and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E1.SHE_Data &lt;= @DataNaDzienC))
+						and (@DataDok is null or not @DataDok is null and E1.SHE_DataZap &lt;= @DataDok)
+						and E1.SHE_Data = ( select min(E2.SHE_Data) from cdn.SrtHistElem as E2
+											where E2.SHE_SrtNumer = E1.She_SrtNumer 
+												and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E2.SHE_Data &lt;= @DataNaDzienC))
+												and (@DataDok is null or not @DataDok is null and E2.SHE_DataZap &lt;= @DataDok)
+												and E2.SHE_GIDTyp = @NT and E2.SHE_Tor3_Lp&gt;0
+										)
+						and E1.SHE_SrtLp = (select min(E3.SHE_SrtLp) from cdn.SrtHistElem as E3
+											where E3.SHE_SrtNumer = E1.She_SrtNumer 
+												and E3.SHE_GIDTyp = @NT and E3.SHE_Tor3_Lp&gt;0
+												and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E3.SHE_Data &lt;= @DataNaDzienC))
+												and (@DataDok is null or not @DataDok is null and E3.SHE_DataZap &lt;= @DataDok)
+												and E3.SHE_Data = ( select min(E4.SHE_Data) from cdn.SrtHistElem as E4
+																	where E4.SHE_SrtNumer = E1.She_SrtNumer 
+																		and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E4.SHE_Data &lt;= @DataNaDzienC))
+																		and (@DataDok is null or not @DataDok is null and E4.SHE_DataZap &lt;= @DataDok)
+																		and E4.SHE_GIDTyp = @NT and E4.SHE_Tor3_Lp&gt;0
+														)
+											)
+					) as pNT on Srodek.srt_gidnumer = pNT.She_SrtNumer
+
+
+			where Srodek.Srt_GIDNumer = @Srt_GIDNumer
+				and (@DataDok is null or not @DataDok is null and Srodek.Srt_Data &lt;= @DataDok)
+		) as a1
+	
+	end
+	else if @Tor = 3
+	begin
+	
+		select @_rv =
+			case @Rodzaj
+			when 0 then --stawka * wsp
+				case when Metoda = 2 then --degresywna 
+					round(Stawka * WspDegr,2)
+				else					
+					round(Stawka * Wsp,2)
+				end
+			when 1 then --stawka
+				Stawka
+			when 2 then --wsp
+				case when Metoda = 2 then --degresywna 
+					WspDegr
+				else					
+					Wsp
+				end
+			end
+		from
+		(
+			select			
+				case when pOT.she_gidtyp is null then
+					Srodek.Srt_StawkaTor4
+				else
+					case when oZS2.she_Gidtyp is null and oZMT1.she_Gidtyp is null and pNT.SHE_GIDTyp is null then
+						pOT.SHE_StawkaAmTor4
+					else
+						iif(	
+							isnull(oZS2.she_Data,0) - isnull(oZMT1.she_Data,0) &lt;= 0, 
+							iif(isnull(pNT.she_Data,0) - isnull(oZMT1.she_Data,0) &lt;= 0, oZMT1.SHE_StawkaAmTor4, pNT.SHE_StawkaAmTor4), 
+							iif(isnull(pNT.she_Data,0) - isnull(oZS2.she_Data,0) &lt;=0, oZS2.SHE_StawkaAmTor4 , pNT.SHE_StawkaAmTor4)
+						)
+					end
+				end as Stawka,
+			
+				case when pOT.she_gidtyp is null then
+						Srodek.Srt_WspAmTor4
+				else
+					case when oZW2.she_Gidtyp is null and oZMT1.she_Gidtyp is null and pNT.SHE_GIDTyp is null then
+						pOT.SHE_WspAmTor4
+					else
+						iif(	
+							isnull(oZW2.she_Data,0) - isnull(oZMT1.she_Data,0) &lt;= 0, 
+							iif(isnull(pNT.she_Data,0) - isnull(oZMT1.she_Data,0) &lt;= 0, oZMT1.SHE_WspAmTor4, pNT.SHE_WspAmTor4), 
+							iif(isnull(pNT.she_Data,0) - isnull(oZW2.she_Data,0) &lt;=0, oZW2.SHE_WspAmTor4 , pNT.SHE_WspAmTor4)
+						)						
+					end
+				end as Wsp,
+			
+				case when pOT.she_gidtyp is null then
+					Srodek.Srt_WspDegrTor4
+				else
+					case when oZW2.she_Gidtyp is null and oZMT1.she_Gidtyp is null and pNT.SHE_GIDTyp is null then
+						pOT.SHE_WspDegrTor4
+					else
+
+						iif(	
+							isnull(oZW2.she_Data,0) - isnull(oZMT1.she_Data,0) &lt;= 0, 
+							iif(isnull(pNT.she_Data,0) - isnull(oZMT1.she_Data,0) &lt;= 0, oZMT1.SHE_WspDegrTor4, pNT.SHE_WspDegrTor4), 
+							iif(isnull(pNT.she_Data,0) - isnull(oZW2.she_Data,0) &lt;=0, oZW2.SHE_WspDegrTor4 , pNT.SHE_WspDegrTor4)
+						)
+					end
+				end as WspDegr,
+					
+				case when pOT.she_gidtyp is null then
+					Srodek.Srt_MetodaTor4
+				else
+					case when oZMT2.she_Gidtyp is null and oZMT1.she_Gidtyp is null and pNT.SHE_GIDTyp is null then
+						pOT.SHE_MetodaAmTor4
+					else
+
+						iif(	
+							isnull(oZMT2.she_Data,0) - isnull(oZMT1.she_Data,0) &lt;= 0, 
+							iif(isnull(pNT.she_Data,0) - isnull(oZMT1.she_Data,0) &lt;= 0, oZMT1.SHE_MetodaAmTor4, pNT.SHE_MetodaAmTor4), 
+							iif(isnull(pNT.she_Data,0) - isnull(oZMT2.she_Data,0) &lt;=0, oZMT2.SHE_MetodaAmTor4 , pNT.SHE_MetodaAmTor4)
+						)
+					end
+				end as Metoda
+			
+			from cdn.SrtKarty Srodek
+			left outer join 
+					(select E1.*
+					from cdn.SrtHistElem as E1
+					where E1.SHE_GIDTyp = @OT
+						and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E1.SHE_Data &lt;= @DataNaDzienC))
+						and (@DataDok is null or not @DataDok is null and E1.SHE_DataZap &lt;= @DataDok)
+						and E1.SHE_Data = ( select min(E2.SHE_Data) from cdn.SrtHistElem as E2
+											where E2.SHE_SrtNumer = E1.She_SrtNumer 
+												and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E2.SHE_Data &lt;= @DataNaDzienC))
+												and (@DataDok is null or not @DataDok is null and E2.SHE_DataZap &lt;= @DataDok)
+												and E2.SHE_GIDTyp = @OT
+										)
+						and E1.SHE_SrtLp = (select min(E3.SHE_SrtLp) from cdn.SrtHistElem as E3
+											where E3.SHE_SrtNumer = E1.She_SrtNumer 
+												and E3.SHE_GIDTyp = @OT
+												and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E3.SHE_Data &lt;= @DataNaDzienC))
+												and (@DataDok is null or not @DataDok is null and E3.SHE_DataZap &lt;= @DataDok)
+												and E3.SHE_Data = ( select min(E4.SHE_Data) from cdn.SrtHistElem as E4
+																	where E4.SHE_SrtNumer = E1.She_SrtNumer 
+																		and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E4.SHE_Data &lt;= @DataNaDzienC))
+																		and (@DataDok is null or not @DataDok is null and E4.SHE_DataZap &lt;= @DataDok)
+																		and E4.SHE_GIDTyp = @OT
+														)
+											)
+					) as pOT on Srodek.srt_gidnumer = pOT.She_SrtNumer
+				
+			left outer join 
+					(	select E1.*
+						from cdn.SrtHistElem as E1               
+						where   (E1.SHE_GIDTyp = @ZSA or (E1.SHE_GIDTyp = @ZMT and E1.SHE_MsObowAmTor4 = 2 and E1.SHE_Tor4_Lp&gt;0))
+		        			and (@DataDok is null or not @DataDok is null and E1.SHE_DataZap &lt;= @DataDok)
+							and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E1.SHE_Data &lt;= @DataNaDzienC))
+							and E1.SHE_Data = ( select max(E3.SHE_Data) from cdn.SrtHistElem as E3
+												where SHE_SrtNumer = E1.She_SrtNumer
+													and (E3.SHE_GIDTyp = @ZSA or (E3.SHE_GIDTyp = @ZMT and E3.SHE_MsObowAmTor4 = 2 and E3.SHE_Tor4_Lp&gt;0))
+													and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E3.SHE_Data &lt;= @DataNaDzienC))
+													and (@DataDok is null or not @DataDok is null and E3.SHE_DataZap &lt;= @DataDok)
+									
+											)
+							and E1.SHE_SrtLp = ( select max(E4.SHE_SrtLp) from cdn.SrtHistElem as E4
+													where E4.SHE_SrtNumer = E1.She_SrtNumer
+													and (E4.SHE_GIDTyp = @ZSA or (E4.SHE_GIDTyp = @ZMT and E4.SHE_MsObowAmTor4 = 2 and E4.SHE_Tor4_Lp&gt;0))
+													and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E4.SHE_Data &lt;= @DataNaDzienC))
+													and (@DataDok is null or not @DataDok is null and E4.SHE_DataZap &lt;= @DataDok)
+													and E4.SHE_Data = ( select max(E5.SHE_Data) from cdn.SrtHistElem as E5
+																		where E5.SHE_SrtNumer = E1.She_SrtNumer
+																			and (E5.SHE_GIDTyp = @ZSA or (E5.SHE_GIDTyp = @ZMT and E5.SHE_MsObowAmTor4 = 2 and E5.SHE_Tor4_Lp&gt;0))
+																			and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E5.SHE_Data &lt;= @DataNaDzienC))
+																			and (@DataDok is null or not @DataDok is null and E5.SHE_DataZap &lt;= @DataDok)
+																	)
+											)
+					) as oZS2 on Srodek.srt_gidnumer = oZS2.She_SrtNumer
+				
+			left outer join 
+					(	select E1.*
+						from cdn.SrtHistElem as E1               
+						where   (E1.SHE_GIDTyp = @ZMT and E1.SHE_MsObowAmTor4 = 1 and E1.SHE_Tor4_Lp&gt;0)
+		        			and (@DataDok is null or not @DataDok is null and E1.SHE_DataZap &lt;= @DataDok)
+							and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E1.SHE_Data &lt;= @DataNaDzienC))
+							and E1.SHE_Data = ( select max(E3.SHE_Data) from cdn.SrtHistElem as E3
+												where SHE_SrtNumer = E1.She_SrtNumer
+													and (E3.SHE_GIDTyp = @ZMT and E3.SHE_MsObowAmTor4 = 1 and E3.SHE_Tor4_Lp&gt;0)
+													and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E3.SHE_Data &lt;= @DataNaDzienC))
+													and (@DataDok is null or not @DataDok is null and E3.SHE_DataZap &lt;= @DataDok)
+											)
+							and E1.SHE_SrtLp = ( select max(E4.SHE_SrtLp) from cdn.SrtHistElem as E4
+													where E4.SHE_SrtNumer = E1.She_SrtNumer
+													and (E4.SHE_GIDTyp = @ZMT and E4.SHE_MsObowAmTor4 = 1 and E4.SHE_Tor4_Lp&gt;0)
+													and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E4.SHE_Data &lt;= @DataNaDzienC))
+													and (@DataDok is null or not @DataDok is null and E4.SHE_DataZap &lt;= @DataDok)
+													and E4.SHE_Data = ( select max(E5.SHE_Data) from cdn.SrtHistElem as E5
+																		where E5.SHE_SrtNumer = E1.She_SrtNumer
+																			and (E5.SHE_GIDTyp = @ZMT and E5.SHE_MsObowAmTor4 = 1 and E5.SHE_Tor4_Lp&gt;0)
+																			and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E5.SHE_Data &lt;= @DataNaDzienC))
+																			and (@DataDok is null or not @DataDok is null and E5.SHE_DataZap &lt;= @DataDok)
+																		)
+												)
+					) as oZMT1 on Srodek.srt_gidnumer = oZMT1.She_SrtNumer
+				
+			left outer join 
+					(	select E1.*
+						from cdn.SrtHistElem as E1               
+						where   (E1.SHE_GIDTyp = @ZW or (E1.SHE_GIDTyp = @ZMT and E1.SHE_MsObowAmTor4 = 2 and E1.SHE_Tor4_Lp&gt;0))
+		        			and (@DataDok is null or not @DataDok is null and E1.SHE_DataZap &lt;= @DataDok)
+							and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E1.SHE_Data &lt;= @DataNaDzienC))
+							and E1.SHE_Data = (select max(E3.SHE_Data) from cdn.SrtHistElem as E3
+												where SHE_SrtNumer = E1.She_SrtNumer
+													and (E3.SHE_GIDTyp = @ZW or (E3.SHE_GIDTyp = @ZMT and E3.SHE_MsObowAmTor4 = 2 and E3.SHE_Tor4_Lp&gt;0))
+													and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E3.SHE_Data &lt;= @DataNaDzienC))
+													and (@DataDok is null or not @DataDok is null and E3.SHE_DataZap &lt;= @DataDok)
+												)
+							and E1.SHE_SrtLp = (select max(E4.SHE_SrtLp) from cdn.SrtHistElem as E4
+												where E4.SHE_SrtNumer = E1.She_SrtNumer
+													and (E4.SHE_GIDTyp = @ZW or (E4.SHE_GIDTyp = @ZMT and E4.SHE_MsObowAmTor4 = 2 and E4.SHE_Tor4_Lp&gt;0))
+													and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E4.SHE_Data &lt;= @DataNaDzienC))
+													and (@DataDok is null or not @DataDok is null and E4.SHE_DataZap &lt;= @DataDok)
+													and E4.SHE_Data = (select max(E5.SHE_Data) from cdn.SrtHistElem as E5
+																		where E5.SHE_SrtNumer = E1.She_SrtNumer
+																			and (E5.SHE_GIDTyp = @ZW or (E5.SHE_GIDTyp = @ZMT and E5.SHE_MsObowAmTor4 = 2 and E5.SHE_Tor4_Lp&gt;0))
+																			and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E5.SHE_Data &lt;= @DataNaDzienC))
+																			and (@DataDok is null or not @DataDok is null and E5.SHE_DataZap &lt;= @DataDok)
+																		)
+												)
+					) as oZW2 on Srodek.srt_gidnumer = oZW2.She_SrtNumer
+			left outer join 
+					(	select E1.*
+						from cdn.SrtHistElem as E1               
+						where   (E1.SHE_GIDTyp = @ZMT and E1.SHE_MsObowAmTor4 = 2 and E1.SHE_Tor4_Lp&gt;0)
+		        			and (@DataDok is null or not @DataDok is null and E1.SHE_DataZap &lt;= @DataDok)
+							and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E1.SHE_Data &lt;= @DataNaDzienC))
+							and E1.SHE_Data = (select max(E3.SHE_Data) from cdn.SrtHistElem as E3
+												where SHE_SrtNumer = E1.She_SrtNumer
+													and (E3.SHE_GIDTyp = @ZMT and E3.SHE_MsObowAmTor4 = 2 and E3.SHE_Tor4_Lp&gt;0)
+													and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E3.SHE_Data &lt;= @DataNaDzienC))
+													and (@DataDok is null or not @DataDok is null and E3.SHE_DataZap &lt;= @DataDok)
+												)
+							and E1.SHE_SrtLp = (select max(E4.SHE_SrtLp) from cdn.SrtHistElem as E4
+												where E4.SHE_SrtNumer = E1.She_SrtNumer
+													and (E4.SHE_GIDTyp = @ZMT and E4.SHE_MsObowAmTor4 = 2 and E4.SHE_Tor4_Lp&gt;0)
+													and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E4.SHE_Data &lt;= @DataNaDzienC))
+													and (@DataDok is null or not @DataDok is null and E4.SHE_DataZap &lt;= @DataDok)
+													and E4.SHE_Data = (select max(E5.SHE_Data) from cdn.SrtHistElem as E5
+																		where E5.SHE_SrtNumer = E1.She_SrtNumer
+																			and (E5.SHE_GIDTyp = @ZMT and E5.SHE_MsObowAmTor4 = 2 and E5.SHE_Tor4_Lp&gt;0)
+																			and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E5.SHE_Data &lt;= @DataNaDzienC))
+																			and (@DataDok is null or not @DataDok is null and E5.SHE_DataZap &lt;= @DataDok)
+																		)
+												)
+					) as oZMT2 on Srodek.srt_gidnumer = oZMT2.She_SrtNumer
+								
+			left outer join 
+					(select E1.*
+					from cdn.SrtHistElem as E1
+					where E1.SHE_GIDTyp = @NT  and E1.SHE_Tor4_Lp&gt;0
+						and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E1.SHE_Data &lt;= @DataNaDzienC))
+						and (@DataDok is null or not @DataDok is null and E1.SHE_DataZap &lt;= @DataDok)
+						and E1.SHE_Data = ( select min(E2.SHE_Data) from cdn.SrtHistElem as E2
+											where E2.SHE_SrtNumer = E1.She_SrtNumer 
+												and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E2.SHE_Data &lt;= @DataNaDzienC))
+												and (@DataDok is null or not @DataDok is null and E2.SHE_DataZap &lt;= @DataDok)
+												and E2.SHE_GIDTyp = @NT and E2.SHE_Tor4_Lp&gt;0
+										)
+						and E1.SHE_SrtLp = (select min(E3.SHE_SrtLp) from cdn.SrtHistElem as E3
+											where E3.SHE_SrtNumer = E1.She_SrtNumer 
+												and E3.SHE_GIDTyp = @NT and E3.SHE_Tor4_Lp&gt;0
+												and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E3.SHE_Data &lt;= @DataNaDzienC))
+												and (@DataDok is null or not @DataDok is null and E3.SHE_DataZap &lt;= @DataDok)
+												and E3.SHE_Data = ( select min(E4.SHE_Data) from cdn.SrtHistElem as E4
+																	where E4.SHE_SrtNumer = E1.She_SrtNumer 
+																		and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E4.SHE_Data &lt;= @DataNaDzienC))
+																		and (@DataDok is null or not @DataDok is null and E4.SHE_DataZap &lt;= @DataDok)
+																		and E4.SHE_GIDTyp = @NT and E4.SHE_Tor4_Lp&gt;0
+														)
+											)
+					) as pNT on Srodek.srt_gidnumer = pNT.She_SrtNumer
+
+			where Srodek.Srt_GIDNumer = @Srt_GIDNumer
+				and (@DataDok is null or not @DataDok is null and Srodek.Srt_Data &lt;= @DataDok)
+		) as a1
+
+	end
+	else if @Tor = 4
+	begin
+		select @_rv =
+			case @Rodzaj
+			when 0 then --stawka * wsp
+				case when Metoda = 2 then --degresywna 
+					round(Stawka * WspDegr,2)
+				else					
+					round(Stawka * Wsp,2)
+				end
+			when 1 then --stawka
+				Stawka
+			when 2 then --wsp
+				case when Metoda = 2 then --degresywna 
+					WspDegr
+				else					
+					Wsp
+				end
+			end
+		from
+		(
+			select
+				case when pOT.she_gidtyp is null then
+					Srodek.Srt_StawkaTor5
+				else
+					case when oZS2.she_Gidtyp is null and oZMT1.she_Gidtyp is null and pNT.SHE_GIDTyp is null then
+						pOT.SHE_StawkaAmTor5
+					else
+						iif(	
+							isnull(oZS2.she_Data,0) - isnull(oZMT1.she_Data,0) &lt;= 0, 
+							iif(isnull(pNT.she_Data,0) - isnull(oZMT1.she_Data,0) &lt;= 0, oZMT1.SHE_StawkaAmTor5, pNT.SHE_StawkaAmTor5), 
+							iif(isnull(pNT.she_Data,0) - isnull(oZS2.she_Data,0) &lt;=0, oZS2.SHE_StawkaAmTor5 , pNT.SHE_StawkaAmTor5)
+						)
+					end
+				end as Stawka,
+			
+				case when pOT.she_gidtyp is null then
+						Srodek.Srt_WspAmTor5
+				else
+					case when oZW2.she_Gidtyp is null and oZMT1.she_Gidtyp is null and pNT.SHE_GIDTyp is null then
+						pOT.SHE_WspAmTor5
+					else
+						iif(	
+							isnull(oZW2.she_Data,0) - isnull(oZMT1.she_Data,0) &lt;= 0, 
+							iif(isnull(pNT.she_Data,0) - isnull(oZMT1.she_Data,0) &lt;= 0, oZMT1.SHE_WspAmTor5, pNT.SHE_WspAmTor5), 
+							iif(isnull(pNT.she_Data,0) - isnull(oZW2.she_Data,0) &lt;=0, oZW2.SHE_WspAmTor5 , pNT.SHE_WspAmTor5)
+						)						
+					end
+				end as Wsp,
+			
+				case when pOT.she_gidtyp is null then
+					Srodek.Srt_WspDegrTor5
+				else
+					case when oZW2.she_Gidtyp is null and oZMT1.she_Gidtyp is null and pNT.SHE_GIDTyp is null then
+						pOT.SHE_WspDegrTor5
+					else
+
+						iif(	
+							isnull(oZW2.she_Data,0) - isnull(oZMT1.she_Data,0) &lt;= 0, 
+							iif(isnull(pNT.she_Data,0) - isnull(oZMT1.she_Data,0) &lt;= 0, oZMT1.SHE_WspDegrTor5, pNT.SHE_WspDegrTor5), 
+							iif(isnull(pNT.she_Data,0) - isnull(oZW2.she_Data,0) &lt;=0, oZW2.SHE_WspDegrTor5 , pNT.SHE_WspDegrTor5)
+						)
+					end
+				end as WspDegr,
+					
+				case when pOT.she_gidtyp is null then
+					Srodek.Srt_MetodaTor5
+				else
+					case when oZMT2.she_Gidtyp is null and oZMT1.she_Gidtyp is null and pNT.SHE_GIDTyp is null then
+						pOT.SHE_MetodaAmTor5
+					else
+
+						iif(	
+							isnull(oZMT2.she_Data,0) - isnull(oZMT1.she_Data,0) &lt;= 0, 
+							iif(isnull(pNT.she_Data,0) - isnull(oZMT1.she_Data,0) &lt;= 0, oZMT1.SHE_MetodaAmTor5, pNT.SHE_MetodaAmTor5), 
+							iif(isnull(pNT.she_Data,0) - isnull(oZMT2.she_Data,0) &lt;=0, oZMT2.SHE_MetodaAmTor5 , pNT.SHE_MetodaAmTor5)
+						)
+					end
+				end as Metoda
+			
+			from cdn.SrtKarty Srodek
+			left outer join 
+			(
+				select E1.*
+				from cdn.SrtHistElem as E1
+				where E1.SHE_GIDTyp = @OT
+					and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E1.SHE_Data &lt;= @DataNaDzienC))
+					and (@DataDok is null or not @DataDok is null and E1.SHE_DataZap &lt;= @DataDok)
+					and E1.SHE_Data = ( select min(E2.SHE_Data) from cdn.SrtHistElem as E2
+										where E2.SHE_SrtNumer = E1.She_SrtNumer 
+											and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E2.SHE_Data &lt;= @DataNaDzienC))
+											and (@DataDok is null or not @DataDok is null and E2.SHE_DataZap &lt;= @DataDok)
+											and E2.SHE_GIDTyp = @OT
+									)
+					and E1.SHE_SrtLp = (select min(E3.SHE_SrtLp) from cdn.SrtHistElem as E3
+										where E3.SHE_SrtNumer = E1.She_SrtNumer 
+											and E3.SHE_GIDTyp = @OT
+											and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E3.SHE_Data &lt;= @DataNaDzienC))
+											and (@DataDok is null or not @DataDok is null and E3.SHE_DataZap &lt;= @DataDok)
+											and E3.SHE_Data = ( select min(E4.SHE_Data) from cdn.SrtHistElem as E4
+																where E4.SHE_SrtNumer = E1.She_SrtNumer 
+																	and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E4.SHE_Data &lt;= @DataNaDzienC))
+																	and (@DataDok is null or not @DataDok is null and E4.SHE_DataZap &lt;= @DataDok)
+																	and E4.SHE_GIDTyp = @OT
+													)
+										)
+			) as pOT on Srodek.srt_gidnumer = pOT.She_SrtNumer
+				
+			left outer join 
+			(	
+				select E1.*
+				from cdn.SrtHistElem as E1               
+				where   (E1.SHE_GIDTyp = @ZSA or (E1.SHE_GIDTyp = @ZMT and E1.SHE_MsObowAmTor5 = 2 and E1.SHE_Tor5_Lp&gt;0))
+		        	and (@DataDok is null or not @DataDok is null and E1.SHE_DataZap &lt;= @DataDok)
+					and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E1.SHE_Data &lt;= @DataNaDzienC))
+					and E1.SHE_Data = ( select max(E3.SHE_Data) from cdn.SrtHistElem as E3
+										where SHE_SrtNumer = E1.She_SrtNumer
+											and (E3.SHE_GIDTyp = @ZSA or (E3.SHE_GIDTyp = @ZMT and E3.SHE_MsObowAmTor5 = 2 and E3.SHE_Tor5_Lp&gt;0))
+											and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E3.SHE_Data &lt;= @DataNaDzienC))
+											and (@DataDok is null or not @DataDok is null and E3.SHE_DataZap &lt;= @DataDok)
+									
+									)
+					and E1.SHE_SrtLp = ( select max(E4.SHE_SrtLp) from cdn.SrtHistElem as E4
+											where E4.SHE_SrtNumer = E1.She_SrtNumer
+											and (E4.SHE_GIDTyp = @ZSA or (E4.SHE_GIDTyp = @ZMT and E4.SHE_MsObowAmTor5 = 2 and E4.SHE_Tor5_Lp&gt;0))
+											and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E4.SHE_Data &lt;= @DataNaDzienC))
+											and (@DataDok is null or not @DataDok is null and E4.SHE_DataZap &lt;= @DataDok)
+											and E4.SHE_Data = ( select max(E5.SHE_Data) from cdn.SrtHistElem as E5
+																where E5.SHE_SrtNumer = E1.She_SrtNumer
+																	and (E5.SHE_GIDTyp = @ZSA or (E5.SHE_GIDTyp = @ZMT and E5.SHE_MsObowAmTor5 = 2 and E5.SHE_Tor5_Lp&gt;0))
+																	and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E5.SHE_Data &lt;= @DataNaDzienC))
+																	and (@DataDok is null or not @DataDok is null and E5.SHE_DataZap &lt;= @DataDok)
+															)
+									)
+			) as oZS2 on Srodek.srt_gidnumer = oZS2.She_SrtNumer
+				
+			left outer join 
+			(	select E1.*
+				from cdn.SrtHistElem as E1               
+				where   (E1.SHE_GIDTyp = @ZMT and E1.SHE_MsObowAmTor5 = 1 and E1.SHE_Tor5_Lp&gt;0)
+		        	and (@DataDok is null or not @DataDok is null and E1.SHE_DataZap &lt;= @DataDok)
+					and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E1.SHE_Data &lt;= @DataNaDzienC))
+					and E1.SHE_Data = ( select max(E3.SHE_Data) from cdn.SrtHistElem as E3
+										where SHE_SrtNumer = E1.She_SrtNumer
+											and (E3.SHE_GIDTyp = @ZMT and E3.SHE_MsObowAmTor5 = 1 and E3.SHE_Tor5_Lp&gt;0)
+											and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E3.SHE_Data &lt;= @DataNaDzienC))
+											and (@DataDok is null or not @DataDok is null and E3.SHE_DataZap &lt;= @DataDok)
+									)
+					and E1.SHE_SrtLp = ( select max(E4.SHE_SrtLp) from cdn.SrtHistElem as E4
+											where E4.SHE_SrtNumer = E1.She_SrtNumer
+											and (E4.SHE_GIDTyp = @ZMT and E4.SHE_MsObowAmTor5 = 1 and E4.SHE_Tor5_Lp&gt;0)
+											and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E4.SHE_Data &lt;= @DataNaDzienC))
+											and (@DataDok is null or not @DataDok is null and E4.SHE_DataZap &lt;= @DataDok)
+											and E4.SHE_Data = ( select max(E5.SHE_Data) from cdn.SrtHistElem as E5
+																where E5.SHE_SrtNumer = E1.She_SrtNumer
+																	and (E5.SHE_GIDTyp = @ZMT and E5.SHE_MsObowAmTor5 = 1 and E5.SHE_Tor5_Lp&gt;0)
+																	and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E5.SHE_Data &lt;= @DataNaDzienC))
+																	and (@DataDok is null or not @DataDok is null and E5.SHE_DataZap &lt;= @DataDok)
+																)
+										)
+			) as oZMT1 on Srodek.srt_gidnumer = oZMT1.She_SrtNumer
+				
+			left outer join 
+			(	select E1.*
+				from cdn.SrtHistElem as E1               
+				where   (E1.SHE_GIDTyp = @ZW or (E1.SHE_GIDTyp = @ZMT and E1.SHE_MsObowAmTor5 = 2 and E1.SHE_Tor5_Lp&gt;0))
+		        	and (@DataDok is null or not @DataDok is null and E1.SHE_DataZap &lt;= @DataDok)
+					and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E1.SHE_Data &lt;= @DataNaDzienC))
+					and E1.SHE_Data = (select max(E3.SHE_Data) from cdn.SrtHistElem as E3
+										where SHE_SrtNumer = E1.She_SrtNumer
+											and (E3.SHE_GIDTyp = @ZW or (E3.SHE_GIDTyp = @ZMT and E3.SHE_MsObowAmTor5 = 2 and E3.SHE_Tor5_Lp&gt;0))
+											and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E3.SHE_Data &lt;= @DataNaDzienC))
+											and (@DataDok is null or not @DataDok is null and E3.SHE_DataZap &lt;= @DataDok)
+										)
+					and E1.SHE_SrtLp = (select max(E4.SHE_SrtLp) from cdn.SrtHistElem as E4
+										where E4.SHE_SrtNumer = E1.She_SrtNumer
+											and (E4.SHE_GIDTyp = @ZW or (E4.SHE_GIDTyp = @ZMT and E4.SHE_MsObowAmTor5 = 2 and E4.SHE_Tor5_Lp&gt;0))
+											and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E4.SHE_Data &lt;= @DataNaDzienC))
+											and (@DataDok is null or not @DataDok is null and E4.SHE_DataZap &lt;= @DataDok)
+											and E4.SHE_Data = (select max(E5.SHE_Data) from cdn.SrtHistElem as E5
+																where E5.SHE_SrtNumer = E1.She_SrtNumer
+																	and (E5.SHE_GIDTyp = @ZW or (E5.SHE_GIDTyp = @ZMT and E5.SHE_MsObowAmTor5 = 2 and E5.SHE_Tor5_Lp&gt;0))
+																	and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E5.SHE_Data &lt;= @DataNaDzienC))
+																	and (@DataDok is null or not @DataDok is null and E5.SHE_DataZap &lt;= @DataDok)
+																)
+										)
+			) as oZW2 on Srodek.srt_gidnumer = oZW2.She_SrtNumer
+
+			left outer join 
+			(	select E1.*
+				from cdn.SrtHistElem as E1               
+				where   (E1.SHE_GIDTyp = @ZMT and E1.SHE_MsObowAmTor5 = 2 and E1.SHE_Tor5_Lp&gt;0)
+		        	and (@DataDok is null or not @DataDok is null and E1.SHE_DataZap &lt;= @DataDok)
+					and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E1.SHE_Data &lt;= @DataNaDzienC))
+					and E1.SHE_Data = (select max(E3.SHE_Data) from cdn.SrtHistElem as E3
+										where SHE_SrtNumer = E1.She_SrtNumer
+											and (E3.SHE_GIDTyp = @ZMT and E3.SHE_MsObowAmTor5 = 2 and E3.SHE_Tor5_Lp&gt;0)
+											and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E3.SHE_Data &lt;= @DataNaDzienC))
+											and (@DataDok is null or not @DataDok is null and E3.SHE_DataZap &lt;= @DataDok)
+										)
+					and E1.SHE_SrtLp = (select max(E4.SHE_SrtLp) from cdn.SrtHistElem as E4
+										where E4.SHE_SrtNumer = E1.She_SrtNumer
+											and (E4.SHE_GIDTyp = @ZMT and E4.SHE_MsObowAmTor5 = 2 and E4.SHE_Tor5_Lp&gt;0)
+											and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E4.SHE_Data &lt;= @DataNaDzienC))
+											and (@DataDok is null or not @DataDok is null and E4.SHE_DataZap &lt;= @DataDok)
+											and E4.SHE_Data = (select max(E5.SHE_Data) from cdn.SrtHistElem as E5
+																where E5.SHE_SrtNumer = E1.She_SrtNumer
+																	and (E5.SHE_GIDTyp = @ZMT and E5.SHE_MsObowAmTor5 = 2 and E5.SHE_Tor5_Lp&gt;0)
+																	and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E5.SHE_Data &lt;= @DataNaDzienC))
+																	and (@DataDok is null or not @DataDok is null and E5.SHE_DataZap &lt;= @DataDok)
+																)
+										)
+			) as oZMT2 on Srodek.srt_gidnumer = oZMT2.She_SrtNumer
+			
+			left outer join 
+					(select E1.*
+					from cdn.SrtHistElem as E1
+					where E1.SHE_GIDTyp = @NT  and E1.SHE_Tor5_Lp&gt;0
+						and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E1.SHE_Data &lt;= @DataNaDzienC))
+						and (@DataDok is null or not @DataDok is null and E1.SHE_DataZap &lt;= @DataDok)
+						and E1.SHE_Data = ( select min(E2.SHE_Data) from cdn.SrtHistElem as E2
+											where E2.SHE_SrtNumer = E1.She_SrtNumer 
+												and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E2.SHE_Data &lt;= @DataNaDzienC))
+												and (@DataDok is null or not @DataDok is null and E2.SHE_DataZap &lt;= @DataDok)
+												and E2.SHE_GIDTyp = @NT and E2.SHE_Tor5_Lp&gt;0
+										)
+						and E1.SHE_SrtLp = (select min(E3.SHE_SrtLp) from cdn.SrtHistElem as E3
+											where E3.SHE_SrtNumer = E1.She_SrtNumer 
+												and E3.SHE_GIDTyp = @NT and E3.SHE_Tor5_Lp&gt;0
+												and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E3.SHE_Data &lt;= @DataNaDzienC))
+												and (@DataDok is null or not @DataDok is null and E3.SHE_DataZap &lt;= @DataDok)
+												and E3.SHE_Data = ( select min(E4.SHE_Data) from cdn.SrtHistElem as E4
+																	where E4.SHE_SrtNumer = E1.She_SrtNumer 
+																		and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E4.SHE_Data &lt;= @DataNaDzienC))
+																		and (@DataDok is null or not @DataDok is null and E4.SHE_DataZap &lt;= @DataDok)
+																		and E4.SHE_GIDTyp = @NT and E4.SHE_Tor5_Lp&gt;0
+														)
+											)
+					) as pNT on Srodek.srt_gidnumer = pNT.She_SrtNumer
+
+			where Srodek.Srt_GIDNumer = @Srt_GIDNumer
+				and (@DataDok is null or not @DataDok is null and Srodek.Srt_Data &lt;= @DataDok)
+		) as a1
+	
+	end
+
+	return(@_rv)
+	
+
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do funkcji SrtStanStawka"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do funkcji SrtStanStawka */</I><BR>
+GRANT EXECUTE ON CDN.SrtStanStawka TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

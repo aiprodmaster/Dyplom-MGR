@@ -1,0 +1,61 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="POGListaOkresow"></A><PRE>
+          <FONT SIZE="2"><I>/* POGListaOkresow */</I><BR>
+CREATE FUNCTION CDN.POGListaOkresow
+(	
+	@p_PTOId		INTEGER,		--Identyfikator typu okresu	
+	@p_Data			INTEGER=null,	--Data od której zwracać okresy (jeśli null to od początku)	
+	@p_IlIteracja	INTEGER=null	--Ilość iteracji
+)
+RETURNS @Table TABLE (
+	Okres		VARCHAR(25),
+	Iteracja	INTEGER,
+	Pocz		INTEGER,
+	Kon			INTEGER
+) 
+AS
+BEGIN 
+
+	DECLARE @TerminOd INTEGER
+	DECLARE @PowtarzacCo INTEGER
+	DECLARE @LOCAL_MaxRECURSION INTEGER
+	SET @LOCAL_MaxRECURSION = 10000
+
+	SELECT @TerminOd=PTO_TerminOd/86400+69035, @PowtarzacCo=PTO_PowtarzacCo FROM CDN.PlanyTypyOkresow WHERE PTO_Id=@p_PTOId
+
+	if @TerminOd is null
+		set @TerminOd = DATEDIFF(d,'18001228',GETDATE());
+
+	if @PowtarzacCo is null
+		set @PowtarzacCo = 7;
+
+	with CTE_Okresy as
+	(
+		select 1 as Iteracja, @TerminOd as Pocz, @TerminOd+@PowtarzacCo as Kon 
+		union all
+		select Iteracja + 1, Kon+1, Kon+@PowtarzacCo as Kon FROM CTE_Okresy where Iteracja &lt; @LOCAL_MaxRECURSION
+	)
+	insert into @Table
+	select top (IsNull(@p_IlIteracja,@LOCAL_MaxRECURSION)) substring(convert(varchar,CDN.TSToDate(Pocz,0),120),1,10)+' - '+substring(convert(varchar,CDN.TSToDate(Kon,0),120),1,10) as Okres, Iteracja, Pocz, Kon from CTE_Okresy
+	where @p_Data is null or @p_Data&lt;Kon 
+	option (MAXRECURSION 0);
+
+	RETURN
+
+END;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

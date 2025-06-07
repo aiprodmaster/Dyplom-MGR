@@ -1,0 +1,89 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[ESKLEP_EksportTwrXML]"></A><PRE>
+          <FONT SIZE="2"><I>/* [ESKLEP_EksportTwrXML] */</I><BR>
+CREATE PROCEDURE [CDN].[ESKLEP_EksportTwrXML]
+  @ID INT             -- ID e-sklepu
+ ,@Opcje INT          -- Maska opcji eksportu
+ ,@UniId VARCHAR(60)
+ ,@START INT
+ ,@TwrLastID INT
+ AS
+SET NOCOUNT ON
+
+DECLARE  @ExpCennik                             INT -- Eksport cennika (0 - nie, 1 - tak)
+                ,@ExpCennikTyp                  INT -- Typ eksportu cennika (0 - rĂłĹĽnicowy, 1 - peĹ‚ny)
+                ,@ExpGrup                               INT -- Eksport grup (0 - nie, 1 - tak)
+                ,@ExpGrupTyp                    INT -- Typ eksportu grup (0 - rĂłĹĽnicowy, 1 - peĹ‚ny)
+                ,@ExpDaneBinarne                INT -- Eksport danych binarnych (0 - nie, 1 - tak)
+                ,@ExpDaneBinarneTyp             INT     -- Typ eksportu danych binarnych (0 - rĂłĹĽnicowy, 1 - peĹ‚ny)
+                ,@ExpDaneBinarnePaczki  INT -- Eksport danych binarnych w paczkach (0 - pierwsza paczka, 1 - kolejne paczki z sami danymi binarnymi)
+                ,@ExpZasoby                             INT -- Eksport zasobĂłw towarowych (0 - nie, 1 - tak)
+                ,@ExpCen                             INT -- Eksport tylko cen (0 - nie, 1 - tak)
+                ,@ExpKontrahentow                             INT -- Eksport kontrahentow, tylko nowi, nie aktualizujemy (0 - nie, 1 - tak)
+				,@ExpKontrahentowTyp			INT  --Typ eksportu kontrahentĂłw (0 - rĂłĹĽnicowy, 1 - peĹ‚ny)                                
+				,@ExpAtrTyp			INT  --Typ eksportu atrybutow (0 - rĂłĹĽnicowy, 1 - peĹ‚ny)     
+DECLARE @DABID INT                      -- ID danych binarnych, ktĂłre byĹ‚y wysĹ‚ane jako ostatnie w poprzedniej paczce
+DECLARE @PcK_Stan     INT   -- Stan e-sklepu : (0 - nowy; 1 - wykonano pierwszy eksport; 2 - wykonano peĹ‚nÄ… synchronizacjÄ™ (import,eksport) )
+SELECT  @PcK_Stan =   (SELECT PcK_Stan FROM CDN.PicoKonfig WHERE PcK_PicoID = @ID)
+
+SELECT   @ExpCennik                             =  @Opcje &amp; 1
+                ,@ExpCennikTyp                  = (@Opcje &amp; 2) / 2
+                ,@ExpGrup                               = (@Opcje &amp; 4) / 4
+            ,@ExpGrupTyp                        = (@Opcje &amp; 8) / 8
+                ,@ExpDaneBinarne                = (@Opcje &amp; 16) / 16
+                ,@ExpDaneBinarneTyp             = (@Opcje &amp; 32) / 32
+                ,@ExpDaneBinarnePaczki  = (@Opcje &amp; 64) / 64
+                ,@ExpZasoby                             = (@Opcje &amp; 128) / 128
+                ,@ExpCen							=  (@Opcje &amp; 256) / 256
+                ,@ExpKontrahentow					=  (@Opcje &amp; 512) / 512
+				,@ExpKontrahentowTyp				=  (@Opcje &amp; 1024) / 1024
+                
+ IF (SELECT PcK_TSSynchrTwrPtw FROM CDN.PicoKonfig WHERE PcK_PicoID = @ID) = 0 AND @Opcje &gt; 0
+         SET @ExpCennikTyp = 1
+ IF (SELECT PcK_TSSynchrGrupPtw FROM CDN.PicoKonfig WHERE PcK_PicoID = @ID) = 0 AND @Opcje &gt; 0
+         SET @ExpGrupTyp = 1
+
+SET @ExpAtrTyp = 1
+
+ SET @Opcje = @ExpCennik + 2*@ExpCennikTyp + 4*@ExpGrup + 8*@ExpGrupTyp + 16*@ExpDaneBinarne + 32*@ExpDaneBinarneTyp + 64*@ExpDaneBinarnePaczki + 128*@ExpZasoby + 
+ 256*@ExpCen + 512*@ExpKontrahentow + 4096*@ExpCennik + 8192*(CASE WHEN @Opcje &gt; 0 THEN @ExpAtrTyp ELSE 0 END)
+
+ UPDATE CDN.PicoKonfig SET PcK_EtapSynchronizacji = 2  WHERE PcK_PicoID = @ID -- etap synchronizacji: eksport
+
+ SELECT '&lt;ROOT&gt;'
+ --EXEC CDN.ESKLEP_EksportInfoBlok @ID, @Opcje, 1, @UniId
+
+ IF @ExpDaneBinarnePaczki = 0 AND @ExpCen = 0
+        BEGIN
+				
+				IF (@ExpCennik = 1)
+                        BEGIN
+								EXEC CDN.ESKLEP_EksportInfoBlok @ID, @Opcje, 0, @UniId
+								EXEC CDN.ESKLEP_EksportTwr @ID, @ExpCennikTyp,@START,@TwrLastID
+                              		
+						END
+        END
+SELECT '&lt;/ROOT&gt;'
+ UPDATE CDN.PicoKonfig SET PcK_EtapSynchronizacji = 0  WHERE PcK_PicoID = @ID -- Etap synchronizacji: bezczynny
+
+ IF @PcK_Stan = 0 -- nowo utworzony oddziaĹ‚
+        UPDATE CDN.PicoKonfig SET PcK_Stan = 1  WHERE PcK_PicoID = @ID -- Wykonano pierwszÄ… synchronizacjÄ™: eksport
+
+SET NOCOUNT OFF
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,115 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="KompElementyDoKorekty"></A><PRE>
+          <FONT SIZE="2"><I>/* KompElementyDoKorekty */</I><BR>
+CREATE FUNCTION CDN.KompElementyDoKorekty(@NumerDok int,@LpDok INT)
+RETURNS @Elementy TABLE (Typ int, Numer int,Lp int, SubLp int,Ilosc decimal(15,4),Koszt decimal(15,4))
+AS
+BEGIN
+
+DECLARE  @Poziom INT,@Typ INT,@Numer INT, @Lp INT, @SubLp INT,@ZwrNum INT,@ZwrLp INT, @ZwrSubLp INT,@Ilosc DECIMAL(15,4),@Koszt DECIMAL(15,2)
+
+declare @DrzewoKorekt table(Typ int,Numer INT, Poziom INT,OstKor INT)
+BEGIN
+WITH DrzewoKor 
+AS
+(SELECT TrN_GIDTyp Typ,TrN_GIDNumer Numer,1 Poziom,TrN_ZwrNumer OstKor FROM CDN.TraNag
+WHERE TrN_GIDNumer = @NumerDok
+UNION ALL
+SELECT TrN_GIDTyp Typ,TrN_GIDNumer Numer,Poziom + 1 Poziom,TrN_ZwrNumer OstKor
+FROM CDN.TraNag
+JOIN DrzewoKor ON TrN_ZwrNumer = Numer AND Numer &gt; 0 AND TrN_GIDNumer &lt;&gt; @NumerDok)
+INSERT INTO @DrzewoKorekt
+SELECT * FROM DrzewoKor
+END
+
+DECLARE @elemOstKor table(Typ int, Numer int,Lp int, SubLp int,Ilosc decimal(15,4),Koszt decimal(15,4),ZwrNumer INT,ZwrLp INT,ZwrSubLp INT)
+
+declare korekty cursor fast_forward for
+SELECT Poziom,Typ,Numer,TrS_GIDLp,TrS_SubGIDLp,TrS_ZwrNumer,TrS_ZwrLp,TrS_SubZwrLp,TrS_Ilosc,TrS_KosztKsiegowy FROM @DrzewoKorekt
+JOIN CDN.TraSElem ON TrS_GIDNumer = Numer AND TrS_OrgLp = @LpDok
+ORDER BY Poziom
+
+open korekty 
+fetch next from korekty into @Poziom,@Typ,@Numer,@Lp, @SubLp,@ZwrNum,@ZwrLp, @ZwrSubLp,@Ilosc,@Koszt
+
+	while @@FETCH_STATUS = 0 
+	begin
+		IF @Lp &lt; 0 
+		BEGIN
+			INSERT INTO @elemOstKor VALUES(@Typ,@Numer,@Lp,@SubLp,@Ilosc,@Koszt,@ZwrNum,@ZwrLp,@ZwrSubLp)
+		END
+		ELSE
+		BEGIN 
+			IF @ZwrLp &lt; 0 
+			BEGIN
+				IF NOT EXISTS(SELECT * FROM @elemOstKor WHERE ZwrNumer = @ZwrNum AND ZwrLp = @ZwrLp AND @ZwrSubLp = ZwrSubLp AND Lp &gt; 0)
+					UPDATE @elemOstKor SET Typ = @Typ,Numer = @Numer,Lp = @Lp,SubLp = @SubLp,ZwrNumer = @ZwrNum,ZwrLp = @ZwrLp,ZwrSubLp = @ZwrSubLp 
+						WHERE Numer = @ZwrNum AND Lp = @ZwrLp AND SubLp = @ZwrSubLp
+				ELSE
+				BEGIN
+					UPDATE @elemOstKor SET Typ = @Typ,Numer = @Numer,Lp = @Lp,SubLp = @SubLp WHERE ZwrNumer = @ZwrNum AND ZwrLp = @ZwrLp AND @ZwrSubLp = ZwrSubLp AND Lp &gt; 0
+				END
+					
+			END
+			ELSE
+			BEGIN
+				IF NOT EXISTS(SELECT * FROM @elemOstKor WHERE ZwrNumer = @ZwrNum AND ZwrLp = @ZwrLp AND @ZwrSubLp = ZwrSubLp AND Lp &gt; 0)
+					INSERT INTO @elemOstKor VALUES(@Typ,@Numer,@Lp,@SubLp,@Ilosc,@Koszt,@ZwrNum,@ZwrLp,@ZwrSubLp)
+				ELSE
+				BEGIN
+					UPDATE @elemOstKor SET Typ = @Typ,Numer = @Numer,Lp = @Lp,SubLp = @SubLp WHERE ZwrNumer = @ZwrNum AND ZwrLp = @ZwrLp AND @ZwrSubLp = ZwrSubLp AND Lp &gt; 0
+				END
+			END
+		END 
+		fetch next from korekty into @Poziom,@Typ,@Numer,@Lp, @SubLp,@ZwrNum,@ZwrLp, @ZwrSubLp,@Ilosc,@Koszt
+	end
+
+	close korekty 
+	deallocate korekty
+
+
+/*INSERT INTO @elemOstKor
+SELECT COALESCE(KOR.TrS_GIDTyp,ORYG.trs_GIDTyp),COALESCE(KOR.TrS_GIDNumer,ORYG.TrS_GIDNumer),COALESCE(KOR.TrS_GIDLp,ORYG.Trs_GIDLp),COALESCE(KOR.TrS_SubGIDLp,ORYG.Trs_SubGIDLp),
+COALESCE(KOR.TrS_Ilosc,ORYG.Trs_Ilosc),COALESCE(KOR.TrS_KosztKsiegowy,ORYG.Trs_KosztKsiegowy),COALESCE(KOR.TrS_ZwrNumer,ORYG.Trs_GIDNumer),
+COALESCE(KOR.TrS_ZwrLp,ORYG.Trs_GIDLp),COALESCE(KOR.TrS_SubZwrLp,ORYG.TRS_SubGIDLp)
+FROM CDN.TraNag NORYG
+LEFT JOIN CDN.TraSElem KOR ON KOR.TrS_GIDNumer = TrN_ZwrNumer AND KOR.TrS_OrgLp = @LpDok
+LEFT JOIN CDN.TraSElem ORYG ON ORYG.TrS_GIDNumer = TrN_GIDNumer AND ORYG.TrS_OrgLp = @LpDok
+LEFT JOIN CDN.TraNag NKOR ON KOR.TrS_GIDNumer = NKOR.TrN_GIDNumer
+WHERE NORYG.TrN_GIDNumer = @NumerDok AND NORYG.TrN_Stan &gt; 3 AND NORYG.TrN_Stan &lt; 6 AND ((NKOR.TrN_Stan &gt; 3 AND NKOR.TrN_Stan &lt; 6) OR NKOR.TrN_Stan IS NULL) */
+
+INSERT INTO @Elementy
+SELECT Typ,Numer,Lp,SubLp,CASE WHEN Lp &lt; 0 THEN EElem.TrS_Ilosc ELSE EELEM.TrS_Ilosc + SUM(EKor.TrS_Ilosc)  END Ilosc,
+CASE WHEN Lp &lt; 0 THEN EElem.TrS_KosztKsiegowy ELSE EELEM.trs_kosztKsiegowy + SUM(EKor.trs_kosztKsiegowy) END Koszt
+FROM @elemOstKor
+LEFT JOIN CDN.TraSElem EKor ON EKor.TrS_ZwrNumer = ZwrNumer AND EKor.TrS_ZwrLp = ZwrLp AND EKor.TrS_SubZwrLp = ZwrSubLp AND EKor.TrS_GIDLp &gt; 0
+JOIN CDN.TraSElem EElem ON EElem.TrS_GIDNumer = ZwrNumer AND EElem.TrS_GIDLp = ZwrLp AND EElem.TrS_SubGIDLp = ZwrSubLp
+WHERE ZwrLp &lt; 0 
+GROUP BY Typ,Numer,Lp,SubLp,EElem.TrS_Ilosc,EElem.TrS_KosztKsiegowy,Ilosc,Koszt
+
+INSERT INTO @Elementy
+SELECT Typ,Numer,Lp,SubLp,CASE WHEN Lp &lt; 0 THEN Ilosc ELSE SUM(EKOR.TrS_Ilosc) END Ilosc,CASE WHEN Lp &lt; 0 THEN Koszt ELSE SUM(EKOR.TrS_KosztKsiegowy) END Koszt 
+FROM @elemOstKor
+LEFT JOIN CDN.TraSElem EKor ON EKor.TrS_ZwrNumer = ZwrNumer AND EKor.TrS_ZwrLp = ZwrLp AND EKor.TrS_SubZwrLp = ZwrSubLp AND EKor.TrS_GIDLp &gt; 0
+JOIN CDN.TraSElem EElem ON EElem.TrS_GIDNumer = ZwrNumer AND EElem.TrS_GIDLp = ZwrLp AND EElem.TrS_SubGIDLp = ZwrSubLp
+WHERE ZwrLp &gt; 0
+GROUP BY Typ,Numer,Lp,SubLp,Ilosc,Koszt
+
+RETURN 
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

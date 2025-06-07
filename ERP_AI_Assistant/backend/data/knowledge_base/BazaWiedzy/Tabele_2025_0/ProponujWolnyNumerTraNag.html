@@ -1,0 +1,110 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[ProponujWolnyNumerTraNag]"></A><PRE>
+          <FONT SIZE="2"><I>/* [ProponujWolnyNumerTraNag] */</I><BR>
+CREATE PROCEDURE [CDN].[ProponujWolnyNumerTraNag]
+(
+    
+/* ==========================================================================================
+        @p_dokTyp               - typ dokumentu
+        @p_seria                - seria dokumentu
+        @p_data                 - data wystawienia dokumentu(proponowania numeru)
+        @p_magazyn              - magazyn dokumentu
+        @p_czyAnulowane         - czy uwzglÄ™dniaÄ‡ numery z anulowanymi dokumentami(parametr z definicji dok.)
+        @p_numeracjaDokumentow  - parametr NumeracjaDokumentow(ustawienie w konfiguracji)
+   ========================================================================================== */  
+@p_dokTyp int, @p_seria varchar(6), @p_data int, @p_magazyn int, @p_czyAnulowane smallint, @p_numeracjaDokumentow varchar(10)
+)
+/* ==========================================================================================
+        Bďż˝ďż˝dy:
+        -1 : Nierozpoznana tabela
+   ========================================================================================== */
+
+AS
+BEGIN
+	DECLARE @wynik int;
+	DECLARE @rok int;
+	DECLARE @miesiac int;
+	DECLARE @seria varchar(6);
+	
+	SET @seria = LTRIM(RTRIM(@p_seria));
+	SET @wynik = -1;
+	SET @rok = YEAR(DATEADD(d, @p_data, CONVERT(datetime, '1800-12-28', 120)));
+	IF (SELECT CHARINDEX('6', @p_numeracjaDokumentow)) &gt; 0 OR (SELECT CHARINDEX('7', @p_numeracjaDokumentow)) &gt; 0
+	BEGIN
+		SET @miesiac = MONTH(DATEADD(d, @p_data, CONVERT(datetime, '1800-12-28', 120)));
+	END;
+	ELSE
+	BEGIN
+		SET @miesiac = 0;
+	END;                                                
+
+	create table #TraNagNumery
+	(
+		Id int, 
+		TrnNumer int, 
+		DataWplywu int,
+		CONSTRAINT PK_Id PRIMARY KEY (Id)
+	)
+	DECLARE @dataWplywuPierwszegoDokumentu int
+
+
+	INSERT INTO #TraNagNumery
+	SELECT ROW_NUMBER() OVER(ORDER BY TRN_TRNNUMER ASC), TRN_TRNNUMER , TRN_DataWplywu
+	FROM cdn.TraNag with (nolock)
+	WHERE
+	TrN_TrnTyp = @p_dokTyp AND 
+	TrN_TrNRok = @rok AND 
+	TrN_TrNMiesiac = @miesiac AND 
+	TrN_TrNSeria = @seria AND 
+	( TrN_TrNLp = 127 OR 
+	@p_czyAnulowane = 0
+	) 
+	SELECT @dataWplywuPierwszegoDokumentu = DataWplywu FROM #TraNagNumery where Id = 1 and TrnNumer &gt; 1
+	IF @p_data &lt;= @dataWplywuPierwszegoDokumentu
+		SELECT @wynik = 1;
+	ELSE
+	BEGIN
+
+		select @wynik = ISNULL(MIN(TNN1.TrnNumer)+1,-1) 
+		from	#TraNagNumery TNN1
+		INNER JOIN #TraNagNumery TNN2 on TNN1.Id+1 = TNN2.Id
+		WHERE TNN2.DataWplywu&gt;=@p_data AND TNN1.DataWplywu &lt;= @p_data AND TNN1.TrnNumer+1&lt;&gt;TNN2.TrnNumer AND TNN1.TrnNumer&lt;&gt;TNN2.TrnNumer
+
+		IF @wynik = -1 --przypadek istnienia dokumentďż˝w z pďż˝niejszďż˝ datďż˝ niďż˝ aktualny
+
+			SELECT @wynik = ISNULL(Id, 1)
+			FROM
+			(
+				SELECT MAX(t1.TRN_TRNNUMER) + 1 AS Id
+				FROM cdn.TraNag t1 with (nolock)
+				WHERE TrN_TrnTyp = @p_dokTyp AND 
+						TrN_TrNRok = @rok AND 
+						TrN_TrNMiesiac = @miesiac AND 
+						TrN_TrNSeria = @seria AND 
+						( TrN_TrNLp = 127 OR 
+						@p_czyAnulowane = 0
+						)
+			) ot;
+	END
+
+	drop table #TraNagNumery
+    select @wynik
+	
+
+END;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

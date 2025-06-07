@@ -1,0 +1,86 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="StanyHistoryczneBO"></A><PRE>
+          <FONT SIZE="2"><I>/* StanyHistoryczneBO */</I><BR>
+CREATE PROCEDURE cdn.StanyHistoryczneBO(@POPRZEDNITYP  int) AS
+    EXEC cdn.PrzetworzStanyHistoryczne
+    DECLARE @TYP int
+    DECLARE @DATA int
+    DECLARE @ROK int
+    DECLARE @MIESIAC int
+    SET @TYP=(SELECT KON_WARTOSC FROM CDN.Konfig WHERE KON_NUMER=9938) 
+    IF NOT (@POPRZEDNITYP=1 AND @TYP=0) AND NOT (@POPRZEDNITYP=0 AND @TYP=1) 
+      --z miesiecznej na dzienna nie trzeba kasowac
+      --z dziennej na miesieczna powinno sie przeliczac, wiec zostana skasowane pozniej
+      delete from cdn.twrstany 
+    IF @TYP=2
+    BEGIN
+      --wylaczone
+      RETURN
+    END
+    IF @TYP=0
+    BEGIN
+      --okres dzienny
+      SET @DATA=DateDiff(s,CONVERT(DATETIME,'19900101'),GetDate())-DateDiff(s,CONVERT(DATETIME,'19900101'),GetDate())%86400
+    END
+    IF @TYP=1
+    BEGIN
+      SET @DATA=DATEDIFF(second,CONVERT(DATETIME,'19900101'),CONVERT(DATETIME,
+        CAST(YEAR(GetDate()) AS VARCHAR(5))+'-'+CAST(MONTH(GetDate()) AS VARCHAR(3)) 
+        +'-01 00:00:00.000',121)) 
+    END
+    IF NOT (@TYP=1 AND @POPRZEDNITYP=0)
+    BEGIN
+      -- jezeli nie dzienna-&gt;miesieczna to wrzucamy z zasoby
+      insert into cdn.twrstany 
+      select @DATA, 
+      twz_twrtyp, twz_twrfirma, twz_twrnumer, twz_twrlp, 
+      twz_magtyp, twz_magfirma, twz_magnumer, twz_maglp, 
+      sum(twz_ksiegowanetto), sum(twz_rzeczywistanetto), sum(twz_ilspr), sum(twz_ilmag)
+      from cdn.twrzasoby
+      group by 
+      twz_twrtyp, twz_twrfirma, twz_twrnumer, twz_twrlp, 
+      twz_magtyp, twz_magfirma, twz_magnumer, twz_maglp
+    END ELSE
+    BEGIN
+      --jezeli dzienna-&gt;miesieczna to przeliczamy 
+      select
+        DATEDIFF(second,CONVERT(DATETIME,'19900101'),CONVERT(DATETIME,
+        CAST(YEAR(DATEADD(second,A.tws_data,CONVERT(DATETIME,'19900101'))) AS VARCHAR(5))+'-'+CAST(MONTH(DATEADD(second,A.tws_data,CONVERT(DATETIME,'19900101'))) AS VARCHAR(3)) 
+        +'-01 00:00:00.000',121)) as tws_data,
+        A.tws_twrtyp, A.tws_twrfirma, A.tws_twrnumer, A.tws_twrlp, 
+        A.tws_magtyp, A.tws_magfirma, A.tws_magnumer, A.tws_maglp, 
+        A.tws_ksiegowanetto,A.tws_rzeczywistanetto,A.tws_ilspr,A.tws_ilmag into cdn.twrstany#
+      from cdn.twrstany as a join 
+       (select max(tws_data) as Tws_data,tws_twrtyp, tws_twrfirma, tws_twrnumer, tws_twrlp, tws_magtyp, tws_magfirma, tws_magnumer, tws_maglp from cdn.twrstany group by  
+        tws_twrtyp, tws_twrfirma, tws_twrnumer, tws_twrlp, tws_magtyp, tws_magfirma, tws_magnumer, tws_maglp,
+        YEAR(DATEADD(second,tws_data,CONVERT(DATETIME,'19900101'))),MONTH(DATEADD(second,tws_data,CONVERT(DATETIME,'19900101')))) as B
+      ON 
+        A.tws_twrtyp=B.tws_twrtyp AND A.tws_twrfirma=B.tws_twrfirma AND A.tws_twrnumer=B.tws_twrnumer AND A.tws_twrlp=B.tws_twrlp AND 
+        A.tws_magtyp=B.tws_magtyp AND A.tws_magfirma=B.tws_magfirma AND A.tws_magnumer=B.tws_magnumer AND A.tws_maglp=B.tws_maglp AND
+        A.tws_data=B.tws_data  --wyciagamy ostatni stan z miesiaca
+
+      delete from cdn.twrstany
+
+      insert into cdn.twrstany select tws_data,      
+      tws_twrtyp, tws_twrfirma, tws_twrnumer, tws_twrlp, 
+      tws_magtyp, tws_magfirma, tws_magnumer, tws_maglp, 
+      tws_ksiegowanetto,tws_rzeczywistanetto,tws_ilspr,tws_ilmag from cdn.twrstany# --wrzucamy do cdn.twrstany
+      
+      drop table cdn.twrstany# --i kasujemy tymczasowa
+    END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,281 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie procedury DodajRozniceKursowa"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie procedury DodajRozniceKursowa */</I><BR>
+if exists (select name from sysobjects where name = 'DodajRozniceKursowa' and type = 'P')
+  drop procedure CDN.DodajRozniceKursowa;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury DodajRozniceKursowa"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury DodajRozniceKursowa */</I><BR>
+CREATE PROCEDURE CDN.DodajRozniceKursowa
+@GIDFirma INT,
+@Data INT,
+@OpeNumer INT,
+@Kwota DECIMAL(15,2),
+@WalutaSys VARCHAR(3),
+@KontoDT VARCHAR(50),
+@KontoDTNumer INT,
+@KontoCT VARCHAR(50),
+@KontoCTNumer INT,
+@Opis VARCHAR(80),
+@GIDNumer INT OUTPUT,
+@DataDzisiejsza int,
+@Dokument VARCHAR(30)
+AS
+
+DECLARE @Dziennik VARCHAR(5);
+DECLARE @Bufor VARCHAR(5)
+DECLARE @CzyBufor INT;
+DECLARE @DataSQL DATETIME;
+DECLARE @RMNumer INT;
+DECLARE @TS INT;
+DECLARE @DataChar CHAR(10);
+DECLARE @RozrachunkoweDT SMALLINT;
+DECLARE @PozabilansoweDT SMALLINT;
+DECLARE @RozrachunkoweCT SMALLINT;
+DECLARE @PozabilansoweCT SMALLINT;
+DECLARE @OKRID INT;
+DECLARE @OKRPoczatek INT;
+DECLARE @OKRSymbol VARCHAR(10);
+DECLARE @Zamkniety INT;
+DECLARE @ZamChar CHAR(10);
+DECLARE @AnalitykaDT SMALLINT;
+DECLARE @AnalitykaCT SMALLINT;
+
+declare @CzyIdentyfikator smallint
+declare @Identyfikator Varchar(40)
+
+-- początek transakcji
+BEGIN TRAN
+
+
+SET @DataSQL = DATEADD( dd, @data, '18001228' );
+SET @DataChar = CONVERT( CHAR(10), @DataSQL, 104 )
+
+
+
+SELECT 
+	@OKRID = OKR_ID, 
+	@OKRPoczatek = Okr_Poczatek,
+	@OkrSymbol = CASE WHEN Okr_SymbolWNr&lt;&gt;0 THEN Okr_Symbol ELSE '' END,
+	@Zamkniety = ISNULL(OKR_ZamknietyDo,0) 
+FROM CDN.Okresy WITH(NOLOCK) 
+WHERE @Data BETWEEN OKR_Poczatek AND OKR_Koniec
+
+
+IF @OKRID IS NULL
+BEGIN
+	ROLLBACK TRAN
+	RAISERROR('602:Różnica kursowa z datą %s niemożliwa. Nie istnieje odpowiedni okres obrachunkowy.', 16, 1, @DataChar)
+	RETURN 602
+END
+
+
+
+SET @ZamChar = CONVERT( CHAR(10), DATEADD( dd, @Zamkniety, '18001228'), 104 )
+
+IF @Data &lt;= @Zamkniety
+BEGIN
+	ROLLBACK TRAN
+	RAISERROR('603:Różnica kursowa z datą %s niemożliwa. Okres obrachunkowy jest zamknięty do daty %s.', 16, 1, @DataChar, @ZamChar )
+	RETURN 603
+END
+
+
+
+SET @TS = DATEDIFF( ss, '19900101', DATEADD( dd, @DataDzisiejsza, '18001228' ))
+SELECT @Dziennik = KON_Wartosc FROM CDN.Konfig WITH(NOLOCK) WHERE KON_Numer=2047;
+SELECT @CzyBufor = KON_Wartosc FROM CDN.Konfig WITH(NOLOCK) WHERE KON_Numer=2048;
+SELECT @Bufor    = KON_Wartosc FROM CDN.Konfig WITH(NOLOCK) WHERE KON_Numer=2049
+select @CzyIdentyfikator = KON_Wartosc FROM CDN.Konfig WITH(NOLOCK) WHERE KON_Numer=20103
+
+IF ISNULL(@Czybufor,0) = 0
+	SET @Bufor = ''
+else
+begin
+	if exists(select 1 from cdn.Nazwy where Naz_GIDTyp = 480 and Naz_Nazwa = @Bufor and Naz_Archiwalny = 1)
+	BEGIN
+		ROLLBACK TRAN
+		RAISERROR('601:Bufor księgowań różnic kursowych %s jest archiwalny', 16, 1, @Bufor)
+		RETURN 601
+	END
+end
+
+
+
+Set @RMNumer = isnull((
+			SELECT 
+				MAX(DZK_RMNumer)
+			FROM CDN.Dziennik WITH(NOLOCK) 
+			WHERE DZK_Dziennik = @Dziennik AND DZK_Rok = Year(@DataSQL) AND DZK_Miesiac = Month(@DataSQL) AND DZK_OkrPoczatek=@OKRPoczatek
+			),0) + 1
+
+
+if isnull(@CzyIdentyfikator,0) &lt;&gt; 0
+	set @Identyfikator = cdn.NumerDekretu(@Bufor, @Dziennik, Year(@DataSQL), Month(@DataSQL), @RMNumer, 0, 0, @OKRSymbol)
+else
+	set @Identyfikator = ''
+
+
+-- naglowek dekretu zbiorczego
+
+
+
+
+
+INSERT INTO CDN.Dziennik(DZK_GIDTyp, DZK_GIDFirma, DZK_GIDLp, DZK_Dziennik, DZK_Rok, DZK_Miesiac, DZK_Dzien,
+	DZK_OkrPoczatek, DZK_OkrSymbol,
+	DZK_DataWyst, DZK_DataOper, DZK_RMNumer, DZK_Bufor, DZK_Opis, DZK_DokumentZrodlowy, DZK_NumerDokumentu,
+	DZK_Komentarz, DZK_TS, DZK_Aktywny,
+	DZK_OPEWTyp, DZK_OPEWFirma, DZK_OPEWNumer, DZK_OPEWLp,
+	DZK_OPEZTyp, DZK_OPEZFirma, DZK_OPEZNumer, DZK_OPEZLp,
+	DZK_TSModyf, DZK_OpeMNumer, DZK_TSZatw,
+	DZK_Storno, DZK_OrgNumer, DZK_SumaDT, DZK_SumaCT, DZK_Prosty, DZK_Identyfikator )
+VALUES(432, @GIDFirma, 0, @Dziennik, Year(@DataSQL), Month(@DataSQL), Day(@DataSQL),
+	@OKRPoczatek, @OKRSymbol,
+	@Data, @Data, @RMNumer, @Bufor, @Opis, @Dokument, 0,
+	'', @TS, 0,
+	128, @GIDFirma, @OPENumer, 0,
+	CASE @Bufor WHEN '' THEN 128 ELSE 0 END, CASE @Bufor WHEN '' THEN @GIDFirma ELSE 0 END, CASE @Bufor WHEN '' THEN @OPENumer ELSE 0 END, 0,
+	@TS, @OPENumer, CASE @Bufor WHEN '' THEN @TS ELSE 0 END,
+	0, 0, @Kwota, @Kwota, 0, @Identyfikator )
+
+
+
+SELECT @GIDNumer = SCOPE_IDENTITY()
+
+-- pozycja dekretu zbiorczego
+
+INSERT INTO CDN.DziennikElem(DEL_GIDTyp, DEL_GIDFirma, DEL_GIDNumer, DEL_GIDLp, DEL_Pozycja,
+	DEL_DataWyst, DEL_DataOper, DEL_Opis, DEL_DokumentZrodlowy, 
+	DEL_TS, DEL_TypKwoty, DEL_OPEWNumer, DEL_OPEZNumer, DEL_WycenaParID )
+VALUES(432, @GIDFirma, @GIDNumer, 1, 1, 
+	@Data, @Data, @Opis, @Dokument,
+	@TS, 0, @OPENumer, CASE @Bufor WHEN '' THEN @OPENumer ELSE 0 END, 0 )
+
+
+
+
+
+SELECT 
+	@AnalitykaDT = KKS_Analityka, 
+	@RozrachunkoweDT = KKS_Rozrachunkowe, 
+	@PozabilansoweDT = CASE KKS_TypKonta WHEN 6 THEN 1 ELSE 0 END
+FROM CDN.Konta WITH(NOLOCK) 
+WHERE KKS_OkresID = @OKRID AND KKS_Konto = @KontoDT
+
+
+IF @RozrachunkoweDT IS NULL
+BEGIN
+	ROLLBACK TRAN
+	RAISERROR('601:Różnica kursowa z datą %s niemożliwa. W odpowiednim okresie nie istnieje konto %s', 16, 1, @DataChar, @KontoDT)
+	RETURN 601
+END
+
+
+IF ISNULL(@AnalitykaDT,0) = 0
+BEGIN
+	ROLLBACK TRAN
+	RAISERROR('601:Konto %s nie jest analityką. Ksiegowanie różnicy kursowej na to konto niemożliwe!', 16, 1, @KontoDT )
+	RETURN 601
+END
+
+
+
+INSERT INTO CDN.Dekrety(DT_GIDTyp, DT_GIDFirma, DT_GIDNumer, DT_GIDLp,
+	DT_DC, DT_Bufor, DT_Dziennik, DT_Rok, DT_Miesiac, DT_Dzien,
+	DT_Konto, DT_FirmaKonta, DT_Kwota, DT_Pozostaje, DT_Waluta,
+	DT_NrKursu, DT_Termin, DT_DataRozliczenia, DT_Rozliczony, DT_Nierozliczony,
+	DT_KorektaBO, DT_DataOddzialu, DT_DataCentrali,
+	DT_BezKontroli, DT_Znak, DT_KKSNumer, DT_WalutaObca, DT_KursKwota )
+VALUES( 432, @GIDFirma, @GIDNumer, 1,
+	1, @Bufor, @Dziennik, Year(@DataSQL), Month(@DataSQL), Day(@DataSQL),
+	@KontoDT, @GIDFirma, @Kwota, @Kwota, @WalutaSys,
+	0, @Data, @Data, 0, @RozrachunkoweDT,
+	0, @TS, @TS,
+	0, 1, @KontoDTNumer, 0, 1
+	)
+
+
+
+SELECT 
+	@AnalitykaCT = KKS_Analityka, 
+	@RozrachunkoweCT = KKS_Rozrachunkowe, 
+	@PozabilansoweCT = CASE KKS_TypKonta WHEN 6 THEN 1 ELSE 0 END
+FROM CDN.Konta WITH(NOLOCK) 
+WHERE KKS_OkresID = @OKRID AND KKS_Konto = @KontoCT
+
+
+IF @RozrachunkoweCT IS NULL
+BEGIN
+	ROLLBACK TRAN
+	RAISERROR('601:Różnica kursowa z datą %s niemożliwa. W odpowiednim okresie nie istnieje konto %s', 16, 1, @DataChar, @KontoCT)
+	RETURN 601
+END
+
+
+IF ISNULL(@AnalitykaCT,0) = 0
+BEGIN
+	ROLLBACK TRAN
+	RAISERROR('601:Konto %s nie jest analityką. Ksiegowanie różnicy kursowej na to konto niemożliwe!', 16, 1, @KontoCT )
+	RETURN 601
+END
+
+
+
+IF @PozabilansoweCT &lt;&gt; @PozabilansoweDT
+BEGIN
+	ROLLBACK TRAN
+	RAISERROR('602:Różnica kursowa powinna być wyksięgowana na konta %s i %s, lecz jedno z nich jest pozabilansowe, co powodowałoby nie bilansowanie się zapisu.', 16, 1, @KontoDT, @KontoCT)
+	RETURN 602
+END
+
+
+
+INSERT INTO CDN.Dekrety(DT_GIDTyp, DT_GIDFirma, DT_GIDNumer, DT_GIDLp,
+	DT_DC, DT_Bufor, DT_Dziennik, DT_Rok, DT_Miesiac, DT_Dzien,
+	DT_Konto, DT_FirmaKonta, DT_Kwota, DT_Pozostaje, DT_Waluta,
+	DT_NrKursu, DT_Termin, DT_DataRozliczenia, DT_Rozliczony, DT_Nierozliczony,
+	DT_KorektaBO, DT_DataOddzialu, DT_DataCentrali,
+	DT_BezKontroli, DT_Znak, DT_KKSNumer, DT_WalutaObca, DT_KursKwota )
+VALUES( 432, @GIDFirma, @GIDNumer, 1,
+	2, @Bufor, @Dziennik, Year(@DataSQL), Month(@DataSQL), Day(@DataSQL),
+	@KontoCT, @GIDFirma, @Kwota, @Kwota, @WalutaSys,
+	0, @Data, @Data, 0, @RozrachunkoweCT,
+	0, @TS, @TS, 
+	0, 2, @KontoCTNumer, 0, 1
+	)
+
+
+
+-- koniec transakcji i powrót
+COMMIT TRAN
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury DodajRozniceKursowa"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury DodajRozniceKursowa */</I><BR>
+GRANT EXECUTE ON CDN.DodajRozniceKursowa TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,126 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="ImportWalutOptima"></A><PRE>
+          <FONT SIZE="2"><I>/* ImportWalutOptima */</I><BR>
+Create Procedure CDN.ImportWalutOptima
+@SourceName  VARCHAR(255),
+@SourceDatabase  VARCHAR(255),
+@SameServer TINYINT = 1
+AS
+Begin
+
+SET NOCOUNT ON
+
+DECLARE @sql NVARCHAR(4000)
+DECLARE @params NVARCHAR(4000)
+DECLARE @SourceDatabaseKonf NVARCHAR(255)
+
+DECLARE @WNaID int
+DECLARE @WNaSymbol  VARCHAR(4)
+DECLARE @WNaKontoMa VARCHAR(31)
+DECLARE @WNaKontoWn VARCHAR(31)
+DECLARE @WNaNazwa  VARCHAR(21)
+DECLARE @WNaKraj    VARCHAR(31)
+DECLARE @WNaSlownie1   VARCHAR(21)
+DECLARE @WNaSlownie2  VARCHAR(21)
+DECLARE @WNaNieaktualizowana  INT
+DECLARE @WaNWsk     SMALLINT
+DECLARE @WaNSymbolEMU  VARCHAR(4)
+DECLARE @WaNParytet DECIMAL(10,6)
+DECLARE @WANCzySystemowaoptima SMALLINT
+DECLARE @CzyDodacDoXL SMALLINT
+DECLARE @sqlFrom NVARCHAR(1000)
+
+IF @SameServer = 1 
+BEGIN
+	SELECT @sql =
+	N'
+	select @SourceDatabaseKonf = SYS_Wartosc from ['+@SourceName+'].['+@SourceDatabase+'].cdn.SystemCDN where SYS_ID = 1002;
+	'
+
+	SELECT @params =N'@SourceDatabaseKonf NVARCHAR(255) OUTPUT'
+
+	EXEC sp_executesql @sql, @params, @SourceDatabaseKonf OUTPUT
+
+	set @sqlFrom = ' ['+@SourceName+'].['+@SourceDatabaseKonf+'].[CDN].[WalNazwy] '
+END
+ELSE
+	set @sqlFrom = ' ##WalutyOptima '
+
+
+SELECT @sql = 
+N'
+DECLARE WALUTYCURSORWALNAG CURSOR FAST_FORWARD READ_ONLY FOR
+SELECT WNA_WNAID,WNA_SYMBOL, WNA_KONTOMA,WNA_KONTOWN, WNA_NAZWA,WNA_KRAJ,WNA_SLOWNIE1,WNA_SLOWNIE2,WNA_NIEAKTUALIZOWANA,0,'''',0,  
+       case when WNA_WNAID = 1 then 1 else 0 end as CzySystemowaOptima, 
+       case when WAN_SYMBOL is null then 1 else 0 end as CzyDodacDoXL
+FROM 
+     (select DTT_LPLWaluta from ##DtsTempOptima where DTT_Oddelegowani = 1
+      group by DTT_LPLWaluta)PrzeniesioneWaluty 
+inner join 
+     '+ @sqlFrom +'
+on PrzeniesioneWaluty.DTT_LPLWaluta = WNA_SYMBOL
+left join 
+      cdn.WalNag 
+ON WAN_SYMBOL = WNA_SYMBOL;
+OPEN WALUTYCURSORWALNAG;
+'
+EXEC (@sql)
+
+
+WHILE 1=1
+BEGIN
+   FETCH NEXT FROM WalutyCursorWalNag INTO 
+                            @WNaID,
+                            @WNaSymbol,
+                            @WNaKontoMa,
+                            @WNaKontoWn,
+                            @WNaNazwa,
+                            @WNaKraj,
+                            @WNaSlownie1,
+                            @WNaSlownie2,
+                            @WNaNieaktualizowana,
+                            @WaNWsk,
+                            @WaNSymbolEMU,
+                            @WaNParytet,
+                            @WANCzySystemowaOptima,
+                            @CzyDodacDoXL
+   IF @@FETCH_STATUS &lt;&gt; 0                        
+                BREAK
+ 
+     --dodanie do XL'a brakujących walut 
+	 IF @CzyDodacDoXL = 1      
+	   INSERT INTO CDN.WalNag(WAN_SYMBOL,WAN_KONTOPLUS,WAN_KONTOMINUS,WAN_NAZWA,WAN_PANSTWO,WAN_SLOWNIE1,WAN_SLOWNIE2,WAN_AKTYWNA,
+		   WAN_WSK,WAN_SYMBOLEMU,WAN_PARYTET,WAN_CZYSYSTEMOWAOPTIMA)
+	   VALUES(@WNaSymbol,@WNaKontoMa,@WNaKontoWn,@WNaNazwa,@WNaKraj,@WNaSlownie1,@WNaSlownie2,@WNaNieaktualizowana,0,'',0,
+	       @WANCzySystemowaoptima)
+	       
+ 	 --aktualizacja flagi w XL, która z walut jest systemowa w Optimie  
+	 IF @WANCzySystemowaOptima = 1
+		UPDATE CDN.WalNag SET WaN_CzySystemowaOptima = 1 WHERE WaN_Symbol = @WNaSymbol
+	 ELSE
+		UPDATE CDN.WalNag SET WaN_CzySystemowaOptima = 0 WHERE WaN_Symbol = @WNaSymbol               
+   
+END 
+
+CLOSE WalutyCursorWalNag
+DEALLOCATE WalutyCursorWalNag
+
+
+END
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

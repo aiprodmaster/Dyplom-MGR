@@ -1,0 +1,119 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[TwrKarty_AktualizujPodstawoweTechnologiePTZ]"></A><PRE>
+          <FONT SIZE="2"><I>/* [TwrKarty_AktualizujPodstawoweTechnologiePTZ] */</I><BR>
+CREATE TRIGGER [CDN].[TwrKarty_AktualizujPodstawoweTechnologiePTZ] ON [CDN].[TwrKarty]
+FOR UPDATE
+AS
+     BEGIN
+         IF TRIGGER_NESTLEVEL(
+                             (
+                                 SELECT object_id
+                                 FROM sys.triggers
+                                 WHERE NAME = 'ProdTechnologiaZasoby_AktualizujPodstawoweTechnologieTWR'
+                             )) &gt; 0
+             BEGIN
+                 RETURN;
+         END;
+         IF UPDATE(Twr_ProdTechnologia)
+             BEGIN
+                 UPDATE ptz
+                   SET
+                       PTZ_PodstawowaTechnologiaDlaProduktu = 0
+                 FROM CDN.ProdTechnologiaZasoby ptz
+                      JOIN CDN.ProdTechnologiaCzynnosci ptc ON ptc_id = PTZ_TechnologiaCzynnosc
+                      JOIN inserted twr ON Twr_GIDNumer &gt; 0
+                                           AND PTZ_TwrNumer = Twr_GIDNumer
+                 WHERE PTZ_PodstawowaTechnologiaDlaProduktu = 1
+                       AND Twr_ProdTechnologia &lt;&gt; 0
+                       AND PTZ_TypZasobu = 0;
+                 UPDATE ptz
+                   SET
+                       PTZ_PodstawowaTechnologiaDlaProduktu = 1
+                 FROM CDN.ProdTechnologiaZasoby ptz
+                      JOIN CDN.ProdTechnologiaCzynnosci ptc ON ptc_id = PTZ_TechnologiaCzynnosc
+                      JOIN inserted twr ON Twr_GIDNumer &gt; 0
+                                           AND PTZ_TwrNumer = Twr_GIDNumer
+                 WHERE PTC_Technologia = Twr_ProdTechnologia
+                       AND PTZ_PodstawowaTechnologiaDlaProduktu &lt;&gt; 1
+                       AND Twr_ProdTechnologia &lt;&gt; 0
+                       AND PTZ_TypZasobu = 0;
+         END;
+     END;
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="ProdTechnologiaZasoby_AktualizujPodstawoweTechnologieTWR"></A><PRE>
+          <FONT SIZE="2"><I>/* ProdTechnologiaZasoby_AktualizujPodstawoweTechnologieTWR */</I><BR>
+CREATE TRIGGER cdn.ProdTechnologiaZasoby_AktualizujPodstawoweTechnologieTWR ON cdn.ProdTechnologiaZasoby
+FOR UPDATE
+AS
+BEGIN
+	IF TRIGGER_NESTLEVEL(
+		(
+			SELECT object_id
+            FROM sys.triggers
+            WHERE NAME = 'TwrKarty_AktualizujPodstawoweTechnologiePTZ'
+        )) &gt; 0
+	BEGIN
+		RETURN;
+	END;
+    
+	IF UPDATE(PTZ_PodstawowaTechnologiaDlaProduktu) OR UPDATE(PTZ_TwrNumer)
+	BEGIN
+		UPDATE ptz
+        SET PTZ_PodstawowaTechnologiaDlaProduktu = 0
+        FROM CDN.ProdTechnologiaZasoby ptz
+			JOIN CDN.ProdTechnologiaCzynnosci ptc ON ptc.ptc_id = ptz.PTZ_TechnologiaCzynnosc
+            JOIN inserted nptz ON ptz.PTZ_TwrNumer = nptz.PTZ_TwrNumer
+				AND nptz.PTZ_TwrNumer &gt; 0
+            JOIN CDN.ProdTechnologiaCzynnosci nptc ON nptc.ptc_id = nptz.PTZ_TechnologiaCzynnosc
+		WHERE ptz.PTZ_PodstawowaTechnologiaDlaProduktu = 1
+			AND nptz.PTZ_PodstawowaTechnologiaDlaProduktu = 1
+            AND ptz.PTZ_TypZasobu = 0
+			AND nptz.PTZ_Id &lt;&gt; ptz.PTZ_Id;
+        
+			UPDATE twr
+			SET Twr_ProdTechnologia = PTC_Technologia
+			FROM inserted ptz
+				JOIN CDN.ProdTechnologiaCzynnosci ptc ON ptc_id = PTZ_TechnologiaCzynnosc
+				JOIN cdn.TwrKarty twr ON Twr_GIDNumer &gt; 0
+					AND PTZ_TwrNumer = Twr_GIDNumer
+			WHERE PTZ_PodstawowaTechnologiaDlaProduktu = 1
+				AND PTZ_TypZasobu = 0;
+        
+			UPDATE twr
+			SET Twr_ProdTechnologia = 0
+			FROM 
+				(
+					SELECT PTZ_TwrNumer, PTZ_TwrTyp, PTZ_TypZasobu, PTZ_PodstawowaTechnologiaDlaProduktu FROM inserted
+					UNION ALL
+					SELECT PTZ_TwrNumer, PTZ_TwrTyp, PTZ_TypZasobu, PTZ_PodstawowaTechnologiaDlaProduktu FROM deleted
+				) ptz
+				JOIN cdn.TwrKarty twr ON Twr_GIDNumer &gt; 0
+					AND PTZ_TwrNumer = Twr_GIDNumer
+			WHERE ptz.PTZ_TypZasobu = 0
+				AND NOT EXISTS(SELECT PTZ_Id FROM CDN.ProdTechnologiaZasoby wewPTZ 
+									WHERE wewPTZ.PTZ_TwrNumer = ptz.PTZ_TwrNumer AND wewPTZ.PTZ_TwrTyp = ptz.PTZ_TwrTyp AND wewPTZ.PTZ_TypZasobu = 0 
+										AND wewPTZ.PTZ_PodstawowaTechnologiaDlaProduktu = 1);
+	END;
+END;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,448 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="PobierzListeAdresowDoRozmieszczeniaTowaru"></A><PRE>
+          <FONT SIZE="2"><I>/* PobierzListeAdresowDoRozmieszczeniaTowaru */</I><BR>
+create function CDN.PobierzListeAdresowDoRozmieszczeniaTowaru(@p_tpa int,@p_mag int,@p_ilosc decimal(15,4),@p_jms int,@p_iloscjms decimal(15,4),
+                                                              @p_dlugosc decimal(5,2),@p_szerokosc decimal(5,2),@p_wysokosc decimal(5,2))
+
+returns @adresy table(adr_id int,adr_ilosc decimal(15,4),adr_objetosc decimal(28,4),adr_nosnosc decimal(28,4))
+
+as
+
+begin
+
+declare @adrid integer;                       --identyfikator adresu
+declare @adrilosc decimal(28,4);              --ilosc z tabeli adresy
+
+declare @towary table (MgA_Id int, MgA_MPAId int, TPA_Partia smallint, TPM_Domyslna tinyint,
+	MgO_Id int, MgO_Kod varchar(10), MgO_Towary tinyint,
+	MgA_Segment1 varchar(3), MgA_Segment2 varchar(3), MgA_Segment3 varchar(3), MgA_Segment4 varchar(1))
+insert into @towary
+select MgA_Id, MPA_Id, max(TPA_Partia), max(TPM_Domyslna), MgO_Id, MgO_Kod, MgO_Towary,
+	MgA_Segment1, MgA_Segment2, MgA_Segment3, MgA_Segment4
+from (
+	select TZM_MgAId, case when I.TPA_Id=P.TPA_Id then 1 else 0 end TPA_Partia, 0 TPM_Domyslna
+	from CDN.TwrPartie P
+	inner join CDN.TwrPartie I on I.TPA_TwrTyp=P.TPA_TwrTyp and I.TPA_TwrNumer=P.TPA_TwrNumer
+	inner join CDN.TwrZasobyMag on TZM_TpaId=I.TPA_Id and TZM_MgAId&gt;0
+	where P.TPA_Id=@p_tpa
+	union
+	select MaP_MgAId, case when I.TPA_Id=P.TPA_Id then 1 else 0 end TPA_Partia, 0
+	from CDN.TwrPartie P
+	inner join CDN.TwrPartie I on I.TPA_TwrTyp=P.TPA_TwrTyp and I.TPA_TwrNumer=P.TPA_TwrNumer
+	inner join CDN.MagElem on MaE_TpaId=I.TPA_Id
+	inner join CDN.MagNag on MaN_GIDNumer=MaE_GIDNumer and MaN_Stan&lt;3
+	inner join CDN.MagPElem on MaP_GIDNumer=MaN_GIDNumer and MaP_GIDLp=MaE_GIDLp
+	where P.TPA_Id=@p_tpa
+	union
+	select TPM_MgAId, -1, 1
+	from CDN.TwrPartie P
+	inner join CDN.TwrParMag on TPM_TwrTyp=P.TPA_TwrTyp and TPM_TwrNumer=P.TPA_TwrNumer and TPM_MagNumer=@p_mag
+	where P.TPA_Id=@p_tpa
+) Tow
+inner join CDN.MagAdresy on MgA_Id=TZM_MgAId
+inner join CDN.MagParAdr on MPA_Id=MgA_MPAId
+inner join CDN.MagObszary on MgO_Id=MgA_MgOId
+where TPM_Domyslna=1 or MPA_Rodzaj=1 and MgO_MagNumer=@p_mag -- adres wlasciwego magazynu
+group by MgA_Id, MPA_Id, MgO_Id, MgO_Kod, MgO_Towary,
+	MgA_Segment1, MgA_Segment2, MgA_Segment3, MgA_Segment4
+
+if @p_jms = 0
+begin
+	declare partia_cursor cursor for 
+	--Lokalizacja domyslna oraz adresy gdzie partia juz jest i mozna dolozyc
+	select MgA_Id, Ilosc
+	from (
+		select MgO_Kod, MTO_Count, MgA_Id, MgA_Segment1, MgA_Segment2, MgA_Segment3, MgA_Segment4,
+			case when MPA_Rodzaj=0 then @p_ilosc
+				when Twr_ObjJedn&gt;0 and convert(float,PozObjetosc)*Twr_WagaJedn&lt;convert(float,PozNosnosc)*Twr_ObjJedn
+				then PozObjetosc/Twr_ObjJedn
+				when Twr_WagaJedn&gt;0
+				then PozNosnosc/Twr_WagaJedn
+				else @p_ilosc end Ilosc, TPM_Domyslna, MPA_PriorytetS
+		from (
+			select MgO_Kod, MTO_Count, MgA_Id, MgA_Segment1, MgA_Segment2, MgA_Segment3, MgA_Segment4,
+				Twr_ObjetoscL/case Twr_WymJM when 'mm' then 1000000000 when 'cm' then 1000000 when 'dm' then 1000 else 1 end Twr_ObjJedn,
+				Twr_WagaBrutto*case Twr_Wjm when 'Gram' then 0.001 when 'Dkg' then 0.01 when 'Tona' then 1000 else 1 end Twr_WagaJedn,
+				MPA_Rodzaj, MPA_Objetosc-Objetosc PozObjetosc, MPA_Nosnosc-Waga PozNosnosc, TPM_Domyslna, MPA_PriorytetS
+			from (
+				select TwrNumer, MgO_Kod, MTO_Count, MgA_Id, MgA_Segment1, MgA_Segment2, MgA_Segment3, MgA_Segment4,
+					MPA_Rodzaj, MPA_Nosnosc, MPA_Objetosc, MPA_PriorytetS, TPM_Domyslna,
+					TZM_Inne+sum(case when MaN_GIDNumer is not null and isnull(MaP_JednostkaLog-@p_jms,0)&lt;&gt;0 then 1 else 0 end) Inne,
+					TZM_Objetosc+isnull(sum(MaP_Ilosc*Twr_ObjetoscL/case Twr_WymJM when 'mm' then 1000000000 when 'cm' then 1000000 when 'dm' then 1000 else 1 end),0) Objetosc,
+					TZM_Waga+isnull(sum(MaP_Ilosc*Twr_WagaBrutto*case Twr_Wjm when 'Gram' then 0.001 when 'Dkg' then 0.01 when 'Tona' then 1000 else 1 end),0) Waga
+				from (
+					select Adr.TPA_TwrNumer TwrNumer, MgO_Kod, MTO_Count, MgA_Id, MgA_Segment1, MgA_Segment2, MgA_Segment3, MgA_Segment4,
+						MPA_Rodzaj, MPA_Nosnosc, MPA_Wysokosc*MPA_Szerokosc*MPA_Dlugosc MPA_Objetosc, MPA_PriorytetS, TPM_Domyslna,
+						sum(case when isnull(TZM_JednostkaLog-@p_jms,0)&lt;&gt;0 then 1 else 0 end) TZM_Inne,
+						isnull(sum(TZM_Ilosc*Twr_ObjetoscL/case Twr_WymJM when 'mm' then 1000000000 when 'cm' then 1000000 when 'dm' then 1000 else 1 end),0) TZM_Objetosc,
+						isnull(sum(TZM_Ilosc*Twr_WagaBrutto*case Twr_Wjm when 'Gram' then 0.001 when 'Dkg' then 0.01 when 'Tona' then 1000 else 1 end),0) TZM_Waga
+					from (
+						select A.MgA_Id, MgO_Kod, A.MgA_Segment1, A.MgA_Segment2, A.MgA_Segment3, A.MgA_Segment4,
+							MPA_Rodzaj, MPA_Nosnosc, MPA_Wysokosc, MPA_Szerokosc, MPA_Dlugosc, MPA_PriorytetS,
+							TPM_Domyslna, TPA_TwrNumer, count(MTO_MgOId) MTO_Count
+						from @towary A
+						inner join CDN.MagParAdr on MPA_Id=A.MgA_MPAId
+						inner join CDN.TwrPartie on TPA_Id=@p_tpa
+						left outer join CDN.MagParJednostki on MPJ_MPAId=MPA_Id			
+						--MSm begin
+						--left outer join CDN.InwNag on InN_MagNumer=@p_mag and InN_TStampZam=0
+						left outer join CDN.InwMag on InM_MagNumer=@p_mag
+						left outer join CDN.InwNag on InN_Id=InM_InNId and InN_TStampZam=0
+						--MSm end						
+						left outer join CDN.InwArk on InA_MgOId=MgO_Id and InA_InNId=InN_Id
+						left outer join CDN.MagAdresy O on O.MgA_Id=InA_MgAIdOd
+						left outer join CDN.MagAdresy D on D.MgA_Id=InA_MgAIdDo and A.MgA_Segment1+A.MgA_Segment2+A.MgA_Segment3+A.MgA_Segment4 between O.MgA_Segment1+O.MgA_Segment2+O.MgA_Segment3+O.MgA_Segment4 and D.MgA_Segment1+D.MgA_Segment2+D.MgA_Segment3+D.MgA_Segment4
+						left outer join CDN.TwrLinki on TwL_GIDTyp=TPA_TwrTyp and TwL_GIDNumer=TPA_TwrNumer
+						left outer join CDN.MagTwrObszary on MTO_MgOId=MgO_Id and ((TwL_GROTyp=MTO_TwrTyp and TwL_GRONumer=MTO_TwrNumer) or (MTO_TwrTyp=TPA_TwrTyp and MTO_TwrNumer=TPA_TwrNumer))
+						where (TPA_Partia=1 or TPM_Domyslna=1)			-- lezy tam partia lub lokalizacja domyslna
+							and isnull(MPJ_JednostkaLog,MPA_Rodzaj)=0	-- mozna skladowac luzem lub pole odkladcze
+							and D.MgA_Id is null                        -- adres nie nalezy do zakresu inwentaryzacji
+						group by A.MgA_Id, MgO_Kod, MgO_Towary, A.MgA_Segment1, A.MgA_Segment2, A.MgA_Segment3, A.MgA_Segment4, TPM_Domyslna,
+							MPA_Rodzaj, MPA_Nosnosc, MPA_Wysokosc, MPA_Szerokosc, MPA_Dlugosc, MPA_PriorytetS, TPA_TwrNumer
+						having MgO_Towary=1 or count(MTO_MgOId)&gt;0		-- mozna skladowac towar w obszarze
+					) Adr
+					left outer join CDN.TwrZasobyMag on TZM_MgaId=MgA_Id
+					left outer join CDN.TwrPartie Z on Z.TPA_Id=TZM_TPAId
+					left outer join CDN.TwrKarty on Twr_GIDNumer=Z.TPA_TwrNumer
+					group by Adr.TPA_TwrNumer, MgO_Kod, MTO_Count, MgA_Id, MgA_Segment1, MgA_Segment2, MgA_Segment3, MgA_Segment4,
+						TPM_Domyslna, MPA_Rodzaj, MPA_Nosnosc, MPA_Wysokosc, MPA_Szerokosc, MPA_Dlugosc, MPA_PriorytetS
+				) Zas
+				left outer join CDN.MagPElem on MaP_MgAId=MgA_Id
+				left outer join CDN.MagNag on MaN_GIDNumer=MaP_GIDNumer and MaN_Stan&lt;3
+				left outer join CDN.MagElem on MaE_GIDNumer=MaN_GIDNumer and MaE_GIDLp=MaP_GIDLp
+				left outer join CDN.TwrPartie on TPA_Id=MaE_TPAId
+				left outer join CDN.TwrKarty on Twr_GIDNumer=TPA_TwrNumer
+				group by TwrNumer, MgO_Kod, MTO_Count, MgA_Id, MgA_Segment1, MgA_Segment2, MgA_Segment3, MgA_Segment4,
+					TPM_Domyslna, TZM_Inne, TZM_Objetosc, TZM_Waga, MPA_Rodzaj, MPA_Nosnosc, MPA_Objetosc, MPA_PriorytetS
+			) Elem
+			inner join CDN.TwrPartie on TPA_Id=@p_tpa
+			inner join CDN.TwrKarty on Twr_GIDNumer=TPA_TwrNumer	
+			where MPA_Rodzaj=0 or (MPA_Objetosc-Objetosc&gt;0 and MPA_Nosnosc-Waga&gt;0 and Inne=0)
+		) Ilosc
+	) Wynik
+	order by
+		-TPM_Domyslna,														-- czy lokalizacja domyslna
+		case when MTO_Count&gt;0 then 0 else 1 end,							-- jest przypisany do obszaru
+		case when @p_ilosc&lt;=Ilosc then 0 else 1 end,						-- towar miesci sie w calosci
+		MPA_PriorytetS,														-- priorytet skladowania
+		case when @p_ilosc&lt;=Ilosc then Ilosc else -Ilosc end,				-- ile towaru mozna zmiescic
+		MgO_Kod, MgA_Segment1, MgA_Segment2, MgA_Segment3, MgA_Segment4		-- kolejnosc alfabetyczna
+	open partia_cursor
+	while @p_ilosc&gt;0
+    begin
+      	fetch next from partia_cursor into @adrid, @adrilosc
+		if @@fetch_status &lt;&gt; 0 break 
+   		if @p_ilosc &lt;= @adrilosc
+       	begin
+      		insert into @adresy values(@adrid, @p_ilosc, 0, 0)
+			set @p_ilosc = 0
+			break
+    	end
+    	else
+    	begin
+			insert into @adresy values(@adrid, floor(@adrilosc), 0, 0)
+			set @p_ilosc = @p_ilosc - floor(@adrilosc)
+    	end
+    end
+	close partia_cursor
+	deallocate partia_cursor
+	if @p_ilosc&lt;=0 return
+	declare adresy_cursor cursor for 
+	--Pozostale adresy gdzie mozna towar umiescic
+	select MgA_Id, Ilosc
+	from (
+		select MgO_Kod, MTO_Count, MgA_Id, MgA_Segment1, MgA_Segment2, MgA_Segment3, MgA_Segment4,
+			case when MPA_Rodzaj=0 then @p_ilosc
+				when Twr_ObjJedn&gt;0 and convert(float,PozObjetosc)*Twr_WagaJedn&lt;convert(float,PozNosnosc)*Twr_ObjJedn
+				then PozObjetosc/Twr_ObjJedn
+				when Twr_WagaJedn&gt;0
+				then PozNosnosc/Twr_WagaJedn
+				else @p_ilosc end Ilosc,
+			MPA_Rodzaj, MPA_PriorytetS, Towar, Odleglosc
+		from (
+			select Elem.MgO_Kod, Elem.MTO_Count, Elem.MgA_Id, Elem.MgA_Segment1, Elem.MgA_Segment2, Elem.MgA_Segment3, Elem.MgA_Segment4,
+				Twr_ObjetoscL/case Twr_WymJM when 'mm' then 1000000000 when 'cm' then 1000000 when 'dm' then 1000 else 1 end Twr_ObjJedn,
+				Twr_WagaBrutto*case Twr_Wjm when 'Gram' then 0.001 when 'Dkg' then 0.01 when 'Tona' then 1000 else 1 end Twr_WagaJedn,
+				MPA_Rodzaj, MPA_PriorytetS, MPA_Objetosc-Objetosc PozObjetosc, MPA_Nosnosc-Waga PozNosnosc, Towar,
+				min(case when Elem.MgO_Id&lt;&gt;Tow.MgO_Id then 10000 else 0 end
+					+ 100*abs(convert(int,Elem.MgA_Segment1)-convert(int,Tow.MgA_Segment1))
+					+  10*abs(convert(int,Elem.MgA_Segment2)-convert(int,Tow.MgA_Segment2))
+					+   5*abs(convert(int,Elem.MgA_Segment3)-convert(int,Tow.MgA_Segment3))
+					+ case when Elem.Mga_Segment4&lt;&gt;Tow.MgA_Segment4 then 1 else 0 end) Odleglosc
+			from (
+				select TwrNumer, MgO_Id, MgO_Kod, MTO_Count, MgA_Id, MgA_Segment1, MgA_Segment2, MgA_Segment3, MgA_Segment4,
+					MPA_Rodzaj, MPA_Nosnosc, MPA_Objetosc, MPA_PriorytetS,
+					TZM_Towar+count(MaN_GIDNumer) Towar,
+					TZM_Inne+sum(case when MaN_GIDNumer is not null and isnull(MaP_JednostkaLog-@p_jms,0)&lt;&gt;0 then 1 else 0 end) Inne,
+					TZM_Objetosc+isnull(sum(MaP_Ilosc*Twr_ObjetoscL/case Twr_WymJM when 'mm' then 1000000000 when 'cm' then 1000000 when 'dm' then 1000 else 1 end),0) Objetosc,
+					TZM_Waga+isnull(sum(MaP_Ilosc*Twr_WagaBrutto*case Twr_Wjm when 'Gram' then 0.001 when 'Dkg' then 0.01 when 'Tona' then 1000 else 1 end),0) Waga
+				from (
+					select Adr.TPA_TwrNumer TwrNumer, MgO_Id, MgO_Kod, MTO_Count,
+						MgA_Id, MgA_Segment1, MgA_Segment2, MgA_Segment3, MgA_Segment4, 
+						MPA_Rodzaj, MPA_Nosnosc, MPA_Wysokosc*MPA_Szerokosc*MPA_Dlugosc MPA_Objetosc, MPA_PriorytetS,
+						count(TZM_MgAId) TZM_Towar,
+						sum(case when isnull(TZM_JednostkaLog-@p_jms,0)&lt;&gt;0 then 1 else 0 end) TZM_Inne,
+						isnull(sum(TZM_Ilosc*Twr_ObjetoscL/case Twr_WymJM when 'mm' then 1000000000 when 'cm' then 1000000 when 'dm' then 1000 else 1 end),0) TZM_Objetosc,
+						isnull(sum(TZM_Ilosc*Twr_WagaBrutto*case Twr_Wjm when 'Gram' then 0.001 when 'Dkg' then 0.01 when 'Tona' then 1000 else 1 end),0) TZM_Waga
+					from (
+						select A.MgA_Id, A.MgA_Segment1, A.MgA_Segment2, A.MgA_Segment3, A.MgA_Segment4,
+							MPA_Rodzaj, MPA_Nosnosc, MPA_Wysokosc, MPA_Szerokosc, MPA_Dlugosc, MPA_PriorytetS,
+							TPA_TwrNumer, B.MgO_Id, B.MgO_Kod, count(MTO_MgOId) MTO_Count
+						from CDN.MagAdresy A
+						inner join CDN.MagParAdr on MPA_Id=MgA_MPAId
+						inner join CDN.MagObszary B on B.MgO_Id=MgA_MgOId
+						inner join CDN.TwrPartie on TPA_Id=@p_tpa
+						left outer join @towary T on T.MgA_Id=A.MgA_Id and (T.TPA_Partia=1 or T.TPM_Domyslna=1)
+						left outer join CDN.MagParJednostki on MPJ_MPAId=MPA_Id
+						--MSm begin
+						--left outer join CDN.InwNag on InN_MagNumer=@p_mag and InN_TStampZam=0
+						left outer join CDN.InwMag on InM_MagNumer=@p_mag
+						left outer join CDN.InwNag on InN_Id=InM_InNId and InN_TStampZam=0
+						--MSm end
+						left outer join CDN.InwArk on InA_MgOId=B.MgO_Id and InA_InNId=InN_Id
+						left outer join CDN.MagAdresy O on O.MgA_Id=InA_MgAIdOd
+						left outer join CDN.MagAdresy D on D.MgA_Id=InA_MgAIdDo and A.MgA_Segment1+A.MgA_Segment2+A.MgA_Segment3+A.MgA_Segment4 between O.MgA_Segment1+O.MgA_Segment2+O.MgA_Segment3+O.MgA_Segment4 and D.MgA_Segment1+D.MgA_Segment2+D.MgA_Segment3+D.MgA_Segment4
+						left outer join CDN.TwrLinki on TwL_GIDTyp=TPA_TwrTyp and TwL_GIDNumer=TPA_TwrNumer
+						left outer join CDN.MagTwrObszary on MTO_MgOId=B.MgO_Id and ((TwL_GROTyp=MTO_TwrTyp and TwL_GRONumer=MTO_TwrNumer) or (MTO_TwrTyp=TPA_TwrTyp and MTO_TwrNumer=TPA_TwrNumer))
+						where T.MgA_Id is null										-- adres nie byl analizowany uprzednio
+							and isnull(MPJ_JednostkaLog,MPA_Rodzaj)=0				-- mozna skladowac luzem
+							and MgO_MagNumer=@p_mag									-- adres wlasciwego magazynu
+							and D.MgA_Id is null									-- adres nie nalezy do zakresu inwentaryzacji
+						group by A.MgA_Id, A.MgA_Segment1, A.MgA_Segment2, A.MgA_Segment3, A.MgA_Segment4,
+							MPA_Rodzaj, MPA_Nosnosc, MPA_Wysokosc, MPA_Szerokosc, MPA_Dlugosc, MPA_PriorytetS,
+							TPA_TwrNumer, B.MgO_Id, B.MgO_Kod, B.MgO_Towary
+						having B.MgO_Towary=1 or count(MTO_MgOId)&gt;0					-- mozna skladowac towar w obszarze
+					) Adr
+					left outer join CDN.TwrZasobyMag on TZM_MgaId=MgA_Id
+					left outer join CDN.TwrPartie Z on Z.TPA_Id=TZM_TPAId
+					left outer join CDN.TwrKarty on Twr_GIDNumer=Z.TPA_TwrNumer
+					group by Adr.TPA_TwrNumer, MgO_Id, MgO_Kod, MTO_Count,
+						MgA_Id, MgA_Segment1, MgA_Segment2, MgA_Segment3, MgA_Segment4,
+						MPA_Rodzaj, MPA_Nosnosc, MPA_Wysokosc, MPA_Szerokosc, MPA_Dlugosc, MPA_PriorytetS
+				) Zas
+				left outer join CDN.MagPElem on MaP_MgAId=MgA_Id
+				left outer join CDN.MagNag on MaN_GIDNumer=MaP_GIDNumer and MaN_Stan&lt;3
+				left outer join CDN.MagElem on MaE_GIDNumer=MaN_GIDNumer and MaE_GIDLp=MaP_GIDLp
+				left outer join CDN.TwrPartie on TPA_Id=MaE_TPAId
+				left outer join CDN.TwrKarty on Twr_GIDNumer=TPA_TwrNumer
+				group by TwrNumer, MgO_Id, MgO_Kod, MTO_Count, MgA_Id, MgA_Segment1, MgA_Segment2, MgA_Segment3, MgA_Segment4,
+					MPA_Rodzaj, MPA_Nosnosc, MPA_Objetosc, MPA_PriorytetS, TZM_Towar, TZM_Inne, TZM_Objetosc, TZM_Waga
+			) Elem
+			inner join CDN.TwrKarty on Twr_GIDNumer=TwrNumer
+			left outer join @towary Tow on TPA_Partia&gt;=0
+			where (MPA_Objetosc-Objetosc&gt;0 and MPA_Nosnosc-Waga&gt;0 and Inne=0) or MPA_Rodzaj=0
+			group by Elem.MgO_Id, Elem.MgO_Kod, Elem.MTO_Count,
+				Elem.MgA_Id, Elem.MgA_Segment1, Elem.MgA_Segment2, Elem.MgA_Segment3, Elem.MgA_Segment4,
+				Twr_ObjetoscL, Twr_WymJM, Twr_WagaBrutto, Twr_Wjm,
+				MPA_Rodzaj, MPA_PriorytetS, MPA_Objetosc, Objetosc, MPA_Nosnosc, Waga, Towar
+		) Odl
+	) Ilosc
+	order by
+		-MPA_Rodzaj,                                                    -- pola odkladcze na koniec
+		case when Towar=0 then 0 else 1 end,							-- czy lokalizacja jest pusta
+		case when MTO_Count&gt;0 then 0 else 1 end,		                -- jest przypisany do obszaru
+		case when @p_ilosc&lt;=Ilosc then 0 else 1 end,                    -- towar miesci się w calosci
+		MPA_PriorytetS,                                                 -- priorytet skladowania
+		case when @p_ilosc&lt;=Ilosc then Ilosc else -Ilosc end,           -- ile towaru mozna zmiescic
+		isnull(Odleglosc,2147483647),									-- odleglosc od tego samego towaru
+		MgO_Kod, MgA_Segment1, MgA_Segment2, MgA_Segment3, MgA_Segment4 -- kolejnosc alfabetyczna
+	open adresy_cursor
+	while @p_ilosc&gt;0
+    begin
+      	fetch next from adresy_cursor into @adrid, @adrilosc
+		if @@fetch_status &lt;&gt; 0 break 
+   		if @p_ilosc &lt;= @adrilosc
+       	begin
+      		insert into @adresy values(@adrid, @p_ilosc, 0, 0)
+			set @p_ilosc = 0
+			break
+    	end
+    	else
+    	begin
+			insert into @adresy values(@adrid, floor(@adrilosc), 0, 0)
+			set @p_ilosc = @p_ilosc - floor(@adrilosc)
+    	end
+    end
+	close adresy_cursor
+	deallocate adresy_cursor
+end
+else
+begin
+	--Lokalizacja domyslna oraz adresy gdzie partia juz jest i mozna dolozyc
+	insert into @adresy
+	select top 1 MgA_Id, @p_Ilosc, 0, 0
+	from (
+		select TwrNumer, MgO_Kod, MgA_Id, MgA_Segment1, MgA_Segment2, MgA_Segment3, MgA_Segment4,
+			MPA_Rodzaj, MPA_Nosnosc, MPJ_IloscMaks, MPA_PriorytetS, TPM_Domyslna, MTO_Count,
+			TZM_Inne+sum(case when MaN_GIDNumer is not null and isnull(MaP_JednostkaLog-@p_jms,0)&lt;&gt;0 then 1 else 0 end) Inne,
+			TZM_IloscJed+isnull(count(MaN_GIDNumer),0) IloscJed,
+			TZM_Waga+isnull(sum(MaP_Ilosc*Twr_WagaBrutto*case Twr_Wjm when 'Gram' then 0.001 when 'Dkg' then 0.01 when 'Tona' then 1000 else 1 end),0) Waga
+		from (
+			select Adr.TPA_TwrNumer TwrNumer, MgO_Kod, MgA_Id, MgA_Segment1, MgA_Segment2, MgA_Segment3, MgA_Segment4,
+				MPA_Rodzaj, MPA_Nosnosc, MPA_PriorytetS, MPJ_IloscMaks, TPM_Domyslna, MTO_Count,
+				sum(case when isnull(TZM_JednostkaLog-@p_jms,0)&lt;&gt;0 then 1 else 0 end) TZM_Inne,
+				isnull(count(TZM_MgAId),0) TZM_IloscJed,
+				isnull(sum(TZM_Ilosc*Twr_WagaBrutto*case Twr_Wjm when 'Gram' then 0.001 when 'Dkg' then 0.01 when 'Tona' then 1000 else 1 end),0) TZM_Waga
+			from (
+				select TPA_TwrNumer, A.MgA_Id, MgO_Kod, A.MgA_Segment1, A.MgA_Segment2, A.MgA_Segment3, A.MgA_Segment4,
+					MPA_Rodzaj, MPA_Nosnosc, MPA_PriorytetS, MPJ_IloscMaks, TPM_Domyslna, count(MTO_MgOId) MTO_Count
+				from @towary A
+				inner join CDN.MagParAdr on MPA_Id=A.MgA_MPAId
+				left outer join CDN.MagParJednostki on MPJ_MPAId=MPA_Id 
+				inner join CDN.TwrPartie on TPA_Id=@p_tpa
+				left outer join CDN.TwrParMag on TPM_TwrTyp=TPA_TwrTyp and TPM_TwrNumer=TPA_TwrNumer and TPM_MagNumer=@p_mag
+				--MSm begin
+				--left outer join CDN.InwNag on InN_MagNumer=@p_mag and InN_TStampZam=0
+				left outer join CDN.InwMag on InM_MagNumer=@p_mag
+				left outer join CDN.InwNag on InN_Id=InM_InNId and InN_TStampZam=0
+				--MSm end
+				left outer join CDN.InwArk on InA_MgOId=MgO_Id and InA_InNId=InN_Id
+				left outer join CDN.MagAdresy O on O.MgA_Id=InA_MgAIdOd
+				left outer join CDN.MagAdresy D on D.MgA_Id=InA_MgAIdDo and A.MgA_Segment1+A.MgA_Segment2+A.MgA_Segment3+A.MgA_Segment4 between O.MgA_Segment1+O.MgA_Segment2+O.MgA_Segment3+O.MgA_Segment4 and D.MgA_Segment1+D.MgA_Segment2+D.MgA_Segment3+D.MgA_Segment4
+				left outer join CDN.TwrLinki on TwL_GIDTyp=TPA_TwrTyp and TwL_GIDNumer=TPA_TwrNumer
+				left outer join CDN.MagTwrObszary on MTO_MgOId=MgO_Id and ((TwL_GROTyp=MTO_TwrTyp and TwL_GRONumer=MTO_TwrNumer) or (MTO_TwrTyp=TPA_TwrTyp and MTO_TwrNumer=TPA_TwrNumer))
+				where (TPA_Partia=1 or TPM_Domyslna=1)					-- lezy tam partia lub lokalizacja domyslna
+					and isnull(MPJ_JednostkaLog-@p_jms,MPA_Rodzaj)=0	-- mozna skladowac luzem lub pole odkladcze
+					and D.MgA_Id is null								-- adres nie nalezy do zakresu inwentaryzacji
+					and (MPA_Rodzaj=0 or								-- pole odkladcze lub nie przekroczone wymiary
+						(@p_dlugosc&lt;=MPA_Dlugosc and @p_szerokosc&lt;=MPA_Szerokosc and @p_wysokosc&lt;=MPA_Wysokosc))
+				group by TPA_TwrNumer, A.MgA_Id, MgO_Kod, A.MgA_Segment1, A.MgA_Segment2, A.MgA_Segment3, A.MgA_Segment4,
+					MPA_Rodzaj, MPA_Nosnosc, MPA_PriorytetS, MPJ_IloscMaks, TPM_Domyslna, MgO_Towary
+				having MgO_Towary=1 or count(MTO_MgOId)&gt;0				-- mozna skladowac towar w obszarze
+			) Adr
+			left outer join CDN.TwrZasobyMag on TZM_MgaId=MgA_Id
+			left outer join CDN.TwrPartie Z on Z.TPA_Id=TZM_TPAId
+			left outer join CDN.TwrKarty on Twr_GIDNumer=Z.TPA_TwrNumer
+			group by Adr.TPA_TwrNumer, MgO_Kod, MgA_Id, MgA_Segment1, MgA_Segment2, MgA_Segment3, MgA_Segment4,
+				MPA_Rodzaj, MPA_Nosnosc, MPA_PriorytetS, MPJ_IloscMaks, TPM_Domyslna, MTO_Count
+		) Zas
+		left outer join CDN.MagPElem on MaP_MgAId=MgA_Id
+		left outer join CDN.MagNag on MaN_GIDNumer=MaP_GIDNumer and MaN_Stan&lt;3
+		left outer join CDN.MagElem on MaE_GIDNumer=MaN_GIDNumer and MaE_GIDLp=MaP_GIDLp
+		left outer join CDN.TwrPartie on TPA_Id=MaE_TPAId
+		left outer join CDN.TwrKarty on Twr_GIDNumer=TPA_TwrNumer
+		group by TwrNumer, MgO_Kod, MgA_Id, MgA_Segment1, MgA_Segment2, MgA_Segment3, MgA_Segment4,
+			MPA_Rodzaj, MPA_Nosnosc, MPA_PriorytetS, MPJ_IloscMaks, TPM_Domyslna, MTO_Count,
+			TZM_Inne, TZM_IloscJed, TZM_Waga
+	) Elem
+	inner join CDN.TwrKarty on Twr_GIDNumer=TwrNumer
+	inner join CDN.Slowniki on Slw_Id=@p_jms
+	where MPA_Rodzaj=0 or (MPJ_IloscMaks-IloscJed&gt;0
+		and MPA_Nosnosc-Waga-Slw_WartoscN4*(IloscJed+1)&gt;=@p_ilosc*Twr_WagaBrutto
+			* case Twr_Wjm when 'Gram' then 0.001 when 'Dkg' then 0.01 when 'Tona' then 1000 else 1 end
+		and Inne=0)
+	order by
+		-TPM_Domyslna,														-- czy lokalizacja domyslna
+		case when MTO_Count&gt;0 then 0 else 1 end,							-- jest przypisany do obszaru
+		MPA_PriorytetS,														-- priorytet skladowania
+        MgO_Kod, MgA_Segment1, MgA_Segment2, MgA_Segment3, MgA_Segment4		-- kolejnosc alfabetyczna
+
+	if @@rowcount&gt;0 return
+
+	--Pozostale adresy gdzie mozna towar umiescic
+	insert into @adresy
+	select top 1 MgA_Id, @p_Ilosc, 0, 0
+	from (
+		select Elem.MgO_Kod, Elem.MgA_Id, Elem.MgA_Segment1, Elem.MgA_Segment2, Elem.MgA_Segment3, Elem.MgA_Segment4,
+			MPA_Rodzaj, Towar, MPA_PriorytetS, MTO_Count,
+			min(case when Elem.MgO_Id&lt;&gt;Tow.MgO_Id then 10000 else 0 end
+			+ 100*abs(convert(int,Elem.MgA_Segment1)-convert(int,Tow.MgA_Segment1))
+			+  10*abs(convert(int,Elem.MgA_Segment2)-convert(int,Tow.MgA_Segment2))
+			+   5*abs(convert(int,Elem.MgA_Segment3)-convert(int,Tow.MgA_Segment3))
+			+ case when Elem.Mga_Segment4&lt;&gt;Tow.MgA_Segment4 then 1 else 0 end) Odleglosc
+		from (
+			select TwrNumer, MgO_Id, MgO_Kod, MgA_Id, MgA_Segment1, MgA_Segment2, MgA_Segment3, MgA_Segment4,
+				MPA_Rodzaj, MPA_Nosnosc, MPJ_IloscMaks, MPA_PriorytetS, MTO_Count,
+				TZM_Towar+count(MaN_GIDNumer) Towar,
+				TZM_Inne+sum(case when MaN_GIDNumer is not null and isnull(MaP_JednostkaLog-@p_jms,0)&lt;&gt;0 then 1 else 0 end) Inne,
+				TZM_IloscJed+isnull(count(MaN_GIDNumer),0) IloscJed,
+				TZM_Waga+isnull(sum(MaP_Ilosc*Twr_WagaBrutto*case Twr_Wjm when 'Gram' then 0.001 when 'Dkg' then 0.01 when 'Tona' then 1000 else 1 end),0) Waga
+			from (
+				select Adr.TPA_TwrNumer TwrNumer, MgO_Id, MgO_Kod, MgA_Id, MgA_Segment1, MgA_Segment2, MgA_Segment3, MgA_Segment4,
+					MPA_Rodzaj, MPA_Nosnosc, MPJ_IloscMaks, MPA_PriorytetS, MTO_Count,
+					count(TZM_MgAId) TZM_Towar,
+					sum(case when isnull(TZM_JednostkaLog-@p_jms,0)&lt;&gt;0 then 1 else 0 end) TZM_Inne,
+					isnull(count(TZM_MgAId),0) TZM_IloscJed,
+					isnull(sum(TZM_Ilosc*Twr_WagaBrutto*case Twr_Wjm when 'Gram' then 0.001 when 'Dkg' then 0.01 when 'Tona' then 1000 else 1 end),0) TZM_Waga
+				from (
+					select B.MgO_Id, B.MgO_Kod, A.MgA_Id, A.MgA_Segment1, A.MgA_Segment2, A.MgA_Segment3, A.MgA_Segment4,
+						MPA_Rodzaj, MPA_Nosnosc, MPA_PriorytetS, MPJ_IloscMaks, TPA_TwrNumer, count(MTO_MgOId) MTO_Count
+					from CDN.MagAdresy A
+					inner join CDN.MagParAdr on MPA_Id=MgA_MPAId
+					inner join CDN.MagObszary B on B.MgO_Id=MgA_MgOId
+					inner join CDN.TwrPartie on TPA_Id=@p_tpa
+					left outer join @towary T on T.MgA_Id=A.MgA_Id and (T.TPA_Partia=1 or T.TPM_Domyslna=1)
+					left outer join CDN.MagParJednostki on MPJ_MPAId=MPA_Id
+					--MSm begin
+					--left outer join CDN.InwNag on InN_MagNumer=@p_mag and InN_TStampZam=0
+					left outer join CDN.InwMag on InM_MagNumer=@p_mag
+					left outer join CDN.InwNag on InN_Id=InM_InNId and InN_TStampZam=0
+					--MSm end
+					left outer join CDN.InwArk on InA_MgOId=B.MgO_Id and InA_InNId=InN_Id
+					left outer join CDN.MagAdresy O on O.MgA_Id=InA_MgAIdOd
+					left outer join CDN.MagAdresy D on D.MgA_Id=InA_MgAIdDo and A.MgA_Segment1+A.MgA_Segment2+A.MgA_Segment3+A.MgA_Segment4 between O.MgA_Segment1+O.MgA_Segment2+O.MgA_Segment3+O.MgA_Segment4 and D.MgA_Segment1+D.MgA_Segment2+D.MgA_Segment3+D.MgA_Segment4
+					left outer join CDN.TwrLinki on TwL_GIDTyp=TPA_TwrTyp and TwL_GIDNumer=TPA_TwrNumer
+					left outer join CDN.MagTwrObszary on MTO_MgOId=B.MgO_Id and ((TwL_GROTyp=MTO_TwrTyp and TwL_GRONumer=MTO_TwrNumer) or (MTO_TwrTyp=TPA_TwrTyp and MTO_TwrNumer=TPA_TwrNumer))
+					where T.MgA_Id is null										-- adres nie byl analizowany uprzednio
+						and isnull(MPJ_JednostkaLog-@p_jms,MPA_Rodzaj)=0		-- mozna skladowac luzem
+						and MgO_MagNumer=@p_mag									-- adres wlasciwego magazynu
+						and D.MgA_Id is null									-- adres nie nalezy do zakresu inwentaryzacji
+						and (MPA_Rodzaj=0 or									-- pole odkladcze lub nie przekroczone wymiary
+							(@p_dlugosc&lt;=MPA_Dlugosc and @p_szerokosc&lt;=MPA_Szerokosc and @p_wysokosc&lt;=MPA_Wysokosc))
+					group by B.MgO_Id, B.MgO_Kod, A.MgA_Id, A.MgA_Segment1, A.MgA_Segment2, A.MgA_Segment3, A.MgA_Segment4,
+						MPA_Rodzaj, MPA_Nosnosc, MPA_PriorytetS, MPJ_IloscMaks, TPA_TwrNumer, B.MgO_Towary
+					having B.MgO_Towary=1 or count(MTO_MgOId)&gt;0					-- mozna skladowac towar w obszarze
+				) Adr
+				left outer join CDN.TwrZasobyMag on TZM_MgaId=MgA_Id
+				left outer join CDN.TwrPartie Z on Z.TPA_Id=TZM_TPAId
+				left outer join CDN.TwrKarty on Twr_GIDNumer=Z.TPA_TwrNumer
+				group by MgO_Id, MgO_Kod, MgA_Id, MgA_Segment1, MgA_Segment2, MgA_Segment3, MgA_Segment4,
+					MPA_Rodzaj, MPA_Nosnosc, MPA_PriorytetS, MPJ_IloscMaks, MTO_Count, Adr.TPA_TwrNumer
+			) Zas
+			left outer join CDN.MagPElem on MaP_MgAId=MgA_Id
+			left outer join CDN.MagNag on MaN_GIDNumer=MaP_GIDNumer and MaN_Stan&lt;3
+			left outer join CDN.MagElem on MaE_GIDNumer=MaN_GIDNumer and MaE_GIDLp=MaP_GIDLp
+			left outer join CDN.TwrPartie on TPA_Id=MaE_TPAId
+			left outer join CDN.TwrKarty on Twr_GIDNumer=TPA_TwrNumer
+			group by TwrNumer, MgO_Id, MgO_Kod, MgA_Id, MgA_Segment1, MgA_Segment2, MgA_Segment3, MgA_Segment4,
+				MPA_Rodzaj, MPA_Nosnosc, MPJ_IloscMaks, MPA_PriorytetS, MTO_Count,
+				TZM_Towar, TZM_Inne, TZM_IloscJed, TZM_Waga
+		) Elem
+		inner join CDN.TwrKarty on Twr_GIDNumer=TwrNumer
+		inner join CDN.Slowniki on Slw_Id=@p_jms
+		left outer join @towary Tow on TPA_Partia&gt;=0
+		where MPA_Rodzaj=0 or (MPJ_IloscMaks-IloscJed&gt;0
+			and MPA_Nosnosc-Waga-Slw_WartoscN4*(IloscJed+1)&gt;=@p_ilosc*Twr_WagaBrutto
+			* case Twr_Wjm when 'Gram' then 0.001 when 'Dkg' then 0.01 when 'Tona' then 1000 else 1 end
+			and Inne=0)
+		group by Elem.MgO_Id, Elem.MgO_Kod, Elem.MgA_Id, Elem.MgA_Segment1, Elem.MgA_Segment2, Elem.MgA_Segment3, Elem.MgA_Segment4,
+			MPA_Rodzaj, Towar, MPA_PriorytetS, MTO_Count
+	) Odl
+	order by
+		-MPA_Rodzaj,                                                    -- pola odkladcze na koniec
+		case when Towar=0 then 0 else 1 end,							-- czy lokalizacja jest pusta
+		case when MTO_Count&gt;0 then 0 else 1 end,		                -- jest przypisany do obszaru
+		MPA_PriorytetS,                                                 -- priorytet skladowania
+		isnull(Odleglosc,2147483647),									-- odleglosc od tego samego towaru
+		MgO_Kod, MgA_Segment1, MgA_Segment2, MgA_Segment3, MgA_Segment4 -- kolejnosc alfabetyczna
+end
+
+return
+
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

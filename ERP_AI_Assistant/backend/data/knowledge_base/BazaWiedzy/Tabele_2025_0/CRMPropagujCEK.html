@@ -1,0 +1,274 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="CRMPropagujCEK"></A><PRE>
+          <FONT SIZE="2"><I>/* CRMPropagujCEK */</I><BR>
+CREATE PROCEDURE CDN.CRMPropagujCEK
+/* ==========================================================================================
+	Procedura serwerowa do pełnej propagacji pojedynczego kontrahenta kampanii CRM
+	Parametry wejściowe
+	@CEKId - CEK_Id propagowanego kontrahenta
+	@TypPropagacji - liczba naturalna propagacja w przód, ujemna cofanie
+	@OpeNumer - GidNumer operatora ktory wykonuje tą operacje
+	
+	Procedura ta jest obudowaniem CDN.PropagujKontrahenta
+	Wszystkie błędy zwracane przez procedure CDN.PropagujKontrahenta są wyrzucane na ekran
+	Tam też znajduje się tabelka zwracanych przez nią komunikatów/błędów
+	Dodatko przechwytywany jest CEK_ID spropagowanego kontrahenta
+
+	W przypadku powodzenia przy propagacji następuje kasowane oraz dodawane nowych zadań.
+	
+	Uwaga: Procedura zwraca wartość (@ReturnCEKID):
+		   0 - wystąpił błąd, nie udało się spropagować kontrahenta
+		   &gt;0 - identyfikator nowego kontrahenta (CEK_ID)
+
+   ========================================================================================== */
+(
+	@CEKId INT,
+    @TypPropagacji SMALLINT,
+    @OpeNumer INT,
+	@ReturnCEKID INT OUTPUT
+)
+AS
+BEGIN
+	--zmienne tymczasowe:
+	DECLARE @OpeTyp SMALLINT
+	DECLARE @OpeFirma INT
+	DECLARE @OpeLp SMALLINT
+	DECLARE @CKNIleEtapow SMALLINT
+	DECLARE @CKNJedenWatek SMALLINT
+	DECLARE @CKNGidTyp SMALLINT -- GidNumer kampanii w ktorej znajduje sie propagowany kontrahent
+	DECLARE @CKNGidNumer INT -- GidNumer kampanii w ktorej znajduje sie propagowany kontrahent
+	DECLARE @oCKEPozycja SMALLINT -- pozycja STAREGO etapu, czyli tego Z którego dokonujemy propagacji
+	DECLARE @nCKEPozycja SMALLINT -- pozycja NOWEGO etapu, czyli tego DO którego dokonujemy propagacji
+	DECLARE @oIleEtapow INT -- o ile etapów przeskoczy kontrahent (pomijąc etapy archiwalne i oznaczone jako bez kontrahentow)
+	DECLARE @oCEKDataStart INT -- data wejscia kontrahenta który będzie propagowany
+	DECLARE @oCEKStatus SMALLINT -- status kontrahenta który będzie propagowany
+	SET NOCOUNT ON;
+
+	-- zerujemy parametr wyjściowy, jeśli przypadkiem ktoś przekazał coś innego
+	SET @ReturnCEKID = 0 
+
+	-- Wypełniamy potrzebne zmienne
+	SELECT @CKNIleEtapow=CKN_IleEtapow, @CKNJedenWatek=CKN_JedenWatek, @CKNGidTyp=CKN_GidTyp, @CKNGidNumer=CKN_GidNumer,
+         @oCKEPozycja=CKE_Pozycja, @oCEKDataStart=CEK_DataStart, @oCEKStatus=CEK_Status
+	FROM CDN.CRMKntEtapy
+	LEFT JOIN CDN.CRMKampNag ON CEK_CKETyp=CKN_GidTyp AND CEK_CKENumer=CKN_GidNumer
+	LEFT JOIN CDN.CRMKampEtapy ON CEK_CKETyp=CKE_GidTyp AND CEK_CKENumer=CKE_GidNumer AND CEK_CKELp=CKE_GidLp
+	WHERE CEK_Id = @CEKID
+
+	-- jesli kontrahent nie aktywny to koniec
+	IF @oCEKStatus&lt;&gt;0 OR @OCEKDataStart&gt;DATEDIFF(dd,'18001228',GETDATE())  BEGIN
+        RAISERROR('(Operacja anulowana) Wskazany kontrahent nie jest aktywny.',16,1)
+		RETURN 0
+	END
+
+	-- Wyznaczamy pierwszy wlasciwy etap do ktorego moze trafic kontrahent (odrzucamy etapy archiwalne i oznaczone jako bez kontrahentow)
+	IF @TypPropagacji &lt; 0
+		-- COFANIE (-)
+		BEGIN
+			SELECT @nCKEPozycja=IsNull(MAX(CKE_Pozycja),0)
+			FROM CDN.CRMKampEtapy
+			WHERE CKE_GidTyp=@CKNGidTyp AND CKE_GidNumer=@CKNGidNumer AND CKE_EtapBezKnt=0 AND CKE_Archiwalny=0
+			AND CKE_Pozycja&lt;@oCKEPozycja		
+			-- ilośc etapów dla cofania powinna być ujemna:
+			SET @oIleEtapow = (-1) * (@nCKEPozycja - @oCKEPozycja)
+		END
+	ELSE
+		-- PROPAGACJA (+)
+		BEGIN
+			SELECT @nCKEPozycja=IsNull(MIN(CKE_Pozycja),0)
+			FROM CDN.CRMKampEtapy
+			WHERE CKE_GidTyp=@CKNGidTyp AND CKE_GidNumer=@CKNGidNumer AND CKE_EtapBezKnt=0 AND CKE_Archiwalny=0
+			AND CKE_Pozycja&gt;@oCKEPozycja
+			SET @oIleEtapow = @nCKEPozycja - @oCKEPozycja
+		END
+
+	SELECT @OpeTyp=IsNull(Ope_GidTyp,0), @OpeFirma=IsNull(Ope_GidFirma,0), @OpeLp=IsNull(Ope_GidLp,0) FROM CDN.OpeKarty WHERE Ope_GidNumer=@OpeNumer
+	IF @OpeTyp=0 BEGIN
+        RAISERROR('(Operacja anulowana) Wskazany operator wykonujący propagację jest nieprawidłowy.',16,1)
+		RETURN 0
+	END
+	/* ========================================================================================== *
+											START: PROPAGACJA
+	 * ========================================================================================== */
+	DECLARE @_TRANCOUNT int;
+	SELECT @_TRANCOUNT=@@TRANCOUNT; 
+	IF @_TRANCOUNT&gt;0 SAVE TRANSACTION CRMPropagujCEK;
+	ELSE BEGIN TRANSACTION CRMPropagujCEK;
+	
+	BEGIN TRY
+		exec @ReturnCEKID = CDN.PropagujKontrahenta @CEKId, @oIleEtapow, @OpeTyp, @OpeFirma, @OpeNumer, @OpeLp, @CKNIleEtapow, @CKNJedenWatek
+	END TRY
+	BEGIN CATCH
+	END CATCH
+	
+	IF @ReturnCEKID = 0
+	BEGIN
+		SET NOCOUNT OFF
+		IF XACT_STATE()&lt;&gt;0 ROLLBACK TRANSACTION CRMPropagujCEK
+		RETURN 0
+	END
+	--ELSE NIE było błędu, dodajemy/kasujem zadania:
+
+	/* ========================================================================================== *	
+	    Pobieramy parametry nowego kontrahentowi w etapie
+	 * ========================================================================================== */
+
+	DECLARE @nCKETyp SMALLINT
+	DECLARE @nCKENumer INT
+	DECLARE @nCKELp SMALLINT
+
+	DECLARE @nCEKKntNumer INT
+	DECLARE @nCEKKntLp SMALLINT
+	DECLARE @nCEKKntOsobaLp SMALLINT
+
+	DECLARE @CDZId INT
+	DECLARE	@returnValue INT
+
+	DECLARE @nKntAkronim VARCHAR(20)
+
+	SELECT @nCKETyp=CEK_CKETyp, @nCKENumer=CEK_CKENumer, @nCKELp=CEK_CKELp,
+		   @nCEKKntNumer=CEK_KntNumer, @nCEKKntLp=CEK_KntLp, @nCEKKntOsobaLp=CEK_KntOsobaLp,
+		   @nKntAkronim=Knt_Akronim
+	FROM CDN.CRMKntEtapy
+	--LEFT JOIN CDN.CRMKampNag ON CEK_CKETyp=CKN_GidTyp AND CEK_CKENumer=CKN_GidNumer
+	--LEFT JOIN CDN.CRMKampEtapy ON CEK_CKETyp=CKE_GidTyp AND CEK_CKENumer=CKE_GidNumer AND CEK_CKELp=CKE_GidLp
+	LEFT JOIN CDN.KntKarty ON CEK_KntTyp=Knt_GidTyp AND CEK_KntNumer=Knt_GidNumer
+	WHERE CEK_Id = @ReturnCEKID
+
+	/* ========================================================================================== *	
+	    Kasujemy wszystkie niewykonane zadania spropagowanemu kontrahentowi
+	 * ========================================================================================== */
+	DELETE CDN.Zadania WHERE Zad_ZrdTyp=341 AND Zad_ZrdNumer=@CEKId AND Zad_CzasWykonania=0
+	IF @@error &lt;&gt; 0 BEGIN
+		SET NOCOUNT OFF
+		IF XACT_STATE()&lt;&gt;0 ROLLBACK TRANSACTION CRMPropagujCEK
+		RAISERROR ('(Operacja anulowana) Wystąpił błąd podczas kasowania zadań propagowanemu kontrahentowi.', 16, 1)
+		RETURN 0
+	END
+
+	/* ========================================================================================== *	
+	    Dodajemy nowe zadanie związane z akcją na nowym kontrahencie (zakładka Akcja)
+	 * ========================================================================================== */
+	IF (SELECT CEK_Terminarz FROM CDN.CRMKntEtapy WHERE CEK_Id = @ReturnCEKID)=1 BEGIN
+		-- dodajemy zadania:
+		BEGIN TRY
+			EXEC @returnValue=CDN.XLNoweZadanieTERMINARZ @Kod=@nKntAkronim,@Nazwa='Wykonanie akcji na kontrahencie w etapie',@OpeTyp=128,@OpeNumer=@OpeNumer,@ObiTyp=32,@ObiNumer=@nCEKKntNumer,@ZrdTyp=341,@ZrdNumer=@ReturnCEKID,@ZrdLp=0,@OpePrcJakoObiekt=1
+		END TRY
+		BEGIN CATCH	
+		END CATCH
+		
+ 		IF @returnValue &lt; 0 BEGIN
+			SET NOCOUNT OFF
+			IF XACT_STATE()&lt;&gt;0 ROLLBACK TRANSACTION CRMPropagujCEK
+			RAISERROR ('(Operacja anulowana) Wystąpił błąd podczas dodawania zadań nowo spropagowanemu kontrahentowi.', 16, 1)
+			RETURN 0
+		END
+	END
+
+	/* ========================================================================================== *	
+	    Dodajemy nowe zdania, które są wzorcowe dla nowego etapu
+	 * ========================================================================================== */
+
+    DECLARE C1 CURSOR FAST_FORWARD FOR
+		SELECT CDZ_Id
+		--      ,[CDZ_DataUtworzenia],[CDZ_TerminZadania]
+		--      ,[CDZ_Tytul],[CDZ_Priorytet],[CDZ_TypId],[CDZ_Rodzaj],[CDZ_Opis]
+		--      ,[CDZ_Obsluga],[CDZ_OpeUNumer],[CDZ_OpeMNumer],[CDZ_OpeONumer] ,[CDZ_FrsId]
+		--      ,[CDZ_CzasPlanowany],[CDZ_CzasPlanowanyJedn]
+		--      ,[CDZ_Przypomnienie],[CDZ_CzasPrzypomnienia],[CDZ_CzasPrzypomnieniaJedn]
+		--      ,[CDZ_Terminarz]
+		FROM CDN.CRMDefZadania
+		WHERE CDZ_GenerujAutomatycznie=1 AND CDZ_CkeTyp=@nCKETyp AND CDZ_CkeNumer=@nCKENumer AND CDZ_CkeLp=@nCKELp
+    OPEN C1;
+    FETCH NEXT FROM C1 INTO @CDZId
+
+    WHILE @@fetch_status = 0
+    BEGIN
+		BEGIN TRY
+			EXEC	@returnValue = CDN.XLDodajElementDoWatkuCRM
+					@Tytul = NULL,
+					@ElementTyp = 2,
+					@OpeStartNumer = @OpeNumer,
+					@SsNNumer = 0,
+					@KntNumer = @nCEKKntNumer,
+					@KntLp = @nCEKKntLp,
+					@KntOsobaLp = @nCEKKntOsobaLp,
+					@CkeNumer = @nCKENumer,
+					@CkeLp = @nCKELp,
+					@CdzID = @CDZId,
+					@OpePTyp = NULL,
+					@OpePNumer = NULL,
+					@OpeWNumer = NULL,
+					@DataWykonania = NULL,
+					@CzasKonsultacji = NULL,
+					@CzasDodatkowy = NULL,
+					@TStampDataStart = NULL,
+					@RodzajZadania = NULL,
+					@Priorytet = NULL,
+					@FlagaStatusu = NULL,
+					@TSPrzypomnienie = NULL,
+					@Odleglosc = NULL,
+					@AkwOsobaLp = NULL,
+					@TStampTerminOd = NULL,
+					@TStampTerminDo = NULL,
+					@Terminarz = NULL,
+					@CzasPlanowanyJedn = NULL,
+					@CzasPrzypomnieniaJedn = NULL,
+					@TypId = NULL,
+					@Opis = NULL,
+					@IgnorujSelecty = 1
+							
+
+					/* 	
+					INSERT INTO cdn.crmzadaniaobiekty
+					(CZO_CdzID,CZO_SsENumer,CZO_SsELp,CZO_ObiTyp,CZO_ObiNumer,CZO_DataUtworzenia)
+					SELECT 0,@SsE:GIDNumer,@SsE:GIDLp,CZO_ObiTyp,CZO_ObiNumer,'Today()'
+					FROM cdn.crmzadaniaobiekty
+					WHERE czo_cdzid = @CdzID
+					*/
+		END TRY
+		BEGIN CATCH
+		END CATCH					
+
+        IF @returnValue &lt; 0  BEGIN
+          SET NOCOUNT OFF
+          IF XACT_STATE()&lt;&gt;0 ROLLBACK TRANSACTION CRMPropagujCEK
+          CLOSE C1;
+          DEALLOCATE C1;
+          RAISERROR ('(Operacja anulowana) Wystąpił błąd podczas dodawania zadań nowo spropagowanemu kontrahentowi (Zadania wzorcowe dla etapu).', 16, 1)
+          RETURN 0
+        END
+
+        FETCH NEXT FROM C1 INTO @CDZId
+    END
+    CLOSE C1;
+    DEALLOCATE C1;
+
+    IF @@error &lt;&gt; 0 BEGIN
+        SET NOCOUNT OFF
+		IF XACT_STATE()&lt;&gt;0 ROLLBACK TRANSACTION CRMPropagujCEK
+		RAISERROR ('(Operacja anulowana) Wystąpił błąd podczas dodawania zadań wzorcowych dla etapu nowo spropagowanemu kontrahentowi.', 16, 1)
+        RETURN 0
+	END
+
+	SET NOCOUNT OFF
+	IF @_TRANCOUNT=0 COMMIT TRANSACTION CRMPropagujCEK;
+	return @ReturnCEKID
+END
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

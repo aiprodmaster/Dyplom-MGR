@@ -1,0 +1,111 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="ProdPlanowanieCalosciowe"></A><PRE>
+          <FONT SIZE="2"><I>/* ProdPlanowanieCalosciowe */</I><BR>
+create procedure CDN.ProdPlanowanieCalosciowe @Towary varchar(8000), @DataOd int, @Etap int as 
+begin
+set nocount on
+
+if exists(select name from sysobjects where name='ProdPlanowanieCaloscioweEx' and type = 'P')
+  begin
+    exec sp_executesql N'exec CDN.ProdPlanowanieCaloscioweEx @Towary, @DataOd, @Etap', N'@Towary varchar(8000), @DataOd int, @Etap int', @Towary, @DataOd, @Etap
+    return
+  end
+
+declare @Lista table (
+  Numer int,
+  Kod varchar(40),
+  Brak decimal(11,4),
+  Rotacja decimal(11,4)
+)
+
+if @Etap&lt;24
+  begin
+    declare @DataDo int
+    set @DataDo = case
+                  when @Etap in (0,4,5,6,16,17) then @DataOd+7
+                  when @Etap in (1,7,8,9,18,19) then @DataOd+31
+                  when @Etap in (2,0,11,12,20,21) then @DataOd+92
+                  else 0 end
+    insert into @Lista
+      select Num, Kod, case when @Etap in (5,6,8,9,11,12,14,15) then SMin
+        when @Etap&gt;15 then SMax else 0 end - Stan
+        - isnull(sum(Rez_Ilosc-Rez_Zrealizowano),0), 0
+      from (
+        select Num, Twr_Kod Kod, isnull(sum(TwZ_IlSpr),0) Stan, Twr_IloscMin SMin, Twr_IloscMax SMax 
+        from CDN.Str2List(@Towary)
+        inner join CDN.TwrKarty on Twr_GIDNumer=Num
+        left outer join CDN.TwrZasoby on TwZ_TwrNumer=Twr_GIDNumer 
+        group by Num, Twr_Kod, Twr_IloscMin, Twr_IloscMax 
+      ) Stany 
+      left outer join CDN.Rezerwacje on Rez_Typ&lt;&gt;0 and Rez_TwrNumer=Num
+        and Rez_GIDTyp=2592 and Rez_Aktywna&lt;&gt;0 and Rez_DataWaznosci&gt;=@DataOd
+        and (Rez_DataRealizacji&lt;=@DataDo or @DataDo=0)
+      group by Num, Kod, Stan, SMin, SMax
+    if @Etap in (0,1,2,3,5,8,11,14,16,18,20,22)
+      update @Lista set Brak = Brak + isnull( (
+        select sum(Rez_Ilosc-Rez_Zrealizowano) from CDN.Rezerwacje
+        where Rez_Typ&lt;&gt;0 and Rez_TwrNumer=Numer and Rez_GIDTyp=2576
+          and Rez_Aktywna&lt;&gt;0 and Rez_DataWaznosci&gt;=@DataOd
+          and (Rez_DataRealizacji&lt;=@DataDo or @DataDo=0)
+      ), 0)
+    else
+      update @Lista set Brak = Brak + isnull( (
+        select sum(Ilosc) from CDN.PlanowanaIlosc(0, @DataOd, @DataDo)
+        where TwrNumer=Numer
+      ), 0) - isnull( (
+        select sum(TrE_Ilosc) from CDN.TraElem 
+        inner join CDN.TraNag on TrN_GIDNumer=TrE_GIDNumer
+        where Tre_TwrNumer=Numer and TrE_GIDTyp in (2033,2041,2037,2045,
+          2036,2044,2034,2042,1616,1624,2000,2008,2001,2009,2005,2013)
+          and @DataOd&lt;=TrN_Data3 and (TrN_Data3&lt;=@DataDo or @DataDo=0)
+          and exists(
+            select * from CDN.PlanElem
+            inner join CDN.PlanOkres on PLO_Id=PLE_Okres
+            inner join CDN.PlanNag on PLN_Id=PLE_Plan
+            where PLE_TwrNumer=Numer and PLN_Stan&gt;0
+              and TrN_Data3 between PLO_OkresOd and PLO_OkresDo
+          )
+      ), 0)
+  end
+else
+  insert into @Lista
+  select Num, Twr_Kod, 0, 0
+  from CDN.Str2List(@Towary)
+  inner join CDN.TwrKarty on Twr_GIDNumer=Num
+
+update @Lista set Rotacja = isnull(
+  (
+    select sum(TrE_Ilosc)
+    from CDN.TraElem
+    inner join CDN.TraNag on TrN_GIDNumer=TrE_GIDNumer
+    where TrE_TwrNumer=Numer and TrE_GIDTyp in (2033,2041,2037,2045,
+      2036,2044,2034,2042,1616,1624,2000,2008,2001,2009,2005,2013)
+      and TrN_Data3 between @DataOd-182 and @DataOd
+  ),0)
+update @Lista set Rotacja=1 where Rotacja&lt;=0
+
+if @Etap&gt;=24
+  update @Lista set Brak = case
+    when 1.0 * Rotacja / 16 * power(2.0,@Etap-24) &gt; 9999999.9999
+    then 9999999.9999 else 1.0 * Rotacja / 16 * power(2.0,@Etap-24) end
+
+select * from @Lista where Brak&gt;0
+
+set nocount off
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

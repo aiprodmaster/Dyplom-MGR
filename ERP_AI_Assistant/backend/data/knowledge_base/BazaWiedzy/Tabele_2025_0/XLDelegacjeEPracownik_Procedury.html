@@ -1,0 +1,2599 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="EP_DelegacjeZaliczki_Add"></A><PRE>
+          <FONT SIZE="2"><I>/* EP_DelegacjeZaliczki_Add */</I><BR>
+CREATE PROCEDURE CDN.EP_DelegacjeZaliczki_Add
+@DelegacjaGIDTyp SMALLINT,
+@DelegacjaGIDNumer INT,
+@DelegacjaGIDLp SMALLINT,
+@KwotaWal DECIMAL(15,2),
+@PrcOptimaID INT 
+AS SET NOCOUNT ON
+
+Declare
+@WNOGidNumer INT,
+@WNOGidLp INT,
+@WNOTyp SMALLINT,
+@WNOStan SMALLINT,
+@WNOGIDFirma INT,
+@WNOPRCNumer INT,
+@WNOOPENumerWpr INT,
+@WNOTStampWpr INT,
+@WNOKwota DECIMAL(15,2),
+@WNOFRSNumer INT,
+@WNORok SMALLINT,
+@WNOMiesiac TINYINT,
+@WNOSeria varchar(6),
+@WNONumer INT,
+@WNODlgNumer INT,
+@WNODlgLp SMALLINT,
+@WNOOPENumerMod INT,
+@WNOTStampMod INT,
+@WNOTrybWstawiania TINYINT,
+@PrcGidNumer INT,
+@WNOPrcNumerWpr INT,
+@WNOPrcNumerMod INT,
+@PrcImie varchar(30),
+@PrcNazwisko varchar(50),
+@lFormatLen int
+
+
+IF @DelegacjaGIDNumer &lt;&gt; 0
+    BEGIN
+        IF not exists(select * from cdn.Delegacje where DLG_GIDTyp = @DelegacjaGIDTyp and DLG_GIDNumer = @DelegacjaGIDNumer) 
+            BEGIN 
+                RAISERROR('W tabeli cdn.Delegacje nie istnieje obiekt nadrzędny. Dane nie zostaną zapisane.',16,1)
+                Return
+            END   
+    END 
+ 
+IF @KwotaWal = 0 
+    BEGIN  
+        RAISERROR('Wprowadzono Błędną kwotę wniosku o zaliczkę. Dane nie zostaną zapisane.',16,1)
+        Return
+    END 
+
+IF exists(select * from cdn.PrcKarty where Prc_OptimaId = @PrcOptimaID)
+    BEGIN
+        SET @PrcGidNumer = isnull((select prc_gidnumer from cdn.PrcKarty where Prc_OptimaId = @PrcOptimaID),0)  		
+
+        SET @WNOPrcNumerWpr = @PrcGidNumer         
+        SET @WNOPrcNumerMod = @PrcGidNumer     
+    END
+ELSE
+    BEGIN
+        RAISERROR('W tabeli cdn.PrcKarty nie istnieje zsynchronizowany obiekt pracownika. Dane nie zostaną zapisane.',16,1)
+        Return
+    END
+
+IF exists(select Kon_Wartosc from cdn.Konfig where kon_numer = 20129)
+    BEGIN       
+       SET @WNOOPENumerWpr = (select Ope_GIDNumer from cdn.OpeKarty where Ope_Ident = (select Kon_Wartosc from cdn.Konfig where kon_numer = 20129))     END
+ELSE
+    BEGIN
+        RAISERROR('W Konfiguracji brak wybranego operatora. Dane nie zostaną zapisane.',16,1)
+        Return
+    END
+
+BEGIN TRY 
+
+SET @WNOGidLp = 0
+SET @WNOGIDFirma = isnull((select Frm_GidFirma from cdn.Firma where Frm_GidNumer = 1),0)
+SET @WNOTyp = isnull((select isnull(SLW_ID,0) from cdn.Slowniki join cdn.SlownikiStruktura on SLW_SLSId = SLS_Id and SLS_Predefiniowany = 149 and slw_wartoscs = 'Wniosek o zaliczkę'),0)
+SET @WNOStan = 1
+ 
+IF exists (select DLG_PRCNumer from cdn.Delegacje where DLG_GIDTyp = @DelegacjaGIDTyp and DLG_GIDNumer = @DelegacjaGIDNumer)
+    BEGIN        
+        SET @WNOPRCNumer = (select DLG_PRCNumer from cdn.Delegacje where DLG_GIDTyp = @DelegacjaGIDTyp and DLG_GIDNumer = @DelegacjaGIDNumer)                     
+		SET @PrcImie = isnull((select Prc_Imie1 from cdn.PrcKarty where Prc_GIDNumer = @WNOPRCNumer),'')
+		SET @PrcNazwisko = isnull((select Prc_Nazwisko from cdn.PrcKarty where Prc_GIDNumer = @WNOPRCNumer),'')
+    END   
+ELSE
+    BEGIN        
+        SET @WNOPRCNumer = 0 
+		SET @PrcImie = ''
+		SET @PrcNazwisko = ''
+    END
+ 
+SET @WNOTStampWpr = (select DATEDIFF(day,'18001228',GETDATE()))  
+SET @WNOKwota =  @KwotaWal
+SET @WNOSeria = 'EPRAC'  
+SET @WNOFRSNumer = isnull((select Ope_FrSId from cdn.opekarty where ope_gidnumer = @WNOOPENumerWpr),0);
+SET @WNORok = (select YEAR(GETDATE()))
+
+SET @lFormatLen = isnull((SELECT len(kon_wartosc) FROM cdn.konfig WHERE Kon_Numer=992),0)
+if @lFormatLen = 7
+    begin
+        SET @WNOMiesiac = (select MONTH(GETDATE())) 
+	end
+else
+    begin
+	    SET @WNOMiesiac = 0
+	end
+
+SET @WNONumer = isnull((select MAX(ISNULL(WNO_Numer,0))+1 From cdn.Wnioski where WNO_Miesiac = @WNOMiesiac and WNO_Rok = @WNORok and WNO_Seria = @WNOSeria),1)
+SET @WNODlgNumer = @DelegacjaGIDNumer
+SET @WNODlgLp = @DelegacjaGIDLp
+SET @WNOOPENumerMod = @WNOOPENumerWpr 
+SET @WNOTStampMod = @WNOTStampWpr 
+SET @WNOTrybWstawiania = 1
+    
+INSERT INTO CDN.Wnioski
+(       [WNO_GIDTyp]
+       ,[WNO_GIDFirma]       
+       ,[WNO_GIDLp]
+       ,[WNO_Typ]
+       ,[WNO_Stan]       
+       ,[WNO_PRCNumer]       
+       ,[WNO_OPENumerWpr]
+       ,[WNO_TStampWpr]       
+       ,[WNO_OPENumerZatw]
+       ,[WNO_TStampZatw]       
+       ,[WNO_OPENumerAnul]
+       ,[WNO_TStampAnul]
+       ,[WNO_PowodAnul]
+       ,[WNO_Opis]
+       ,[WNO_Kwota]
+       ,[WNO_Waluta]
+       ,[WNO_FRSNumer]
+       ,[WNO_Rok]
+       ,[WNO_Miesiac]
+       ,[WNO_Seria]
+       ,[WNO_Numer]       
+       ,[WNO_DlgNumer]
+       ,[WNO_DlgLp]       
+       ,[WNO_KazNumer]       
+       ,[WNO_TStampPow]       
+       ,[WNO_OPENumerMod]
+       ,[WNO_TStampMod]       
+       ,[WNO_EPRCNumerZatw]       
+       ,[WNO_EPRCNumerAnul]
+       ,[WNO_EPRCNumerZapisuKB]
+       ,[WNO_Zatwierdzono]
+       ,[WNO_Odrzucono]
+       ,[WNO_TrybWstawiania]       
+       ,[WNO_PrcNumerWpr]       
+       ,[WNO_PrcNumerMod]
+	   ,[WNO_Imie]
+	   ,[WNO_Nazwisko]
+       )
+ VALUES
+       (2983,
+       @WNOGIDFirma,       
+       0, 
+       @WNOTyp,
+       @WNOStan,       
+       @WNOPRCNumer,        
+       @WNOOPENumerWpr, 
+       @WNOTStampWpr,
+       0,
+       0,
+       0,
+       0,
+       '',
+       '',
+       @WNOKwota,
+       'PLN',
+       @WNOFRSNumer,
+       @WNORok, 
+       @WNOMiesiac, 
+       @WNOSeria,
+       @WNONumer,       
+       @WNODlgNumer, 
+       @WNODlgLp,
+       0,
+       0,            
+       @WNOOPENumerMod,
+       @WNOTStampMod,
+       0,
+       0,
+       0,
+       0,
+       0,      
+       @WNOTrybWstawiania,       
+       @WNOPrcNumerWpr,       
+       @WNOPrcNumerMod,
+	   @PrcImie,
+	   @PrcNazwisko
+)    
+
+END TRY
+BEGIN CATCH
+
+  DECLARE
+    @ErrorMessage     NVARCHAR(4000),
+    @ErrorSeverity    INT,
+    @ErrorState       INT
+
+  SELECT 
+    @ErrorMessage=ERROR_MESSAGE(),
+    @ErrorSeverity=ERROR_SEVERITY(),
+    @ErrorState=ERROR_STATE();
+
+  RAISERROR(@ErrorMessage,@ErrorSeverity,@ErrorState);
+
+
+END CATCH
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="EP_DelegacjeZaliczki_Edit"></A><PRE>
+          <FONT SIZE="2"><I>/* EP_DelegacjeZaliczki_Edit */</I><BR>
+CREATE PROCEDURE CDN.EP_DelegacjeZaliczki_Edit
+@WniosekGIDTyp SMALLINT,
+@WniosekGIDNumer INT,
+@KwotaWal DECIMAL(15,2), 
+@Opis     NVARCHAR(255),
+@Wlasciciel INT,
+@PrcOptimaID INT    
+    
+AS SET NOCOUNT ON
+
+DECLARE
+@PrcGidNumer INT,
+@WNOPrcNumerWpr INT,
+@WNOPrcNumerMod INT,
+@WNOOPENumerMod INT,
+@PrcImie varchar(30),
+@PrcNazwisko varchar(50) 
+
+IF @KwotaWal = 0 
+    BEGIN  
+        RAISERROR('Wprowadzono Błędną kwotę wniosku o zaliczkę. Dane nie zostaną zapisane.',16,1)
+        Return
+    END 
+
+IF exists(select * from cdn.PrcKarty where Prc_OptimaId = @PrcOptimaID)
+    BEGIN
+        SET @PrcGidNumer = isnull((select prc_gidnumer from cdn.PrcKarty where Prc_OptimaId = @PrcOptimaID),0) 		
+
+        SET @WNOPrcNumerWpr = @PrcGidNumer         
+        SET @WNOPrcNumerMod = @PrcGidNumer     
+    END
+ELSE
+    BEGIN
+        RAISERROR('W tabeli cdn.PrcKarty nie istnieje zsynchronizowany obiekt pracownika. Dane nie zostaną zapisane.',16,1)
+        Return
+    END
+
+IF exists(select Kon_Wartosc from cdn.Konfig where kon_numer = 20129)
+    BEGIN       
+       SET @WNOOPENumerMod = (select Ope_GIDNumer from cdn.OpeKarty where Ope_Ident = (select Kon_Wartosc from cdn.Konfig where kon_numer = 20129))     END
+ELSE
+    BEGIN
+        RAISERROR('W Konfiguracji brak wybranego operatora. Dane nie zostaną zapisane.',16,1)
+        Return
+    END
+
+
+
+BEGIN TRY 
+
+if @Wlasciciel &gt; 0    
+	UPDATE CDN.Wnioski 
+	SET WNO_Kwota = @KwotaWal,
+		WNO_Opis = @Opis,
+		WNO_FRSNumer = @Wlasciciel,
+		WNO_TStampMod = (select DATEDIFF(day,'18001228',GETDATE())),				
+		WNO_PrcNumerMod = @WNOPrcNumerMod,		
+		WNO_OPENumerMod = @WNOOPENumerMod		
+	where     
+		WNO_GIDTyp = @WniosekGIDTyp
+		and WNO_GIDNumer = @WniosekGIDNumer  
+else
+    UPDATE CDN.Wnioski 
+	SET WNO_Kwota = @KwotaWal,
+		WNO_Opis = @Opis,		
+		WNO_TStampMod = (select DATEDIFF(day,'18001228',GETDATE())),		
+		WNO_PrcNumerMod = @WNOPrcNumerMod,		
+		WNO_OPENumerMod = @WNOOPENumerMod		
+	where     
+		WNO_GIDTyp = @WniosekGIDTyp
+		and WNO_GIDNumer = @WniosekGIDNumer
+
+END TRY
+BEGIN CATCH
+
+  DECLARE
+    @ErrorMessage     NVARCHAR(4000),
+    @ErrorSeverity    INT,
+    @ErrorState       INT
+
+  SELECT 
+    @ErrorMessage=ERROR_MESSAGE(),
+    @ErrorSeverity=ERROR_SEVERITY(),
+    @ErrorState=ERROR_STATE();
+
+  RAISERROR(@ErrorMessage,@ErrorSeverity,@ErrorState);
+
+
+END CATCH
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="EP_DelegacjeZaliczki_Delete"></A><PRE>
+          <FONT SIZE="2"><I>/* EP_DelegacjeZaliczki_Delete */</I><BR>
+CREATE PROCEDURE CDN.EP_DelegacjeZaliczki_Delete
+@WnoDlgGIDTyp SMALLINT,
+@WnoDlgGIDNumer INT
+
+AS SET NOCOUNT ON
+ 
+BEGIN TRY 
+    
+  IF @WnoDlgGIDTyp = 2983    
+    DELETE CDN.Wnioski WHERE WNO_GIDTyp = @WnoDlgGIDTyp and WNO_GIDNumer = @WnoDlgGIDNumer     
+  ELSE 
+    DELETE CDN.Wnioski WHERE WNO_DlgNumer = @WnoDlgGIDNumer       
+
+END TRY
+BEGIN CATCH
+
+  DECLARE
+    @ErrorMessage     NVARCHAR(4000),
+    @ErrorSeverity    INT,
+    @ErrorState       INT
+
+  SELECT 
+    @ErrorMessage=ERROR_MESSAGE(),
+    @ErrorSeverity=ERROR_SEVERITY(),
+    @ErrorState=ERROR_STATE();
+
+  RAISERROR(@ErrorMessage,@ErrorSeverity,@ErrorState);
+
+
+END CATCH
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="EP_Delegacje_Delete"></A><PRE>
+          <FONT SIZE="2"><I>/* EP_Delegacje_Delete */</I><BR>
+CREATE PROCEDURE CDN.EP_Delegacje_Delete
+@DelegacjaGIDTyp SMALLINT,
+@DelegacjaGIDNumer INT
+
+AS SET NOCOUNT ON
+ 
+BEGIN TRY 
+    
+DELETE CDN.Delegacje WHERE DLG_GIDTyp = @DelegacjaGIDTyp and DLG_GIDNumer = @DelegacjaGIDNumer     
+
+END TRY
+BEGIN CATCH
+
+  DECLARE
+    @ErrorMessage     NVARCHAR(4000),
+    @ErrorSeverity    INT,
+    @ErrorState       INT
+
+  SELECT 
+    @ErrorMessage=ERROR_MESSAGE(),
+    @ErrorSeverity=ERROR_SEVERITY(),
+    @ErrorState=ERROR_STATE();
+
+  RAISERROR(@ErrorMessage,@ErrorSeverity,@ErrorState);
+
+
+END CATCH
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="EP_Delegacje_Add"></A><PRE>
+          <FONT SIZE="2"><I>/* EP_Delegacje_Add */</I><BR>
+CREATE PROCEDURE CDN.EP_Delegacje_Add
+@DataOd DATETIME, 
+@DataDo DATETIME, 
+@Miejsce VARCHAR(120),
+@Cel VARCHAR(120),
+@WyjazdZMZ BIT = 1, 
+@Komentarz VARCHAR(4000),
+@PrcOptimaID INT,
+@FrsOptimaID INT,
+@PrjOptimaID INT,
+@PodmiotOptimaID INT
+ 
+AS 
+SET NOCOUNT ON
+
+DECLARE @DLGGidTyp AS SMALLINT, 
+        @DLGGidFirma AS INT, 
+        @DLGGidNumer AS INT, 
+        @DLGGidLp AS SMALLINT, 
+        @DLGStan AS SMALLINT, 
+        @DLGRodzaj AS SMALLINT, 
+        @DLGPRCNumer AS INT, 
+        @DLGFRSWlascicielNumer AS INT, 
+        @DLGFRSCentrumNumer AS INT, 
+        @DLGPRJTyp AS SMALLINT, 
+        @DLGPRJNumer AS INT, 
+        @DLGTStampWpr AS INT, 
+        @DLGOPENumerWpr AS INT, 
+        @DLGTStampAkcept AS INT, 
+        @DLGZaakceptowana AS TINYINT, 
+        @DLGOPENumerAkcept AS INT, 
+        @DLGTStampAnul AS INT, 
+        @DLGOPENumerAnul AS INT, 
+        @DLGTStampRozp AS INT, 
+        @DLGTStampZak AS INT, 
+        @DLGZatwierdzona AS TINYINT, 
+        @DLGKwota AS DECIMAL (15, 2), 
+        @DLGRok AS SMALLINT, 
+        @DLGMiesiac AS SMALLINT, 
+        @DLGSeria AS VARCHAR (6), 
+        @DLGNumer AS INT, 
+        @DLGMiejsce AS VARCHAR (120), 
+        @DLGCel AS VARCHAR (120), 
+        @DLGSrodTransNumer AS INT, 
+        @DLGWyjazdZMiejscaZam AS SMALLINT, 
+        @DLGTStampRozl AS INT, 
+        @DLGTStampMod AS INT, 
+        @DLGOPENumerMod AS INT, 
+        @DLGPokazKomentarz AS TINYINT, 
+        @DLGKomentarz AS VARCHAR (4000), 
+        @DLGTStampAkceptWPR AS INT, 
+        @DLGOPENumerAkceptWPR AS INT, 
+        @DLGTrybWstawiania AS TINYINT, 
+        @DLGID AS INT, 
+        @DLGTStammpZatw AS INT, 
+        @DLGOpeNumerZatw AS SMALLINT, 
+        @PrcGidNumer AS INT, 
+        @DLGPrcNumerWpr AS INT, 
+        @DLGPrcNumerMod AS INT,
+        @PodmiotID INT,
+		@PrcImie varchar(30),
+        @PrcNazwisko varchar(50),
+        @lFormatLen int,
+		@NumerDokumentu varchar(80),
+		@DLGNazwa varchar(30),
+		@DLGDataOdTStamp int,
+		@DLGDataDoTStamp int,
+		@TerminarzOpis varchar(1024),
+		@ZadanieId int,
+		@DLGSposobGenPlatnosci SMALLINT,
+		@DLGTerminarz SMALLINT,
+		@DLGNieKsiegowac tinyint,
+		@CentrumPrawID INT
+
+SET @DLGGidTyp = 2984;
+SET @DLGGidFirma = isnull((SELECT Frm_GidFirma
+                           FROM   cdn.Firma
+                           WHERE  Frm_GidNumer = 1), 0);
+
+IF @FrsOptimaID = 3 
+    SET @FrsOptimaID = 0   
+    
+SET @DLGGidLp = 0;
+SET @DLGStan = 1;
+SET @DLGRodzaj = 1;
+SET @DLGPRCNumer = 0;
+SET @DLGFRSCentrumNumer = isnull((select FRS_ID from cdn.FrmStruktura where FRS_Warstwa = 2 and FRS_GIDTyp = -4272 and FRS_OptimaId = @FrsOptimaID),0);
+SET @DLGPRJTyp = -4592;
+SET @DLGPRJNumer = isnull((select PRJ_GIDNumer from cdn.PrjStruktura where PRJ_OptimaId = @PrjOptimaID),0);
+SET @DLGTStampWpr = (SELECT DATEDIFF(day, '18001228', GETDATE()));
+SET @DLGOPENumerWpr = 0;
+SET @DLGTStampAkcept = 0;
+SET @DLGZaakceptowana = 0;
+SET @DLGOPENumerAkcept = 0;
+SET @DLGTStampAnul = 0;
+SET @DLGOPENumerAnul = 0;
+SET @DLGTStampRozp = (SELECT DATEDIFF(day, '18001228', @DataOd));
+SET @DLGTStampZak = (SELECT DATEDIFF(day, '18001228', @DataDo));
+SET @DLGZatwierdzona = 0;
+SET @DLGKwota = 0;
+SET @DLGRok = (SELECT YEAR(GETDATE()));
+
+SET @lFormatLen = isnull((SELECT len(kon_wartosc) FROM cdn.konfig WHERE Kon_Numer=992),0)
+	if @lFormatLen = 7
+		begin
+	        SET @DLGMiesiac = (SELECT MONTH(GETDATE()));
+        end
+    else
+	    begin
+		    SET @DLGMiesiac = 0
+		end
+
+SET @DLGSeria = 'EPRAC';
+SET @DLGNumer = isnull((SELECT isnull(MAX(ISNULL(DLG_Numer, 0)), 0) + 1
+                        FROM   cdn.Delegacje
+                        WHERE  DLG_Miesiac = @DLGMiesiac
+                               AND DLG_Rok = @DLGRok and DLG_Seria = @DLGSeria), 1);
+SET @DLGMiejsce = @Miejsce;
+SET @DLGCel = @Cel;
+SET @DLGSrodTransNumer = 0;
+SET @DLGWyjazdZMiejscaZam = @WyjazdZMZ;
+SET @DLGTStampRozl = case when @DataDo is null then @DLGTStampWpr else (SELECT DATEDIFF(day, '18001228', @DataDo+1)) end;
+SET @DLGTStampMod = @DLGTStampWpr;
+SET @DLGOPENumerMod = 0;
+SET @DLGPokazKomentarz = 1;
+SET @DLGKomentarz = @Komentarz;
+SET @DLGTStampAkceptWPR = 0;
+SET @DLGOPENumerAkceptWPR = 0;
+SET @DLGTrybWstawiania = 1;
+SET @DLGID = 0;
+SET @DLGTStammpZatw = 0;
+SET @DLGOpeNumerZatw = 0;
+set @DLGNieKsiegowac = 0
+
+SET @PodmiotID = isnull((select Prc_GIDNumer from cdn.PrcKarty where Prc_OptimaId = @PodmiotOptimaID),0)
+
+IF @PodmiotID = 0
+   BEGIN
+        RAISERROR ('W tabeli cdn.PrcKarty nie istnieje zsynchronizowany obiekt pracownika. Dane nie zostaną zapisane.', 16, 1);
+        RETURN;
+    END
+
+IF @DLGFRSCentrumNumer = 0
+    BEGIN
+        RAISERROR ('W tabeli cdn.FrmStruktura nie istnieje zsynchronizowany obiekt centrum kosztowego. Dane nie zostaną zapisane.', 16, 1);
+        RETURN;
+    END
+
+IF @DLGPRJNumer = 0 AND @PrjOptimaID IS NOT NULL AND @PrjOptimaID &lt;&gt; 1
+    BEGIN
+        RAISERROR ('W tabeli cdn.PrjStruktura nie istnieje zsynchronizowany obiekt w strukturze projektów. Dane nie zostaną zapisane.', 16, 1);
+        RETURN;
+    END
+
+IF @DLGTStampRozp &gt; @DLGTStampZak
+    BEGIN
+        RAISERROR ('Data rozpoczęcia delegacji jest większa niż data zakończenia delegacji. Dane nie zostaną zapisane.', 16, 1);
+        RETURN;
+    END
+IF EXISTS (SELECT *
+           FROM   cdn.PrcKarty
+           WHERE  Prc_OptimaId = @PrcOptimaID)
+    BEGIN
+        SET @PrcGidNumer = (SELECT prc_gidnumer
+                            FROM   cdn.PrcKarty
+                            WHERE  Prc_OptimaId = @PrcOptimaID);
+        SET @PrcImie = isnull((select Prc_Imie1 from cdn.PrcKarty where Prc_OptimaId = @PrcOptimaID),'')
+        SET @PrcNazwisko = isnull((select Prc_Nazwisko from cdn.PrcKarty where Prc_OptimaId = @PrcOptimaID),'') 
+
+        SET @DLGPrcNumerWpr = @PodmiotID;
+        SET @DLGPrcNumerMod = @PodmiotID;
+        SET @DLGPRCNumer = @PrcGidNumer;
+    END
+ELSE
+    BEGIN
+        RAISERROR ('W tabeli cdn.PrcKarty nie istnieje zsynchronizowany obiekt pracownika. Dane nie zostaną zapisane.', 16, 1);
+        RETURN;
+    END
+IF EXISTS (SELECT Kon_Wartosc
+           FROM   cdn.Konfig
+           WHERE  kon_numer = 20129)
+    BEGIN
+        SET @DLGOPENumerWpr = (SELECT Ope_GIDNumer
+                               FROM   cdn.OpeKarty
+                               WHERE  Ope_Ident = (SELECT Kon_Wartosc
+                                                   FROM   cdn.Konfig
+                                                   WHERE  kon_numer = 20129));
+        SET @DLGOPENumerMod = @DLGOPENumerWpr;
+    END
+ELSE
+    BEGIN
+        RAISERROR ('W Konfiguracji brak wybranego operatora. Dane nie zostaną zapisane.', 16, 1);
+        RETURN;
+    END
+
+SET @DLGFRSWlascicielNumer = isnull((select Ope_FrSId from cdn.opekarty where ope_gidnumer = @DLGOPENumerWpr),0);--isnull((select FRS_ID from cdn.FrmStruktura where FRS_Warstwa = 1 and FRS_GIDTyp = -4272 and FRS_GRONumer = 0),0);
+ 
+SET @NumerDokumentu = isnull(CDN.NumerDokumentu(@DLGGidTyp,@DLGGidTyp,0,@DLGNumer,@DLGRok,@DLGSeria,@DLGMiesiac),'')
+SET @DLGNazwa = 'Delegacja krajowa' + ' ' + @NumerDokumentu
+SET @DLGDataOdTStamp = (select DATEDIFF(second, convert(datetime,'01-01-1990',105),convert(datetime,@DataOd,105)))      
+if @DataOd = @DataDo 
+    begin
+        SET @DLGDataDoTStamp = (select DATEDIFF(second, convert(datetime,'01-01-1990',105),convert(datetime,(@DataDo+' 23:59'),105)))      	                     
+    end
+else
+    begin
+	    SET @DLGDataDoTStamp = (select DATEDIFF(second, convert(datetime,'01-01-1990',105),convert(datetime,@DataDo,105)))
+	end
+SET @TerminarzOpis = @DLGMiejsce + ' ' + @DLGCel 
+
+SET @CentrumPrawID = isnull((select Ope_FrSId from cdn.opekarty where Ope_GIDNumer = @DLGOPENumerWpr),1)
+
+
+SET @DLGSposobGenPlatnosci = isnull((select Dok_PlatnosciRozszerzone from cdn.DokDefinicje where dok_gidtyp = 2984 and dok_frsid = @CentrumPrawID),0)
+SET @DLGTerminarz = isnull((select DOK_GenerujZapisWTerminarzu from cdn.DokDefinicje where dok_gidtyp = 2984 and dok_frsid = @CentrumPrawID),0)
+SET @DLGNieKsiegowac = isnull((select DOK_NieKsiegowac from cdn.DokDefinicje where dok_gidtyp = 2984 and dok_frsid = @CentrumPrawID),0)
+
+BEGIN TRY
+    INSERT  INTO CDN.Delegacje ([DLG_GIDTyp], [DLG_GIDFirma], [DLG_GIDLp], [DLG_ID], [DLG_Stan], [DLG_Rodzaj], [DLG_PRCNumer], [DLG_FRSWlascicielNumer], [DLG_FRSCentrumNumer], 
+	                            [DLG_PRJTyp], [DLG_PRJNumer], [DLG_TStampWpr], [DLG_OPENumerWpr], [DLG_TStampAkcept], [DLG_Zaakceptowana], [DLG_OPENumerAkcept], [DLG_TStampAnul], [DLG_OPENumerAnul], 
+								[DLG_TStampRozp], [DLG_TStampZak], [DLG_Zatwierdzona], [DLG_Kwota], [DLG_Waluta], [DLG_Rok], [DLG_Miesiac], [DLG_Seria], [DLG_Numer], [DLG_Miejsce], [DLG_Cel], 
+								[DLG_WyjazdZMiejscaZam], [DLG_TStampRozl], [DLG_TStampMod], [DLG_OPENumerMod], [DLG_PokazKomentarz], [DLG_Komentarz], [DLG_TStampAkceptWPR], [DLG_OPENumerAkceptWPR], 
+								[DLG_TStampZatw], [DLG_OpeNumerZatw], [DLG_TrybWstawiania], [DLG_PrcNumerWpr], [DLG_PrcNumerMod], [DLG_Imie],[DLG_Nazwisko],[DLG_Zaksiegowano],[DLG_SposobGenPlatnosci],
+								[DLG_PrcNumerAkcept],[DLG_PrcNumerAnul],[DLG_DoWyplaty],[DLG_PrcNumerAkceptWPR],[DLG_PrcNumerZatw],[dlg_aktywny],[DLG_Dziennik],[DLG_SCHTyp],[DLG_SCHNumer],[DLG_WsStosujSchemat],
+								[DLG_WsSCHTyp],[DLG_WsSCHNumer],[DLG_WsDziennik],[DLG_WsStosujDziennik],[DLG_TStampWPRDoAkcept],[DLG_OpeNumerWPRDoAkcept],[DLG_PrcNumerWPRDoAkcept],
+								[DLG_NieKsiegowac]
+								)
+    VALUES                     (@DLGGidTyp, @DLGGidFirma, @DLGGidLp, @DLGID, @DLGStan, @DLGRodzaj, @DLGPRCNumer, @DLGFRSWlascicielNumer, @DLGFRSCentrumNumer, @DLGPRJTyp, @DLGPRJNumer, @DLGTStampWpr, 
+	                            @DLGOPENumerWpr, @DLGTStampAkcept, @DLGZaakceptowana, @DLGOPENumerAkcept, @DLGTStampAnul, @DLGOPENumerAnul, @DLGTStampRozp, @DLGTStampZak, @DLGZatwierdzona, @DLGKwota, 'PLN', 
+							    @DLGRok, @DLGMiesiac, @DLGSeria, @DLGNumer, @DLGMiejsce, @DLGCel, @DLGWyjazdZMiejscaZam, @DLGTStampRozl, @DLGTStampMod, @DLGOPENumerMod, @DLGPokazKomentarz, @DLGKomentarz, 
+							    @DLGTStampAkceptWPR, @DLGOPENumerAkceptWPR, @DLGTStammpZatw, @DLGOPeNumerzatw, @DLGTrybWstawiania, @DLGPrcNumerWpr, @DLGPrcNumerMod, @PrcImie,@PrcNazwisko,0,@DLGSposobGenPlatnosci,
+								0,0,0,0,0,0,'',0,0,0,0,0,'',0,0,0,0,
+								@DLGNieKsiegowac
+								);
+
+    DECLARE @DelagacjaId AS INT;
+    SET @DelagacjaId = 0;
+    SET @DelagacjaId = IsNull(IDENT_CURRENT('CDN.Delegacje'), 0);
+    SELECT @DelagacjaId AS DelegacjaId;
+	IF @DLGTerminarz = 1
+	    BEGIN
+			exec CDN.XLNoweZadanieTERMINARZ @Kod='Delegacja',
+			@Nazwa= @DLGNazwa,	
+			@OpeTyp=128,@OpeNumer=@DLGOPENumerWpr,@ZrdTyp=@DLGGidTyp,@ZrdNumer=@DelagacjaId,@ZrdLp=0,@OpePrcJakoObiekt=0,	
+			@RezerwujCzas=1,
+			@Przypomnienie=1,
+			@TerminOd= @DLGDataOdTStamp,
+			@TerminDo= @DLGDataDoTStamp,
+			@Opis = @TerminarzOpis,
+			@ObiTyp=944,
+			@ObiNumer=@DLGPRCNumer,
+			@IgnorujTranWew = 1
+
+			SET @ZadanieId = IsNull(IDENT_CURRENT('CDN.Zadania'), 0);
+			if not exists(select * from cdn.ZadaniaObiekty where ZaO_ZadId = @ZadanieId)
+				BEGIN
+					exec CDN.XLDodajObiektDoZadaniaTERMINARZ @ZadanieId,944,@DLGPRCNumer; 
+				END
+        END
+END TRY
+BEGIN CATCH
+    DECLARE @ErrorMessage AS NVARCHAR (4000), 
+            @ErrorSeverity AS INT, 
+            @ErrorState AS INT;
+    SELECT @ErrorMessage = ERROR_MESSAGE(),
+           @ErrorSeverity = ERROR_SEVERITY(),
+           @ErrorState = ERROR_STATE();
+    RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState);
+END CATCH
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="EP_Delegacje_Edit"></A><PRE>
+          <FONT SIZE="2"><I>/* EP_Delegacje_Edit */</I><BR>
+CREATE PROCEDURE CDN.EP_Delegacje_Edit
+@DelegacjaGIDTyp SMALLINT,
+@DelegacjaGIDNumer INT,
+@DataOd DATETIME, 
+@DataDo DATETIME, 
+@Miejsce VARCHAR(120),
+@Cel VARCHAR(120),
+@WyjazdZMZ BIT, 
+@Komentarz NVARCHAR (255),
+@PrcOptimaID INT,
+@FrsOptimaID INT,
+@PrjOptimaID INT,
+@PodmiotOptimaID INT
+ 
+AS SET NOCOUNT ON
+
+DECLARE
+
+@DLGFRSWlascicielNumer INT,
+@DLGFRSCentrumNumer INT,
+@DLGPRJTyp SMALLINT,
+@DLGPRJNumer INT,
+
+@DLGTStampRozp INT,
+@DLGTStampZak INT,
+@DLGTStampMod INT,
+@DLGOPENumerMod INT,
+@DLGPokazKomentarz tinyint,
+@PrcGidNumer INT,
+@DLGPrcNumerMod INT,
+@PodmiotID INT,
+@PrcImie varchar(30),
+@PrcNazwisko varchar(50),
+@DLGSposobGenPlatnosci SMALLINT,
+@DLGAktualnaDataOd  int,
+@DLGAktualnaDataDo  int,
+@DLGAktualnyPrcNumer int,
+@ZadID int,
+@DLGDataOdTStamp int,
+@DLGDataDoTStamp int,
+@DLGTerminarz SMALLINT,
+@DLGPrcNumerAktualny INT,
+@CentrumPrawID INT
+
+SET @DLGOPENumerMod = 0
+SET @DLGPokazKomentarz = 1
+
+SET @PodmiotID = isnull((select Prc_GIDNumer from cdn.PrcKarty where Prc_OptimaId = @PodmiotOptimaID),0)
+
+IF @PodmiotID = 0
+   BEGIN
+        RAISERROR ('W tabeli cdn.PrcKarty nie istnieje zsynchronizowany obiekt pracownika. Dane nie zostaną zapisane.', 16, 1);
+        RETURN;
+    END
+
+if not exists(select * from cdn.Delegacje where DLG_GIDTyp = @DelegacjaGIDTyp and DLG_GIDNumer = @DelegacjaGIDNumer) 
+    BEGIN 
+        RAISERROR('Nie istnieje rekord w tabeli CDN.Delegacje. Dane nie zostaną zapisane.',16,1)
+        Return
+    END
+/*if @PodmiotNumer &gt; 0
+    begin
+		if not exists(select * from cdn.PrcKarty where Prc_GIDNumer = @PodmiotNumer ) 
+			BEGIN 
+				RAISERROR('Nie istnieje rekord w tabeli CDN.PrcKarty. Dane nie zostaną zapisane.',16,1)
+				Return
+			END 
+    end */   			
+IF @DLGTStampRozp &gt; @DLGTStampZak 
+    BEGIN  
+        RAISERROR('Data rozpoczęcia delegacji jest większa niż data zakończenia delegacji. Dane nie zostaną zapisane.',16,1)
+        Return
+    END
+
+IF exists(select * from cdn.PrcKarty where Prc_OptimaId = @PrcOptimaID)
+    BEGIN
+        SET @PrcGidNumer = (select prc_gidnumer from cdn.PrcKarty where Prc_OptimaId = @PrcOptimaID)   
+		SET @PrcImie = isnull((select Prc_Imie1 from cdn.PrcKarty where Prc_OptimaId = @PrcOptimaID),'')
+        SET @PrcNazwisko = isnull((select Prc_Nazwisko from cdn.PrcKarty where Prc_OptimaId = @PrcOptimaID),'')      
+        SET @DLGPrcNumerMod = @PodmiotID     
+    END
+ELSE
+    BEGIN
+        RAISERROR('W tabeli cdn.PrcKarty nie istnieje zsynchronizowany obiekt pracownika. Dane nie zostaną zapisane.',16,1)
+        Return
+    END
+
+
+IF exists(select Kon_Wartosc from cdn.Konfig where kon_numer = 20129)
+    BEGIN       
+       SET @DLGOPENumerMod = (select Ope_GIDNumer from cdn.OpeKarty where Ope_Ident = (select Kon_Wartosc from cdn.Konfig where kon_numer = 20129))     END
+ELSE
+    BEGIN
+        RAISERROR('W Konfiguracji brak wybranego operatora. Dane nie zostaną zapisane.',16,1)
+        Return
+    END
+
+
+IF @FrsOptimaID = 3
+    SET @FrsOptimaID = 0   
+   
+SET @DLGFRSWlascicielNumer = isnull((select FRS_ID from cdn.FrmStruktura where FRS_Warstwa = 1 and FRS_GIDTyp = -4272 and FRS_GRONumer = 0),0);
+SET @DLGFRSCentrumNumer = isnull((select FRS_ID from cdn.FrmStruktura where FRS_Warstwa = 2 and FRS_GIDTyp = -4272 and FRS_OptimaId = @FrsOptimaID),0); 
+SET @DLGPRJTyp = -4592;
+SET @DLGPRJNumer = isnull((select PRJ_GIDNumer from cdn.PrjStruktura where PRJ_OptimaId = @PrjOptimaID),0);
+
+IF @DLGFRSCentrumNumer = 0
+    BEGIN
+        RAISERROR ('W tabeli cdn.FrmStruktura nie istnieje zsynchronizowany obiekt centrum kosztowego. Dane nie zostaną zapisane.', 16, 1);
+        RETURN;
+    END
+
+IF @DLGPRJNumer = 0 AND @PrjOptimaID IS NOT NULL AND @PrjOptimaID &lt;&gt; 1
+    BEGIN
+        RAISERROR ('W tabeli cdn.PrjStruktura nie istnieje zsynchronizowany obiekt w strukturze projektów. Dane nie zostaną zapisane.', 16, 1);
+        RETURN;
+    END
+
+SET @CentrumPrawID = isnull((select Ope_FrSId from cdn.opekarty where Ope_GIDNumer = @DLGOPENumerMod),1)
+
+SET @DLGSposobGenPlatnosci = isnull((select Dok_PlatnosciRozszerzone from cdn.DokDefinicje where dok_gidtyp = 2984 and dok_frsid = @CentrumPrawID),0)
+SET @DLGTerminarz = isnull((select DOK_GenerujZapisWTerminarzu from cdn.DokDefinicje where dok_gidtyp = 2984 and dok_frsid = @CentrumPrawID),0)
+
+SET @DLGAktualnaDataOd = isnull((select DLG_TStampRozp from cdn.delegacje where dlg_gidnumer = @DelegacjaGIDNumer),0)
+SET @DLGAktualnaDataDo = isnull((select DLG_TStampZak from cdn.delegacje where dlg_gidnumer = @DelegacjaGIDNumer),0)
+SET @DLGAktualnyPrcNumer = isnull((select dlg_prcnumer from cdn.delegacje where dlg_gidnumer = @DelegacjaGIDNumer),0)
+SET @ZadID = isnull((select zad_id from cdn.zadania where Zad_ZrdTyp = 2984 and Zad_ZrdNumer = @DelegacjaGIDNumer),0)
+
+BEGIN TRY 
+    
+UPDATE CDN.Delegacje
+SET DLG_PRCNumer = case when @PrcGidNumer &gt; 0 then @PrcGidNumer else DLG_PRCNumer end,
+    DLG_TStampRozp = (select DATEDIFF(day,'18001228',@DataOd)),
+    DLG_TStampZak = (select DATEDIFF(day,'18001228',@DataDo)),
+	DLG_TStampRozl = case when @DataDo is null then DLG_TStampWpr else (select DATEDIFF(day,'18001228',@DataDo+1)) end,
+    DLG_Komentarz = @Komentarz,
+    DLG_WyjazdZMiejscaZam = @WyjazdZMZ,    
+	DLG_TStampMod = DATEDIFF(second, '19900101',convert(datetime,getdate(),105)),
+    DLG_OpeNumerMod = @DLGOPENumerMod,    
+    DLG_PrcNumerMod = @DLGPrcNumerMod,
+    DLG_Miejsce = @Miejsce,
+    DLG_Cel = @Cel,
+    DLG_FRSCentrumNumer = @DLGFRSCentrumNumer,
+    DLG_FRSWlascicielNumer = @DLGFRSWlascicielNumer,
+    DLG_PRJNumer = @DLGPRJNumer,
+    DLG_PRJTyp = @DLGPRJTyp,
+    DLG_Imie = case when @PrcGidNumer &gt; 0 then @PrcImie else DLG_Imie end,
+	DLG_Nazwisko = case when @PrcGidNumer &gt; 0 then @PrcNazwisko else DLG_Nazwisko end,
+	DLG_SposobGenPlatnosci = @DLGSposobGenPlatnosci
+WHERE
+    DLG_GidTyp = @DelegacjaGIDTyp and DLG_GidNumer = @DelegacjaGIDNumer   
+
+	if @DLGTerminarz=1
+	    BEGIN
+			if @ZadID &gt; 0
+				begin
+					if @DLGAktualnaDataOd&lt;&gt;(DATEDIFF(day,'18001228',@DataOd)) or @DLGAktualnaDataDo&lt;&gt;(DATEDIFF(day,'18001228',@DataDo)) or @DLGAktualnyPrcNumer&lt;&gt;@PrcGidNumer 
+						begin
+							SET @DLGDataOdTStamp = (select DATEDIFF(second, convert(datetime,'01-01-1990',105),convert(datetime,@DataOd,105)))      
+							if @DataDo = @DataOd
+								begin
+									SET @DLGDataDoTStamp = (select DATEDIFF(second, convert(datetime,'01-01-1990',105),convert(datetime,(@DataDo+' 23:59'),105)))
+								end
+							else
+								begin
+    								SET @DLGDataDoTStamp = (select DATEDIFF(second, convert(datetime,'01-01-1990',105),convert(datetime,(@DataDo),105)))
+								end
+							exec cdn.XLModyfikujZadanieTERMINARZ @ZadID,@OpeTyp=128,@OpeNumer=@DLGOPENumerMod,@TerminOd= @DLGDataOdTStamp,@TerminDo= @DLGDataDoTStamp,@ObiTyp=944,@ObiNumer=@PrcGidNumer,@ObiTypOld=944,@ObiNumerOld=@DLGAktualnyPrcNumer
+						end
+				end
+        END
+
+END TRY
+BEGIN CATCH
+
+  DECLARE
+    @ErrorMessage     NVARCHAR(4000),
+    @ErrorSeverity    INT,
+    @ErrorState       INT
+
+  SELECT 
+    @ErrorMessage=ERROR_MESSAGE(),
+    @ErrorSeverity=ERROR_SEVERITY(),
+    @ErrorState=ERROR_STATE();
+
+  RAISERROR(@ErrorMessage,@ErrorSeverity,@ErrorState);
+
+
+END CATCH
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="EP_DelegacjeElem_Add"></A><PRE>
+          <FONT SIZE="2"><I>/* EP_DelegacjeElem_Add */</I><BR>
+CREATE PROCEDURE CDN.EP_DelegacjeElem_Add
+@DelegacjaGIDTyp SMALLINT,
+@DelegacjaGIDNumer INT,
+@IloscSniadan int, 
+@IloscObiadow int, 
+@IloscKolacji int,
+@Komentarz varchar(4000)
+
+AS 
+SET NOCOUNT ON
+
+DECLARE
+@DLGGidTyp SMALLINT,
+@DLGGidFirma INT,
+@DLGGidNumer INT,
+@DLGGidLp SMALLINT,
+@DLGRodzaj SMALLINT,
+@DGEWaluta VARCHAR(3),
+@DGEKraj VARCHAR(11),
+@DGEStawkaNumer INT,
+@DGELiczbaSniadan INT,
+@DGELiczbaObiadow INT,
+@DGELiczbaKolacji INT,
+@DGEKwotaDiety Decimal(15,2),
+@DGEKwotaRyczaltDojazd Decimal(15,2),
+@DGEKwotaRyczaltNocleg Decimal(15,2),
+@DGETStampRozp INT,
+@DGETStampZak INT,
+@DGEPokazKomentarz bit
+
+SET @DLGGidTyp = @DelegacjaGIDTyp
+SET @DLGGidFirma = isnull((select isnull(Frm_GidFirma,0) from cdn.Firma where Frm_GidNumer = 1),0)
+SET @DLGGidNumer = @DelegacjaGIDNumer
+SET @DLGGidLp = isnull((select isnull(MAX(DGE_GIDLp),0)+1 from cdn.DelegacjeElem where DGE_GIDTyp = @DelegacjaGIDTyp 
+                        and DGE_GIDNumer = @DelegacjaGIDNumer),1)
+SET @DLGRodzaj = 1
+SET @DGEWaluta = 'PLN'
+SET @DGEKraj = 'PL'
+SET @DGEStawkaNumer = 0
+SET @DGELiczbaSniadan = @IloscSniadan
+SET @DGELiczbaObiadow = @IloscObiadow
+SET @DGELiczbaKolacji = @IloscKolacji
+SET @DGEKwotaDiety = 0
+SET @DGEKwotaRyczaltDojazd = 0
+SET @DGEKwotaRyczaltNocleg = 0
+SET @DGETStampRozp = 0
+SET @DGETStampZak = 0 
+SET @DGEPokazKomentarz = 1 
+ 
+BEGIN TRY 
+ 
+if not exists(select * from cdn.Delegacje where DLG_GIDTyp = @DelegacjaGIDTyp and DLG_GIDNumer = @DLGGidNumer) 
+    BEGIN 
+        RAISERROR('Nie istnieje rekord w tabeli CDN.Delegacje. Dane nie zostaną zapisane.',16,1)
+        Return
+    END
+if exists(select * from cdn.Delegacje where DLG_GIDTyp = @DelegacjaGIDTyp and DLG_GIDNumer = @DLGGidNumer and DLG_Stan = 1) 
+    BEGIN 
+        RAISERROR('Nie można dodać elementu do delegacji o statusie Wprowadzona. Dane nie zostaną zapisane.',16,1)
+        Return
+    END     
+    
+if @DLGGidLp &gt; 1 and @DLGRodzaj = 0   
+    BEGIN 
+        RAISERROR('Dla delegacji krajowej może istnieć tylko jeden element. Dane nie zostaną zapisane.',16,1)
+        Return
+    END
+    
+INSERT INTO CDN.DelegacjeElem
+           ([DGE_GIDTyp]
+           ,[DGE_GIDFirma]
+           ,[DGE_GIDNumer]
+           ,[DGE_GIDLp]
+           ,[DGE_Rodzaj]
+           ,[DGE_Waluta]
+           ,[DGE_Kraj]
+           ,[DGE_StawkaNumer]
+           ,[DGE_LiczbaSniadan]
+           ,[DGE_LiczbaObiadow]
+           ,[DGE_LiczbaKolacji]
+           ,[DGE_KwotaDiety]
+		   ,[DGE_KwotaRyczaltDojazd]
+		   ,[DGE_KwotaRyczaltNocleg]
+           ,[DGE_TStampRozp]
+           ,[DGE_TStampZak]
+           ,[DGE_PokazKomentarz]
+           ,[DGE_Komentarz])
+     VALUES
+           (
+           @DLGGidTyp,
+           @DLGGidFirma,
+           @DLGGidNumer,
+           @DLGGidLp,
+           @DLGRodzaj,
+           @DGEWaluta,
+           @DGEKraj,
+           @DGEStawkaNumer,
+           @DGELiczbaSniadan,
+           @DGELiczbaObiadow,
+           @DGELiczbaKolacji,
+           @DGEKwotaDiety,
+		   @DGEKwotaRyczaltDojazd,
+		   @DGEKwotaRyczaltNocleg,
+           @DGETStampRozp,
+           @DGETStampZak,
+           @DGEPokazKomentarz,
+           @Komentarz
+           )
+END TRY
+BEGIN CATCH
+
+  DECLARE
+    @ErrorMessage     NVARCHAR(4000),
+    @ErrorSeverity    INT,
+    @ErrorState       INT
+
+  SELECT 
+    @ErrorMessage=ERROR_MESSAGE(),
+    @ErrorSeverity=ERROR_SEVERITY(),
+    @ErrorState=ERROR_STATE();
+
+  RAISERROR(@ErrorMessage,@ErrorSeverity,@ErrorState);
+
+END CATCH
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="EP_DelegacjeElem_Delete"></A><PRE>
+          <FONT SIZE="2"><I>/* EP_DelegacjeElem_Delete */</I><BR>
+CREATE PROCEDURE CDN.EP_DelegacjeElem_Delete
+@DelegacjaGIDTyp SMALLINT, @ElemDelegacjaGIDNumer INT, @DelegacjeGidLp SMALLINT
+AS 
+SET NOCOUNT ON
+ 
+BEGIN TRY
+    IF @DelegacjaGIDTyp IS NOT NULL
+        BEGIN
+            IF NOT EXISTS (SELECT *
+                           FROM   cdn.Delegacje
+                           WHERE  DLG_GIDTyp = @DelegacjaGIDTyp
+                                  AND DLG_GIDNumer = @ElemDelegacjaGIDNumer)
+                BEGIN
+                    RAISERROR ('Nie istnieje rekord w tabeli CDN.Delegacje. Dane nie zostaną zapisane.', 16, 1);
+                    RETURN;
+                END
+        END
+    ELSE
+        BEGIN
+            IF NOT EXISTS (SELECT *
+                           FROM   cdn.DelegacjeElem
+                           WHERE  DGE_GIDTyp = @DelegacjaGIDTyp
+                                  AND DGE_GIDNumer = @ElemDelegacjaGIDNumer
+                                  AND DGE_GIDLp = @DelegacjeGidLp)
+                BEGIN
+                    RAISERROR ('Nie istnieje rekord w tabeli CDN.DelegacjeElem. Dane nie zostaną zapisane.', 16, 1);
+                    RETURN;
+                END
+        END
+    DELETE CDN.DelegacjeElem
+    WHERE  DGE_GIDTyp = @DelegacjaGIDTyp
+           AND DGE_GIDNumer = @ElemDelegacjaGIDNumer
+           AND DGE_GIDLp = @DelegacjeGidLp;
+END TRY
+BEGIN CATCH
+    DECLARE @ErrorMessage AS NVARCHAR (4000), 
+            @ErrorSeverity AS INT, 
+            @ErrorState AS INT;
+    SELECT @ErrorMessage = ERROR_MESSAGE(),
+           @ErrorSeverity = ERROR_SEVERITY(),
+           @ErrorState = ERROR_STATE();
+    RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState);
+END CATCH
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="EP_DelegacjeElem_Edit"></A><PRE>
+          <FONT SIZE="2"><I>/* EP_DelegacjeElem_Edit */</I><BR>
+CREATE PROCEDURE CDN.EP_DelegacjeElem_Edit
+@DelegacjaGIDTyp SMALLINT,
+@DelegacjaGIDNumer INT,
+@DelegacjeGidLp SMALLINT,
+@IloscSniadan INT, 
+@IloscObiadow INT, 
+@IloscKolacji INT,
+@Komentarz varchar(4000) 
+AS 
+SET NOCOUNT ON
+
+if not exists(select * from cdn.DelegacjeElem where DGE_GIDTyp = @DelegacjaGIDTyp and DGE_GIDNumer = @DelegacjaGIDNumer and DGE_GIDLp = @DelegacjeGidLp) 
+    BEGIN 
+        RAISERROR('Nie istnieje rekord w tabeli CDN.DelegacjeElem. Dane nie zostaną zapisane.',16,1)
+        Return
+    END
+
+ 
+BEGIN TRY 
+    
+UPDATE CDN.DelegacjeElem
+SET 
+    DGE_LiczbaSniadan= @IloscSniadan,
+    DGE_LiczbaObiadow = @IloscObiadow,
+    DGE_LiczbaKolacji = @IloscKolacji,
+    DGE_Komentarz = @Komentarz
+WHERE
+    DGE_GIDTyp = @DelegacjaGIDTyp and DGE_GIDNumer = @DelegacjaGIDNumer and DGE_GIDLp = @DelegacjeGidLp   
+
+END TRY
+BEGIN CATCH
+
+  DECLARE
+    @ErrorMessage     NVARCHAR(4000),
+    @ErrorSeverity    INT,
+    @ErrorState       INT
+
+  SELECT 
+    @ErrorMessage=ERROR_MESSAGE(),
+    @ErrorSeverity=ERROR_SEVERITY(),
+    @ErrorState=ERROR_STATE();
+
+  RAISERROR(@ErrorMessage,@ErrorSeverity,@ErrorState);
+
+
+END CATCH
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="EP_DelegacjeElemPrzejazd_Add"></A><PRE>
+          <FONT SIZE="2"><I>/* EP_DelegacjeElemPrzejazd_Add */</I><BR>
+CREATE PROCEDURE CDN.EP_DelegacjeElemPrzejazd_Add
+@DelegacjaGIDTyp SMALLINT,
+@DelegacjaGIDNumer INT,
+@DelegacjaGIDLp SMALLINT,
+@MiejsceOdjazdu nvarchar(127), 
+@DataOdjazdu DateTime, 
+@GodzinaOdjazdu DateTime, 
+@MiejscePrzyjazdu nvarchar(127), 
+@DataPrzyjazdu DateTime, 
+@GodzinaPrzyjazdu DateTime, 
+@SrodekLokomocji nvarchar(50), 
+@TypWydatku nvarchar(50),
+@Kwota Decimal(15,2),
+@Opis VARCHAR ( 1025),
+@LicznikPocz DECIMAL ( 9,2) = 0,
+@LicznikKon DECIMAL ( 9,2) = 0,
+@NrRej VARCHAR(10) 
+AS 
+SET NOCOUNT ON
+
+DECLARE
+
+@SaPPrzejazdNumer INT,
+@SaPPrzejazdRok SMALLINT,
+@SaPDataWyjazdu INT,
+@SaPDataPrzyjazdu INT,
+@SaPOdleglosc decimal(7,2),
+@SaPSamId INT,
+@SaPKierTyp SMALLINT,
+@SaPKierNumer INT,
+@SaPRodzajPrzejazdu INT,
+@SaPOpeNumer INT,
+@SaPPrcNumer INT,
+@SaPDataZapisu INT,
+@SaPPotwierdzony tinyint,
+@SaPOpeNumerZ INT,
+@SaPDataPotwierdzenia INT,
+@SaPZrdTyp SMALLINT,
+@SaPZrdNumer INT,
+@SaPZrdLp SMALLINT,
+@SaPWyjazdZ  varchar(100),
+@SaPPrzyjazdDo varchar(100),
+@SaPLicznikPocz decimal(9,2),
+@SaPLicznikKon decimal(9,2),
+@SaPPrzyjazdGPSSz decimal(9,6),
+@SaPPrzyjazdGPSDl decimal(9,6),
+@SaPPrzyjazdGPSDataPobrania int,
+@SaPPrzyjazdGPSGodzinaPobrania int,
+@SaPDGENumer int,
+@SaPDGELp smallint,
+@SaPSrodekTransportu int,
+@SaPNrRej varchar(10),
+@SaPTypWydatku INT
+
+SET @SaPPrzejazdRok = isnull((select YEAR(@DataOdjazdu)),0)
+SET @SaPPrzejazdNumer = isnull((select isnull(MAX(SaP_PrzejazdNumer)+1,1) from cdn.SamPrzejazdy where SaP_PrzejazdRok = @SaPPrzejazdRok),1)
+SET @SaPDataWyjazdu =   isnull((select DATEDIFF(second, convert(datetime,'01-01-1990',105),convert(datetime,(select cast(@DataOdjazdu as         
+                        datetime) + cast(@GodzinaOdjazdu as datetime)),105))),0)
+SET @SaPDataPrzyjazdu = isnull((select DATEDIFF(second, convert(datetime,'01-01-1990',105),convert(datetime,(select cast(@DataPrzyjazdu as   
+                        datetime) + cast(@GodzinaPrzyjazdu as datetime)),105))),0)
+SET @SaPOdleglosc = 0
+SET @SaPSamId = isnull((select SaM_Id from cdn.Samochody where UPPER(REPLACE(SaM_NrRej,' ','')) = UPPER(REPLACE(@NrRej,' ',''))),0)
+if @SaPSamId &gt; 0
+    BEGIN
+	    SET @NrRej = isnull((select isnull(SaM_NrRej,'') from cdn.Samochody where SaM_Id = @SaPSamId),'')
+	END
+
+SET @SaPKierTyp = 0
+SET @SaPKierNumer = 0
+SET @SaPRodzajPrzejazdu = isnull((select min(SLW_ID) from cdn.Slowniki join cdn.SlownikiStruktura on SLW_SLSId = SLS_Id 
+                                  where SLS_Predefiniowany = 40 and SLW_WartoscS = 'Delegacje'),0)
+SET @SaPOpeNumer = 0
+SET @SaPPrcNumer = 0
+SET @SaPDataZapisu = (select DATEDIFF(second, convert(datetime,'01-01-1990',105),convert(datetime,GETDATE(),105)))
+SET @SaPPotwierdzony = 0
+SET @SaPOpeNumerZ = 0 
+SET @SaPDataPotwierdzenia = 0
+SET @SaPZrdTyp = 0
+SET @SaPZrdNumer = 0
+SET @SaPZrdLp = 0
+SET @SaPWyjazdZ = @MiejsceOdjazdu
+SET @SaPPrzyjazdDo = @MiejscePrzyjazdu
+SET @SaPLicznikPocz = @LicznikPocz
+SET @SaPLicznikKon = @LicznikKon
+SET @SaPPrzyjazdGPSSz = 0
+SET @SaPPrzyjazdGPSDl = 0
+SET @SaPPrzyjazdGPSDataPobrania = 0
+SET @SaPPrzyjazdGPSGodzinaPobrania = 0
+SET @SaPDGENumer = @DelegacjaGIDNumer
+SET @SaPDGELp = @DelegacjaGIDLp
+SET @SaPSrodekTransportu = isnull((select SLW_ID from cdn.Slowniki join cdn.SlownikiStruktura on SLW_SLSId = SLS_Id 
+                            where SLS_Predefiniowany = 150 and SLW_WartoscS = @SrodekLokomocji),0) 
+if @SaPSamId &gt; 0
+    begin
+        SET @SaPNrRej = ''
+    end
+else
+    begin
+        SET @SaPNrRej = @NrRej
+    end
+
+SET @SaPTypWydatku = isnull((select SLW_ID from cdn.Slowniki join cdn.SlownikiStruktura on SLW_SLSId = SLS_Id 
+                     WHERE SLS_Predefiniowany in(153,154,155,156,157)
+                     and SLW_WartoscS = @TypWydatku),0) 
+                        
+if @SaPTypWydatku = 0 SET @Kwota = 0                                       
+  /*
+	if isnull(@SrodekLokomocji,'') = 'Samochód służbowy' SET @SaPSamId = isnull((select MIN(Sam_Id) from cdn.Samochody),0)                        
+	 
+	if @SaPSamId &lt;&gt; 0      
+		begin
+			 SET @SaPNrRej = (select sam_NrRej from cdn.samochody where SaM_Id = @SaPSamId)          
+		end
+  */     
+BEGIN TRY 
+ 
+if not exists(select * from cdn.DelegacjeElem where DGE_GIDTyp = @DelegacjaGIDTyp and DGE_GIDNumer = @DelegacjaGIDNumer 
+              and DGE_GIDLp = @DelegacjaGIDLp) 
+    BEGIN 
+        RAISERROR('Nie istnieje rekord w tabeli CDN.DelegacjeElem. Dane nie zostaną zapisane.',16,1)
+        Return
+    END
+if @SaPDataWyjazdu &gt; @SaPDataPrzyjazdu
+    BEGIN 
+        RAISERROR('Data wyjazdu jest większa niż data przyjazdu. Dane nie zostaną zapisane.',16,1)
+        Return
+    END   
+    
+IF exists(select Kon_Wartosc from cdn.Konfig where kon_numer = 20129)
+    BEGIN       
+       SET @SaPOpeNumer = (select Ope_GIDNumer from cdn.OpeKarty where Ope_Ident = (select Kon_Wartosc from cdn.Konfig where kon_numer = 20129))     
+    END
+ELSE
+    BEGIN
+        RAISERROR('W Konfiguracji brak wybranego operatora. Dane nie zostaną zapisane.',16,1)
+        Return
+    END
+    
+    
+INSERT INTO CDN.SamPrzejazdy
+           (
+            [SaP_PrzejazdNumer]
+           ,[SaP_PrzejazdRok]
+           ,[SaP_DataWyjazdu]
+           ,[SaP_DataPrzyjazdu]
+           ,[SaP_Odleglosc]
+           ,[SaP_SamId]
+           ,[SaP_NrRej]
+           ,[SaP_KierTyp]
+           ,[SaP_KierNumer]
+           ,[SaP_RodzajPrzejazdu]
+           ,[SaP_SrodekTransportu] 
+           ,[SaP_TypWydatku]
+           ,[Sap_Kwota]           
+           ,[SaP_OpeNumer]
+           ,[SaP_DataZapisu]
+           ,[SaP_Potwierdzony]
+           ,[SaP_OpeNumerZ]
+           ,[SaP_DataPotwierdzenia]
+           ,[SaP_ZrdTyp]
+           ,[SaP_ZrdNumer]
+           ,[SaP_ZrdLp]
+           ,[SaP_WyjazdZ]
+           ,[SaP_PrzyjazdDo]
+           ,[SaP_LicznikPocz]
+           ,[SaP_LicznikKon]
+           ,[SaP_Opis]
+           ,[SaP_PrzyjazdGPSSz]
+           ,[SaP_PrzyjazdGPSDl]
+           ,[SaP_PrzyjazdGPSDataPobrania]
+           ,[SaP_PrzyjazdGPSGodzinaPobrania]           
+           ,[SaP_DGENumer]
+           ,[SaP_DGELp]
+		   ,[SaP_PrcNumer]
+           )
+     VALUES
+           (
+            @SaPPrzejazdNumer,
+            @SaPPrzejazdRok,
+            @SaPDataWyjazdu,
+            @SaPDataPrzyjazdu,
+            @SaPOdleglosc,
+            @SaPSamId,
+            @SaPNrRej,
+            @SaPKierTyp,
+            @SaPKierNumer,            
+            @SaPRodzajPrzejazdu,
+            @SaPSrodekTransportu, 
+            @SaPTypWydatku,
+            @Kwota,           
+            @SaPOpeNumer,
+            @SaPDataZapisu,
+            @SaPPotwierdzony,
+            @SaPOpeNumerZ,
+            @SaPDataPotwierdzenia,
+            @SaPZrdTyp,
+            @SaPZrdNumer,
+            @SaPZrdLp,
+            @SaPWyjazdZ,
+            @SaPPrzyjazdDo,
+            @SaPLicznikPocz,
+            @SaPLicznikKon,
+            @Opis,
+            @SaPPrzyjazdGPSSz,
+            @SaPPrzyjazdGPSDl,
+            @SaPPrzyjazdGPSDataPobrania,
+            @SaPPrzyjazdGPSGodzinaPobrania,            
+            @SaPDGENumer,
+            @SaPDGELp,
+			@SaPPrcNumer            
+           )
+
+		   SELECT SCOPE_IDENTITY()
+
+END TRY
+BEGIN CATCH
+
+  DECLARE
+    @ErrorMessage     NVARCHAR(4000),
+    @ErrorSeverity    INT,
+    @ErrorState       INT
+
+  SELECT 
+    @ErrorMessage=ERROR_MESSAGE(),
+    @ErrorSeverity=ERROR_SEVERITY(),
+    @ErrorState=ERROR_STATE();
+
+  RAISERROR(@ErrorMessage,@ErrorSeverity,@ErrorState);
+
+END CATCH
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="EP_DelegacjeElemPrzejazd_Edit"></A><PRE>
+          <FONT SIZE="2"><I>/* EP_DelegacjeElemPrzejazd_Edit */</I><BR>
+CREATE PROCEDURE CDN.EP_DelegacjeElemPrzejazd_Edit
+@PrzejazdID INT,
+@MiejsceOdjazdu nvarchar(127), 
+@DataOdjazdu DateTime, 
+@GodzinaOdjazdu DateTime, 
+@MiejscePrzyjazdu nvarchar(127), 
+@DataPrzyjazdu DateTime, 
+@GodzinaPrzyjazdu DateTime, 
+@SrodekLokomocji nvarchar(50),
+@Kwota Decimal(15,2),
+@Opis VARCHAR ( 1025),
+@LicznikPocz DECIMAL ( 9,2) = 0,
+@LicznikKon DECIMAL ( 9,2) = 0,
+@NrRej VARCHAR(10) 
+
+AS SET NOCOUNT ON
+
+DECLARE
+
+@SaPDataWyjazdu INT,
+@SaPDataPrzyjazdu INT,
+@SaPOdleglosc decimal(7,2),
+@SaPSamId INT,
+@SaPRodzajPrzejazdu INT,
+@SaPWyjazdZ  varchar(100),
+@SaPPrzyjazdDo varchar(100),
+@SaPOpis varchar(1025),
+@SaPSrodekTransportu int,
+@SaPNrRej varchar(10)
+
+
+SET @SaPDataWyjazdu =   isnull((select DATEDIFF(second, convert(datetime,'01-01-1990',105),convert(datetime,(select cast(@DataOdjazdu as  
+                        datetime) + cast(@GodzinaOdjazdu as datetime)),105))),0)
+SET @SaPDataPrzyjazdu = isnull((select DATEDIFF(second, convert(datetime,'01-01-1990',105),convert(datetime,(select cast(@DataPrzyjazdu as 
+                        datetime) + cast(@GodzinaPrzyjazdu as datetime)),105))),0)
+
+SET @SaPWyjazdZ = @MiejsceOdjazdu
+SET @SaPPrzyjazdDo = @MiejscePrzyjazdu
+SET @SaPSrodekTransportu = isnull((select SLW_ID from cdn.Slowniki join cdn.SlownikiStruktura on SLW_SLSId = SLS_Id 
+                                   where SLS_Predefiniowany = 150 and SLW_WartoscS = @SrodekLokomocji),0)
+                                   
+SET @SaPSamId = isnull((select SaM_Id from cdn.Samochody where UPPER(REPLACE(SaM_NrRej,' ','')) = UPPER(REPLACE(@NrRej,' ',''))),0)
+if @SaPSamId &gt; 0
+    BEGIN
+	    SET @NrRej = isnull((select isnull(SaM_NrRej,'') from cdn.Samochody where SaM_Id = @SaPSamId),'')
+	END
+
+
+if @SaPSamId &gt; 0
+    begin
+        SET @SaPNrRej = ''
+    end
+else
+    begin
+        SET @SaPNrRej = @NrRej
+    end
+ 
+BEGIN TRY 
+ 
+if not exists(select * from cdn.SamPrzejazdy where SaP_Id = @PrzejazdID) 
+    BEGIN 
+        RAISERROR('Nie istnieje rekord w tabeli CDN.SamPrzejazdy. Dane nie zostaną zapisane.',16,1)
+        Return
+    END
+if @SaPDataWyjazdu &gt; @SaPDataPrzyjazdu
+    BEGIN 
+        RAISERROR('Data wyjazdu jest większa niż data przyjazdu. Dane nie zostaną zapisane.',16,1)
+        Return
+    END      
+ 
+if @Kwota &lt; 0    
+   BEGIN
+       RAISERROR('Nie można dodać przejazdu na delegacji z kwotą mniejszą od 0. Dane nie zostaną zapisane.',16,1)
+       Return
+   END
+
+UPDATE CDN.SamPrzejazdy
+   SET SaP_DataWyjazdu = @SaPDataWyjazdu,
+       SaP_DataPrzyjazdu = @SaPDataPrzyjazdu,       
+       SaP_WyjazdZ = @MiejsceOdjazdu,
+       SaP_PrzyjazdDo = @MiejscePrzyjazdu,
+       SaP_SrodekTransportu = @SaPSrodekTransportu,
+       SaP_SamID = @SaPSamId,
+       SaP_NrRej = @SaPNrRej, 
+       SaP_Opis = @Opis,
+       SaP_LicznikPocz = @LicznikPocz,
+       SaP_LicznikKon = @LicznikKon,
+	   SAP_Kwota = @Kwota       
+   WHERE SaP_Id = @PrzejazdID    
+   
+if @Kwota &gt; 0
+    BEGIN
+		UPDATE CDN.WydatkiPracownikow
+		   SET WPR_Wartosc = @Kwota
+	    WHERE WPR_SaPId = @PrzejazdID	       
+    END
+	  
+if @Kwota = 0  
+    BEGIN
+	    DELETE CDN.WydatkiPracownikow WHERE WPR_SaPId = @PrzejazdID
+	END
+	   
+END TRY
+BEGIN CATCH
+
+  DECLARE
+    @ErrorMessage     NVARCHAR(4000),
+    @ErrorSeverity    INT,
+    @ErrorState       INT
+
+  SELECT 
+    @ErrorMessage=ERROR_MESSAGE(),
+    @ErrorSeverity=ERROR_SEVERITY(),
+    @ErrorState=ERROR_STATE();
+
+  RAISERROR(@ErrorMessage,@ErrorSeverity,@ErrorState);
+
+END CATCH
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="EP_DelegacjeElemPrzejazd_Delete"></A><PRE>
+          <FONT SIZE="2"><I>/* EP_DelegacjeElemPrzejazd_Delete */</I><BR>
+CREATE PROCEDURE CDN.EP_DelegacjeElemPrzejazd_Delete
+@PrzeDlgGIDTyp SMALLINT, @PrzeDlgGIDNumer INT
+AS
+SET NOCOUNT ON;
+BEGIN TRY
+    IF @PrzeDlgGIDTyp IS NOT NULL
+        BEGIN
+            IF NOT EXISTS (SELECT *
+                           FROM   cdn.Delegacje
+                           WHERE  DLG_GIDTyp = @PrzeDlgGIDTyp
+                                  AND DLG_GIDNumer = @PrzeDlgGIDNumer)
+                BEGIN
+                    RAISERROR ('Nie istnieje rekord w tabeli CDN.Delegacje. Dane nie zostaną zapisane.', 16, 1);
+                    RETURN;
+                END
+            DELETE CDN.SamPrzejazdy
+            WHERE  SaP_DGENumer = @PrzeDlgGIDNumer;
+			--usuwanie wszystkich wydatkow powiazanych z delegacja, powiazanych z przejazdami
+			DELETE CDN.WydatkiPracownikow
+			WHERE WPR_DGENumer = @PrzeDlgGIDNumer and WPR_SaPId &lt;&gt; 0;
+        END
+    ELSE
+        BEGIN
+            IF NOT EXISTS (SELECT *
+                           FROM   cdn.SamPrzejazdy
+                           WHERE  SaP_Id = @PrzeDlgGIDNumer)
+                BEGIN
+                    RAISERROR ('Nie istnieje rekord w tabeli CDN.SamPrzejazdy. Dane nie zostaną zapisane.', 16, 1);
+                    RETURN;
+                END
+            DELETE CDN.SamPrzejazdy
+            WHERE  SaP_ID = @PrzeDlgGIDNumer;
+			--usuwanie powiazanego wydatku
+			DELETE CDN.WydatkiPracownikow
+			WHERE WPR_SaPId = @PrzeDlgGIDNumer;
+        END
+END TRY
+BEGIN CATCH
+    DECLARE @ErrorMessage AS NVARCHAR (4000), 
+            @ErrorSeverity AS INT, 
+            @ErrorState AS INT;
+    SELECT @ErrorMessage = ERROR_MESSAGE(),
+           @ErrorSeverity = ERROR_SEVERITY(),
+           @ErrorState = ERROR_STATE();
+    RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState);
+END CATCH
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="EP_Delegacje_Zatwierdz"></A><PRE>
+          <FONT SIZE="2"><I>/* EP_Delegacje_Zatwierdz */</I><BR>
+CREATE PROCEDURE CDN.EP_Delegacje_Zatwierdz
+@DelegacjaGIDTyp SMALLINT,
+@DelegacjaGIDNumer INT,
+@PrcOptimaID INT
+
+AS SET NOCOUNT ON
+
+DECLARE
+@DLGStan SMALLINT,
+@TStampMod INT,
+@PrcGidNumer INT,
+@DLGPrcNumerZatw INT,
+@DLGOPENumerZatw INT
+
+
+if not exists(select * from cdn.Delegacje where DLG_GIDTyp = @DelegacjaGIDTyp and DLG_GIDNumer = @DelegacjaGIDNumer) 
+    BEGIN 
+        RAISERROR('Nie istnieje rekord w tabeli CDN.Delegacje. Dane nie zostaną zapisane.',16,1)
+        Return
+    END
+
+IF exists(select * from cdn.PrcKarty where Prc_OptimaId = @PrcOptimaID)
+    BEGIN
+        SET @PrcGidNumer = (select prc_gidnumer from cdn.PrcKarty where Prc_OptimaId = @PrcOptimaID)                 
+        SET @DLGPrcNumerZatw = @PrcGidNumer         
+    END
+ELSE
+    BEGIN
+        RAISERROR('W tabeli cdn.PrcKarty nie istnieje zsynchronizowany obiekt pracownika. Dane nie zostaną zapisane.',16,1)
+        Return
+    END
+
+
+IF exists(select Kon_Wartosc from cdn.Konfig where kon_numer = 20129)
+    BEGIN      
+      SET @DLGOPENumerZatw = (select Ope_GIDNumer from cdn.OpeKarty where Ope_Ident = (select Kon_Wartosc from cdn.Konfig where kon_numer = 20129))     END
+ELSE
+    BEGIN
+        RAISERROR('W Konfiguracji brak wybranego operatora. Dane nie zostaną zapisane.',16,1)
+        Return
+    END
+
+
+SET @DLGStan = isnull((select dlg_stan from cdn.Delegacje where DLG_GIDTyp = @DelegacjaGIDTyp and DLG_GIDNumer = @DelegacjaGIDNumer),0)
+/*
+if @DLGStan &lt; 3    
+    BEGIN 
+        RAISERROR('Nie można zatwierdzić delegacji. Delegacja musi mieć status zaakceptowane wydatki.',16,1)
+        Return
+    END */
+SET @TStampMod = isnull((select DATEDIFF(day,'18001228',GETDATE())),0)    
+     
+BEGIN TRY 
+    
+UPDATE CDN.Delegacje
+SET DLG_Zatwierdzona = 1,
+    DLG_Stan = 5,     
+    DLG_TStampZatw = @TStampMod,    
+    DLG_OPENumerZatw = @DLGOPENumerZatw,    
+    DLG_PrcNumerZatw = @DLGPrcNumerZatw          
+WHERE
+    DLG_GidTyp = @DelegacjaGIDTyp and DLG_GidNumer = @DelegacjaGIDNumer   
+
+END TRY
+BEGIN CATCH
+
+  DECLARE
+    @ErrorMessage     NVARCHAR(4000),
+    @ErrorSeverity    INT,
+    @ErrorState       INT
+
+  SELECT 
+    @ErrorMessage=ERROR_MESSAGE(),
+    @ErrorSeverity=ERROR_SEVERITY(),
+    @ErrorState=ERROR_STATE();
+
+  RAISERROR(@ErrorMessage,@ErrorSeverity,@ErrorState);
+
+
+END CATCH
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="EP_Delegacje_Pobierz"></A><PRE>
+          <FONT SIZE="2"><I>/* EP_Delegacje_Pobierz */</I><BR>
+CREATE PROCEDURE CDN.EP_Delegacje_Pobierz
+@DelegacjaGIDNumer INT
+AS
+SET NOCOUNT ON;
+SELECT isnull(D.DLG_GIDNumer, 0) AS DelegecjaID,
+       CDN.NumerDokumentu(DLG_GIDTYP, DLG_GIDTYP, 0, DLG_Numer, DLG_Rok, DLG_Seria, DLG_Miesiac) AS DelegacjaNumer,
+       isnull(P.prc_optimaid, 0) AS PrcOptimaID,
+       ISNULL(P.prc_nazwisko + ' ' + P.prc_imie1, '') as Pracownik,
+       (SELECT isnull(PRJ_OptimaId, 0)
+        FROM   cdn.PrjStruktura
+        WHERE  PRJ_GIDNumer = D.DLG_PRJNumer) AS PrjOptimaID,
+       isnull((SELECT CASE
+                      WHEN isnull(D.DLG_FRSCentrumNumer, 0) = 2 THEN 3 ELSE isnull(FRS_OptimaId, 0)
+                      END
+               FROM   cdn.FrmStruktura
+               WHERE  FRS_ID = D.DLG_FRSCentrumNumer
+                      AND FRS_Warstwa = 2
+                      AND FRS_GIDTyp = -4272), 0) AS FrsOptimaID,
+       CASE
+       WHEN DLG_TStampRozp = 0 THEN '1900-01-01 00:00:00.000' ELSE DateAdd(d, DLG_TStampRozp, CONVERT (DATETIME, '28-12-1800', 105))
+       END AS DataRozpoczecia,
+       CASE
+       WHEN DLG_TStampZak = 0 THEN '2999-12-31 00:00:00.000' ELSE DateAdd(d, DLG_TStampZak, CONVERT (DATETIME, '28-12-1800', 105))
+       END AS DataZakonczenia,
+                   D.DLG_Stan AS DelegacjaStatus,
+       isnull(D.DLG_Miejsce, '') AS Miejsce,
+       isnull(D.DLG_Cel, '') AS Cel,
+       isnull(D.DLG_WyjazdZMiejscaZam, 0) AS CzyWyjazdZMiejscaZamieszkania,
+       isnull(D.DLG_Komentarz, '') AS Opis,
+       isnull(DE.DGE_LiczbaSniadan, 0) AS LiczbaSniadan,
+       isnull(DE.DGE_LiczbaObiadow, 0) AS LiczbaObiadow,
+       isnull(DE.DGE_LiczbaKolacji, 0) AS LiczbaKolacji,
+       CASE
+       WHEN DLG_TStampWpr = 0 THEN '2999-12-31 00:00:00.000' ELSE DateAdd(d, DLG_TStampWpr, CONVERT (DATETIME, '28-12-1800', 105))
+       END AS DataWystawienia
+FROM   CDN.Delegacje AS D
+       INNER JOIN
+        cdn.PrcKarty P
+        ON  Prc_GIDNumer = D.DLG_PRCNumer
+       LEFT OUTER JOIN
+       CDN.DelegacjeElem AS DE
+       ON D.DLG_GIDTyp = DE.DGE_GIDTyp
+          AND D.DLG_GIDNumer = DE.DGE_GIDNumer
+WHERE  D.DLG_GIDNumer = @DelegacjaGIDNumer
+       AND D.DLG_Stan &gt; 0;
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="EP_DelegacjePrzejazdy_Pobierz"></A><PRE>
+          <FONT SIZE="2"><I>/* EP_DelegacjePrzejazdy_Pobierz */</I><BR>
+CREATE PROCEDURE CDN.EP_DelegacjePrzejazdy_Pobierz
+@DelegacjaGIDNumer INT
+AS SET NOCOUNT ON
+
+SELECT                
+    isnull(P.SaP_Id,0) as PrzejazdID,
+    isnull(Rtrim(Ltrim(P.SaP_WyjazdZ)),'') as MiejsceOdjazdu,
+    isnull(CONVERT(VARCHAR(10), (select DATEADD(second,P.SaP_DataWyjazdu,convert(datetime,'01-01-1990',105))),120),0) as DataOdjazdu,
+    isnull(CONVERT(VARCHAR(5),(select DATEADD(second,P.SaP_DataWyjazdu,convert(datetime,'01-01-1990',105))),108),0) as GodzinaOdjazdu,
+    isnull(Rtrim(Ltrim(P.SaP_PrzyjazdDo)),'') as MiejscePrzyjazdu,
+    isnull(CONVERT(VARCHAR(10), (select DATEADD(second,P.SaP_DataPrzyjazdu,convert(datetime,'01-01-1990',105))),120),0) as DataPrzyjazdu,
+    isnull(CONVERT(VARCHAR(5),(select DATEADD(second,P.SaP_DataPrzyjazdu,convert(datetime,'01-01-1990',105))),108),0) as GodzinaPrzyjazdu,
+    isnull((select S.SLW_ID from cdn.Slowniki S join cdn.SlownikiStruktura St on S.SLW_SLSId = St.SLS_Id
+                                   and St.SLS_Predefiniowany = 150 and S.SLW_ID = P.SaP_SrodekTransportu
+    ),0)as SrodekTransportuID,
+    isnull((select S.SLW_WartoscS from cdn.Slowniki S join cdn.SlownikiStruktura St on S.SLW_SLSId = St.SLS_Id
+                                   and St.SLS_Predefiniowany = 150 and S.SLW_ID = P.SaP_SrodekTransportu
+    ),0)as SrodekTransportu,
+    isnull(SaP_Opis,'') as Opis,
+    isnull(SaP_Kwota, 0) as Kwota,
+    isnull(P.SaP_LicznikPocz, 0) as LicznikPocz,
+    isnull(P.SaP_Licznikkon, 0) as LicznikKon,
+    case when isnull(P.SaP_NrRej, '') = '' then isnull((select SaM_NrRej from cdn.samochody where sam_id = SaP_SamId),'') else P.SaP_NrRej end as NrRej
+FROM     
+    CDN.SamPrzejazdy P where P.SaP_DGENumer  = @DelegacjaGIDNumer   
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="EP_DelegacjeZaliczki_Pobierz"></A><PRE>
+          <FONT SIZE="2"><I>/* EP_DelegacjeZaliczki_Pobierz */</I><BR>
+CREATE PROCEDURE CDN.EP_DelegacjeZaliczki_Pobierz
+@DelegacjaGIDNumer INT
+AS SET NOCOUNT ON
+
+SELECT                        
+    isnull(W.WNO_GIDNumer,0) as ZaliczkaID,
+    CDN.NumerDokumentu(WNO_GIDTyp,WNO_GIDTyp,0,WNO_Numer,WNO_Rok,WNO_Seria,WNO_Miesiac)as ZaliczkaNumer,
+    isnull(W.WNO_Kwota,0) as ZaliczkaKwota,
+    W.WNO_Stan as ZaliczkaStan     
+FROM         
+    CDN.Wnioski W where W.WNO_DlgNumer = @DelegacjaGIDNumer
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="EP_DelegacjeWydatki_Pobierz"></A><PRE>
+          <FONT SIZE="2"><I>/* EP_DelegacjeWydatki_Pobierz */</I><BR>
+CREATE PROCEDURE CDN.EP_DelegacjeWydatki_Pobierz
+@DelegacjaGIDNumer INT
+AS SET NOCOUNT ON
+
+SELECT                        
+    isnull(W.WPR_Id,0) as WydatekID,
+    isnull(W.WPR_Wartosc,0) as WydatekKwota,
+    isnull(WPR_Opis,'') as Opis,
+    (select isnull(SLW_WartoscS,'') from cdn.Slowniki where SLW_ID = W.WPR_TypWydatku) as WydatekTyp,
+	isnull(WPR_SaPId,0) as WydatekPrzejazdID     
+FROM         
+    CDN.WydatkiPracownikow W where W.WPR_DGENumer = @DelegacjaGIDNumer
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="EP_DelegacjeSlowniki_Pobierz"></A><PRE>
+          <FONT SIZE="2"><I>/* EP_DelegacjeSlowniki_Pobierz */</I><BR>
+CREATE PROCEDURE CDN.EP_DelegacjeSlowniki_Pobierz
+
+AS SET NOCOUNT ON
+
+SELECT                        
+    SLW_ID as SlownikID,
+    SLW_WartoscS AS SlownikWartosc,
+    SLW_Kategoria,
+    SLW_Archiwalny AS Archiwalny,
+    CAST(SLW_Aktywny as tinyint) AS Aktywny,
+	Isnull(SLW_Domyslny,0) AS Domyslny
+FROM cdn.slowniki join cdn.SlownikiStruktura on SLW_SLSId = SLS_Id 
+WHERE SLS_Predefiniowany in(150,40)    
+UNION ALL
+select 
+    s1.SLS_Id as SlownikStrukturaID,
+    s1.SLS_Nazwa as RodzajWydatku,
+    s2.SLS_Nazwa,
+    CAST(0 AS tinyint) AS Archiwalny,
+    CAST(1 as tinyint) AS Aktywny,
+	CAST(1 as bit) AS Domyslny
+from cdn.SlownikiStruktura s1 join cdn.SlownikiStruktura s2 on s2.SLS_Id = s1.SLS_OId where s2.SLS_Id = 97 
+UNION ALL
+SELECT                        
+    SLW_ID as SlownikID,
+    SLW_WartoscS AS SlownikWartosc,
+    SLW_Kategoria,
+    SLW_Archiwalny AS Archiwalny,
+    CAST(SLW_Aktywny AS tinyint) AS Aktywny,
+	Isnull(CAST(SLW_Domyslny AS bit),0) AS Domyslny
+FROM cdn.slowniki join cdn.SlownikiStruktura on SLW_SLSId = SLS_Id 
+WHERE SLS_Predefiniowany in(153,154,155,156,157)
+        
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="EP_Delegacje_PobierzOdDo"></A><PRE>
+          <FONT SIZE="2"><I>/* EP_Delegacje_PobierzOdDo */</I><BR>
+CREATE FUNCTION CDN.EP_Delegacje_PobierzOdDo (@DataOd DATETIME, @DataDo DATETIME)
+RETURNS TABLE 
+AS
+RETURN
+(
+   SELECT * from cdn.Delegacje 
+   where 
+   DLG_TStampRozp &gt;= DATEDIFF(day,'18001228',@DataOd) 
+   AND DLG_TStampZak &lt;= DATEDIFF(day,'18001228',@DataDo)  
+   and DLG_Stan &gt; 0
+)
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="EP_Delegacje_Zaakceptuj"></A><PRE>
+          <FONT SIZE="2"><I>/* EP_Delegacje_Zaakceptuj */</I><BR>
+CREATE PROCEDURE CDN.EP_Delegacje_Zaakceptuj
+@DelegacjaGIDTyp SMALLINT,
+@DelegacjaGIDNumer INT,
+@PrcOptimaID INT
+
+AS SET NOCOUNT ON
+
+DECLARE
+@DLGStan SMALLINT,
+@TStampMod INT,
+@PrcGidNumer INT,
+@DLGPrcNumerAkcept INT,
+@DLGOPENumerAkcept INT
+
+
+if not exists(select * from cdn.Delegacje where DLG_GIDTyp = @DelegacjaGIDTyp and DLG_GIDNumer = @DelegacjaGIDNumer) 
+    BEGIN 
+        RAISERROR('Nie istnieje rekord w tabeli CDN.Delegacje. Dane nie zostaną zapisane.',16,1)
+        Return
+    END
+
+IF exists(select * from cdn.PrcKarty where Prc_OptimaId = @PrcOptimaID)
+    BEGIN
+        SET @PrcGidNumer = (select prc_gidnumer from cdn.PrcKarty where Prc_OptimaId = @PrcOptimaID)                 
+        SET @DLGPrcNumerAkcept = @PrcGidNumer         
+    END
+ELSE
+    BEGIN
+        RAISERROR('W tabeli cdn.PrcKarty nie istnieje zsynchronizowany obiekt pracownika. Dane nie zostaną zapisane.',16,1)
+        Return
+    END
+
+
+IF exists(select Kon_Wartosc from cdn.Konfig where kon_numer = 20129)
+    BEGIN      
+      SET @DLGOPENumerAkcept = (select Ope_GIDNumer from cdn.OpeKarty where Ope_Ident = (select Kon_Wartosc from cdn.Konfig where kon_numer = 20129))     END
+ELSE
+    BEGIN
+        RAISERROR('W Konfiguracji brak wybranego operatora. Dane nie zostaną zapisane.',16,1)
+        Return
+    END
+
+
+SET @DLGStan = isnull((select dlg_stan from cdn.Delegacje where DLG_GIDTyp = @DelegacjaGIDTyp and DLG_GIDNumer = @DelegacjaGIDNumer),0)
+
+if @DLGStan &lt;&gt; 1    
+    BEGIN 
+        RAISERROR('Nie można zaakceptować delegacji. Delegacja musi mieć status wprowadzona.',16,1)
+        Return
+    END 
+SET @TStampMod = isnull((select DATEDIFF(day,'18001228',GETDATE())),0)    
+     
+BEGIN TRY 
+    
+UPDATE CDN.Delegacje
+SET DLG_Zaakceptowana = 1,
+    DLG_Stan = 2,     
+    DLG_TStampAkcept = @TStampMod,    
+    DLG_OPENumerAkcept = @DLGOPENumerAkcept,    
+    DLG_PrcNumerAkcept = @DLGPrcNumerAkcept          
+WHERE
+    DLG_GidTyp = @DelegacjaGIDTyp and DLG_GidNumer = @DelegacjaGIDNumer;   
+
+IF not exists(select * from cdn.DelegacjeElem where DGE_GIDNumer = @DelegacjaGIDNumer)
+    exec CDN.EP_DelegacjeElem_Add @DelegacjaGIDTyp,@DelegacjaGIDNumer,0,0,0,'';
+
+
+END TRY
+BEGIN CATCH
+
+  DECLARE
+    @ErrorMessage     NVARCHAR(4000),
+    @ErrorSeverity    INT,
+    @ErrorState       INT
+
+  SELECT 
+    @ErrorMessage=ERROR_MESSAGE(),
+    @ErrorSeverity=ERROR_SEVERITY(),
+    @ErrorState=ERROR_STATE();
+
+  RAISERROR(@ErrorMessage,@ErrorSeverity,@ErrorState);
+
+
+END CATCH
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="EP_Delegacje_Anuluj"></A><PRE>
+          <FONT SIZE="2"><I>/* EP_Delegacje_Anuluj */</I><BR>
+CREATE PROCEDURE CDN.EP_Delegacje_Anuluj
+@DelegacjaGIDTyp SMALLINT,
+@DelegacjaGIDNumer INT,
+@PrcOptimaID INT
+
+AS SET NOCOUNT ON
+
+DECLARE
+@DLGStan SMALLINT,
+@TStampMod INT,
+@PrcGidNumer INT,
+@DLGPrcNumerAnul INT,
+@DLGOPENumerAnul INT
+
+
+if not exists(select * from cdn.Delegacje where DLG_GIDTyp = @DelegacjaGIDTyp and DLG_GIDNumer = @DelegacjaGIDNumer) 
+    BEGIN 
+        RAISERROR('Nie istnieje rekord w tabeli CDN.Delegacje. Dane nie zostaną zapisane.',16,1)
+        Return
+    END
+
+IF exists(select * from cdn.PrcKarty where Prc_OptimaId = @PrcOptimaID)
+    BEGIN
+        SET @PrcGidNumer = (select prc_gidnumer from cdn.PrcKarty where Prc_OptimaId = @PrcOptimaID)                 
+        SET @DLGPrcNumerAnul = @PrcGidNumer         
+    END
+ELSE
+    BEGIN
+        RAISERROR('W tabeli cdn.PrcKarty nie istnieje zsynchronizowany obiekt pracownika. Dane nie zostaną zapisane.',16,1)
+        Return
+    END
+
+
+IF exists(select Kon_Wartosc from cdn.Konfig where kon_numer = 20129)
+    BEGIN      
+      SET @DLGOPENumerAnul = (select Ope_GIDNumer from cdn.OpeKarty where Ope_Ident = (select Kon_Wartosc from cdn.Konfig where kon_numer = 20129))     END
+ELSE
+    BEGIN
+        RAISERROR('W Konfiguracji brak wybranego operatora. Dane nie zostaną zapisane.',16,1)
+        Return
+    END
+
+
+SET @DLGStan = isnull((select dlg_stan from cdn.Delegacje where DLG_GIDTyp = @DelegacjaGIDTyp and DLG_GIDNumer = @DelegacjaGIDNumer),0)
+
+if @DLGStan &lt;&gt; 2    
+    BEGIN 
+        RAISERROR('Nie można anulować delegacji. Delegacja musi mieć status zaakceptowane polecenie wyjazdu.',16,1)
+        Return
+    END 
+SET @TStampMod = isnull((select DATEDIFF(day,'18001228',GETDATE())),0)    
+     
+BEGIN TRY 
+    
+UPDATE CDN.Delegacje
+SET 
+    DLG_Stan = 6,     
+    DLG_TStampAnul = @TStampMod,    
+    DLG_OPENumerAnul = @DLGOPENumerAnul,    
+    DLG_PrcNumerAnul = @DLGPrcNumerAnul          
+WHERE
+    DLG_GidTyp = @DelegacjaGIDTyp and DLG_GidNumer = @DelegacjaGIDNumer   
+
+
+END TRY
+BEGIN CATCH
+
+  DECLARE
+    @ErrorMessage     NVARCHAR(4000),
+    @ErrorSeverity    INT,
+    @ErrorState       INT
+
+  SELECT 
+    @ErrorMessage=ERROR_MESSAGE(),
+    @ErrorSeverity=ERROR_SEVERITY(),
+    @ErrorState=ERROR_STATE();
+
+  RAISERROR(@ErrorMessage,@ErrorSeverity,@ErrorState);
+
+
+END CATCH
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="EP_Delegacje_AkceptujWprDoAkceptacji"></A><PRE>
+          <FONT SIZE="2"><I>/* EP_Delegacje_AkceptujWprDoAkceptacji */</I><BR>
+CREATE PROCEDURE CDN.EP_Delegacje_AkceptujWprDoAkceptacji
+@DelegacjaGIDTyp SMALLINT,
+@DelegacjaGIDNumer INT,
+@PrcOptimaID INT
+
+AS SET NOCOUNT ON
+
+DECLARE
+@DLGStan SMALLINT,
+@TStampMod INT,
+@PrcGidNumer INT,
+@DLGPrcNumerAkcept INT,
+@DLGOPENumerAkcept INT
+
+
+if not exists(select * from cdn.Delegacje where DLG_GIDTyp = @DelegacjaGIDTyp and DLG_GIDNumer = @DelegacjaGIDNumer) 
+    BEGIN 
+        RAISERROR('Nie istnieje rekord w tabeli CDN.Delegacje. Dane nie zostaną zapisane.',16,1)
+        Return
+    END
+
+IF exists(select * from cdn.PrcKarty where Prc_OptimaId = @PrcOptimaID)
+    BEGIN
+        SET @PrcGidNumer = (select prc_gidnumer from cdn.PrcKarty where Prc_OptimaId = @PrcOptimaID)                 
+        SET @DLGPrcNumerAkcept = @PrcGidNumer         
+    END
+ELSE
+    BEGIN
+        RAISERROR('W tabeli cdn.PrcKarty nie istnieje zsynchronizowany obiekt pracownika. Dane nie zostaną zapisane.',16,1)
+        Return
+    END
+
+
+IF exists(select Kon_Wartosc from cdn.Konfig where kon_numer = 20129)
+    BEGIN      
+      SET @DLGOPENumerAkcept = (select Ope_GIDNumer from cdn.OpeKarty where Ope_Ident = (select Kon_Wartosc from cdn.Konfig where kon_numer = 20129))     END
+ELSE
+    BEGIN
+        RAISERROR('W Konfiguracji brak wybranego operatora. Dane nie zostaną zapisane.',16,1)
+        Return
+    END
+
+
+SET @DLGStan = isnull((select dlg_stan from cdn.Delegacje where DLG_GIDTyp = @DelegacjaGIDTyp and DLG_GIDNumer = @DelegacjaGIDNumer),0)
+
+if @DLGStan &lt;&gt; 2    
+    BEGIN 
+        RAISERROR('Nie można zaakceptować wydatków do akceptacji. Delegacja musi mieć status zaakceptowane polecenie wyjazdu.',16,1)
+        Return
+    END 
+SET @TStampMod = isnull((select DATEDIFF(day,'18001228',GETDATE())),0)    
+     
+BEGIN TRY 
+    
+UPDATE CDN.Delegacje
+SET
+    DLG_Stan = 3,     
+    DLG_TStampWPRDoAkcept = @TStampMod,    
+    DLG_OpeNumerWPRDoAkcept = @DLGOPENumerAkcept,    
+    DLG_PrcNumerWPRDoAkcept = @DLGPrcNumerAkcept          
+WHERE
+    DLG_GidTyp = @DelegacjaGIDTyp and DLG_GidNumer = @DelegacjaGIDNumer;   
+
+
+END TRY
+BEGIN CATCH
+
+  DECLARE
+    @ErrorMessage     NVARCHAR(4000),
+    @ErrorSeverity    INT,
+    @ErrorState       INT
+
+  SELECT 
+    @ErrorMessage=ERROR_MESSAGE(),
+    @ErrorSeverity=ERROR_SEVERITY(),
+    @ErrorState=ERROR_STATE();
+
+  RAISERROR(@ErrorMessage,@ErrorSeverity,@ErrorState);
+
+
+END CATCH
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="EP_DelegacjeElemWydatek_Add"></A><PRE>
+          <FONT SIZE="2"><I>/* EP_DelegacjeElemWydatek_Add */</I><BR>
+CREATE PROCEDURE CDN.EP_DelegacjeElemWydatek_Add
+@DelegacjaGIDTyp SMALLINT,
+@DelegacjaGIDNumer INT,
+@DelegacjaGIDLp SMALLINT,
+@Kwota Decimal(15,2),
+@TypWydatku nvarchar(50),
+@Opis VARCHAR ( 1025),
+@Data DATETIME,
+@SapID INT
+
+AS 
+SET NOCOUNT ON
+
+DECLARE
+@WPRPrcNumer  INT,
+@WPRData INT,
+@WPRRodzajWydatku INT,
+@WPRTypWydatku INT,
+@WPRDokTyp SMALLINT,
+@WPRDokNumer INT,
+@WPRDokFirma INT,
+@WPRDokLp SMALLINT,
+@WPRProcent DECIMAL (15,4),
+@WPRKntTyp SMALLINT,
+@WPRKntNumer INT,
+@WPRCWNId INT,
+@WPRRokMiesiac INT,
+@WPRDGENumer INT,
+@WPRDGELp SMALLINT,
+@WPROpeNumer INT,
+@WPRSamId INT,
+@WPRPozycja INT
+
+SET @WPRPrcNumer = isnull((select DLG_PRCNumer from cdn.delegacje where DLG_GIDNumer = @DelegacjaGIDNumer),0)
+SET @WPRData =  (select DATEDIFF(day,'18001228',@Data))
+SET @WPRTypWydatku = isnull((select SLW_ID from cdn.Slowniki join cdn.SlownikiStruktura on SLW_SLSId = SLS_Id 
+                     WHERE SLS_Predefiniowany in(153,154,155,156,157)
+                     and SLW_WartoscS = @TypWydatku),0) 
+                      
+SET @WPRRodzajWydatku = isnull((select SLS_Id from cdn.Slowniki join cdn.SlownikiStruktura on slw_slsid = SLS_Id and SLW_WartoscS = @TypWydatku and SLW_Kategoria = SLS_Nazwa where SLS_Predefiniowany in(153,154,155,156,157)),0)
+SET @WPRSamId = 0--isnull((select MIN(Sam_Id) from cdn.Samochody),0)
+SET @WPRDokTyp = 0
+SET @WPRDokNumer = 0
+SET @WPRDokFirma = 0
+SET @WPRDokLp = 0
+SET @WPRProcent = 0
+SET @WPRDGENumer = @DelegacjaGIDNumer
+SET @WPRDGELp = @DelegacjaGIDLp
+SET @WPRRokMiesiac = 0
+SET @WPRKntTyp = 0
+SET @WPRKntNumer = 0  
+SET @WPRCWNId = 0
+SET @WPRPozycja = 0           	              
+      
+BEGIN TRY 
+ 
+if not exists(select * from cdn.DelegacjeElem where DGE_GIDTyp = @DelegacjaGIDTyp and DGE_GIDNumer = @DelegacjaGIDNumer 
+              and DGE_GIDLp = @DelegacjaGIDLp) 
+    BEGIN 
+        RAISERROR('Nie istnieje rekord w tabeli CDN.DelegacjeElem. Dane nie zostaną zapisane.',16,1)
+        Return
+    END
+    
+IF exists(select Kon_Wartosc from cdn.Konfig where kon_numer = 20129)
+    BEGIN       
+       SET @WPROpeNumer = (select Ope_GIDNumer from cdn.OpeKarty where Ope_Ident = (select Kon_Wartosc from cdn.Konfig where kon_numer = 20129))     
+    END
+ELSE
+    BEGIN
+        RAISERROR('W Konfiguracji brak wybranego operatora. Dane nie zostaną zapisane.',16,1)
+        Return
+    END
+    
+IF @Kwota &lt;= 0 
+   BEGIN
+       RAISERROR('Nie można dodać wydatku na delegacji z kwotą równą lub mniejszą od 0. Dane nie zostaną zapisane.',16,1)
+       Return
+   END    
+
+INSERT INTO CDN.WydatkiPracownikow
+           (
+		    [WPR_OpeNumer] 
+           ,[WPR_PrcNumer]
+           ,[WPR_Data]
+           ,[WPR_RodzajWydatku]
+           ,[WPR_TypWydatku]
+           ,[WPR_Wartosc]
+           ,[WPR_SamId]
+           ,[WPR_DokTyp]
+           ,[WPR_DokFirma]
+           ,[WPR_DokNumer]
+           ,[WPR_DokLp]
+           ,[WPR_Procent] 
+           ,[WPR_Kwota]
+           ,[WPR_KntTyp]           
+           ,[WPR_KntNumer]
+           ,[WPR_CWNId]
+           ,[WPR_Opis]
+           ,[WPR_RokMiesiac]
+           ,[WPR_ZewnetrznyId]
+           ,[WPR_ZewnetrznySys]
+           ,[WPR_Waluta]
+           ,[WPR_Zaakceptowano]           
+           ,[WPR_DGENumer]
+           ,[WPR_DGELp] 
+		   ,[WPR_DokZmianaPoAkcept]
+		   ,[WPR_SaPId] 
+		   ,[WPR_Predefiniowany]
+		   ,[WPR_Pozycja]		            
+           )
+     VALUES
+           (
+		    @WPROpeNumer,
+            @WPRPrcNumer,
+            @WPRData,
+            @WPRRodzajWydatku,
+            @WPRTypWydatku,
+            @Kwota,
+            @WPRSamId,
+            @WPRDokTyp,
+            @WPRDokFirma,
+            @WPRDokNumer,
+            @WPRDokLp,
+            @WPRProcent,
+            0,
+            @WPRKntTyp,
+            @WPRKntNumer,
+            @WPRCWNId,
+            @Opis,
+            @WPRRokMiesiac,
+            0,
+            0,
+            'PLN',
+            0,            
+            @WPRDGENumer,
+            @WPRDGELp,
+			0,
+			@SapID,
+			0,
+			@WPRPozycja			           
+           )
+END TRY
+BEGIN CATCH
+
+  DECLARE
+    @ErrorMessage     NVARCHAR(4000),
+    @ErrorSeverity    INT,
+    @ErrorState       INT
+
+  SELECT 
+    @ErrorMessage=ERROR_MESSAGE(),
+    @ErrorSeverity=ERROR_SEVERITY(),
+    @ErrorState=ERROR_STATE();
+
+  RAISERROR(@ErrorMessage,@ErrorSeverity,@ErrorState);
+
+END CATCH
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="EP_DelegacjeZaliczki_Zatwierdz"></A><PRE>
+          <FONT SIZE="2"><I>/* EP_DelegacjeZaliczki_Zatwierdz */</I><BR>
+CREATE PROCEDURE CDN.EP_DelegacjeZaliczki_Zatwierdz
+@DelegacjaGIDTyp SMALLINT,
+@DelegacjaGIDNumer INT,
+@PrcOptimaID INT
+
+AS SET NOCOUNT ON
+
+DECLARE
+@WNOStan SMALLINT,
+@TStampZatw INT,
+@PrcGidNumer INT,
+@WNOPrcNumerZatw INT,
+@WNOOPENumerZatw INT
+
+
+if not exists(select * from cdn.Delegacje where DLG_GIDTyp = @DelegacjaGIDTyp and DLG_GIDNumer = @DelegacjaGIDNumer) 
+    BEGIN 
+        RAISERROR('Nie istnieje rekord w tabeli CDN.Delegacje. Dane nie zostaną zapisane.',16,1)
+        Return
+    END
+
+IF exists(select * from cdn.PrcKarty where Prc_OptimaId = @PrcOptimaID)
+    BEGIN
+        SET @PrcGidNumer = (select prc_gidnumer from cdn.PrcKarty where Prc_OptimaId = @PrcOptimaID)                 
+        SET @WNOPrcNumerZatw = @PrcGidNumer         
+    END
+ELSE
+    BEGIN
+        RAISERROR('W tabeli cdn.PrcKarty nie istnieje zsynchronizowany obiekt pracownika. Dane nie zostaną zapisane.',16,1)
+        Return
+    END
+
+
+IF exists(select Kon_Wartosc from cdn.Konfig where kon_numer = 20129)
+    BEGIN      
+      SET @WNOOPENumerZatw = (select Ope_GIDNumer from cdn.OpeKarty where Ope_Ident = (select Kon_Wartosc from cdn.Konfig where kon_numer = 20129))     END
+ELSE
+    BEGIN
+        RAISERROR('W Konfiguracji brak wybranego operatora. Dane nie zostaną zapisane.',16,1)
+        Return
+    END
+
+SET @TStampZatw = isnull((select DATEDIFF(day,'18001228',GETDATE())),0)    
+     
+BEGIN TRY 
+    
+UPDATE CDN.Wnioski
+SET WNO_Zatwierdzono = 1,
+    WNO_Stan = 2, 
+    WNO_TStampZatw = @TStampZatw,    
+    WNO_OPENumerZatw = @WNOOPENumerZatw,    
+    WNO_EPRCNumerZatw = @WNOPrcNumerZatw          
+WHERE
+    WNO_DlgNumer = @DelegacjaGIDNumer and WNO_Stan = 1
+
+END TRY
+BEGIN CATCH
+
+  DECLARE
+    @ErrorMessage     NVARCHAR(4000),
+    @ErrorSeverity    INT,
+    @ErrorState       INT
+
+  SELECT 
+    @ErrorMessage=ERROR_MESSAGE(),
+    @ErrorSeverity=ERROR_SEVERITY(),
+    @ErrorState=ERROR_STATE();
+
+  RAISERROR(@ErrorMessage,@ErrorSeverity,@ErrorState);
+
+
+END CATCH
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="EP_DelegacjeZaliczki_Anuluj"></A><PRE>
+          <FONT SIZE="2"><I>/* EP_DelegacjeZaliczki_Anuluj */</I><BR>
+CREATE PROCEDURE CDN.EP_DelegacjeZaliczki_Anuluj
+@DelegacjaGIDTyp SMALLINT,
+@DelegacjaGIDNumer INT,
+@PrcOptimaID INT,
+@PowodAnul VARCHAR(90)
+
+AS SET NOCOUNT ON
+
+DECLARE
+@WNOStan SMALLINT,
+@TStampAnul INT,
+@PrcGidNumer INT,
+@WNOPrcNumerAnul INT,
+@WNOOPENumerAnul INT
+
+
+if not exists(select * from cdn.Delegacje where DLG_GIDTyp = @DelegacjaGIDTyp and DLG_GIDNumer = @DelegacjaGIDNumer) 
+    BEGIN 
+        RAISERROR('Nie istnieje rekord w tabeli CDN.Delegacje. Dane nie zostaną zapisane.',16,1)
+        Return
+    END
+
+IF exists(select * from cdn.PrcKarty where Prc_OptimaId = @PrcOptimaID)
+    BEGIN
+        SET @PrcGidNumer = (select prc_gidnumer from cdn.PrcKarty where Prc_OptimaId = @PrcOptimaID)                 
+        SET @WNOPrcNumerAnul = @PrcGidNumer         
+    END
+ELSE
+    BEGIN
+        RAISERROR('W tabeli cdn.PrcKarty nie istnieje zsynchronizowany obiekt pracownika. Dane nie zostaną zapisane.',16,1)
+        Return
+    END
+
+
+IF exists(select Kon_Wartosc from cdn.Konfig where kon_numer = 20129)
+    BEGIN      
+      SET @WNOOPENumerAnul = (select Ope_GIDNumer from cdn.OpeKarty where Ope_Ident = (select Kon_Wartosc from cdn.Konfig where kon_numer = 20129))     END
+ELSE
+    BEGIN
+        RAISERROR('W Konfiguracji brak wybranego operatora. Dane nie zostaną zapisane.',16,1)
+        Return
+    END
+
+SET @TStampAnul = isnull((select DATEDIFF(day,'18001228',GETDATE())),0)    
+SET @PowodAnul = 'Anulowano polecenie wyjazdu'
+     
+BEGIN TRY 
+UPDATE CDN.Wnioski
+SET WNO_Odrzucono = 1,
+    WNO_Stan = 4, 
+    WNO_TStampAnul = @TStampAnul,    
+    WNO_OPENumerAnul = @WNOOPENumerAnul,    
+    WNO_EPRCNumerAnul = @WNOPrcNumerAnul,
+	WNO_PowodAnul = @PowodAnul,          
+	WNO_Zatwierdzono = 0
+WHERE
+    WNO_DlgNumer = @DelegacjaGIDNumer and WNO_Stan = 2
+
+END TRY
+BEGIN CATCH
+
+  DECLARE
+    @ErrorMessage     NVARCHAR(4000),
+    @ErrorSeverity    INT,
+    @ErrorState       INT
+
+  SELECT 
+    @ErrorMessage=ERROR_MESSAGE(),
+    @ErrorSeverity=ERROR_SEVERITY(),
+    @ErrorState=ERROR_STATE();
+
+  RAISERROR(@ErrorMessage,@ErrorSeverity,@ErrorState);
+
+
+END CATCH
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[EP_DelegacjeView]"></A><PRE>
+          <FONT SIZE="2"><I>/* [EP_DelegacjeView] */</I><BR>
+CREATE VIEW [CDN].[EP_DelegacjeView]
+AS
+SELECT   MAX([d].[DLG_GIDNumer]) AS Id,
+         cdn.NumerDokumentu(DLG_GIDTyp, DLG_GIDTyp, 0, DLG_Numer, DLG_Rok, DLG_Seria, DLG_Miesiac) AS Numer,
+         MAX([p].[Prc_OptimaId]) AS PodmiotId,
+         MAX([d].[DLG_Stan]) AS STATUS,
+         MAX(DATEADD(d, d.[DLG_TStampRozp], CONVERT (DATETIME, '28-12-1800', 105))) AS DataWyjazdu,
+         MAX(DATEADD(d, d.[DLG_TStampZak], CONVERT (DATETIME, '28-12-1800', 105))) AS DataPowrotu,
+         isnull(SUM([w].[WNO_Kwota]), 0) AS Zaliczka,
+         MAX([d].[DLG_WyjazdZMiejscaZam]) AS WyjazdZmiejscaZam,
+         MAX([d].[DLG_Miejsce]) AS Miejsce,
+         MAX([d].[DLG_Cel]) AS Cel,
+         MAX([d].[DLG_PokazKomentarz]) AS PokazKomentarz,
+         MAX([d].[DLG_Komentarz]) AS Komentarz,
+         MAX([d].[DLG_Zaakceptowana]) AS Zaakceptowano,
+         MAX(DATEADD(d, d.[DLG_TStampAkcept], CONVERT (DATETIME, '28-12-1800', 105))) AS AkceptacjaData,
+         MAX(isnull(w.WNO_Stan, 0)) AS ZatwierdzonaZaliczka,
+         CASE 
+         WHEN isnull(MAX([d].[DLG_Miejsce]), '') = '' THEN 0 
+         WHEN isnull(MAX([d].[DLG_Cel]), '') = '' THEN 0 ELSE 1 
+         END AS CzyNaglowekKompletny
+FROM     [CDN].[Delegacje] AS d
+         INNER JOIN
+         [CDN].[PrcKarty] AS p
+         ON [d].[DLG_PRCNumer] = [p].[Prc_GIDNumer]
+         LEFT OUTER JOIN
+         [CDN].[Wnioski] AS w
+         ON [w].[WNO_DlgNumer] = [d].[DLG_GIDNumer]
+            AND [w].[WNO_Stan] != 4
+GROUP BY [d].[DLG_GIDTyp], [DLG_Seria], [DLG_Rok], [DLG_Miesiac], [d].[DLG_Numer];
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="EP_DelegacjeElemWydatek_Delete"></A><PRE>
+          <FONT SIZE="2"><I>/* EP_DelegacjeElemWydatek_Delete */</I><BR>
+CREATE PROCEDURE CDN.EP_DelegacjeElemWydatek_Delete
+@WydDlgGIDTyp SMALLINT, @WydDlgGIDNumer INT
+AS
+SET NOCOUNT ON;
+BEGIN TRY
+    IF @WydDlgGIDTyp IS NOT NULL
+        BEGIN
+            IF NOT EXISTS (SELECT *
+                           FROM   cdn.Delegacje
+                           WHERE  DLG_GIDTyp = @WydDlgGIDTyp
+                                  AND DLG_GIDNumer = @WydDlgGIDNumer)
+                BEGIN
+                    RAISERROR ('Nie istnieje rekord w tabeli CDN.Delegacje. Dane nie zostaną zapisane.', 16, 1);
+                    RETURN;
+                END
+            DELETE CDN.WydatkiPracownikow
+            WHERE  WPR_DGENumer = @WydDlgGIDNumer;
+			--usuwanie wszystkich przejazdow pow z delegacja, powiazanych z wydatkiem
+			DELETE CDN.SamPrzejazdy
+			WHERE SaP_DGENumer = @WydDlgGIDNumer and SAP_ID in (select isnull(wpr_sapid,0) from cdn.WydatkiPracownikow where WPR_DGENumer = @WydDlgGIDNumer and WPR_SaPId &lt;&gt; 0);
+        END
+    ELSE
+        BEGIN
+            IF NOT EXISTS (SELECT *
+                           FROM   cdn.WydatkiPracownikow
+                           WHERE  WPR_Id = @WydDlgGIDNumer)
+                BEGIN
+                    RAISERROR ('Nie istnieje rekord w tabeli CDN.WydatkiPracownikow. Dane nie zostaną zapisane.', 16, 1);
+                    RETURN;
+                END
+            DELETE CDN.WydatkiPracownikow
+            WHERE  WPR_Id = @WydDlgGIDNumer;
+			--usuwanie powiazanego przejazdu			
+			DELETE CDN.SAMPrzejazdy 
+			WHERE SaP_Id = isnull((select wpr_sapid from cdn.WydatkiPracownikow where wpr_id = @WydDlgGIDNumer),0);
+        END
+END TRY
+BEGIN CATCH
+    DECLARE @ErrorMessage AS NVARCHAR (4000), 
+            @ErrorSeverity AS INT, 
+            @ErrorState AS INT;
+    SELECT @ErrorMessage = ERROR_MESSAGE(),
+           @ErrorSeverity = ERROR_SEVERITY(),
+           @ErrorState = ERROR_STATE();
+    RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState);
+END CATCH
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="EP_DelegacjeElemWydatek_Edit"></A><PRE>
+          <FONT SIZE="2"><I>/* EP_DelegacjeElemWydatek_Edit */</I><BR>
+CREATE PROCEDURE CDN.EP_DelegacjeElemWydatek_Edit
+@WydatekID INT,
+@Kwota Decimal(15,2),
+@TypWydatku nvarchar(50),
+@Opis VARCHAR ( 1025)
+
+AS 
+SET NOCOUNT ON
+
+DECLARE
+
+@WPRRodzajWydatku INT,
+@WPRTypWydatku INT,
+@WPROpeNumer INT,
+@WPRSamId INT,
+@WPRSapID INT
+
+SET @WPRTypWydatku = isnull((select SLW_ID from cdn.Slowniki join cdn.SlownikiStruktura on SLW_SLSId = SLS_Id 
+                     WHERE SLS_Predefiniowany in(153,154,155,156,157)
+                     and SLW_WartoscS = @TypWydatku),0) 
+                      
+SET @WPRRodzajWydatku = isnull((select SLS_Id from cdn.Slowniki join cdn.SlownikiStruktura on slw_slsid = SLS_Id and SLW_WartoscS = @TypWydatku and SLW_Kategoria = SLS_Nazwa where SLS_Predefiniowany in(153,154,155,156,157)),0)                       
+      
+BEGIN TRY 
+ 
+if not exists(select * from cdn.WydatkiPracownikow where WPR_Id = @WydatekID) 
+    BEGIN 
+        RAISERROR('Nie istnieje rekord w tabeli CDN.WydatkiPracownikow. Dane nie zostaną zapisane.',16,1)
+        Return
+    END
+    
+IF @Kwota &lt;= 0 
+   BEGIN
+       RAISERROR('Nie można dodać wydatku na delegacji z kwotą równą lub mniejszą od 0. Dane nie zostaną zapisane.',16,1)
+       Return
+   END
+/*IF exists(select Kon_Wartosc from cdn.Konfig where kon_numer = 20129)
+    BEGIN       
+       SET @SaPOpeNumer = (select Ope_GIDNumer from cdn.OpeKarty where Ope_Ident = (select Kon_Wartosc from cdn.Konfig where kon_numer = 20129))     
+    END
+ELSE
+    BEGIN
+        RAISERROR('W Konfiguracji brak wybranego operatora. Dane nie zostaną zapisane.',16,1)
+        Return
+    END*/
+    
+    
+UPDATE CDN.WydatkiPracownikow
+SET WPR_RodzajWydatku = @WPRRodzajWydatku
+           ,WPR_TypWydatku = @WPRTypWydatku 
+           ,WPR_Wartosc = @Kwota
+           ,WPR_Opis = @Opis                                 
+WHERE WPR_Id = @WydatekID           
+     
+SET @WPRSapID = isnull((select wpr_sapid from cdn.WydatkiPracownikow where wpr_id = @WydatekID),0)
+if @WPRSapID &gt; 0
+    BEGIN
+		UPDATE CDN.SamPrzejazdy 
+		SET SaP_Kwota = @Kwota
+		WHERE SaP_Id = @WPRSapID
+	END
+
+END TRY
+BEGIN CATCH
+
+  DECLARE
+    @ErrorMessage     NVARCHAR(4000),
+    @ErrorSeverity    INT,
+    @ErrorState       INT
+
+  SELECT 
+    @ErrorMessage=ERROR_MESSAGE(),
+    @ErrorSeverity=ERROR_SEVERITY(),
+    @ErrorState=ERROR_STATE();
+
+  RAISERROR(@ErrorMessage,@ErrorSeverity,@ErrorState);
+
+END CATCH
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

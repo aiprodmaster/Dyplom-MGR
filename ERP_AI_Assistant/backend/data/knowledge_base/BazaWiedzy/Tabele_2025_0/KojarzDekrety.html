@@ -1,0 +1,904 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie procedury KojarzDekrety"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie procedury KojarzDekrety */</I><BR>
+if exists (select name from sysobjects where name = 'KojarzDekrety' and type = 'P')
+  drop procedure CDN.KojarzDekrety;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury KojarzDekrety"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury KojarzDekrety */</I><BR>
+CREATE PROCEDURE CDN.KojarzDekrety
+@GIDTyp1 smallint,
+@GIDNumer1 int,
+@GIDLp1 smallint,
+@GIDTyp2 smallint,
+@GIDNumer2 int,
+@GIDLp2 smallint,
+@R2_ParID int
+
+-------------------------
+AS
+
+-- deklaracje
+
+DECLARE @Nierozliczone TABLE(
+Numer    SMALLINT,
+GIDNumer INT,
+GIDLp    SMALLINT,
+DC       SMALLINT,
+KwotaSys DECIMAL(15,2),
+KwotaWal DECIMAL(15,2),
+Konto    VARCHAR(50),
+KontoNumer INT,
+KontoTypPozabil TINYINT,
+KontoWal VARCHAR(50),
+KontoWalNumer INT,
+Waluta   VARCHAR(3),
+Znak     SMALLINT,
+Data     INT,
+Dokument VARCHAR(40),
+Rozliczony smallint, 
+Nierozliczony smallint,
+MaRozliczenie smallint,
+DT_WycenaParID int,
+KontoRej tinyint
+  );
+
+
+DECLARE @WalutaSys VARCHAR(3)
+
+
+DECLARE @Cnt1 SMALLINT;
+DECLARE @Cnt2 SMALLINT;
+DECLARE @Cnt3 SMALLINT;
+
+
+declare @Dekret1Numer int
+declare @Dekret1Lp smallint
+declare @Dekret1DC smallint
+declare @Dekret2Numer int
+declare @Dekret2Lp smallint
+declare @Dekret2DC smallint
+
+declare @szMsg1 varchar(30)
+declare @szMsg2 varchar(30)
+declare @ZnakTR1 smallint
+declare @ZnakTR2 smallint
+declare @Dokument1 varchar(50)
+declare @Dokument2 varchar(50)
+
+
+declare @Rozliczony1 smallint
+declare @Rozliczony2 smallint
+
+declare @KAZWycenaKolejnosc1 tinyint
+declare @KAZWycenaKolejnosc2 tinyint
+
+declare @KAZKursWgWyceny1 tinyint
+declare @KAZKursWgWyceny2 tinyint
+
+declare @R2_Wycena tinyint
+declare @R2_WycenaParID int
+declare @R2_ID1 int
+declare @R2_ID2 int
+
+
+declare @Err int
+declare @RCount int
+
+-- początek transakcji
+SET NOCOUNT ON
+
+
+
+
+IF @GIDTyp1 = 784
+begin
+	SELECT 		
+		@ZnakTR1 = KAZ_Znak, 		
+		@KAZWycenaKolejnosc1 = KAZ_WycenaKolejnosc,
+		@KAZKursWgWyceny1 = KAZ_KursWgWyceny
+	FROM CDN.Zapisy with (updlock) WHERE KAZ_GIDNumer = @GIDNumer1
+
+	IF @@ERROR &lt;&gt; 0
+	BEGIN	  
+	  RAISERROR('Błąd odczytu dokumentu źródłowego', 16, 1) 
+	  RETURN 104
+	END
+end
+
+IF @GIDTyp2 = 784
+begin
+	SELECT 		
+		@ZnakTR2 = KAZ_Znak, 		
+		@KAZWycenaKolejnosc2 = KAZ_WycenaKolejnosc,
+		@KAZKursWgWyceny2 = KAZ_KursWgWyceny
+	FROM CDN.Zapisy with (updlock) WHERE KAZ_GIDNumer = @GIDNumer2
+
+	IF @@ERROR &lt;&gt; 0
+	BEGIN	  
+	  RAISERROR('Błąd odczytu dokumentu źródłowego', 16, 1) 
+	  RETURN 104
+	END
+end
+
+set @Dokument1 = cdn.NazwaObiektu (@GIDTyp1, @GIDNumer1, 0, 2)
+set @Dokument2 = cdn.NazwaObiektu (@GIDTyp2, @GIDNumer2, 0, 2)
+
+
+
+
+
+
+SELECT @WalutaSys = KON_Wartosc FROM CDN.Konfig with(nolock) WHERE KON_Numer = 211
+
+	
+
+INSERT INTO @Nierozliczone( Numer, GIDNumer, GIDLp, DC, KwotaSys, KwotaWal, Konto, KontoNumer, KontoTypPozabil, KontoWal, KontoWalNumer, Waluta, Znak, Data, Dokument, Rozliczony, Nierozliczony, DT_WycenaParID ) 
+SELECT 1, DT_GIDNumer, DT_GIDLp, DT_DC,
+MAX( CASE WHEN DT_Waluta = @WalutaSys THEN ABS(DT_Pozostaje) ELSE 0 END), 
+MAX( CASE WHEN DT_Waluta &lt;&gt; @WalutaSys THEN ABS(DT_Pozostaje) ELSE 0 END),
+MAX( CASE WHEN DT_Waluta = @WalutaSys THEN KKS_Konto ELSE '' END), 
+MAX( CASE WHEN DT_Waluta = @WalutaSys THEN KKS_GIDNumer ELSE '' END), 
+MAX( CASE WHEN DT_Waluta = @WalutaSys AND KKS_TypKonta=6 THEN 1 ELSE 0 END),
+MAX( CASE WHEN DT_Waluta &lt;&gt; @WalutaSys THEN KKS_Konto ELSE '' END), 
+MAX( CASE WHEN DT_Waluta &lt;&gt; @WalutaSys THEN KKS_GIDNumer ELSE 0 END), 
+MAX( CASE WHEN DT_Waluta &lt;&gt; @WalutaSys THEN DT_Waluta ELSE '' END ),
+MAX( DT_Znak ), 
+MAX( DT_DataDekr ),
+MAX( DEL_DokumentZrodlowy ),
+MAX( DT_Rozliczony ),
+MAX( DT_NieRozliczony ),
+max( DEL_WycenaParID )
+FROM CDN.Dekrety with(updlock)
+	JOIN CDN.Konta 
+		ON DT_KKSNumer = KKS_GIDNumer
+	JOIN CDN.Zrodla with(nolock) 
+		ON ZRO_DTTyp = 432 AND ZRO_DTNumer = DT_GIDNumer AND ZRO_DTLp = DT_GIDLp
+	JOIN CDN.DziennikElem with(nolock)
+		ON DT_GIDNumer = DEL_GIDNumer AND DT_GIDLp = DEL_GIDLp
+WHERE ZRO_TRNTyp = @GIDTyp1 AND ZRO_TRNNumer = @GIDNumer1 AND ZRO_TRNLp = @GIDLp1 AND (DT_Nierozliczony = 1 OR DT_Rozliczony=1)
+	AND KKS_Rozrachunkowe &lt;&gt; 0
+GROUP BY DT_GIDNumer, DT_GIDLp, DT_DC
+
+
+IF @@ERROR &lt;&gt; 0
+BEGIN	  
+  RAISERROR('Błąd odczytu z tabeli Dekrety', 16, 1) 
+  RETURN 104
+END
+
+
+INSERT INTO @Nierozliczone( Numer, GIDNumer, GIDLp, DC, KwotaSys, KwotaWal, Konto, KontoNumer, KontoTypPozabil, KontoWal, KontoWalNumer, Waluta, Znak, Data, Dokument, Rozliczony, Nierozliczony, DT_WycenaParID ) 
+SELECT 2, DT_GIDNumer, DT_GIDLp, DT_DC,
+MAX( CASE WHEN DT_Waluta = @WalutaSys THEN ABS(DT_Pozostaje) ELSE 0 END), 
+MAX( CASE WHEN DT_Waluta &lt;&gt; @WalutaSys THEN ABS(DT_Pozostaje) ELSE 0 END),
+MAX( CASE WHEN DT_Waluta = @WalutaSys THEN KKS_Konto ELSE '' END), 
+MAX( CASE WHEN DT_Waluta = @WalutaSys THEN KKS_GIDNumer ELSE '' END), 
+MAX( CASE WHEN DT_Waluta = @WalutaSys AND KKS_TypKonta=6 THEN 1 ELSE 0 END),
+MAX( CASE WHEN DT_Waluta &lt;&gt; @WalutaSys THEN KKS_Konto ELSE '' END), 
+MAX( CASE WHEN DT_Waluta &lt;&gt; @WalutaSys THEN KKS_GIDNumer ELSE 0 END), 
+MAX( CASE WHEN DT_Waluta &lt;&gt; @WalutaSys THEN DT_Waluta ELSE '' END),
+MAX( DT_Znak ), 
+MAX( DT_DataDekr ),
+MAX( DEL_DokumentZrodlowy ),
+MAX( DT_Rozliczony ),
+MAX( DT_NieRozliczony ),
+max( DEL_WycenaParID )
+FROM CDN.Dekrety with(updlock)
+	JOIN CDN.Konta 
+		ON DT_KKSNumer = KKS_GIDNumer
+	JOIN CDN.Zrodla with(nolock)
+		ON ZRO_DTTyp = 432 AND ZRO_DTNumer = DT_GIDNumer AND ZRO_DTLp = DT_GIDLp
+	JOIN CDN.DziennikElem with(nolock) 
+		ON DT_GIDNumer = DEL_GIDNumer AND DT_GIDLp = DEL_GIDLp
+WHERE ZRO_TRNTyp = @GIDTyp2 AND ZRO_TRNNumer = @GIDNumer2 AND ZRO_TRNLp = @GIDLp2 AND (DT_Nierozliczony = 1 OR DT_Rozliczony=1)
+	AND KKS_Rozrachunkowe &lt;&gt; 0
+GROUP BY DT_GIDNumer, DT_GIDLp, DT_DC
+
+
+IF @@ERROR &lt;&gt; 0
+BEGIN	  
+  RAISERROR('Błąd odczytu z tabeli Dekrety', 16, 1) 
+  RETURN 104
+END
+
+
+
+	
+UPDATE @Nierozliczone SET Waluta = @WalutaSys WHERE Waluta = '';
+
+
+SELECT @Cnt1 = COUNT(Znak) FROM @Nierozliczone WHERE Numer = 1;
+if @Cnt1 = 0
+begin
+	RAISERROR('Dokument %s nie jest zaksięgowany na konto rozrachunkowe', 16, 1, @Dokument1) 
+	RETURN 301
+end
+
+	
+SELECT @Cnt2 = COUNT(Znak) FROM @Nierozliczone WHERE Numer = 2;
+if @Cnt2 = 0
+begin
+	RAISERROR('Dokument %s nie jest zaksięgowany na konto rozrachunkowe', 16, 1, @Dokument2) 
+	RETURN 301
+end
+
+
+if @GIDTyp1 = 784 or @GIDTyp2 = 784
+begin
+--zaznacz konta rejestru
+
+	update @Nierozliczone set
+		KontoRej = 
+		case when (len(rtrim(KontoWal)) &gt; 0 
+				and exists(select KAR_KontoKasy
+							from cdn.Rejestry
+							where KontoWal = KAR_KontoKasy))
+					or exists(select KAR_KontoKasy
+							from cdn.Rejestry
+							where Konto = KAR_KontoKasy) 
+		then 1 else 0 end			
+
+	if @@Error &lt;&gt; 0
+	begin			
+		RAISERROR('Błąd odczytu z tabeli cdn.Rejestry', 16, 1) 
+		RETURN 100		
+	end
+
+
+	select 
+		@R2_ID1 = max(case when R2_Dok1Typ = @GIDTyp1 and R2_Dok1Numer = @GIDNumer1 and R2_Dok1Lp = @GIDLp1 or
+							R2_Dok2Typ = @GIDTyp1 and R2_Dok2Numer = @GIDNumer1 and R2_Dok2Lp = @GIDLp1 then R2_ID else 0 end),
+
+		@R2_ID2 = max(case when R2_Dok1Typ = @GIDTyp2 and R2_Dok1Numer = @GIDNumer2 and R2_Dok1Lp = @GIDLp2 or
+							R2_Dok2Typ = @GIDTyp2 and R2_Dok2Numer = @GIDNumer2 and R2_Dok2Lp = @GIDLp2 then R2_ID else 0 end),
+
+		@R2_Wycena = max(R2_Wycena),
+		@R2_WycenaParID = max(R2_WycenaParID)
+
+	from cdn.Rozliczenia
+	where R2_ParID = @R2_ParID and R2_Dok1Typ &lt;&gt; 435 and R2_Dok2Typ &lt;&gt; 435
+	
+
+	select @Err = @@Error, @RCount = @@ROWCOUNT
+
+	if @Err &lt;&gt; 0
+	begin			
+		RAISERROR('Błąd odczytu z tabeli Rozliczenia', 16, 1) 
+		RETURN 100		
+	end
+
+	if @RCount = 0
+	begin			
+		RAISERROR('Nie znaleziono rekordu w tabeli rozliczenia o podanym id %d', 16, 1, @R2_ParID) 
+		RETURN 100		
+	end	
+end
+else
+begin
+	set @R2_Wycena = 0
+	set @R2_WycenaParID = 0
+end
+
+set @Cnt1 = isnull((SELECT COUNT(Znak) FROM @Nierozliczone WHERE Numer = 1),0)
+set @Cnt2 = isnull((SELECT COUNT(Znak) FROM @Nierozliczone WHERE Numer = 2),0)
+
+
+if @Cnt1 = 0 
+begin
+	RAISERROR('Na dekrecie dokumentu %s brak kont rozrachunkowych', 16, 1, @Dokument1) 
+	RETURN 100
+end
+if @Cnt2 = 0 
+begin
+	RAISERROR('Na dekrecie dokumentu %s brak kont rozrachunkowych', 16, 1, @Dokument2) 
+	RETURN 100
+end
+
+
+
+if @GIDTyp1 = 784
+begin
+	if @R2_Wycena = 0
+	begin --normalne rozliczenie
+		if exists(select PDT_GIDNumer from cdn.Predekrety 
+				where PDT_GIDTyp = 784 and PDT_GIDNumer = @GIDNumer1 
+				and isnull(PDT_ZroTyp,0) = 433 and isnull(PDT_ZroNumer,0) &lt;&gt; 0)
+		begin --zaksiegowany schematem			
+			if exists(select PDT_GIDNumer from cdn.Predekrety 
+					where PDT_GIDTyp = 784 and PDT_GIDNumer = @GIDNumer1 
+					and isnull(PDT_ZroTyp,0) = 433 and isnull(PDT_ZroNumer,0) = @R2_ID1)
+			begin --w oparciu o to rozliczenie ksiegowano 
+				--usun w oparciu o pozostale rozliczenia i kase
+				DELETE FROM a
+				FROM @Nierozliczone a 
+				WHERE a.Numer = 1 AND 
+					not exists (select PDT_GIDNumer from cdn.Predekrety 
+						where PDT_GIDTyp = 784 and PDT_GIDNumer = @GIDNumer1 
+						and isnull(PDT_ZroTyp,0) = 433 and isnull(PDT_ZroNumer,0) = @R2_ID1
+						and isnull(PDT_DelNumer,0) = a.GIDNumer and isnull(PDT_DelLp,0) = a.GIDLp )
+
+			end
+			else
+			begin 
+				if @ZnakTR1 = 1 and @KAZWycenaKolejnosc1 &lt;&gt; 0 and @KAZKursWgWyceny1 &lt;&gt; 0
+				begin --ma rozne kursy
+
+					--usun w oparciu o rozliczenia i w oparciu o kase DT_WycenaParID &lt;&gt; @R2_ParID
+					DELETE FROM a
+					FROM @Nierozliczone a 
+					WHERE a.Numer = 1 AND a.DT_WycenaParID &lt;&gt; @R2_WycenaParID
+
+					set @Cnt1 = isnull((SELECT COUNT(Znak) FROM @Nierozliczone WHERE Numer = 1),0)
+					if @Cnt1 = 0 
+					begin
+						RAISERROR('Zapis %s był błędnie zaksięgowany. Brak dekretu powstałego w oparciu o Kasę na konto podmiotu o odpowiednim kursie', 16, 1, @Dokument1) 
+						RETURN 100
+					end								
+				end
+				else
+				begin --skasuj wszystkie dekrety ksiegowane w oparciu o rozliczenia
+					DELETE FROM a
+					FROM @Nierozliczone a 
+					WHERE a.Numer = 1 AND 
+						exists (select PDT_GIDNumer from cdn.Predekrety 
+							where PDT_GIDTyp = 784 and PDT_GIDNumer = @GIDNumer1 
+							and isnull(PDT_ZroTyp,0) = 433 and isnull(PDT_ZroNumer,0) &lt;&gt; 0
+							and isnull(PDT_DelNumer,0) = a.GIDNumer and isnull(PDT_DelLp,0) = a.GIDLp )
+
+
+					set @Cnt1 = isnull((SELECT COUNT(Znak) FROM @Nierozliczone WHERE Numer = 1),0)
+					if @Cnt1 = 0 
+					begin
+						RAISERROR('Zapis %s był błędnie zaksięgowany. Brak dekretu powstałego w oparciu o Kasę', 16, 1, @Dokument1) 
+						RETURN 100
+					end						
+				end			
+
+
+				DELETE FROM a
+				FROM @Nierozliczone a 
+				WHERE a.Numer = 1 AND a.KontoRej = 1
+				
+				set @Cnt1 = isnull((SELECT COUNT(Znak) FROM @Nierozliczone WHERE Numer = 1),0)
+				if @Cnt1 = 0 
+				begin
+					RAISERROR('Zapis %s był błędnie zaksięgowany. Brak dekretu powstałego w oparciu o Kasę na konto podmiotu', 16, 1, @Dokument1) 
+					RETURN 100
+				end
+			end			
+		end
+		else
+		begin --ksiegowany normalnie
+			if @ZnakTR1 = 1 and @KAZWycenaKolejnosc1 &lt;&gt; 0 and @KAZKursWgWyceny1 &lt;&gt; 0
+			begin --ma rozne kursy
+
+				--usun dekrety DT_WycenaParID &lt;&gt; @R2_ParID
+				DELETE FROM a
+				FROM @Nierozliczone a 
+				WHERE a.Numer = 1 AND a.DT_WycenaParID &lt;&gt; @R2_WycenaParID
+
+				set @Cnt1 = isnull((SELECT COUNT(Znak) FROM @Nierozliczone WHERE Numer = 1),0)
+				if @Cnt1 = 0 
+				begin
+					RAISERROR('Zapis %s był błędnie zaksięgowany. Brak dekretu na konto podmiotu o odpowiednim kursie', 16, 1, @Dokument1) 
+					RETURN 100
+				end			
+			end
+
+
+			DELETE FROM a
+			FROM @Nierozliczone a 
+			WHERE a.Numer = 1 AND a.KontoRej = 1
+			
+			set @Cnt1 = isnull((SELECT COUNT(Znak) FROM @Nierozliczone WHERE Numer = 1),0)
+			if @Cnt1 = 0 
+			begin
+				RAISERROR('Zapis %s był błędnie zaksięgowany. Brak dekretu na konto podmiotu ', 16, 1, @Dokument1) 
+				RETURN 100
+			end			
+		end
+	end
+	else --wycena
+	begin
+			if @ZnakTR1 = 1 and @KAZWycenaKolejnosc1 &lt;&gt; 0 and @KAZKursWgWyceny1 &lt;&gt; 0
+			begin --ma rozne kursy
+
+				--usun dekrety DT_WycenaParID &lt;&gt; @R2_ParID
+				DELETE FROM a
+				FROM @Nierozliczone a 
+				WHERE a.Numer = 1 AND a.DT_WycenaParID &lt;&gt; @R2_ParID
+
+				set @Cnt1 = isnull((SELECT COUNT(Znak) FROM @Nierozliczone WHERE Numer = 1),0)
+				if @Cnt1 = 0 
+				begin
+					RAISERROR('Zapis %s był błędnie zaksięgowany. Brak dekretu na konto rejestru o odpowiednim kursie', 16, 1, @Dokument1) 
+					RETURN 100
+				end			
+			end
+			else -- z kursem ustalonym lub KP
+			begin
+				if exists(select PDT_GIDNumer from cdn.Predekrety 
+						where PDT_GIDTyp = 784 and PDT_GIDNumer = @GIDNumer1 
+						and isnull(PDT_ZroTyp,0) = 433 and isnull(PDT_ZroNumer,0) &lt;&gt; 0)
+				begin --skasuj oparte o rozliczenia
+					DELETE FROM a
+					FROM @Nierozliczone a 
+					WHERE a.Numer = 1 AND 
+						exists (select PDT_GIDNumer from cdn.Predekrety 
+							where PDT_GIDTyp = 784 and PDT_GIDNumer = @GIDNumer1 
+							and isnull(PDT_ZroTyp,0) = 433 and isnull(PDT_ZroNumer,0) &lt;&gt; 0
+							and isnull(PDT_DelNumer,0) = a.GIDNumer and isnull(PDT_DelLp,0) = a.GIDLp )
+
+
+					set @Cnt1 = isnull((SELECT COUNT(Znak) FROM @Nierozliczone WHERE Numer = 1),0)
+					if @Cnt1 = 0 
+					begin
+						RAISERROR('Zapis %s był błędnie zaksięgowany. Brak dekretu powstałego w oparciu o Kasę', 16, 1, @Dokument1) 
+						RETURN 100
+					end						
+				end
+			end
+
+
+			DELETE FROM a
+			FROM @Nierozliczone a 
+			WHERE a.Numer = 1 AND a.KontoRej = 0
+			
+			set @Cnt1 = isnull((SELECT COUNT(Znak) FROM @Nierozliczone WHERE Numer = 1),0)
+			if @Cnt1 = 0 
+			begin
+				RAISERROR('Zapis %s był błędnie zaksięgowany. Brak dekretu na konto rejestru o odpowiednim kursie', 16, 1, @Dokument1) 
+				RETURN 100
+			end
+	end
+end
+
+
+
+
+if @GIDTyp2 = 784
+begin
+	if @R2_Wycena = 0
+	begin --normalne rozliczenie
+		if exists(select PDT_GIDNumer from cdn.Predekrety 
+				where PDT_GIDTyp = 784 and PDT_GIDNumer = @GIDNumer2 
+				and isnull(PDT_ZroTyp,0) = 433 and isnull(PDT_ZroNumer,0) &lt;&gt; 0)
+		begin --zaksiegowany schematem		
+			if exists(select PDT_GIDNumer from cdn.Predekrety 
+					where PDT_GIDTyp = 784 and PDT_GIDNumer = @GIDNumer2 
+					and isnull(PDT_ZroTyp,0) = 433 and isnull(PDT_ZroNumer,0) = @R2_ID2)
+			begin --w oparciu o to rozliczenie ksiegowano 
+				--usun w oparciu o pozostale rozliczenia i kase
+				DELETE FROM a
+				FROM @Nierozliczone a 
+				WHERE a.Numer = 2 AND 
+					not exists (select PDT_GIDNumer from cdn.Predekrety 
+						where PDT_GIDTyp = 784 and PDT_GIDNumer = @GIDNumer2 
+						and isnull(PDT_ZroTyp,0) = 433 and isnull(PDT_ZroNumer,0) = @R2_ID2
+						and isnull(PDT_DelNumer,0) = a.GIDNumer and isnull(PDT_DelLp,0) = a.GIDLp )
+
+			end
+			else
+			begin 
+				if @ZnakTR2 = 1 and @KAZWycenaKolejnosc2 &lt;&gt; 0 and @KAZKursWgWyceny2 &lt;&gt; 0
+				begin --ma rozne kursy
+
+					--usun w oparciu o rozliczenia i w oparciu o kase DT_WycenaParID &lt;&gt; @R2_ParID
+					DELETE FROM a
+					FROM @Nierozliczone a 
+					WHERE a.Numer = 2 AND a.DT_WycenaParID &lt;&gt; @R2_WycenaParID
+
+					set @Cnt2 = isnull((SELECT COUNT(Znak) FROM @Nierozliczone WHERE Numer = 2),0)
+					if @Cnt2 = 0 
+					begin
+						RAISERROR('Zapis %s był błędnie zaksięgowany. Brak dekretu powstałego w oparciu o Kasę na konto podmiotu o odpowiednim kursie', 16, 1, @Dokument2) 
+						RETURN 100
+					end			
+				end
+				else
+				begin --skasuj wszystkie dekrety ksiegowane w oparciu o rozliczenia
+					DELETE FROM a
+					FROM @Nierozliczone a 
+					WHERE a.Numer = 2 AND 
+						exists (select PDT_GIDNumer from cdn.Predekrety 
+							where PDT_GIDTyp = 784 and PDT_GIDNumer = @GIDNumer2 
+							and isnull(PDT_ZroTyp,0) = 433 and isnull(PDT_ZroNumer,0) &lt;&gt; 0
+							and isnull(PDT_DelNumer,0) = a.GIDNumer and isnull(PDT_DelLp,0) = a.GIDLp )
+
+
+					set @Cnt2 = isnull((SELECT COUNT(Znak) FROM @Nierozliczone WHERE Numer = 2),0)
+					if @Cnt2 = 0 
+					begin
+						RAISERROR('Zapis %s był błędnie zaksięgowany. Brak dekretu powstałego w oparciu o Kasę', 16, 1, @Dokument2) 
+						RETURN 100
+					end						
+				end			
+
+				DELETE FROM a
+				FROM @Nierozliczone a 
+				WHERE a.Numer = 2 AND a.KontoRej = 1
+				
+				set @Cnt2 = isnull((SELECT COUNT(Znak) FROM @Nierozliczone WHERE Numer = 2),0)
+				if @Cnt2 = 0 
+				begin
+					RAISERROR('Zapis %s był błędnie zaksięgowany. Brak dekretu powstałego w oparciu o Kasę na konto podmiotu', 16, 1, @Dokument2) 
+					RETURN 100
+				end
+			end			
+		end
+		else
+		begin --ksiegowany normalnie
+			if @ZnakTR2 = 1 and @KAZWycenaKolejnosc2 &lt;&gt; 0 and @KAZKursWgWyceny2 &lt;&gt; 0
+			begin --ma rozne kursy
+
+				--usun dekrety DT_WycenaParID &lt;&gt; @R2_ParID
+				DELETE FROM a
+				FROM @Nierozliczone a 
+				WHERE a.Numer = 2 AND a.DT_WycenaParID &lt;&gt; @R2_WycenaParID
+
+				set @Cnt2 = isnull((SELECT COUNT(Znak) FROM @Nierozliczone WHERE Numer = 2),0)
+				if @Cnt2 = 0 
+				begin
+					RAISERROR('Zapis %s był błędnie zaksięgowany. Brak dekretu na konto podmiotu o odpowiednim kursie', 16, 1, @Dokument2) 
+					RETURN 100
+				end			
+			end
+
+			DELETE FROM a
+			FROM @Nierozliczone a 
+			WHERE a.Numer = 2 AND a.KontoRej = 1
+			
+			set @Cnt2 = isnull((SELECT COUNT(Znak) FROM @Nierozliczone WHERE Numer = 2),0)
+			if @Cnt2 = 0 
+			begin
+				RAISERROR('Zapis %s był błędnie zaksięgowany. Brak dekretu na konto podmiotu', 16, 1, @Dokument2) 
+				RETURN 100
+			end			
+		end
+	end
+	else --wycena
+	begin
+			if @ZnakTR2 = 1 and @KAZWycenaKolejnosc2 &lt;&gt; 0 and @KAZKursWgWyceny2 &lt;&gt; 0
+			begin --ma rozne kursy
+
+				--usun dekrety DT_WycenaParID &lt;&gt; @R2_ParID
+				DELETE FROM a
+				FROM @Nierozliczone a 
+				WHERE a.Numer = 2 AND a.DT_WycenaParID &lt;&gt; @R2_ParID
+
+				set @Cnt2 = isnull((SELECT COUNT(Znak) FROM @Nierozliczone WHERE Numer = 2),0)
+				if @Cnt2 = 0 
+				begin
+					RAISERROR('Zapis %s był błędnie zaksięgowany. Brak dekretu na konto rejestru o odpowiednim kursie', 16, 1, @Dokument2) 
+					RETURN 100
+				end			
+			end
+			else -- z kursem ustalonym lub KP
+			begin
+				if exists(select PDT_GIDNumer from cdn.Predekrety 
+						where PDT_GIDTyp = 784 and PDT_GIDNumer = @GIDNumer2 
+						and isnull(PDT_ZroTyp,0) = 433 and isnull(PDT_ZroNumer,0) &lt;&gt; 0)
+				begin
+					DELETE FROM a
+					FROM @Nierozliczone a 
+					WHERE a.Numer = 2 AND 
+						exists (select PDT_GIDNumer from cdn.Predekrety 
+							where PDT_GIDTyp = 784 and PDT_GIDNumer = @GIDNumer2 
+							and isnull(PDT_ZroTyp,0) = 433 and isnull(PDT_ZroNumer,0) &lt;&gt; 0
+							and isnull(PDT_DelNumer,0) = a.GIDNumer and isnull(PDT_DelLp,0) = a.GIDLp )
+
+
+					set @Cnt2 = isnull((SELECT COUNT(Znak) FROM @Nierozliczone WHERE Numer = 2),0)
+					if @Cnt2 = 0 
+					begin
+						RAISERROR('Zapis %s był błędnie zaksięgowany. Brak dekretu powstałego w oparciu o Kasę', 16, 1, @Dokument2) 
+						RETURN 100
+					end						
+				end
+			end
+
+
+			DELETE FROM a
+			FROM @Nierozliczone a 
+			WHERE a.Numer = 2 AND a.KontoRej = 0
+			
+			set @Cnt2 = isnull((SELECT COUNT(Znak) FROM @Nierozliczone WHERE Numer = 2),0)
+			if @Cnt2 = 0 
+			begin
+				RAISERROR('Zapis %s był błędnie zaksięgowany. Brak dekretu na konto rejestru o odpowiednim kursie', 16, 1, @Dokument2) 
+				RETURN 100
+			end
+	end
+end
+
+
+
+
+set @Cnt1 = isnull((SELECT COUNT(Znak) FROM @Nierozliczone WHERE Numer = 1),0)
+set @Cnt2 = isnull((SELECT COUNT(Znak) FROM @Nierozliczone WHERE Numer = 2),0)
+
+
+if @Cnt1 &gt; 0
+begin
+
+	select @Cnt1 = max(Numer)
+	from @Nierozliczone 
+	where Rozliczony &lt;&gt; 0 and Numer = 1
+	
+
+
+	IF isnull(@Cnt1,0) &lt;&gt; 0 --sa jakies rozrachowane na konta zwykle rozrachunkowe
+	begin
+		update @Nierozliczone set
+			MaRozliczenie = 
+			case when exists(select b.R2_ID from 
+				(select R2_ParID from cdn.Rozliczenia where R2_Dekret1Numer = GIDNumer and R2_Dekret1Lp = GIDLp and R2_Dekret1DC = DC and R2_Wycena = @R2_Wycena
+				union all
+				select R2_ParID from cdn.Rozliczenia where R2_Dekret2Numer = GIDNumer and R2_Dekret2Lp = GIDLp and R2_Dekret2DC = DC and R2_Wycena = @R2_Wycena) a
+				join cdn.Rozliczenia b on a.R2_ParID = b.R2_ParID and b.R2_Dok1Typ &lt;&gt; 0 and b.R2_Dok2Typ &lt;&gt; 0)
+			then 1 else 0 end			
+		where Numer = 1 and Rozliczony &lt;&gt; 0
+
+		set @Cnt1 = 0
+
+		SELECT @Cnt1 = count(Numer)
+		FROM @Nierozliczone 
+		WHERE Numer = 1 and Rozliczony &lt;&gt; 0 and isnull(MaRozliczenie,0) &lt;&gt; 0
+
+
+		if isnull(@Cnt1,0) &gt; 1 --dla ktorejs z platnosci rozrachowano wiecej niz jeden dekret
+		BEGIN
+			set @szMsg1 = (select max(rtrim(Dokument)) from @Nierozliczone where Numer = 1)
+			RAISERROR('Niemożliwe ustalenie kont rozrachunkowych. Na dekrecie płatności dokumentu (%s) dokonano już rozrachunku na więcej niż jednym koncie', 16, 1, @szMsg1) 
+			RETURN 301
+		END
+		ELSE
+		BEGIN
+
+			if @Rozliczony1 = 2 or @Rozliczony2 = 2
+			begin -- ma byc bez rozliczenia
+
+				DELETE FROM @Nierozliczone 
+				WHERE Numer = 1 and Rozliczony &lt;&gt; 0 and isnull(MaRozliczenie,0) &lt;&gt; 0
+
+
+			end
+			else
+			begin --ma byc z rozliczeniem
+
+				if isnull(@Cnt1,0) = 1
+				begin --jest jeden rozrachunek z rozliczeniem
+
+					SELECT @Dekret1Numer = GIDNumer , @Dekret1Lp = GIDLp, @Dekret1DC = DC
+					FROM @Nierozliczone 
+					WHERE Numer = 1 and Rozliczony &lt;&gt; 0 and isnull(MaRozliczenie,0) &lt;&gt; 0
+					
+		
+					DELETE FROM @Nierozliczone 
+					WHERE Numer = 1 and not (@Dekret1Numer = GIDNumer and @Dekret1Lp = GIDLp and @Dekret1DC = DC)
+		
+		
+					SELECT @Cnt1 = COUNT(Znak) FROM @Nierozliczone WHERE Numer = 1
+					if @Cnt1 &gt; 1 
+					BEGIN --nie powinno sie zdarzyc
+						RAISERROR('Niemożliwe ustalenie kont rozrachunkowych (3)', 16, 1) 
+						RETURN 301
+					END
+				end
+				else
+				begin -- nie ma wogole rozrachowanych z rozliczeniem
+					DELETE FROM @Nierozliczone 
+					WHERE Numer = 1 and Rozliczony &lt;&gt; 0 and isnull(MaRozliczenie,0) = 0
+
+					SELECT @Cnt1 = COUNT(Znak) FROM @Nierozliczone WHERE Numer = 1
+					if @Cnt1 = 0 
+					BEGIN 
+						RAISERROR('Dla danej płatności dokumentu %s brak dekretów nierozrachowanych lub rozrachowanych wraz z rozliczeniem', 16, 1, @Dokument1) 
+						RETURN 301
+					END
+				end
+			end
+				
+		END
+	end
+end
+
+
+if @Cnt2 &gt; 0
+begin
+
+	select @Cnt2 = max(Numer)
+	from @Nierozliczone 
+	where Rozliczony &lt;&gt; 0 and Numer = 2
+	
+
+
+	IF isnull(@Cnt2,0) &lt;&gt; 0 --sa jakies rozrachowane na konta zwykle rozrachunkowe
+	begin
+		update @Nierozliczone set
+			MaRozliczenie = 
+			case when exists(select b.R2_ID from 
+				(select R2_ParID from cdn.Rozliczenia where R2_Dekret1Numer = GIDNumer and R2_Dekret1Lp = GIDLp and R2_Dekret1DC = DC and R2_Wycena = @R2_Wycena
+				union all
+				select R2_ParID from cdn.Rozliczenia where R2_Dekret2Numer = GIDNumer and R2_Dekret2Lp = GIDLp and R2_Dekret2DC = DC and R2_Wycena = @R2_Wycena) a
+				join cdn.Rozliczenia b on a.R2_ParID = b.R2_ParID and b.R2_Dok1Typ &lt;&gt; 0 and b.R2_Dok2Typ &lt;&gt; 0)
+			then 1 else 0 end			
+		where Numer = 2 and Rozliczony &lt;&gt; 0
+
+		set @Cnt2 = 0
+
+		SELECT @Cnt2 = count(Numer)
+		FROM @Nierozliczone 
+		WHERE Numer = 2 and Rozliczony &lt;&gt; 0 and isnull(MaRozliczenie,0) &lt;&gt; 0
+
+
+		if isnull(@Cnt2,0) &gt; 1 --dla ktorejs z platnosci rozrachowano wiecej niz jeden dekret
+		BEGIN
+			set @szMsg1 = (select max(rtrim(Dokument)) from @Nierozliczone where Numer = 2)
+			RAISERROR('Niemożliwe ustalenie kont rozrachunkowych. Na dekrecie płatności dokumentu (%s) dokonano już rozrachunku na więcej niż jednym koncie', 16, 1, @szMsg1) 
+			RETURN 301
+		END
+		ELSE
+		BEGIN
+
+			if @Rozliczony1 = 2 or @Rozliczony2 = 2
+			begin -- ma byc bez rozliczenia
+
+				DELETE FROM @Nierozliczone 
+				WHERE Numer = 2 and Rozliczony &lt;&gt; 0 and isnull(MaRozliczenie,0) &lt;&gt; 0
+
+
+			end
+			else
+			begin --ma byc z rozliczeniem
+
+				if isnull(@Cnt2,0) = 1
+				begin --jest jeden rozrachunek z rozliczeniem
+
+					SELECT @Dekret2Numer = GIDNumer , @Dekret2Lp = GIDLp, @Dekret2DC = DC
+					FROM @Nierozliczone 
+					WHERE Numer = 2 and Rozliczony &lt;&gt; 0 and isnull(MaRozliczenie,0) &lt;&gt; 0
+					
+		
+					DELETE FROM @Nierozliczone 
+					WHERE Numer = 2 and not (@Dekret2Numer = GIDNumer and @Dekret2Lp = GIDLp and @Dekret2DC = DC)
+		
+		
+					SELECT @Cnt2 = COUNT(Znak) FROM @Nierozliczone WHERE Numer = 2
+					if @Cnt2 &gt; 1 
+					BEGIN --nie powinno sie zdarzyc
+						RAISERROR('Niemożliwe ustalenie kont rozrachunkowych (4)', 16, 1) 
+						RETURN 301
+					END
+				end
+				else
+				begin -- nie ma wogole rozrachowanych z rozliczeniem
+					DELETE FROM @Nierozliczone 
+					WHERE Numer = 2 and Rozliczony &lt;&gt; 0 and isnull(MaRozliczenie,0) = 0
+
+
+					SELECT @Cnt2 = COUNT(Znak) FROM @Nierozliczone WHERE Numer = 2
+					if @Cnt2 = 0 
+					BEGIN 
+						RAISERROR('Dla danej płatności dokumentu %s brak dekretów nierozrachowanych lub rozrachowanych wraz z rozliczeniem', 16, 1, @Dokument2) 
+						RETURN 301
+					END
+				end
+			end
+				
+		END
+	end
+end
+
+
+
+SELECT @Cnt1 = COUNT(Znak) FROM @Nierozliczone WHERE Numer = 1;
+SELECT @Cnt2 = COUNT(Znak) FROM @Nierozliczone WHERE Numer = 2;
+
+
+
+
+IF @Cnt1 = 1 AND @Cnt2 = 2
+	DELETE FROM a FROM @Nierozliczone a WHERE a.Numer = 2 AND EXISTS(SELECT * FROM @Nierozliczone b WHERE b.Numer = 1 AND b.Znak = a.Znak)
+ELSE IF @Cnt1 = 2 AND @Cnt2 = 1
+  	DELETE FROM a FROM @Nierozliczone a WHERE a.Numer = 1 AND EXISTS(SELECT * FROM @Nierozliczone b WHERE b.Numer = 2 AND b.Znak = a.Znak)
+
+
+
+
+
+
+SELECT @Cnt1 = COUNT(Znak) FROM @Nierozliczone WHERE Numer = 1;
+SELECT @Cnt2 = COUNT(Znak) FROM @Nierozliczone WHERE Numer = 2;
+
+
+
+IF @Cnt1 &lt;&gt; 1 OR @Cnt2 &lt;&gt; 1
+BEGIN
+
+	IF @Cnt1 &lt;&gt; 1
+		DELETE FROM a FROM @Nierozliczone a JOIN @Nierozliczone b ON a.Numer=b.Numer AND (a.GIDNumer&lt;&gt;b.GIDNumer OR a.GIDLp&lt;&gt;b.GIDLp OR a.DC&lt;&gt;b.DC)
+		WHERE a.Numer = 1 AND a.KwotaSys = 0 AND b.KwotaSys &lt;&gt; 0;
+
+
+	IF @Cnt2 &lt;&gt; 1
+		DELETE FROM a FROM @Nierozliczone a JOIN @Nierozliczone b ON a.Numer=b.Numer AND (a.GIDNumer&lt;&gt;b.GIDNumer OR a.GIDLp&lt;&gt;b.GIDLp OR a.DC&lt;&gt;b.DC)
+		WHERE a.Numer = 2 AND a.KwotaSys = 0 AND b.KwotaSys &lt;&gt; 0;
+
+
+	SELECT @Cnt1 = COUNT(Znak) FROM @Nierozliczone WHERE Numer = 1;
+	SELECT @Cnt2 = COUNT(Znak) FROM @Nierozliczone WHERE Numer = 2;
+
+
+	IF @Cnt1 &lt;&gt; 1 OR @Cnt2 &lt;&gt; 1
+	BEGIN
+		DELETE FROM a FROM @Nierozliczone a 
+		WHERE a.Numer in (1,2) 
+		and NOT EXISTS(SELECT * 
+					FROM @Nierozliczone b 
+						left join cdn.KontaNastLinki c
+							on b.KontoNumer = c.KLI_NastNumer and a.KontoNumer = c.KLI_PoprzNumer
+						left join cdn.KontaNastLinki d
+							on a.KontoNumer = d.KLI_NastNumer and b.KontoNumer = d.KLI_PoprzNumer
+					WHERE b.Numer in (1,2) and b.Numer = 3-a.Numer AND b.Znak = 3-a.Znak AND not (c.KLI_NastNumer is null and d.KLI_NastNumer is null))
+
+
+
+		SELECT @Cnt1 = COUNT(Znak) FROM @Nierozliczone WHERE Numer = 1;
+		SELECT @Cnt2 = COUNT(Znak) FROM @Nierozliczone WHERE Numer = 2;
+
+
+		IF @Cnt1 &lt;&gt; 1 OR @Cnt2 &lt;&gt; 1
+		BEGIN
+			RAISERROR('Niemożliwe ustalenie kont rozrachunkowych (5)', 16, 1) 
+			RETURN 300
+		END
+	END
+END
+
+IF EXISTS(select 1 from @Nierozliczone a join @Nierozliczone b on a.Numer=3-b.Numer and a.KontoTypPozabil&lt;&gt;b.KontoTypPozabil)
+BEGIN
+	RAISERROR('102:Nie można dokonywać rozrachunku na kontach o różnych typach - bilansowe, pozabilansowe', 16, 1) 
+	RETURN 102
+END
+
+
+select Numer, Konto, KontoNumer, Znak, Data, Waluta
+from @Nierozliczone
+
+
+-- koniec transakcji i powrót
+
+SET NOCOUNT OFF
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury KojarzDekrety"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury KojarzDekrety */</I><BR>
+GRANT EXECUTE ON CDN.KojarzDekrety TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

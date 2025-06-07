@@ -1,0 +1,212 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="ImtObliczEtykietaKod"></A><PRE>
+          <FONT SIZE="2"><I>/* ImtObliczEtykietaKod */</I><BR>
+create procedure CDN.ImtObliczEtykietaKod
+(
+	@FormatEtykiety			tinyint = 1			-- 1 - przepisz z pola Etykieta, 2 - Księga/NrInwentarzowy/Rodzaj, 3 - przepisz z pola Etykieta
+	, @RodzajSrodekTrwaly		tinyint = 1		
+	, @RodzajWartoscNP			tinyint = 1
+	, @RodzajWyposazenie		tinyint = 1
+	, @TylkoPuste				tinyint = 0		-- 1 - aktualizuj tylko na środkach, które mają puste pole EtykietaKod, 0 - wszystkie
+	, @UwzgledniajZlikwidowane	tinyint = 1		-- 0 - aktualizuj tylko na środkach niezlikwidowanych, 1 - wszystkie
+)
+	
+as	
+begin
+	
+	/*declare @FormatEtykiety			tinyint = 1
+	, @RodzajSrodekTrwaly		tinyint = 1
+	, @RodzajWartoscNP			tinyint = 1
+	, @RodzajWyposazenie		tinyint = 1
+	, @TylkoPuste				tinyint = 0
+	, @UwzgledniajZlikwidowane	tinyint = 1	--*/
+
+	declare @tmpEtykiety table
+	(
+		SRTGIDNumer int,
+		Etykieta	varchar(20),
+		Ksiega		varchar(5),
+		NrInw		int,
+		Rodzaj		tinyint,
+		NrEwid		varchar(30),
+		
+		sDefEtykietaKod varchar(20),		-- pierwotnie wyliczone pole EtykietaKod
+		lEtykietaKod	int,				-- kolejny numer dla duplikacji
+		sAktEtykietaKod varchar(20),		-- obcięte pole EtykietaKod
+		sOstEtykietaKod varchar(20)			-- obcięte pole EtykietaKod z doklejonym numerem
+	)
+        
+
+	declare	@SRTGIDNumer	int
+	declare	@Etykieta		varchar(20)
+	declare	@Ksiega			varchar(5)
+	declare	@NrInw			int
+	declare	@Rodzaj			tinyint
+	declare	@NrEwid			varchar(30)
+		
+	declare	@sDefEtykietaKod varchar(20)		-- pierwotnie wyliczone pole EtykietaKod
+	declare	@lEtykietaKod	 int				-- kolejny numer dla duplikacji
+	declare	@sOstEtykietaKod varchar(20)		-- obcięte pole EtykietaKod z doklejonym numerem
+		
+	declare @sAktEtykietaKod varchar(20)
+	declare @lAktEtykietaKod int
+	declare @lAktEtykietaKod2 int
+	declare @tLicznik		tinyint
+
+    DECLARE SrodkiCursor CURSOR
+    FOR
+		select Srt_GIDNumer, Srt_Etykieta, Srt_Ksiega, Srt_NrInw, Srt_Rodzaj, Srt_NrEwid 
+		from CDN.SrtKarty
+		where ( (@RodzajSrodekTrwaly = 1 AND Srt_Rodzaj = 1) or (@RodzajWartoscNP = 1 AND Srt_Rodzaj = 2) or (@RodzajWyposazenie = 1 AND Srt_Rodzaj = 3) ) AND
+				( @TylkoPuste = 0 or (@TylkoPuste = 1 AND Srt_EtykietaKod = '') ) AND
+				( @UwzgledniajZlikwidowane = 1 or (@UwzgledniajZlikwidowane = 0 AND Srt_DataLikw = 0) )
+
+    OPEN SrodkiCursor
+
+    FETCH NEXT FROM SrodkiCursor into @SrtGIDNumer, @Etykieta, @Ksiega, @NrInw, @Rodzaj, @NrEwid
+    WHILE (@@fetch_status &lt;&gt; -1)
+    BEGIN
+        IF (@@fetch_status &lt;&gt; -2)
+        BEGIN
+			
+			if @FormatEtykiety = 1
+				set @sDefEtykietaKod = left(@Etykieta, LEN(@Etykieta))
+			else if @FormatEtykiety = 3
+				set @sDefEtykietaKod = left(@NrEwid, LEN(@NrEwid))
+			else
+				set @sDefEtykietaKod = left(@Ksiega,len(@Ksiega)) + '/' + CONVERT(varchar(20), @NrInw) + '/' + CONVERT(varchar(1), @Rodzaj)			
+						
+			if LEFT(@sDefEtykietaKod, LEN(@sDefEtykietaKod)) &lt;&gt; ''		-- puste wpisy zostawiamy
+			begin
+			
+			
+				-- dostosowanie do wymaganego formatu - początek [zamiana małych liter na duże wycięcie niedozwolonych znaków (znaki dozwolone to: cyfry 0-9, wielkie litery A-Z, znaki: * - $ % . / + oraz spacja)	]				
+				set @sDefEtykietaKod = UPPER(@sDefEtykietaKod)
+				
+				declare @tPozycja tinyint
+				
+				set @tPozycja = 1
+				set @sAktEtykietaKod = ''
+				
+				while @tPozycja &lt; 21
+				begin
+					if SUBSTRING(@sDefEtykietaKod, @tPozycja, 1) BETWEEN 'A' AND 'Z'
+					begin
+						if SUBSTRING(@sDefEtykietaKod, @tPozycja, 1) NOT IN ('Ą', 'Ć', 'Ę', 'Ł', 'Ń', 'Ś', 'Ó', 'Ź', 'Ż')
+							set @sAktEtykietaKod = @sAktEtykietaKod + SUBSTRING(@sDefEtykietaKod, @tPozycja, 1)
+					end				
+					else if  SUBSTRING(@sDefEtykietaKod, @tPozycja, 1) IN ('*', '-', '$', '%', '.', '/', '+', ' ') OR 						
+						SUBSTRING(@sDefEtykietaKod, @tPozycja, 1) BETWEEN '0' AND '9'
+					begin	
+						set @sAktEtykietaKod = @sAktEtykietaKod + SUBSTRING(@sDefEtykietaKod, @tPozycja, 1)
+					end
+						
+					set @tPozycja = @tPozycja + 1						
+				end
+				set @sDefEtykietaKod = left(@sAktEtykietaKod, LEN(@sAktEtykietaKod))
+				-- dostosowanie do wymaganego formatu - koniec
+			
+				-- szukanie duplikatów i autonumeracja - początek
+				select @lAktEtykietaKod = isnull(MAX(lEtykietaKod), 0) + 1 from @tmpEtykiety where sDefEtykietaKod = @sDefEtykietaKod	-- pobierz max numer dla takiej samej etykiety
+				
+				if @lAktEtykietaKod &gt; 1		-- znaleziono tzn. jest duplikacja
+				begin
+				
+					set @tLicznik = 1
+					
+					while @tLicznik &lt; 6		-- szukaj który to duplikat (tzn. ile znaków obciąć)
+					begin
+						if LEN(convert(varchar(20), abs(@lAktEtykietaKod - 1))) &lt;&gt; LEN(convert(varchar(20), abs(@lAktEtykietaKod - 2)))		-- czy doklejany numer zwiększa się o jedną cyfrę, więc trzeba obciąć jeden znak więcej
+						begin
+							set @lAktEtykietaKod2 = 0
+							select @lAktEtykietaKod2 = MAX(lEtykietaKod) + 1 from @tmpEtykiety where sAktEtykietaKod = substring(@sDefEtykietaKod, 1, 19 - LEN(@lAktEtykietaKod - 1))	-- pobierz max numer dla krótszej etykiety
+																
+							if @lAktEtykietaKod2 &gt; 1	-- jeśli znaleziono, szukaj dalej dla nowego zakresu
+							begin		
+								
+								if @lAktEtykietaKod2 &gt; @lAktEtykietaKod
+									set @lAktEtykietaKod = @lAktEtykietaKod2
+								
+							end	
+							else
+							begin
+								set @tLicznik = 100
+							end
+						end
+						else			-- doklejany numer nie zwiększa się w tym kroku, można obciąć tyle samo znaków co w znalezionej ostatnio etykiecie
+						begin
+							
+							select @lAktEtykietaKod2 = isnull(MAX(lEtykietaKod), 0) + 1 from @tmpEtykiety where sAktEtykietaKod = substring(@sDefEtykietaKod, 1, 19 - LEN(@lAktEtykietaKod - 1))	-- pobierz max numer dla takiej samej etykiety 
+						
+							if @lAktEtykietaKod2 &gt; 1	-- jeśli znaleziono, szukaj dalej dla nowego zakresu
+							begin
+								set @sAktEtykietaKod = substring(@sDefEtykietaKod, 1, 19 - LEN(@lAktEtykietaKod - 1))
+								set @lAktEtykietaKod = @lAktEtykietaKod2									
+							end	
+							else
+							begin
+								set @tLicznik = 100
+							end
+							
+						end
+						
+						set @tLicznik = @tLicznik + 1
+					end
+					
+					-- zakończono szukanie można kleić
+					set @sAktEtykietaKod = SUBSTRING( @sDefEtykietaKod, 1, 19 - len(convert(varchar(20), @lAktEtykietaKod - 1) ) )
+					set @sOstEtykietaKod = SUBSTRING( @sDefEtykietaKod, 1, 19 - len(convert(varchar(20), @lAktEtykietaKod - 1) ) ) + '/' + convert(varchar(20), @lAktEtykietaKod - 1)
+					
+				end
+				else
+				begin
+					set @sAktEtykietaKod = @sDefEtykietaKod
+					set @sOstEtykietaKod = @sDefEtykietaKod
+				end				
+				-- szukanie duplikatów i autonumeracja - koniec
+	        
+				insert @tmpEtykiety values(@SrtGIDNumer, @Etykieta, @Ksiega, @NrInw, @Rodzaj, @NrEwid, @sDefEtykietaKod, @lAktEtykietaKod, @sAktEtykietaKod, @sOstEtykietaKod)
+			end
+			
+                
+        END
+        FETCH NEXT FROM SrodkiCursor into @SrtGIDNumer, @Etykieta, @Ksiega, @NrInw, @Rodzaj, @NrEwid
+    END
+
+    CLOSE SrodkiCursor
+    DEALLOCATE SrodkiCursor
+
+	if exists(select 1 from @tmpEtykiety)	-- jeśli są jakiekolwiek etykiety do aktualizacji to aktualizuj
+	begin
+		if @RodzajSrodekTrwaly = 1 and @RodzajWartoscNP = 1 and @RodzajWyposazenie = 1 and @TylkoPuste = 0 and @UwzgledniajZlikwidowane = 1
+			update cdn.SrtKarty set Srt_EtykietaKod = sOstEtykietaKod
+			from cdn.SrtKarty s1
+			inner join @tmpEtykiety e1 on s1.Srt_GIDNumer = e1.SRTGIDNumer
+		else 
+			update cdn.SrtKarty set Srt_EtykietaKod = sOstEtykietaKod
+			from cdn.SrtKarty s1
+			inner join @tmpEtykiety e1 on s1.Srt_GIDNumer = e1.SRTGIDNumer
+			where ( (@RodzajSrodekTrwaly = 1 AND Srt_Rodzaj = 1) or (@RodzajWartoscNP = 1 AND Srt_Rodzaj = 2) or (@RodzajWyposazenie = 1 AND Srt_Rodzaj = 3) ) AND
+				( @TylkoPuste = 0 or (@TylkoPuste = 1 AND Srt_EtykietaKod = '') ) AND
+				( @UwzgledniajZlikwidowane = 1 or (@UwzgledniajZlikwidowane = 0 AND Srt_DataLikw = 0) )
+	end	
+	
+	--*/	select * from @tmpEtykiety
+	
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

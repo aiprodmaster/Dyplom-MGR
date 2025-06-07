@@ -1,0 +1,183 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="SrtLikwidacja"></A><PRE>
+          <FONT SIZE="2"><I>/* SrtLikwidacja */</I><BR>
+CREATE   function CDN.SrtLikwidacja(@DataNaDzienC int = null, @DataDok int = null, @ZestTryb tinyint = 0) 
+returns @tmpLikwidacja TABLE
+(	She_GIDNumer int,
+	She_SrtNumer int,
+	She_Data int,
+	She_DataZap int
+)
+
+AS 
+BEGIN 
+
+	-- @ZestTryb	-	0 - szukaj dokumnetów LT dla środków trwałych (w tym dla kart zestawów)
+	--				-	1 - szukaj dokumnetów LT i ZPA (typu odłączenie) dla elementów zestawów
+	
+  
+    declare @LT int;
+	declare @LTK int;    
+	declare @ZPA int;
+	declare @ZPK int;
+    
+	set  @LT = 2096;
+	set  @LTK = 2224;
+	set  @ZPA = 2050
+	set  @ZPK = 2051 
+	
+	declare @ZestTrybSrodek  tinyint = 0	
+	declare @ZestTrybZestaw  tinyint = 1
+	declare @ZestTrybElement tinyint = 2
+  
+	declare @ZestOdlaczenie		tinyint = 1
+	declare @ZestPrzylaczenie	tinyint = 2
+  
+	if (@ZestTryb &lt;&gt; @ZestTrybElement) set @ZestTryb = @ZestTrybSrodek
+
+
+	if @ZestTryb = @ZestTrybSrodek
+	begin
+		insert @tmpLikwidacja
+		select 
+			oLT.She_GIDNumer,
+			oLT.She_SrtNumer,
+			oLT.She_Data,
+			oLT.She_DataZap
+		from cdn.SrtKarty 
+		inner join 
+		(
+			select E1.* 
+			from cdn.SrtHistElem as E1
+			where   E1.SHE_GIDTyp = @LT 
+				and isnull(E1.SHE_Likwidacja,0) &lt;&gt; 0 
+				and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E1.SHE_Data &lt;= @DataNaDzienC))
+				and (@DataDok is null or not @DataDok is null and E1.SHE_DataZap &lt;= @DataDok)
+				and E1.SHE_Data = 
+				(
+					select max(E3.SHE_Data) from cdn.SrtHistElem as E3
+					where SHE_SrtNumer = E1.She_SrtNumer
+						and E3.SHE_GIDTyp = @LT 
+						and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E3.SHE_Data &lt;= @DataNaDzienC))
+						and (@DataDok is null or not @DataDok is null and E3.SHE_DataZap &lt;= @DataDok)
+						and isnull(E3.SHE_Likwidacja,0) &lt;&gt; 0
+				) 
+				and E1.SHE_SrtLp = 
+				(
+					select max(E4.SHE_SrtLp) from cdn.SrtHistElem as E4
+					where E4.SHE_SrtNumer = E1.She_SrtNumer
+						and E4.SHE_GIDTyp = @LT
+						and (@DataDok is null or not @DataDok is null and E4.SHE_DataZap &lt;= @DataDok)
+						and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E4.SHE_Data &lt;= @DataNaDzienC))
+						and isnull(E4.SHE_Likwidacja,0) &lt;&gt; 0 
+						and E4.SHE_Data = 
+						(
+							select max(E5.SHE_Data) from cdn.SrtHistElem as E5
+							where E5.SHE_SrtNumer = E1.She_SrtNumer
+								and E5.SHE_GIDTyp = @LT
+								and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E5.SHE_Data &lt;= @DataNaDzienC))
+								and (@DataDok is null or not @DataDok is null and E5.SHE_DataZap &lt;= @DataDok)
+								and isnull(E5.SHE_Likwidacja,0) &lt;&gt; 0
+						)
+				) 
+				and 
+				(
+					not exists 
+					(
+						select N1.Shn_GIDTyp 
+						from cdn.SrtHistNag as N1 
+						inner join cdn.SrtHistNag as N2 
+							on N2.SHN_KorTyp = N1.SHN_GIDTyp and N2.SHN_KorNumer = N1.SHN_GIDNumer
+						inner join cdn.SrtHistElem as E2 
+							on E2.She_GIDTyp = N2.Shn_GIDTyp and E2.She_GIDNumer = N2.Shn_GIDNumer                                                                             
+								and E2.She_SrtNumer = E1.She_SrtNumer
+								and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E2.SHE_Data &lt;= @DataNaDzienC))
+								and (@DataDok is null or not @DataDok is null and E2.SHE_DataZap &lt;= @DataDok)	--wystarczy sprawdzic date na elemencie 
+						where E1.She_GIDTyp = N1.Shn_GIDTyp and 
+									E1.She_GIDNumer = N1.Shn_GIDNumer 
+					)
+				)
+		) as oLT on srt_gidnumer = oLT.She_SrtNumer
+	end
+	else
+	begin
+		insert @tmpLikwidacja
+		select 
+			oLT.She_GIDNumer,
+			oLT.She_SrtNumer,
+			oLT.She_Data,
+			oLT.She_DataZap
+		from cdn.SrtZestElem
+		inner join 
+		(
+			select E1.* 
+			from cdn.SrtHistElem as E1
+			where ( E1.SHE_GIDTyp = @LT or (E1.SHE_GIDTyp = @ZPA and E1.SHE_PrzesStrona = @ZestOdlaczenie) )
+				and isnull(E1.SHE_Likwidacja,0) &lt;&gt; 0 
+				and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E1.SHE_Data &lt;= @DataNaDzienC))
+				and (@DataDok is null or not @DataDok is null and E1.SHE_DataZap &lt;= @DataDok)
+				and E1.SHE_Data = 
+				(
+					select max(E3.SHE_Data) from cdn.SrtHistElem as E3
+					where SHE_SZEId = E1.SHE_SZEId
+						and (E3.SHE_GIDTyp = @LT or E3.SHE_GIDTyp = @ZPA and E3.SHE_PrzesStrona = @ZestOdlaczenie)
+						and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E3.SHE_Data &lt;= @DataNaDzienC))
+						and (@DataDok is null or not @DataDok is null and E3.SHE_DataZap &lt;= @DataDok)
+						and isnull(E3.SHE_Likwidacja,0) &lt;&gt; 0
+				) 
+				and E1.SHE_SZELp = 
+				(
+					select max(E4.SHE_SZELp) from cdn.SrtHistElem as E4
+					where E4.SHE_SZEId = E1.SHE_SZEId
+						and (E4.SHE_GIDTyp = @LT or E4.SHE_GIDTyp = @ZPA and E4.SHE_PrzesStrona = @ZestOdlaczenie)
+						and (@DataDok is null or not @DataDok is null and E4.SHE_DataZap &lt;= @DataDok)
+						and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E4.SHE_Data &lt;= @DataNaDzienC))
+						and isnull(E4.SHE_Likwidacja,0) &lt;&gt; 0 
+						and E4.SHE_Data = 
+						(
+							select max(E5.SHE_Data) from cdn.SrtHistElem as E5
+							where E5.SHE_SZEId = E1.SHE_SZEId
+								and (E5.SHE_GIDTyp = @LT or E5.SHE_GIDTyp = @ZPA and E5.SHE_PrzesStrona = @ZestOdlaczenie)
+								and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E5.SHE_Data &lt;= @DataNaDzienC))
+								and (@DataDok is null or not @DataDok is null and E5.SHE_DataZap &lt;= @DataDok)
+								and isnull(E5.SHE_Likwidacja,0) &lt;&gt; 0
+						)
+				) 
+				and 
+				(
+					not exists 
+					(
+						select N1.Shn_GIDTyp 
+						from cdn.SrtHistNag as N1 
+						inner join cdn.SrtHistNag as N2 
+							on N2.SHN_KorTyp = N1.SHN_GIDTyp and N2.SHN_KorNumer = N1.SHN_GIDNumer
+						inner join cdn.SrtHistElem as E2 
+							on E2.She_GIDTyp = N2.Shn_GIDTyp and E2.She_GIDNumer = N2.Shn_GIDNumer                                                                             
+								and E2.SHE_SZEId = E1.SHE_SZEId
+								and (@DataNaDzienC is null or ( not @DataNaDzienC is null and E2.SHE_Data &lt;= @DataNaDzienC))
+								and (@DataDok is null or not @DataDok is null and E2.SHE_DataZap &lt;= @DataDok)	--wystarczy sprawdzic date na elemencie 
+						where E1.She_GIDNumer = N1.Shn_GIDNumer 
+					)
+				)
+		) as oLT on SZE_ID = oLT.SHE_SZEId
+	end
+
+	return
+
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

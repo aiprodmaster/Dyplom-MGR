@@ -1,0 +1,117 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="WydrTabelkaPlatnosciIVat"></A><PRE>
+          <FONT SIZE="2"><I>/* WydrTabelkaPlatnosciIVat */</I><BR>
+CREATE  PROCEDURE CDN.WydrTabelkaPlatnosciIVat @Filtr varchar(255) 
+AS
+declare @pos1     INT;
+declare @pos2     INT;
+declare @GIDTyp   SMALLINT ;
+declare @GIDNumer INT ;
+
+SET NOCOUNT ON
+SET @pos1 = Patindex('%TrN_GIDTyp=%', @Filtr)+11
+SET @pos2 = Patindex('%AND TrN_GIDNumer%', @Filtr)-2
+SELECT @GIDTyp = convert(smallint,substring(@filtr,@pos1,@pos2-@pos1+1))
+
+Set @pos1 = Patindex('%TrN_GIDNumer=%', @Filtr)+13
+Set @pos2 = Patindex('%)%', @Filtr)-1
+if @pos2&lt;0 SET @pos2=len(@Filtr)
+select @GIDNumer = convert(int,substring(@filtr,@pos1,@pos2-@pos1+1))
+
+DECLARE @Vat TABLE
+(  v_ID      int identity(1,1),
+   v_Str     varchar(10),
+   v_Stawka  varchar(10),
+   v_Netto   decimal(15,2),
+   v_Vat     decimal(15,2),
+   v_Brutto  decimal(15,2),
+   PRIMARY KEY(v_ID)
+);
+
+DECLARE @Plat TABLE
+(  p_ID          int identity(1,1),
+   p_FormaNazwa  varchar(50),
+   p_termin      int,
+   p_Kwota       decimal(15,2),
+   p_Waluta      varchar(3),
+   PRIMARY KEY(p_ID)
+);
+
+INSERT INTO @Vat (v_Str, v_stawka,v_netto,v_Vat,v_brutto)
+SELECT 'Razem:','',
+case when Trn_TrnTyp in (1,2) then sum(TrV_NettoP)          when Trn_TrnTyp in (3,4,10,20) then sum(TrV_NettoR) end ,
+case when Trn_TrnTyp in (1,2) then sum(TrV_VatP)            when Trn_TrnTyp in (3,4,10,20) then sum(TrV_VatR)   end ,
+case when Trn_TrnTyp in (1,2) then sum(TrV_NettoP+TrV_VatP) when Trn_TrnTyp in (3,4,10,20) then sum(TrV_NettoR+TrV_VatR) end
+FROM CDN.Tranag
+JOIN CDN.Travat ON TrN_GIDTyp=TrV_GIDTyp and TrN_GIDNumer=TrV_GIDnumer
+WHERE TrN_GIDTyp=@GIDTyp AND TrN_GIDNumer=@GIDNumer GROUP BY Trn_TrnTyp;
+
+INSERT INTO @Vat (v_Str,v_stawka,v_netto,v_vat,v_brutto)
+(SELECT '', 
+case when (trn_exponorm = 6 and trn_rodzajzakupu = 8) or trn_exponorm in (21,23) or (TrN_ExpoNorm = 20 and TrV_FlagaVat=2) then '--' else CDN.StawkaVat(TrV_FlagaVat,TrV_StawkaPod) end As TrV_StawkaVat,
+case when Trn_TrnTyp in (1,2) then sum(TrV_NettoP)          when Trn_TrnTyp in (3,4,10,20) then sum(TrV_NettoR) end ,
+case when Trn_TrnTyp in (1,2) then sum(TrV_VatP)            when Trn_TrnTyp in (3,4,10,20) then sum(TrV_VatR) end ,
+case when Trn_TrnTyp in (1,2) then sum(TrV_NettoP+TrV_VatP) when Trn_TrnTyp in (3,4,10,20) then sum(TrV_NettoR+TrV_VatR) end
+FROM cdn.Tranag
+JOIN CDN.Travat ON TrN_GIDTyp=TrV_GIDTyp and TrN_GIDNumer=TrV_GIDNumer
+WHERE TrN_GIDTyp=@GIDTyp AND TrN_GIDNumer=@GIDNumer GROUP BY Trn_TrnTyp,TrV_StawkaPod,TrV_FlagaVat,trn_exponorm,trn_rodzajzakupu)
+ORDER BY TrV_StawkaPod,TrV_FlagaVat;
+
+UPDATE @Vat set v_Str='W tym:' where v_ID=2;
+
+INSERT INTO @Plat (p_FormaNazwa, p_termin, p_Kwota, p_Waluta)
+(SELECT  max(trp_formanazwa), trp_termin,
+sum(
+  case when trn_gidtyp = 2041
+  then case when trn_nettor&lt;0
+       then CASE WHEN (TrP_Typ=2) THEN TrP_Kwota ELSE 0-TrP_Kwota END
+       else CASE WHEN (TrP_Typ=2) THEN 0-TrP_Kwota ELSE TrP_Kwota END
+       END
+  else CASE WHEN TrP_Typ=2 THEN TrP_Kwota ELSE 0-TrP_Kwota END
+  END), TrP_Waluta
+FROM cdn.Tranag
+JOIN CDN.TraPlat ON (TrN_GIDTyp=TrP_GIDTyp AND TrN_GIDNumer=TrP_GIDNumer) OR (TrN_GIDTyp=TrP_SpiTyp AND TrN_GIDNumer=TrP_SpiNumer)
+WHERE TrN_GIDTyp=@GIDTyp AND TrN_GIDNumer=@GIDNumer GROUP BY TrP_FormaNr,TrP_Termin, TrP_waluta);
+
+SET NOCOUNT OFF
+
+SELECT
+p_FormaNazwa As TrP_FormaNazwa, convert( char(10), DATEADD(day,p_termin,CONVERT(DATETIME,'1800-12-28',121)), 121 ) AS TrP_Termin,
+[TrP_Kwota] = case when @GIDTyp=2033 then p_Kwota else 0-p_Kwota end, p_Waluta As Trp_Waluta,
+v_Str As TrV_Opis, v_Stawka As TrV_StawkaVat, Str(v_Netto,10,2) As TrV_Netto, Str(v_vat,10,2) As TrV_Vat, Str(v_Brutto,10,2) As TrV_Brutto
+FROM @Vat FULL OUTER JOIN @Plat On v_ID=p_ID
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="StawkaVat"></A><PRE>
+          <FONT SIZE="2"><I>/* StawkaVat */</I><BR>
+CREATE FUNCTION CDN.StawkaVat(@Flaga smallint, @Stawka int)
+RETURNS varchar(3) 
+AS 
+BEGIN
+  RETURN CASE WHEN @Flaga=1 THEN STR(@Stawka,2,0)+'%' 
+              WHEN @Flaga=2 THEN 'np.' 
+              WHEN @Flaga=0 THEN 'zw.' 
+              ELSE '?' 
+         END 
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

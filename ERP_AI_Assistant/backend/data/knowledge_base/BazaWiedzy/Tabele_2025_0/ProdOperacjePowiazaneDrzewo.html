@@ -1,0 +1,147 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Usuwanie funkcji CDN.ProdOperacjePowiazaneDrzewo"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Usuwanie funkcji CDN.ProdOperacjePowiazaneDrzewo */</I><BR>
+if exists(select name from sysobjects where name='ProdOperacjePowiazaneDrzewo' and type='TF')
+	drop function CDN.ProdOperacjePowiazaneDrzewo
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie funkcji CDN.ProdOperacjePowiazaneDrzewo"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie funkcji CDN.ProdOperacjePowiazaneDrzewo */</I><BR>
+CREATE FUNCTION CDN.ProdOperacjePowiazaneDrzewo (@Czynnosc varchar(8000),@WyszukiwanieTerm tinyint)
+RETURNS @Czynnosci TABLE (
+  Czynnosc int,
+  Ojciec int,
+  Poziom int,
+  PlanowacOd int,
+  Zrealizowano DECIMAL(15,4),
+  OperGlowna INT
+)
+as
+begin
+    
+	DECLARE @Proc int
+	DECLARE @zlec int
+	DECLARE @odd int
+
+	DECLARE @Czynnosci2 TABLE (
+  Czynnosc int,
+  Ojciec int,
+  Poziom int,
+  PlanowacOd int,
+  Zrealizowano DECIMAL(15,4),
+  OperGlowna INT)
+    
+    if @Czynnosc=''
+		BEGIN
+            SET @Czynnosc = '0'
+		END
+	IF @WyszukiwanieTerm = 1    
+	BEGIN	
+	with DrzewoCzynnosci
+	AS
+		(SELECT PCZ_Id Czynnosc,0 Ojciec,0 Poziom,PPC_PlanowacOd,P.PCZ_Ilosc, Num
+			FROM CDN.ProdCzynnosci P 
+			JOIN CDN.Str2List(@Czynnosc) ON PCZ_Id = Num
+			JOIN CDN.ProdProcesy  ON PCZ_Proces = PPC_Id
+			where PCZ_Realizuje = 0
+		UNION ALL
+		SELECT POP_PczId,d.czynnosc,d.Poziom + 1,ppc.PPC_PlanowacOd,P.PCZ_Ilosc, Num
+			FROM DrzewoCzynnosci as d
+			JOIN cdn.ProdOperacjePowiazane  on POP_PrzedPczId = d.czynnosc 
+			JOIN CDN.ProdCzynnosci P ON PCZ_Id = POP_PczId 
+			JOIN CDN.ProdProcesy ppc ON PCZ_Proces = PPC_Id
+			WHERE PCZ_Realizuje = 0 AND Poziom &lt; 100
+			)
+		INSERT INTO @Czynnosci2 SELECT distinct Drzewo.Czynnosc,Drzewo.Ojciec,Drzewo.Poziom,Drzewo.PPC_PlanowacOd,Zrealizowano, Num
+			FROM (SELECT A.Czynnosc,A.Ojciec,A.Poziom,A.PPC_PlanowacOd,A.PCZ_Ilosc,
+			(SELECT ISNULL(SUM(R.PCZ_Ilosc),0) FROM CDN.ProdCzynnosci R WHERE R.PCZ_Realizuje = Czynnosc) Zrealizowano, A.Num  FROM DrzewoCzynnosci A
+			) Drzewo
+				WHERE Drzewo.PCZ_Ilosc &gt; drzewo.Zrealizowano
+	END
+	ELSE
+	BEGIN
+		BEGIN
+		with DrzewoCzynnosci
+		AS
+			(SELECT PCZ_Id Czynnosc,0 Ojciec,0 Poziom,PPC_PlanowacOd,P.PCZ_Ilosc, Num
+				FROM CDN.ProdCzynnosci P 
+				JOIN CDN.Str2List(@Czynnosc) ON PCZ_Id = Num
+				JOIN CDN.ProdProcesy  ON PCZ_Proces = PPC_Id
+				where PCZ_Realizuje = 0
+			UNION ALL
+			SELECT POW1.POP_PrzedPczId,d.czynnosc,d.Poziom + 1, 
+			ppc1.PPC_PlanowacOd, P1.PCZ_Ilosc, Num
+				FROM DrzewoCzynnosci as d
+				JOIN cdn.ProdOperacjePowiazane POW1 on (POW1.POP_PczId = d.czynnosc AND D.PPC_PlanowacOd &lt; 0) 
+				JOIN CDN.ProdCzynnosci P1 ON (P1.PCZ_Id = POW1.POP_PrzedPczId AND D.PPC_PlanowacOd &lt; 0) AND P1.PCZ_Realizuje = 0
+				JOIN CDN.ProdProcesy ppc1 ON p1.PCZ_Proces =PPC1.PPC_Id
+				WHERE Poziom &lt; 100
+				)
+			INSERT INTO @Czynnosci2 SELECT distinct Drzewo.Czynnosc,Drzewo.Ojciec,Drzewo.Poziom,Drzewo.PPC_PlanowacOd,Zrealizowano, Num
+				FROM (SELECT A.Czynnosc,A.Ojciec,A.Poziom,A.PPC_PlanowacOd,A.PCZ_Ilosc,
+				(SELECT ISNULL(SUM(R.PCZ_Ilosc),0) FROM CDN.ProdCzynnosci R WHERE R.PCZ_Realizuje = Czynnosc) Zrealizowano, A.Num  FROM DrzewoCzynnosci A
+				) Drzewo
+					WHERE Drzewo.PCZ_Ilosc &gt; drzewo.Zrealizowano
+		END
+		BEGIN
+		with DrzewoCzynnosci
+		AS
+			(SELECT PCZ_Id Czynnosc,0 Ojciec,0 Poziom,PPC_PlanowacOd,P.PCZ_Ilosc, Num
+				FROM CDN.ProdCzynnosci P 
+				JOIN CDN.Str2List(@Czynnosc) ON PCZ_Id = Num
+				JOIN CDN.ProdProcesy  ON PCZ_Proces = PPC_Id
+				where PCZ_Realizuje = 0
+			UNION ALL
+			SELECT POW2.POP_PczId,d.czynnosc,d.Poziom + 1, 
+			PPC2.PPC_PlanowacOd,P2.PCZ_Ilosc, Num
+				FROM DrzewoCzynnosci as d
+				JOIN CDN.ProdOperacjePowiazane POW2 ON (POW2.POP_PrzedPczId = d.czynnosc AND D.PPC_PlanowacOd&gt;=0)
+				JOIN CDN.PROdCzynnosci P2 ON (P2.PCZ_Id = POW2.POP_PczId AND D.PPC_PlanowacOd&gt;=0) and p2.PCZ_Realizuje = 0
+				JOIN CDN.ProdProcesy ppc2 ON p2.PCZ_Proces =PPC2.PPC_Id
+				WHERE Poziom &lt; 100
+				)
+			INSERT INTO @Czynnosci2 SELECT distinct Drzewo.Czynnosc,Drzewo.Ojciec,Drzewo.Poziom,Drzewo.PPC_PlanowacOd,Zrealizowano, Num
+				FROM (SELECT A.Czynnosc,A.Ojciec,A.Poziom,A.PPC_PlanowacOd,A.PCZ_Ilosc,
+				(SELECT ISNULL(SUM(R.PCZ_Ilosc),0) FROM CDN.ProdCzynnosci R WHERE R.PCZ_Realizuje = Czynnosc) Zrealizowano, A.Num  FROM DrzewoCzynnosci A
+				) Drzewo
+					WHERE Drzewo.PCZ_Ilosc &gt; drzewo.Zrealizowano
+		END
+	END
+	INSERT @Czynnosci 
+	SELECT DISTINCT * from @Czynnosci2  A
+	WHERE (((A.Ojciec = 0 AND 
+				NOT EXISTS(SELECT * FROM @Czynnosci2 B WHERE B.Czynnosc = A.Czynnosc AND B.Ojciec &lt;&gt; 0 AND B.Poziom &gt;= A.Poziom AND A.OperGlowna = B.OperGlowna)) 
+				OR A.Ojciec &lt;&gt; 0 )) AND NOT EXISTS(SELECT * FROM @Czynnosci2 C WHERE A.Poziom &lt; C.Poziom and ((A.Czynnosc = c.Czynnosc AND A.Ojciec = C.Ojciec  AND A.OperGlowna = C.OperGlowna ) OR
+				(A.Ojciec = C.Czynnosc AND A.Czynnosc = C.Ojciec AND A.OperGlowna = C.OperGlowna))) 
+				order by Poziom
+	return
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do funkcji CDN.ProdOperacjePowiazaneDrzewo"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do funkcji CDN.ProdOperacjePowiazaneDrzewo */</I><BR>
+GRANT SELECT ON CDN.ProdOperacjePowiazaneDrzewo TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

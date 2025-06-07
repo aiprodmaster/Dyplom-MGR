@@ -1,0 +1,233 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="ProdPlanowanieZgrubne"></A><PRE>
+          <FONT SIZE="2"><I>/* ProdPlanowanieZgrubne */</I><BR>
+create procedure CDN.ProdPlanowanieZgrubne @Termin int, @Okres int, @Czas int, @TechnologiaCzynnosc int, @Oddzial int,
+											@Ilosc decimal(11,4), @Czynnosc int, @Priorytet tinyint,
+											@CzyPrzeciazac tinyint, @Metoda tinyint,@PCZPlanowacOd INT,@PlanowacOdJakoPriorytet TINYINT,@MaxGrpId INT,@MaxPFuId INT, @PZLId INT, @PlanWskazaneZasoby TINYINT as 
+begin
+if exists(select name from sysobjects where name='ProdPlanowanieZgrubneEx' and type = 'P')
+begin
+	exec sp_executesql 'exec CDN.ProdPlanowanieZgrubneEx @Termin,@Okres,@Czas,@TechnologiaCzynnosc,@Oddzial,@Ilosc,@Czynnosc,@Priorytet,@CzyPrzeciazac,@Metoda',
+							'@Termin int,@Okres int,@Czas int,@TechnologiaCzynnosc int,@Oddzial int,@Ilosc decimal(11,4),@Czynnosc int,@Priorytet tinyint,@CzyPrzeciazac tinyint,@Metoda tinyint',
+							@Termin,@Okres,@Czas,@TechnologiaCzynnosc,@Oddzial,@Ilosc,@Czynnosc,@Priorytet,@CzyPrzeciazac,@Metoda
+	return
+end
+
+declare @obiekty table (Funkcja int,Liczba int,Obiekt int,Grupa int,Lp int,Czas int,
+						Dostepny int,Zajety int,Kolejnosc int,Zablokowany TINYINT,PFUDomyslne INT, NieogrZdolnosc TINYINT)
+
+declare @zablokowane table(Funkcja int, Obiekt int,Ilosc int)
+declare @ZablokowaneIl Table(Funkcja int,Ilosc int)
+declare @FBezBrakow TABLE(Funkcja int, Ilosc int)
+declare @IloscF DECIMAL(11,4),@IloscB DECIMAL(11,4),@Funkcja int,@FunkcjaB INT
+
+insert into @zablokowane
+	select PCO_Funkcja,PCO_Obiekt,COUNT(*) from cdn.ProdCzynnosciObiekty where PCO_Czynnosc = @Czynnosc AND PCO_Zablokowany = 1 GROUP BY PCO_Funkcja,PCO_Obiekt
+INSERT INTO @ZablokowaneIl
+	select Funkcja,COUNT(*) from @zablokowane GROUP BY Funkcja
+
+
+DECLARE @TechnologiaCzynnosci TABLE(Id INT,Poziom INT)
+INSERT INTO @TechnologiaCzynnosci(Id,Poziom)
+SELECT Id,Poziom FROM CDN.ProdTechnologiaDrzewo(@TechnologiaCzynnosc,-1)
+
+DECLARE @ZasobyGniazd TABLE(Typ INT, Licznik INT, ZasobGniazda INT,Kod VARCHAR(40),Zablokowany TINYINT,POBId INT,PFUDomyslne INT, NieogrZdolnosc TINYINT, PTCId INT)
+INSERT INTO @ZasobyGniazd
+SELECT DISTINCT Typ, ROW_NUMBER() OVER (ORDER BY Typ, Id) Id,PTG_ZasobGniazda,POB_Kod, 0 Zablokowany, POB_Id,Gniazdo,POB_NieograniczonaZdolnoscProd, PTCId FROM (
+SELECT 0 Typ, PTG_Id Id, PTG_ZasobGniazda,POB_Kod,POB_Id,CASE WHEN PTG_Gniazdo = -1 THEN 0 ELSE PTG_Gniazdo END Gniazdo,POB_NieograniczonaZdolnoscProd, Id PTCId
+FROM @TechnologiaCzynnosci
+JOIN CDN.ProdTechnologieZasobyGniazd ON PTG_TechnologiaOperacje = Id
+Left join CDN.ProdObiekty on POB_Id = PTG_ZasobGniazda
+WHERE (PTG_Planowana &amp; 2&gt;0 ) AND POB_Archiwalny = 0
+UNION
+SELECT DISTINCT Typ, POPL_Id Id, POB_Id PTG_ZasobGniazda, POB_Kod,  POB_Id, POPL_PFUId Gniazdo, POB_NieograniczonaZdolnoscProd, POPL_PTCId PTCId FROM
+(
+	SELECT 1 Typ, POPL_Id, POB_Id PTG_ZasobGniazda, POB_Kod, POB_Id, POPL_PFUId, POPL_PTCId, POB_NieograniczonaZdolnoscProd, COUNT(*) over(partition by POPL_PFUId order by POPL_POBLp) Lp
+	FROM CDN.ProdObiektyDoPlanu
+	JOIN @TechnologiaCzynnosci ON Id = POPL_PTCId
+	JOIN CDN.ProdObiekty on POB_Id = POPL_POBId
+	WHERE @PlanWskazaneZasoby = 1 AND POPL_PZLId =@PZLId AND POB_Archiwalny = 0 AND Poziom = 0
+) Plany
+) Zasoby
+
+insert into @obiekty
+select * from (
+select PTF_Funkcja, PTF_LiczbaObiektow- (select count(1) from @ZasobyGniazd Z WHERE Z.PTCId = ID AND Typ =1) PTF_LiczbaObiektow, POF_Obiekt, POF_Grupa, POF_Lp, POF_Czas +
+	case when POF_WydajnoscIlosc&gt;0 then round(@Ilosc/POF_WydajnoscIlosc*POF_WydajnoscCzas,0) else 0 end Czas,-1 Dostepny,-1 Zajety,0 Kolejnosc,PFU_Zablokowana,0 PFUDomyslne, POB_NieograniczonaZdolnoscProd
+from @TechnologiaCzynnosci
+inner join CDN.ProdTechnologiaFunkcje on PTF_TechnologiaCzynnosc=Id and PTF_Planowana &amp; 2&gt;0 
+	and PTF_LiczbaObiektow&gt;0 and (Poziom=0 or PTF_Wszystkie&gt;0)
+inner join CDN.ProdObiektyFunkcje on POF_Funkcja=PTF_Funkcja AND POF_Widocznosc IN (2,3)
+inner join CDN.ProdObiekty on POB_Id=POF_Obiekt and POB_Archiwalny=0
+inner join CDN.ProdFunkcje on PFU_Id = PTF_Funkcja
+where POF_MinIlosc&lt;=@Ilosc and (@Ilosc&lt;=POF_MaxIlosc or POF_MaxIlosc=0)
+	and (@Oddzial=0 or POF_Oddzial=0 or @Oddzial=POF_Oddzial) and not exists(select * from @ZasobyGniazd where ZasobGniazda = POB_Id)
+union
+SELECT DISTINCT Licznik+@MaxPFuId,1,ZasobGniazda,Licznik + @MaxGrpId,0,0,-1,-1,0,Zablokowany,PFUDomyslne, NieogrZdolnosc
+FROM @ZasobyGniazd
+	) Zasoby
+
+
+update O set Kolejnosc = K.Kolejnosc+1, Czas = K.Czas
+from (
+	select O.Obiekt, O.Funkcja, count(G.Lp) Kolejnosc, case when max(G.Czas)&gt;@Czas then max(G.Czas) else @czas end Czas
+	from @Obiekty O
+	left outer join (
+		select Funkcja, Grupa, Lp, max(Czas) Czas
+		from @obiekty
+		group by Funkcja, Grupa, Lp
+	) G on G.Funkcja=O.Funkcja and G.Lp&lt;O.Lp
+	group by O.Obiekt, O.Funkcja
+) K
+inner join @obiekty O on O.Obiekt=K.Obiekt and O.Funkcja=K.Funkcja
+
+declare @cykl int, @numery varchar(8000), @pocz int, @kon int
+declare @grupy table (Funkcja int, Liczba int, Grupa int, Przeciazony tinyint, Kolejnosc int identity(1,1))
+set @cykl = 0
+while @cykl &lt; 1000
+begin
+	-- Obliczenie dostępności obiektów
+	while 1=1
+	begin
+		select @numery='',	@pocz=case when @Okres&lt;0 then @Termin+@Okres else @Termin end,
+							@kon=case when @Okres&lt;0 then @Termin else @Termin+@Okres end
+
+		select @numery = @numery + case when len(@numery)&lt;7980 then convert(varchar,Obiekt)+',' else '' end
+		from @obiekty
+		where Dostepny=-1
+		group by Obiekt
+		if @@rowcount=0 break
+
+		update @obiekty set Dostepny=Z.Dostepny, Zajety=Z.Zajety
+		from (
+			select Obiekt, Funkcja, Dostepny, Zajety + CASE WHEN NieogrZdolnosc &gt;0 THEN 0 ELSE isnull(sum(case when Zad_Id is null then 0
+				when Zad_TerminDo&gt;@kon then @kon else Zad_TerminDo end
+				- case when Zad_Id is null then 0
+				when Zad_TerminOd&lt;@pocz then @pocz else Zad_TerminOd end),0) END Zajety
+			from (
+				select Obiekt, Funkcja, Dostepny, case when NieogrZdolnosc &gt; 0 THEN 0 ELSE isnull(sum(case when PCZ_Id is null then 0
+					when PCT_TerminDo&gt;@kon then @kon else PCT_TerminDo end
+					- case when PCZ_Id is null then 0
+					when PCT_TerminOd&lt;@pocz then @pocz else PCT_TerminOd end),0) END Zajety, NieogrZdolnosc
+				from (
+					select O.Obiekt, O.Funkcja, isnull(sum(Do-Od-Przerwa),0) Dostepny, NieogrZdolnosc
+					from @obiekty O
+					inner join CDN.Str2List(@numery) on Num=O.Obiekt
+					left outer join CDN.ProdOkresyOdDo(14337,0,@numery,@pocz,@kon,8,-1,0) D
+						on D.Obiekt=O.Obiekt and D.Dostepny&gt;0
+					group by O.Obiekt, O.Funkcja, NieogrZdolnosc
+				) D
+				left outer join CDN.ProdCzynnosciObiekty on PCO_Obiekt=Obiekt and PCO_Funkcja=Funkcja and PCO_Czynnosc&lt;&gt;@Czynnosc
+				left outer join CDN.ProdCzynnosciTerminy on PCT_Czynnosc=PCO_Czynnosc and PCT_Czynnosc&lt;&gt;@Czynnosc
+					and PCT_TerminOd&lt;@kon and @pocz&lt;PCT_TerminDo and PCO_Termin in(0, PCT_Id)
+				left outer join CDN.ProdCzynnosci on PCZ_Id=PCT_Czynnosc and ((PCZ_PriorytetZlc&gt;=@Priorytet and @PlanowacOdJakoPriorytet = 0)
+					OR (@PlanowacOdJakoPriorytet = 1 AND ((PCZ_PlanowacOd &lt; 0 AND @PCZPlanowacOd &lt; 0 AND PCZ_PlanowacOd &gt; @PCZPlanowacOd ) 
+					OR (@PCZPlanowacOd &lt; PCZ_PlanowacOd AND 
+				 (PCZ_PlanowacOd &gt;= 0 OR @PCZPlanowacOd &gt;= 0))) 
+				 OR 
+				 	(PCZ_PlanowacOd = @PCZPlanowacOd AND @PCZPlanowacOd&lt;=PCZ_PriorytetZlc)))
+				group by Obiekt, Funkcja, Dostepny, NieogrZdolnosc
+			) C
+			left outer join CDN.ZadaniaObiekty on ZaO_ObiTyp=14337 and ZaO_ObiNumer=Obiekt
+			left outer join CDN.Zadania on Zad_Id=ZaO_ZadId and Zad_Priorytet&gt;=@Priorytet
+				and Zad_TerminOd&lt;@kon and @pocz&lt;Zad_TerminDo and Zad_ZrdTyp&lt;&gt;14345
+			group by Obiekt, Funkcja, Dostepny, Zajety, NieogrZdolnosc
+		) Z
+		inner join @obiekty O on O.Obiekt=Z.Obiekt and O.Funkcja=Z.Funkcja
+		if @@rowcount=0 break
+	end
+
+	DELETE @FBezBrakow
+	INSERT @FBezBrakow
+	SELECT ZAB.Funkcja,COUNT(OB.Obiekt)
+	FROM @zablokowane ZAB
+	LEFT JOIN @obiekty OB ON ZAB.Funkcja = OB.Funkcja AND ZAB.Obiekt = OB.Obiekt AND OB.Dostepny &gt; 0 AND (OB.Zajety + OB.Czas &lt; OB.Dostepny)
+	GROUP BY ZAB.Funkcja
+
+	declare A_cursor cursor fast_forward for
+	SELECT I.Funkcja,ISNULL(F.Funkcja,0) FunkcjaB,I.Ilosc,ISNULL(F.Ilosc,0) FROM @ZablokowaneIl I
+	LEFT JOIN @FBezBrakow F ON F.Funkcja = I.Funkcja
+
+	OPEN A_cursor
+	fetch next from A_cursor into @Funkcja,@FunkcjaB,@IloscF,@IloscB
+
+		while @@FETCH_STATUS = 0
+		begin
+			UPDATE @Obiekty SET Dostepny = 0 WHERE Funkcja = @Funkcja AND ((Liczba &gt;=@IloscF AND @IloscF &gt; @IloscB) OR @FunkcjaB = 0)
+			fetch next from A_cursor into @Funkcja,@FunkcjaB,@IloscF,@IloscB
+		end
+	close A_cursor 
+	deallocate A_cursor
+
+	update @obiekty set Zablokowany = CASE WHEN EXISTS(select * from @Zablokowane Zab where Zab.Obiekt = obiekt and Zab.Funkcja = Funkcja) THEN 1 ELSE 0 END WHERE Zablokowany = 0
+
+	-- Ustalenie grup i ich kolejności
+	delete @grupy
+
+	insert into @grupy (Funkcja, Liczba, Grupa, Przeciazony)
+	select O.Funkcja, O.Liczba, O.Grupa, max(case when O.Zajety+O.Czas&gt;O.Dostepny and O.Zajety&gt;0 then 1 else 0 end) Przeciazony
+	from @obiekty O
+	left outer join @obiekty P on P.Obiekt=O.Obiekt and P.Funkcja&lt;&gt;O.Funkcja
+		and ( P.Kolejnosc*O.Liczba&lt;O.Kolejnosc*P.Liczba or (
+		P.Kolejnosc*O.Liczba=O.Kolejnosc*P.Liczba and P.Lp&lt;O.Lp) )
+	group by O.Funkcja, O.Liczba, O.Grupa, O.Kolejnosc,O.Zablokowany
+	having count(P.Obiekt)=0
+	order by O.Zablokowany DESC, max(case when O.Zajety+O.Czas&gt;O.Dostepny and O.Zajety&gt;0 then 1 else 0 end), O.Kolejnosc
+
+	if @@rowcount=0
+    begin
+		if exists(select * from CDN.ProdOkresyOdDo(0,0,'',@pocz,@kon,8,-1,0) where Dostepny&gt;0) break
+	end
+
+	-- Jeżeli okres jest w ogóle dostępny
+	if exists(select * from @obiekty where Dostepny&gt;abs(@Okres)/1440)
+	begin
+		-- Jeżeli nie przeciążać lub szukając wstecz doszliśmy do teraźniejszości
+		if @CzyPrzeciazac&gt;0 or @Termin+@Okres&lt;datediff(s,'19900101',getdate()) break
+		-- Jeżeli już wystarczy lub nie da się lepiej
+		if not exists(
+			select Funkcja
+			from @grupy
+			group by Funkcja, Liczba
+			having count(*)-sum(Przeciazony)&lt;Liczba and sum(Przeciazony)&gt;0
+		) break
+	end
+
+	select @cykl = @cykl + 1, @Termin = @Termin + @Okres
+	update @obiekty set Dostepny = -1, Zajety = -1
+end
+
+select @Czas = max(O.Czas)
+from @grupy G
+inner join @obiekty O on O.Funkcja=G.Funkcja and O.Grupa=G.Grupa
+left outer join @grupy I on I.Funkcja=G.Funkcja and I.Kolejnosc&lt;G.Kolejnosc
+group by O.Funkcja, O.Obiekt, O.Czas, G.Liczba
+having count(I.Funkcja)&lt;G.Liczba
+
+select @Termin+case when @Okres&lt;0 then @Okres else 0 end Termin, @Czas Czas
+
+select 0 Termin, O.Obiekt, O.Funkcja, POB_Kod Kod,O.Zablokowany,O.PFUDomyslne
+from @grupy G
+inner join @obiekty O on O.Funkcja=G.Funkcja and O.Grupa=G.Grupa
+inner join CDN.ProdObiekty on POB_Id=Obiekt
+left outer join @grupy I on I.Funkcja=G.Funkcja and I.Kolejnosc&lt;G.Kolejnosc
+group by O.Funkcja, O.Obiekt, O.Czas, G.Liczba, POB_Kod,O.Zablokowany,o.PFUDomyslne
+having count(I.Funkcja)&lt;G.Liczba
+
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

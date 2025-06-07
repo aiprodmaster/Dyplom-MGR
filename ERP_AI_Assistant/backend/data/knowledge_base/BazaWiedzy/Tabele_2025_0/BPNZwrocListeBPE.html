@@ -1,0 +1,236 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="BPNZwrocListeBPE"></A><PRE>
+          <FONT SIZE="2"><I>/* BPNZwrocListeBPE */</I><BR>
+CREATE PROCEDURE CDN.BPNZwrocListeBPE
+(
+	@p_BPNId					int,			-- identyfikator nagłówków budżetów projektowych
+	@p_wspolczynnik				decimal(15,2),	-- wspólczynnik = U/B – wartość umowy/wartość budżetu na poziomie budżetu, nie etapu 
+	@p_TylkoAktywny				tinyint,		-- tylko aktywne
+	@p_sRodzajSkladnika			varchar(20),	-- filtr na rodzaj skladnika
+	@p_Filtr					varchar(max)	-- dodatkowy filtr
+)	
+AS
+BEGIN
+  
+DECLARE @Sql_1 VARCHAR(max)
+DECLARE @Sql_2 VARCHAR(max)
+DECLARE @Sql_3 VARCHAR(max)
+DECLARE @Sql_4 VARCHAR(max)
+DECLARE @Sql_5 VARCHAR(max)
+DECLARE @Sql_Order VARCHAR(max)
+
+DECLARE @sql_KosztyZam  VARCHAR(max)
+
+
+
+
+
+SET @sql_KosztyZam  = 'IsNull((SELECT Sum(IsNull(CDL_Kwota,0.00)) FROM CDN.CRMDokumentyLinki WHERE CDL_CRMTyp=4596 AND CDL_CRMNumer=BPE_ID AND CDL_DokTyp=960 AND CDL_Typ=2 AND CDL_Kierunek=3),0.00) 
+  - IsNull((SELECT round(Sum(IsNull(case when CDL_Pozycje = 0 then trn_nettop else trn_nettop/ 100 * CDL_Procent end , 0.00)), 2) FROM CDN.CRMDokumentyLinki JOIN CDN.TraNag on CDL_DokTyp=TrN_GIDTyp and CDL_DokNumer=TrN_GIDNumer AND TrN_GIDTyp not in (1824,1312,1832,1320,1828,1836) 
+    join (SELECT trs_gidnumer,TrS_GIDTyp,TrS_KosztRzeczywisty FROM CDN.TraSElem WHERE Trs_rezTyp = 960 AND Trs_rezNumer IN (( SELECT CDL_DokNumer FROM CDN.CRMDokumentyLinki left join CDN.CRMDokumentyPozycje on CDL_CRMTyp=CDP_CRMTyp AND CDL_CRMNumer=CDP_CRMNumer AND CDL_CRMLp=CDP_CRMLp AND CDL_DokTyp=CDP_DokTyp AND CDL_DokNumer=CDP_DokNumer 
+	  WHERE CDL_CRMTyp = 4596 AND CDL_CRMNumer = BPE_ID AND CDL_DokTyp = 960 AND CDL_Typ = 2 AND CDL_Kierunek = 3 AND (CDP_DokLp = TrS_RezLp OR CDP_DokLp IS NULL)))) trs on TrN_GIDTyp=trs.TrS_GIDTyp AND TrN_GIDNumer=trs.TrS_GIDNumer 
+	   WHERE CDL_CRMTyp=4596  AND CDL_DokTyp&lt;&gt;960 AND CDL_Typ=2 AND CDL_Kierunek=3  ) 	
+	+ (isnull((SELECT round(Sum(IsNull(trn_nettop , 0.00)), 2) FROM CDN.CRMDokumentyLinki JOIN CDN.TraNag on CDL_DokTyp=TrN_GIDTyp and CDL_DokNumer=TrN_GIDNumer AND TrN_GIDTyp in (1824,1312,1832,1320,1828,1836) 
+	 AND TrN_ZaNTyp = 960 AND TrN_ZaNNumer IN (( SELECT CDL_DokNumer FROM CDN.CRMDokumentyLinki  WHERE CDL_CRMTyp = 4596 AND CDL_CRMNumer = BPE_ID AND CDL_DokTyp = 960 AND CDL_Typ = 2 AND CDL_Kierunek = 3 )) WHERE CDL_CRMTyp=4596  AND CDL_DokTyp&lt;&gt;960 AND CDL_Typ=2 AND CDL_Kierunek=3 ),0.00)  ),
+IsNull((SELECT Sum(IsNull(trn_nettop, 0.00)) FROM CDN.CRMDokumentyLinki JOIN CDN.TraNag ON CDL_DokTyp = TrN_GIDTyp AND CDL_DokNumer = TrN_GIDNumer
+WHERE CDL_CRMTyp = 4596 AND CDL_DokTyp in (1312,1824)   AND CDL_Typ = 2 AND CDL_Kierunek = 3 AND TrN_ZaNTyp = 960 AND TrN_ZaNNumer IN ( SELECT CDL_DokNumer  FROM CDN.CRMDokumentyLinki WHERE CDL_CRMTyp = 4596 AND CDL_CRMNumer = BPE_ID AND CDL_DokTyp = 960 AND CDL_Typ = 2 AND CDL_Kierunek = 3)), 0.00))'
+
+
+SET @Sql_1 = '
+;WITH CTEWartosciStartowe AS
+(
+	SELECT	BPE_ID as Id,
+			BPE_Nadrzedny as Nadrzedny,	
+			BPE_Lp as Lp,
+			replace(str(BPE_Lp, 10), '' '', ''0'') as LpOrder,
+			BPE_WartoscUmowyPoProc as WartoscUmowy,
+			BPE_WartoscBudzetu as WartoscBudzetu,
+			BPE_WartoscKontraktu as WartoscKontraktu,
+			ISNULL((select SUM(IsNull(OWE_Wartosc,0)) from cdn.PrjStruktura  join CDN.OpisWymSElem on OWS_WMRID = PRJ_ID join CDN.OpisWymElem on OWE_GIDTyp=OWS_GIDTyp AND OWE_GIDNumer=OWS_GIDNumer AND OWE_GIDLp=OWS_GIDLp join cdn.OpisWymNag on OWN_GIDTyp=OWE_GIDTyp AND OWN_GIDNumer=OWE_GIDNumer WHERE OWN_Zatwierdzono = 1 AND OWS_TypWymiaru = 5 AND OWS_GIDTyp = 2976 AND PRJ_Id = BPE_PrjId),0.00) as KosztyWynagr, -- TODO pkt 6.4
+			BPE_KosztyInne as KosztyInne,
+			BPE_PrzychodyPlan as PrzychodyPlanEd,
+			BPE_PrzychodyInne as PrzychodyInne,
+			IsNull((SELECT Sum(IsNull(CDL_Kwota,0.00)) FROM CDN.CRMDokumentyLinki WHERE CDL_CRMTyp=4596 AND CDL_CRMNumer=BPE_ID AND CDL_DokTyp&lt;&gt;960 AND CDL_Typ=2 AND CDL_Kierunek=3),0.00) as KosztyRzecz,
+			case when '+@sql_KosztyZam+'&gt;0 then '+@sql_KosztyZam+' else 0 end as KosztyZam,
+			IsNull((SELECT Sum(IsNull(CDL_Kwota,0.00)) FROM CDN.CRMDokumentyLinki WHERE CDL_CRMTyp=4596 AND CDL_CRMNumer=BPE_ID AND CDL_DokTyp&lt;&gt;960 AND CDL_Typ=1 AND CDL_Kierunek=3),0.00) as PrzychodyRzecz
+	FROM CDN.BudzetPrjElem
+	WHERE BPE_BPNId = '+CAST(@p_BPNId AS VARCHAR)+'	
+)'
+SET @Sql_2 = '
+, CTEDrzewo AS
+(
+	SELECT	Id,
+			Nadrzedny,
+			1 as Poziom,
+			cast(Lp as varchar(124)) as sLp,
+			WartoscUmowy,
+			WartoscBudzetu,
+			WartoscKontraktu,
+			KosztyWynagr,
+			KosztyInne,
+			PrzychodyPlanEd,
+			PrzychodyInne,
+			KosztyRzecz,
+			KosztyZam,
+			PrzychodyRzecz,
+			cast(LpOrder as varchar(max)) as sLpOrder
+	FROM CTEWartosciStartowe
+	WHERE Nadrzedny = 0
+		
+	UNION ALL
+		
+	SELECT	B.Id,
+			B.Nadrzedny,
+			A.Poziom + 1,
+			cast(A.sLp + ''.'' + convert(varchar,B.Lp) as varchar(124)),
+			B.WartoscUmowy,
+			B.WartoscBudzetu,
+			B.WartoscKontraktu,
+			B.KosztyWynagr,
+			B.KosztyInne,
+			B.PrzychodyPlanEd,
+			B.PrzychodyInne,
+			B.KosztyRzecz,
+			B.KosztyZam,
+			B.PrzychodyRzecz,
+			cast(A.sLpOrder + ''.'' + B.LpOrder as varchar(max))
+	FROM CTEDrzewo A
+	INNER JOIN CTEWartosciStartowe B ON A.Id = B.Nadrzedny
+) select * into #tbCTEDrzewo from CTEDrzewo'
+
+
+SET @Sql_3 = ';
+select Id, Poziom,
+convert(decimal(15,2), 0) as SumaKosztyRzecz,
+convert(decimal(15,2), 0) as SumaKosztyZam,
+convert(decimal(15,2), 0) as SumaKosztyWynagr,
+convert(decimal(15,2), 0) as SumaKosztyOgol,
+convert(decimal(15,2), 0) as SumaPrzychodRzecz
+into #tbCTEDrzewoSum
+from #tbCTEDrzewo
+
+declare @poziom int 
+select @poziom = max(Poziom) from #tbCTEDrzewo
+if @poziom is null set @poziom = 0
+while (@poziom&gt;0)
+begin
+	update A
+	set SumaKosztyRzecz = IsNull((SELECT SUM(IsNull(KosztyRzecz + SumaKosztyRzecz,0)) FROM #tbCTEDrzewo D JOIN #tbCTEDrzewoSum B on D.Id = B.Id WHERE A.Id = D.Nadrzedny),0),
+	    SumaKosztyZam = IsNull((SELECT SUM(IsNull(KosztyZam + SumaKosztyZam,0)) FROM #tbCTEDrzewo D JOIN #tbCTEDrzewoSum B on D.Id = B.Id WHERE A.Id = D.Nadrzedny),0),
+		SumaKosztyWynagr = IsNull((SELECT SUM(IsNull(KosztyWynagr + SumaKosztyWynagr,0)) FROM #tbCTEDrzewo D JOIN #tbCTEDrzewoSum B on D.Id = B.Id WHERE A.Id = D.Nadrzedny),0),
+		SumaKosztyOgol = IsNull((SELECT SUM(IsNull(KosztyRzecz + KosztyZam + KosztyWynagr + SumaKosztyOgol,0)) FROM #tbCTEDrzewo D JOIN #tbCTEDrzewoSum B on D.Id = B.Id WHERE A.Id = D.Nadrzedny),0),
+		SumaPrzychodRzecz = IsNull((SELECT SUM(IsNull(PrzychodyRzecz + SumaPrzychodRzecz,0)) FROM #tbCTEDrzewo D JOIN #tbCTEDrzewoSum B on D.Id = B.Id WHERE A.Id = D.Nadrzedny),0)
+	from #tbCTEDrzewoSum A
+	where A.Poziom = @poziom 
+
+	set @poziom = @poziom - 1
+end'
+
+SET @Sql_4 = '
+;with CTESumyWartoscDoRozpisania AS 
+(
+	SELECT #tbCTEDrzewo.*,
+			IsNull((SELECT SUM(IsNull(WartoscBudzetu,0)) FROM #tbCTEDrzewo C WHERE #tbCTEDrzewo.Id = C.Nadrzedny),0) as tmpSumaWartoscBudzetu,
+			IsNull((SELECT SUM(IsNull(WartoscKontraktu,0)) FROM #tbCTEDrzewo C WHERE #tbCTEDrzewo.Id = C.Nadrzedny),0) as tmpSumaWartoscKontraktu,
+			IsNull((SELECT SUM(IsNull(KosztyInne,0)) FROM #tbCTEDrzewo C WHERE #tbCTEDrzewo.Id = C.Nadrzedny),0) as tmpSumaKosztyInne,
+			IsNull((SELECT SUM(IsNull(PrzychodyPlanEd,0)) FROM #tbCTEDrzewo C WHERE #tbCTEDrzewo.Id = C.Nadrzedny),0) as tmpSumaPrzychodyPlanEd,
+			IsNull((SELECT SUM(IsNull(PrzychodyInne,0)) FROM #tbCTEDrzewo C WHERE #tbCTEDrzewo.Id = C.Nadrzedny),0) as tmpSumaPrzychodyInne		
+	FROM #tbCTEDrzewo 
+)
+, CTEWartoscDoRozpisania AS 
+(
+	SELECT	CTESWDR.*,
+			CASE WHEN EXISTS(SELECT * FROM CTESumyWartoscDoRozpisania CTESWDRPom where CTESWDRPom.Nadrzedny = CTESWDR.Id) THEN WartoscBudzetu - tmpSumaWartoscBudzetu ELSE 0 END as BudzetDoRozpisania,	
+			CASE WHEN EXISTS(SELECT * FROM CTESumyWartoscDoRozpisania CTESWDRPom where CTESWDRPom.Nadrzedny = CTESWDR.Id) THEN WartoscKontraktu - tmpSumaWartoscKontraktu ELSE 0 END as KontraktDoRozpisania,	
+			CASE WHEN EXISTS(SELECT * FROM CTESumyWartoscDoRozpisania CTESWDRPom where CTESWDRPom.Nadrzedny = CTESWDR.Id) THEN KosztyInne - tmpSumaKosztyInne ELSE 0 END as KosztyDoRozpisania,
+			CASE WHEN EXISTS(SELECT * FROM CTESumyWartoscDoRozpisania CTESWDRPom where CTESWDRPom.Nadrzedny = CTESWDR.Id) THEN PrzychodyPlanEd - tmpSumaPrzychodyPlanEd ELSE 0 END as PrzychodyDoRozpisania,
+			CASE WHEN EXISTS(SELECT * FROM CTESumyWartoscDoRozpisania CTESWDRPom where CTESWDRPom.Nadrzedny = CTESWDR.Id) THEN PrzychodyInne - tmpSumaPrzychodyInne ELSE 0 END as PrzychodyInneDoRozpisania
+	FROM CTESumyWartoscDoRozpisania CTESWDR
+)
+, CTEALL AS 
+(
+	SELECT CTEWartoscDoRozpisania.*,
+			CTEWartoscDoRozpisania.KosztyRzecz + CTEWartoscDoRozpisania.KosztyZam + CTEWartoscDoRozpisania.KosztyWynagr + CTEWartoscDoRozpisania.KosztyInne as KosztyOgolem,	
+			P.SumaKosztyRzecz, P.SumaKosztyZam, P.SumaKosztyWynagr, P.SumaKosztyOgol, P.SumaPrzychodRzecz
+	FROM CTEWartoscDoRozpisania
+	JOIN #tbCTEDrzewoSum P ON P.Id = CTEWartoscDoRozpisania.Id
+)'
+
+SET @Sql_5 = '
+SELECT	sLp,
+		BPE_Kod as Kod,
+		IsNull(CDN.NumerDokumentu(4800,0,0,UmN_Numer,UmN_Rok,UmN_Seria,UmN_Miesiac),'''') as NrUmowy,
+		IsNUll(Knt_Akronim,'''') as KntAkronim,
+		WartoscUmowy,
+		WartoscBudzetu,
+		BudzetDoRozpisania,
+		WartoscKontraktu,
+		KontraktDoRozpisania,
+		WartoscBudzetu - WartoscKontraktu as Roznica,
+		KosztyRzecz,
+		KosztyZam,
+		KosztyWynagr,
+		KosztyInne,
+		KosztyDoRozpisania,
+		KosztyOgolem + BPE_KosztyWyrazen as KosztyOgolem,
+		BPE_KosztyWyrazen as KosztyWyrazen,
+		convert(decimal(15,2), '+CAST(@p_wspolczynnik AS VARCHAR)+'*KosztyOgolem) as PrzychodyPlan,
+		PrzychodyPlanEd,
+		PrzychodyDoRozpisania,
+		PrzychodyRzecz,
+		PrzychodyInne,
+		PrzychodyInneDoRozpisania,
+		PrzychodyRzecz + PrzychodyInne as PrzychodyOgolem,
+		case when WartoscBudzetu=0 then 0 else convert(decimal(15,2), (KosztyOgolem/WartoscBudzetu)*100) end as ZaawansowaniePracProc,
+		WartoscBudzetu - KosztyOgolem as RealizacjaBudzetu,
+		BPE_RealizacjaPracProcBiez as RealizacjaPracProc,
+		BPE_Ilosc as Ilosc,
+		(CASE WHEN BPE_TwrNumer = 0 THEN IsNull(BPE_SkladnikJM,'''') ELSE IsNull(Twr_Jm,'''') END) as IloscJm,
+		BPE_IloscCzas * BPE_Ilosc AS IloscCzas,
+		(CASE WHEN BPE_IloscCzasJM = 1 THEN ''sekund'' WHEN BPE_IloscCzasJM = 2 THEN ''minut'' WHEN BPE_IloscCzasJM = 3 THEN ''godzin'' WHEN BPE_IloscCzasJM = 4 THEN ''dni'' WHEN BPE_IloscCzasJM = 5 THEN ''tygodni'' ELSE '''' END) AS IloscCzasJM,
+		BPE_Stawka as Stawka,
+		BPE_WartoscPoRabacie as WartoscPoRabacie,
+		BPE_Narzut as Narzut,
+		BPE_WartoscPoNarzucie as WartoscPoNarzucie,
+		SumaKosztyRzecz,
+		SumaKosztyZam,
+		SumaKosztyWynagr,
+		SumaKosztyOgol,
+		SumaPrzychodRzecz,
+		SumaPrzychodRzecz as SumaPrzychodOgol,	
+		Id,
+		Poziom,
+		Nadrzedny,
+		BPE_Lp as Lp,
+		BPE_Wyjety as Wyjety,
+		BPE_RodzajSkladnika as RodzajSkladnika
+	FROM CTEALL
+	JOIN CDN.BudzetPrjElem ON BPE_Id=CTEALL.Id
+	LEFT JOIN CDN.UmwNag ON BPE_UmNId=UmN_Id
+	LEFT JOIN CDN.KntKarty ON Knt_GIDNumer=BPE_KntNumer and BPE_KntTyp=32
+	LEFT JOIN CDN.TwrKarty ON Twr_GIDNumer=BPE_TwrNumer and BPE_TwrTyp=16
+	WHERE BPE_RodzajSkladnika in ('+@p_sRodzajSkladnika+') '+
+	CASE WHEN @p_TylkoAktywny=1 THEN ' AND BPE_Wyjety=0' ELSE '' END 	
+
+SET @Sql_Order = ' ORDER BY CTEALL.sLpOrder, CTEALL.Poziom'
+
+
+EXEC(@Sql_1+@Sql_2+@Sql_3+@Sql_4+@Sql_5+@p_Filtr+@Sql_Order)
+
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,79 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="ESKLEP_EksportPrc"></A><PRE>
+          <FONT SIZE="2"><I>/* ESKLEP_EksportPrc */</I><BR>
+CREATE PROCEDURE CDN.ESKLEP_EksportPrc
+  @ID INT      -- ID e-sklepu
+ ,@TypExp INT  -- Typ eksportu cennika (0 - rĂłĹĽnicowy, 1 - peĹ‚ny)
+
+AS
+SET NOCOUNT ON
+
+DECLARE @MaxRozmiarJpg int = 50000;
+DECLARE @TimeStamp INT
+SET @TimeStamp = DATEDIFF(s,CONVERT(DATETIME,'19900101',121),GETDATE())
+
+CREATE TABLE #tmpRecordSet(OpiekunID INT, Imie VARCHAR(31), Nazwisko VARCHAR(51), Telefon VARCHAR (31), Email VARCHAR(256), ZdjecieID INT)
+
+INSERT INTO #tmpRecordSet
+SELECT 
+		Prc_GIDNumer AS OpiekunID,
+		Prc_Imie1 AS Imie,
+		Prc_Nazwisko AS Nazwisko,
+		Prc_Telefon1 AS Telefon,
+		RTRIM(Prc_Email) AS Email,
+		DAB_ID AS ZdjecieID
+		FROM CDN.PrcKarty
+		JOIN CDN.PicoKonfig ON Pck_PicoId = @ID
+		LEFT JOIN CDN.DaneObiekty ON DAO_ObiNumer = Prc_GIDNumer AND Dao_esklep = 1 AND DAO_ObiTyp = 944 AND 
+			DAO_Pozycja = (SELECT MIN(DAO_Pozycja) FROM CDN.DaneObiekty JOIN CDN.DaneBinarne ON DAO_DABId = DAB_ID WHERE DAO_ObiNumer = Prc_GIDNumer AND Dao_esklep = 1 AND (DATALENGTH(DAB_DANE) &lt; @MaxRozmiarJpg) AND dab_rozszerzenie IN('jpg','png'))
+		LEFT JOIN CDN.DaneBinarne ON DAO_DABId = DAB_ID
+		LEFT OUTER JOIN CDN.PicoLog ON PcL_PcKID = @ID AND PcL_ObiTyp = Prc_GIDTyp AND PcL_ObiNumer = Prc_GIDNumer
+		WHERE Prc_ESklep = 1 AND PrC_Archiwalny = 0
+		AND (PrC_CzasModyfikacji &gt; CASE WHEN @TypExp=0 THEN ISNULL(PcL_TStamp,PcK_TSSynchrTwrPtw + 1) ELSE 0 END OR DAO_CzasModyfikacji &gt; ISNULL(PcL_TStamp,PcK_TSSynchrTwrPtw + 1))
+
+
+SELECT DISTINCT 1 AS Tag, NULL AS Parent
+	,NULL AS [OPII!1]
+	,NULL AS [OPP!2!OpiekunID], NULL AS [OPP!2!Imie],NULL AS [OPP!2!Nazwisko], NULL AS [OPP!2!Telefon], NULL AS [OPP!2!Email], NULL AS [OPP!2!ZdjecieID]
+	FROM #tmpRecordSet
+
+UNION ALL 
+
+SELECT  DISTINCT 2 AS Tag, 1 AS Parent
+	,NULL AS [OPII!1]
+	,OpiekunID AS [OPP!2!OpiekunID], Imie AS [OPP!2!Imie],Nazwisko AS [OPP!2!Nazwisko], Telefon AS [OPP!2!Telefon], Email AS [OPP!2!Email], ZdjecieID AS [OPP!2!ZdjecieID]
+	FROM #tmpRecordSet
+FOR XML EXPLICIT
+
+INSERT INTO CDN.PicoLog (PcL_PcKID, PcL_ObiTyp, PcL_ObiNumer, PcL_ObiektID, PcL_Komentarz, PcL_Info, PcL_TStamp)
+                        SELECT DISTINCT @ID, 944, Prc_GIDNumer, -1, 'Pracownik - '+ Prc_Akronim, '', @TimeStamp
+                        FROM CDN.PrcKarty
+                        JOIN #tmpRecordSet ON Prc_GIDNumer = OpiekunID
+                        LEFT OUTER JOIN CDN.PicoLog ON PcL_PcKID = @ID AND PcL_ObiTyp = Prc_GIDTyp AND PcL_ObiNumer = Prc_GIDNumer
+                        WHERE PcL_ID IS NULL
+
+UPDATE CDN.PicoLog
+	SET	PcL_TStamp = @TimeStamp
+	from #tmpRecordSet
+	where PcL_PcKID = @ID AND PcL_ObiTyp = 944 AND PcL_ObiNumer = OpiekunID
+	
+DROP TABLE #tmpRecordSet;
+
+SET NOCOUNT OFF
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

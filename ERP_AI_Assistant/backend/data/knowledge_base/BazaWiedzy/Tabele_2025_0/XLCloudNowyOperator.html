@@ -1,0 +1,94 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="XLCloudNowyOperator"></A><PRE>
+          <FONT SIZE="2"><I>/* XLCloudNowyOperator */</I><BR>
+CREATE PROCEDURE CDN.XLCloudNowyOperator
+	@nazwisko varchar(255), 
+	@NTKonto varchar(128), 
+	@SSOLogin varchar(255),
+	@administrator TINYINT,
+	@czySerwis TINYINT = 0
+AS
+BEGIN
+	SET NOCOUNT ON
+	IF EXISTS(SELECT * FROM CDN.OpeKarty WHERE Ope_NTKonto = @NTKonto)
+	BEGIN
+		UPDATE CDN.OpeKarty SET Ope_Zablokowane = 0 WHERE Ope_NTKonto = @NTKonto
+	END
+	ELSE 
+	BEGIN
+		--Ope_Ident
+		DECLARE @Ident VARCHAR(8)
+		SET @Ident = UPPER(SUBSTRING(@NTKonto,CHARINDEX('\',@NTKonto)+1,8))
+		DECLARE @ZnakiPoOstatniejTyldzie varchar(7)= SUBSTRING(@Ident,LEN(@Ident) - CHARINDEX('~', REVERSE(@Ident)) + 2,LEN(@Ident))
+		; WITH identyfikatory AS (
+			SELECT CASE WHEN @ZnakiPoOstatniejTyldzie &lt;&gt; '' AND PATINDEX('%[^0-9]%', @ZnakiPoOstatniejTyldzie)=0 THEN CAST(@ZnakiPoOstatniejTyldzie AS INT) ELSE 1 END Numer
+			FROM CDN.OpeKarty WHERE Ope_Ident = @Ident
+			UNION ALL
+			SELECT Numer + 1
+			FROM identyfikatory
+			JOIN CDN.OpeKarty ON Ope_Ident = CONCAT(SUBSTRING(@Ident,1,8-LEN(Numer)-1),'~',Numer))
+			SELECT @Ident=CASE WHEN MAX(Numer) IS NULL THEN @Ident ELSE CONCAT(SUBSTRING(@Ident,1,8-LEN(MAX(Numer))-1),'~',MAX(Numer)) end from identyfikatory
+
+		--Ope_SID
+		DECLARE @varBinarySID VARBINARY(85) = SUSER_SID(@NTKonto)		
+		DECLARE @Iter INT = 9,
+				@Dlugosc AS INT = LEN(@varBinarySID),
+				@StringSID VARCHAR(100) = 'S-' + CONVERT(VARCHAR, CONVERT(INT, CONVERT(VARBINARY, SUBSTRING(@varBinarySID, 1, 1)))) 
+							+ '-' + CONVERT(VARCHAR, CONVERT(INT, CONVERT(VARBINARY, SUBSTRING(@varBinarySID, 3, 6))))
+		WHILE @Iter &lt; @Dlugosc
+		BEGIN
+			SELECT @StringSID = @StringSID + '-' + CONVERT(VARCHAR, CONVERT(BIGINT, CONVERT(VARBINARY, REVERSE(CONVERT(VARBINARY, SUBSTRING(@varBinarySID, @Iter, 4)))))), @Iter = @Iter + 4
+		END		
+
+		DECLARE @GIDFirma INT = CDN.GIDFirma(),
+				@OpeGIDNumer INT = 0
+
+		INSERT INTO CDN.OpeKarty(Ope_GIDTyp, Ope_GIDFirma, Ope_Ident, Ope_Nazwisko, Ope_StaTyp, Ope_StaFirma, Ope_StaNumer, Ope_StaLp, 
+			Ope_Haslo_chk, 
+			Ope_Haslo, Ope_DataWprowadzeniaHasla, Ope_Moduly, Ope_Administrator, Ope_Wsk, Ope_LogCoWyswietlac, Ope_LogZamknij, Ope_Platnosci, Ope_AtrybutyZmianaKlawiatury, Ope_PriorytetRez, Ope_AkceptacjaWydatkow, Ope_CofniecieZatwierdzeniaAkceptacji, Ope_PrezentujWszystkoPl, Ope_PrezentujInformacje, Ope_ZamykanieDokumentowAWD_ZWM, Ope_ZmFormPlatNaDom, Ope_PomiarCzasow, Ope_MESWidokZalacznikow, Ope_DoczytujRekordy, Ope_MESEdycjaTerminowRealizacji, Ope_Tlumaczenie, Ope_RozpoznawanieTwarzy, Ope_LimitKredytu, Ope_LimitPoTerminie, Ope_StrukturaMagazynu, Ope_ZamPotw, Ope_DostepDoParamRejestrow, Ope_AktualizacjaCen, Ope_AktualizacjaAdresowKontrahenta, Ope_RabatOperatora, Ope_ZarzadzanieWyglademList, Ope_MenuIlosc, Ope_MESObslugaCech, Ope_PrzerywanieSesji, Ope_KorektaDanych, Ope_SSOLogin, Ope_NTLogin, Ope_NTKonto, Ope_NTSid)
+		VALUES(128, @GIDFirma, @Ident, @nazwisko, 0, 0, 0, 0, 
+		CHAR(ABS(CHECKSUM(NEWID()) % (90-65-1)) + 65) + CHAR(ABS(CHECKSUM(NEWID()) % (122-97-1)) + 97), --Chr(Random(65,90)) &amp; chr(Random(97,122)) ?
+		'E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855', DateDiff(d, convert(DATETIME, '1800-12-28', 120), getdate()), 128, @administrator, 0, 7, 1, 96, 0, 1, 0, 0, -1, -1, 0, 0, -1, 1, 1, 1, 1, 0, 0, 100, 1, 24, 1, 1, 0, 100, 1, 3, 1, 1, 1, @SSOLogin, 1, @NTKonto, @StringSID)
+
+		IF @@ROWCOUNT = 0
+		BEGIN		
+			RAISERROR ('Nie powiodło się dodawanie wpisu do tabeli CDN.OpeKarty.', 16, 1);
+			RETURN -1
+		END
+
+		SET @OpeGIDNumer = SCOPE_IDENTITY()
+
+		IF @czySerwis = 1
+		BEGIN
+			-- dodanie operatora do struktury firmy
+			INSERT INTO CDN.FrmStruktura(FRS_GIDTyp, FRS_GIDFirma, FRS_GIDNumer, FRS_GIDLp, FRS_GROTyp, FRS_GROFirma, FRS_GRONumer, FRS_GROLp, FRS_StrTyp, FRS_Warstwa, FRS_Nazwa, FRS_Opis, FRS_Archiwalny, FRS_PlatnosciZRodzica, FRS_ZakLp, FRS_SprLp, FRS_FormPlatNumer, FRS_DetDokumentyZDni, FRS_ProdCzasWyswietlania, FRS_ProdRozpocznijPoWczytaniu, FRS_ProdZaokraglanieMat, FRS_ProdZaokraglanieProdukt, FRS_ProdRealizacjaEtapu, FRS_ProdListaKonfliktow, FRS_ProdukcjaZRodzica, FRS_OperacjeTylkoZeZwolnionych, FRS_DataPlanJakoPriorytet, FRS_MESPrzeliczMaterialyPoZmianieOperacji)
+			VALUES (128, @GIDFirma, @OpeGIDNumer, 0, -4272, @GIDFirma, 1, 0, -1, 1, @Ident, @nazwisko, 0, 0, 0, 0, 736, 10, 15, 1, 0 , 1, 0, 0, 0, 0, 0, 1)
+		END
+	
+	END
+
+	INSERT INTO CDN.Atrybuty(Atr_ObiTyp, Atr_ObiFirma, Atr_ObiNumer, Atr_ObiLp, Atr_ObiSubLp
+							,Atr_AtkId, Atr_Wartosc, Atr_AtrTyp, Atr_AtrFirma, Atr_AtrNumer, Atr_AtrLp, Atr_AtrSubLp, Atr_OptimaId)
+	SELECT 128, @GIDFirma, @OpeGIDNumer, 0, 0, Atk_Id, AtK_DomyslnaAPI, 0, 0, 0, 0, 0, 0
+	FROM CDN.AtrybutyKlasy
+	JOIN CDN.AtrybutyObiekty ON AtO_AtKId=AtK_ID
+	WHERE AtK_Automat=1 AND AtO_GIDTyp=128 AND AtO_Element=0
+
+SET NOCOUNT OFF
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

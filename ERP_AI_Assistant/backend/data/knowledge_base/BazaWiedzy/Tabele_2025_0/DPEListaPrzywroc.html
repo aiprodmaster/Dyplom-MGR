@@ -1,0 +1,146 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="DPEListaPrzywroc"></A><PRE>
+          <FONT SIZE="2"><I>/* DPEListaPrzywroc */</I><BR>
+CREATE PROCEDURE CDN.DPEListaPrzywroc 
+@PONGIDNumer int
+,@POEGIDLp smallint
+,@PENIDMin int = 0
+,@RecordsCount int = 300
+,@Filtr varchar(max)=''
+AS
+begin
+
+declare @sSQL nvarchar(max)
+declare @Kolumny varchar(max)
+declare @rv int
+declare @PONGIDTyp smallint = 7691
+declare @PONDPNID int
+declare @DPELp smallint
+declare @DPENazwa varchar(100)
+declare @IloscKolumn tinyint
+declare @IloscKolumnZapisanych tinyint
+declare @Agregat tinyint 
+	--set @RecordsCount = 100
+	
+	
+	select 
+		@PONDPNID = PON_DPNID
+		,@DPELp=DPE_Lp
+		,@DPENazwa=DPE_Nazwa		
+		,@Agregat = DPE_Agreguj
+	from cdn.PodElem
+				join cdn.PodNag on POE_GIDTyp=PON_GIDTyp and POE_GIDNumer=PON_GIDNumer
+				join cdn.DefPodNag on PON_DPNID=DPN_ID
+				join cdn.DefPodElem on DPN_ID=DPE_DPNID and POE_GIDLp=DPE_ID
+	where PON_GIDNumer = @PONGIDNumer and POE_GIDLp=@POEGIDLp and DPE_Typ=11
+
+	if @@ROWCOUNT=0 
+		return
+
+		 
+	set @Kolumny = ''
+	
+	select
+		@Kolumny = @Kolumny + ISNULL(DPK_NazwaPola+',','')		
+	from cdn.DefPodElemKolumny
+	where DPK_DPNId=@PONDPNId and DPK_DPELp=@DPELp 
+	order by DPK_Id
+
+	set @IloscKolumn = @@ROWCOUNT
+
+
+	
+	select
+		@IloscKolumnZapisanych = COUNT(1)
+	from cdn.DefPodElemKolumny
+	where DPK_DPNId=@PONDPNId and DPK_DPELp=@DPELp --and DPK_PominKolumne=0 and DPK_KluczGlowny=0
+	
+
+	set @Kolumny = LEFT(@Kolumny, len(@Kolumny)-1)	
+	
+
+	set @sSQL = N';with Zrd as (
+		select ' + case when @RecordsCount&gt;0 then N' top '+convert(nvarchar,@RecordsCount*@IloscKolumnZapisanych) else N' top 100 percent ' end+
+		' PEN_Id,DPK_NrKolumny,DPK_NazwaPola,DPK_KluczGlowny,PEL_WartoscString,PEN_ObiTyp,PEN_ObiNumer,PEN_ObiLp,PEN_ObiLp1
+		from cdn.PodElemNagListy PEN
+				join cdn.DefPodElemKolumny DPK on 1=1
+				left join cdn.PodElemListy PEL on DPK_ID=PEL_DPKID	and PEL_PONTyp=PEN_PONTyp and PEL_PONNumer=PEN_PONNumer and PEL_POELp=PEN_POELp and PEL_PENID=PEN_ID				
+		where DPK_DPNId=@PONDPNId and DPK_DPELp=@DPELp and PEN_PONTyp='+convert(nvarchar,@PONGIDTyp)+N' and PEN_PONNumer=@PONGIDNumer and PEN_POELp=@POEGIDLp
+			and PEN_ID&gt;@PENIDMin' +
+			--case when @PENIDMin&lt;&gt;0 then N' and PEN_ID between @PENIDMin+1 and @PENIDMin+1000' end +
+			case when @Filtr&lt;&gt;'' then N' and ' + @Filtr else N'' end +
+	N' order by PEN.PEN_ID) 
+	select 
+		 ' +
+		--case when @Agregat = 0 then	' PEN_Id,' else '' end		
+		N' PEN_Id,'
+		 + @Kolumny +			
+	N' from
+	(
+	select' + case when @RecordsCount&gt;0 then N' top '+convert(nvarchar,@RecordsCount*@IloscKolumnZapisanych) else N' top 100 percent ' end+
+		  +
+		--case when @Agregat = 0 then	N' PEN_Id,' else '' end +
+		N' PEN_Id,'+
+		N'DPK_NazwaPola
+		,case DPK_KluczGlowny when 0 then PEL_WartoscString 
+		when 1 then convert(varchar,PEN_ObiTyp)
+		when 2 then convert(varchar,PEN_ObiNumer)
+		when 3 then convert(varchar,PEN_ObiLp)
+		when 4 then convert(varchar,PEN_ObiLp1)
+		else NULL
+		end PEL_WartoscString
+	from Zrd 
+	order by  ' +
+		--case when @Agregat = 0 then	'PEN_ID,' else ''end
+		N' PEN_Id,'
+		+N' DPK_NrKolumny
+	) a
+	PIVOT (max(PEL_WartoscString) for DPK_NazwaPola
+		in ('+@Kolumny+N')
+	) pvt		
+	 ' +
+		--case when @Agregat = 0 then	'order by PEN_Id' else '' end
+		N'order by PEN_Id'
+		
+			
+	--select @sSQL as a1
+	--			return		
+
+
+	EXECUTE @rv = sp_executesql @sSQL, 
+			N'@PONGIDNumer int
+			,@POEGIDLp smallint
+			,@PONDPNId int
+			,@DPELp smallint
+			,@PENIDMin int'			
+			,@PONGIDNumer = @PONGIDNumer
+			,@POEGIDLp = @POEGIDLp
+			,@PONDPNId = @PONDPNId
+			,@DPELp = @DPELp			
+			,@PENIDMin= @PENIDMin
+
+
+	if @rv &lt;&gt; 0
+	begin 				
+		raiserror('Błąd wyświetlania pola listy : %s', 16, 1, @DPENazwa)	
+		return 1
+	end
+			
+						
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

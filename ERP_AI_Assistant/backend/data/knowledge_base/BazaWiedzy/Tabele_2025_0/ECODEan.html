@@ -1,0 +1,169 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[ECODEan]"></A><PRE>
+          <FONT SIZE="2"><I>/* [ECODEan] */</I><BR>
+CREATE FUNCTION [CDN].[ECODEan]
+(
+	@Rodzaj			TINYINT
+	,@TwrNumer		INT
+	,@Jm			VARCHAR(8)
+	,@KntNumer		INT
+	,@ZwrocRodzaj	BIT = 0
+)
+RETURNS VARCHAR(42)
+AS
+BEGIN
+	-- Stałe
+	DECLARE	@e_RodzajKodu_Wlasny	TINYINT
+			,@e_RodzajKodu_Obcy		TINYINT
+			,@e_TypKodu_EAN8		TINYINT
+			,@e_TypKodu_EAN13		TINYINT
+			,@e_TypKodu_EAN13Ilosc	TINYINT
+			,@e_TypKodu_Inny		TINYINT
+			
+	SELECT	@e_RodzajKodu_Wlasny	= 0
+			,@e_RodzajKodu_Obcy		= 1
+			,@e_TypKodu_EAN8		= 0
+			,@e_TypKodu_EAN13		= 1
+			,@e_TypKodu_EAN13Ilosc	= 2
+			,@e_TypKodu_Inny		= 3
+
+	-- Zmienne
+	DECLARE @EAN			VARCHAR(40)
+			,@JmPod			VARCHAR(8)
+	SELECT	@EAN			= NULL
+	SELECT	@JmPod = Twr_Jm FROM CDN.TwrKarty WHERE Twr_GIDNumer = @TwrNumer
+	
+	IF @Rodzaj = @e_RodzajKodu_Wlasny
+	BEGIN
+		-- Rodzaj: własny; Wskazanie na dany towar; Wskazanie na jednostkę elementu dok.; Typ: EAN13
+		SELECT TOP 1 @EAN = CASE WHEN TwK_Kod = '' THEN NULL ELSE TwK_Kod END
+		FROM CDN.TwrKody
+		WHERE	TwK_Rodzaj = @e_RodzajKodu_Wlasny AND 
+				TwK_TypKodu = @e_TypKodu_EAN13 AND
+				TwK_TwrNumer = @TwrNumer AND
+				TwK_Jm = @Jm
+		ORDER BY TwK_Domyslny DESC, TwK_Id
+		IF ISNULL(@EAN,'') &lt;&gt; '' 
+		BEGIN
+			-- Uwaga dodatkowe sprawdzenie, czy jednostką elementu jest jednostka podstawowa towaru
+			-- tylko dla kodu własnego (kod własny może mieć przypisaną jednostkę podstawową)
+			RETURN 
+				CASE @ZwrocRodzaj 
+					WHEN 1 THEN CASE WHEN @JmPod = @Jm THEN '3:' ELSE '1:' END + @EAN 
+					ELSE @EAN 
+				END
+		END
+		
+		-- Rodzaj: własny; Wskazanie na dany towar; Wskazanie na jednostkę elementu dok.; Typ: inny jak EAN13	
+		SELECT TOP 1 @EAN = CASE WHEN TwK_Kod = '' THEN NULL ELSE TwK_Kod END
+		FROM CDN.TwrKody
+		WHERE	TwK_Rodzaj = @e_RodzajKodu_Wlasny AND 
+				TwK_TypKodu IN (@e_TypKodu_EAN8,@e_TypKodu_EAN13Ilosc,@e_TypKodu_Inny) AND
+				TwK_TwrNumer = @TwrNumer AND
+				TwK_Jm = @Jm
+		ORDER BY TwK_Domyslny DESC, TwK_Id
+		IF ISNULL(@EAN,'') &lt;&gt; '' 
+		BEGIN
+			-- Uwaga dodatkowe sprawdzenie, czy jednostką elementu jest jednostka podstawowa towaru
+			-- tylko dla kodu własnego (kod własny może mieć przypisaną jednostkę podstawową)
+			RETURN 
+				CASE @ZwrocRodzaj 
+					WHEN 1 THEN CASE WHEN @JmPod = @Jm THEN '4:' ELSE '2:' END + @EAN 
+					ELSE @EAN 
+				END
+		END
+		
+		-- Rodzaj: własny; Wskazanie na dany towar; Wskazanie na jednostkę główną; Typ: EAN13
+		SELECT TOP 1 @EAN = CASE WHEN TwK_Kod = '' THEN NULL ELSE TwK_Kod END
+		FROM CDN.TwrKody
+			INNER JOIN CDN.TwrKarty ON Twr_GIDNumer = TwK_TwrNumer
+		WHERE	TwK_Rodzaj = @e_RodzajKodu_Wlasny AND 
+				TwK_TypKodu = @e_TypKodu_EAN13 AND
+				TwK_TwrNumer = @TwrNumer AND
+				TwK_Jm = Twr_Jm
+		ORDER BY TwK_Domyslny DESC, TwK_Id
+		IF ISNULL(@EAN,'') &lt;&gt; '' RETURN CASE @ZwrocRodzaj WHEN 1 THEN '3:'+@EAN ELSE @EAN END
+		
+		-- Rodzaj: własny; Wskazanie na dany towar; Wskazanie na jednostkę główną; Typ: inny jak EAN13
+		SELECT TOP 1 @EAN = CASE WHEN TwK_Kod = '' THEN NULL ELSE TwK_Kod END
+		FROM CDN.TwrKody
+			INNER JOIN CDN.TwrKarty ON Twr_GIDNumer = TwK_TwrNumer
+		WHERE	TwK_Rodzaj = @e_RodzajKodu_Wlasny AND 
+				TwK_TypKodu IN (@e_TypKodu_EAN8,@e_TypKodu_EAN13Ilosc,@e_TypKodu_Inny) AND
+				TwK_TwrNumer = @TwrNumer AND
+				TwK_Jm = Twr_Jm
+		ORDER BY TwK_Domyslny DESC, TwK_Id
+		IF ISNULL(@EAN,'') &lt;&gt; '' RETURN CASE @ZwrocRodzaj WHEN 1 THEN '4:'+@EAN ELSE @EAN END
+		
+	END
+	IF 	@Rodzaj = @e_RodzajKodu_Obcy
+	BEGIN
+		-- Ustalenie kodu EAN
+		-- Rodzaj: obcy; Przypisany kontrahent; Wskazanie na dany towar; Wskazanie na jednostkę elementu dok.; Typ: EAN13
+		SELECT TOP 1 @EAN = CASE WHEN TwK_Kod = '' THEN NULL ELSE TwK_Kod END
+		FROM CDN.TwrKody
+			INNER JOIN CDN.TwrKodyKnt ON TKK_TwKId = TwK_Id
+		WHERE	TwK_Rodzaj = @e_RodzajKodu_Obcy AND 
+				TwK_TypKodu = @e_TypKodu_EAN13 AND
+				TwK_TwrNumer = @TwrNumer AND
+				TwK_Jm = @Jm AND
+				TKK_KntNumer = @KntNumer
+		ORDER BY TKK_Domyslny DESC, TwK_Id
+		IF ISNULL(@EAN,'') &lt;&gt; '' RETURN CASE @ZwrocRodzaj WHEN 1 THEN '1:'+@EAN ELSE @EAN END
+		
+		-- Rodzaj: obcy; Przypisany kontrahent; Wskazanie na dany towar; Wskazanie na jednostkę elementu dok.; Typ: inny jak EAN13	
+		SELECT TOP 1 @EAN = CASE WHEN TwK_Kod = '' THEN NULL ELSE TwK_Kod END
+		FROM CDN.TwrKody
+			INNER JOIN CDN.TwrKodyKnt ON TKK_TwKId = TwK_Id
+		WHERE	TwK_Rodzaj = @e_RodzajKodu_Obcy AND 
+				TwK_TypKodu IN (@e_TypKodu_EAN8,@e_TypKodu_EAN13Ilosc,@e_TypKodu_Inny) AND
+				TwK_TwrNumer = @TwrNumer AND
+				TwK_Jm = @Jm AND
+				TKK_KntNumer = @KntNumer
+		ORDER BY TKK_Domyslny DESC, TwK_Id
+		IF ISNULL(@EAN,'') &lt;&gt; '' RETURN CASE @ZwrocRodzaj WHEN 1 THEN '2:'+@EAN ELSE @EAN END
+
+		-- Rodzaj: obcy; Przypisany kontrahent; Wskazanie na dany towar; Brak przypisanej jednostki; Typ: EAN13
+		SELECT TOP 1 @EAN = CASE WHEN TwK_Kod = '' THEN NULL ELSE TwK_Kod END
+		FROM CDN.TwrKody
+			INNER JOIN CDN.TwrKodyKnt ON TKK_TwKId = TwK_Id
+			INNER JOIN CDN.TwrKarty ON Twr_GIDNumer = TwK_TwrNumer
+		WHERE	TwK_Rodzaj = @e_RodzajKodu_Obcy AND 
+				TwK_TypKodu = @e_TypKodu_EAN13 AND
+				TwK_TwrNumer = @TwrNumer AND
+				TwK_Jm = '' AND
+				TKK_KntNumer = @KntNumer	
+		ORDER BY TKK_Domyslny DESC, TwK_Id
+		IF ISNULL(@EAN,'') &lt;&gt; '' RETURN CASE @ZwrocRodzaj WHEN 1 THEN '3:'+@EAN ELSE @EAN END
+
+		-- EAN4 Rodzaj: obcy; Przypisany kontrahent; Wskazanie na dany towar; Brak przypisanej jednostki; Typ: inny jak EAN13		
+		SELECT TOP 1 @EAN = CASE WHEN TwK_Kod = '' THEN NULL ELSE TwK_Kod END
+		FROM CDN.TwrKody
+			INNER JOIN CDN.TwrKodyKnt ON TKK_TwKId = TwK_Id
+			INNER JOIN CDN.TwrKarty ON Twr_GIDNumer = TwK_TwrNumer
+		WHERE	TwK_Rodzaj = @e_RodzajKodu_Obcy AND 
+				TwK_TypKodu IN (@e_TypKodu_EAN8,@e_TypKodu_EAN13Ilosc,@e_TypKodu_Inny) AND
+				TwK_TwrNumer = @TwrNumer AND
+				TwK_Jm = '' AND
+				TKK_KntNumer = @KntNumer
+		ORDER BY TKK_Domyslny DESC, TwK_Id
+		IF ISNULL(@EAN,'') &lt;&gt; '' RETURN CASE @ZwrocRodzaj WHEN 1 THEN '4:'+@EAN ELSE @EAN END
+	END
+	RETURN NULL
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

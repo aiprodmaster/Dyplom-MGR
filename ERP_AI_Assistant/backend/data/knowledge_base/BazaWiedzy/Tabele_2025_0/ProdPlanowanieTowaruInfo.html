@@ -1,0 +1,79 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="ProdPlanowanieTowaruInfo"></A><PRE>
+          <FONT SIZE="2"><I>/* ProdPlanowanieTowaruInfo */</I><BR>
+CREATE PROCEDURE CDN.ProdPlanowanieTowaruInfo
+	@Zlecenie int,
+	@Technologia int,
+	@PlanowacOd int,
+	@TechnologiaZasob int,
+	@PZEId int,
+	@MetodaPlanowania int,
+	@PCZPartia INT = 0,
+	@PPCPartia INT = 0,
+	@MagNumer INT = -1
+AS
+BEGIN
+	  --zapytanie zwracające informację jaką ilość danego produktu potrzebujemy wyprodukować
+
+		
+		select PTZ_Kod, SUM(PZE_Ilosc) Ilosc
+        from (
+                    select PZE_PlanowacOd, SUM(PZE_Ilosc) - ISNULL(SUM(PLKIlosc),0) PZE_Ilosc,PZE_PTZId
+                    FROM
+						(SELECT PZE_Id PZEId,ISNULL(SUM(PLK_Ilosc),0) PLKIlosc,cdn.ProdPZEDomyslnyPTZ(PZE_Id) PZE_PTZId
+						from CDN.ProdZlecElem
+						LEFT JOIN CDN.ProdLinki ON PLK_PZEId = PZE_Id
+						GROUP BY PZE_Id) Elementy
+					JOIN CDN.ProdZlecElem ON PZE_Id = PZEId
+					WHERE PZE_Zlecenie = @Zlecenie and PZE_Technologia = @Technologia
+                          and PZE_PlanowacOd = @PlanowacOd AND (@PZEId = 0 OR PZE_Id = @PZEId) AND  PZE_PTZId = @TechnologiaZasob
+                    group by PZE_PlanowacOd, PZE_PTZId
+        ) PTZ
+        inner join CDN.ProdTechnologiaZasoby on PTZ_Id = @TechnologiaZasob
+        group by PTZ_Kod      
+
+    --zapytanie zwracające informacje istniejącym procesie dotyczącym tego samego produktu, jeśli istnieje planowanie zwiększy ilość na istniejącym planowaniu
+    select PPC_Id, PTC_Id, PPC_Ilosc, PTE_Ilosc, PTC_Ilosc, PTC_IloscMax, PTZ_Ilosc, 
+        sum(PCZ_Ilosc) PCZ_Ilosc, sum(Realizacje) Realizacje, 
+        min(case when Realizacje&gt;0 then 2147483647 else PCZ_Id end) Czynnosc, min(PCZ_PolprodPartia) PCZ_PolprodPartia
+    from (
+        select PPC_Id, PTC_Id, PPC_Ilosc, PTE_Ilosc, 
+            CDN.Prod_WartoscAtr(PTC_Ilosc,PTC_IloscAtr,14340,PTE_Id,-PZL_DataWystawienia,PPC_Id) PTC_Ilosc, 
+            CDN.Prod_WartoscAtr(PTC_IloscMax,PTC_IloscMaxAtr,14340,PTE_Id,-PZL_DataWystawienia,PPC_Id) PTC_IloscMax, 
+            CDN.Prod_WartoscAtr(PTZ_Ilosc,PTZ_IloscAtr,14340,PTE_Id,-PZL_DataWystawienia,PPC_Id) PTZ_Ilosc, 
+            isnull(C.PCZ_Ilosc,0) PCZ_Ilosc, count(R.PCZ_Id) Realizacje, isnull(C.PCZ_Id,0) PCZ_Id, isnull(C.PCZ_PolprodPartia,0) PCZ_PolprodPartia
+        from CDN.ProdTechnologiaZasoby 
+        inner join CDN.ProdTechnologiaCzynnosci on PTC_Id=PTZ_TechnologiaCzynnosc 
+        inner join CDN.ProdTechnologia on PTE_Id=PTC_Technologia 
+        inner join CDN.ProdZlecenia on PZL_Id = @Zlecenie
+        inner join CDN.ProdProcesy on PPC_Zlecenie=PZL_Id and PPC_Technologia=PTE_Id and 
+			(PPC_PlanowacOd in (@PlanowacOd, case when @PlanowacOd &lt; 0 then 0 else @PlanowacOd end))	--w kodzie Clarionowym było: (PPC_PlanowacOd=' &amp; lPlanowacOd &amp; choose(lPlanowacOd&lt;0,' or PPC_PlanowacOd=0','') &amp; ') '
+        left outer join CDN.ProdCzynnosci C on PCZ_Proces=PPC_Id and PCZ_TechnologiaCzynnosc=PTC_Id and PCZ_Realizuje=0 
+			AND ISNULL((SELECT POM_MagNumer FROM CDN.ProdOperacjeMagazyny WHERE POM_PCZId = C.PCZ_Id AND POM_PTZId = PTZ_Id),-1) = @MagNumer
+		left outer join CDN.ProdOperacjeMagazyny ON POM_PCZId = C.PCZ_Id
+        left outer join CDN.ProdCzynnosci R on R.PCZ_Realizuje=C.PCZ_Id 
+        where PTZ_Id= @TechnologiaZasob AND @PCZPartia IN (ISNULL(C.PCZ_PZEPartia,0),0) AND @PPCPartia = PPC_PZEPartia--AND @PPCPartia IN (PPC_PZEPartia,0)
+        group by PTZ_Id, PTZ_Ilosc, PTZ_IloscAtr, PTC_Id, PTC_Ilosc, PTC_IloscAtr, PTC_IloscMax, PTC_IloscMaxAtr, 
+            PTE_Id, PTE_Ilosc, PZL_DataWystawienia, PPC_Id, PPC_Ilosc, C.PCZ_Id, C.PCZ_Ilosc, C.PCZ_PolprodPartia
+    ) C 
+    where PTZ_Ilosc&gt;0 
+    group by PTZ_Ilosc, PTC_Id, PTC_Ilosc, PTC_IloscMax, PTE_Ilosc, PPC_Id, PPC_Ilosc 
+    having PTC_IloscMax=0 or PTC_IloscMax*PPC_Ilosc/PTE_Ilosc&gt;sum(PCZ_Ilosc) or sum(Realizacje)=0 
+    order by Realizacje desc, Czynnosc desc        
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

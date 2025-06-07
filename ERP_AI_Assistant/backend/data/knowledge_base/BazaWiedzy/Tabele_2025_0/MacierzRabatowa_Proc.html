@@ -1,0 +1,469 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[MacierzRabatowa]"></A><PRE>
+          <FONT SIZE="2"><I>/* [MacierzRabatowa] */</I><BR>
+CREATE PROCEDURE [CDN].[MacierzRabatowa]
+	@lNagPoz  int ,  -- miejsce stosowania nagłówek (1)/pozycja(2)       
+	@lRodzajDok smallint, --  rodzaj dokumentu (przychód/rozchód)
+	@lData int, 	 -- bieżąca data i czas jako timestamp
+	@lKntTyp smallint,  -- dane kontrahenta (KNT,KNU,PRM)
+	@lKntNumer int,
+	@lTwrTyp smallint,  -- dane towaru (TWU,PRM)
+	@lTwrNumer int,
+	@lFormaNr int, -- numer	formy płatności (PLT)
+	@lFormaTermin int, -- termin formy płatności (PLT)
+	@lFormaData int, -- data płatności (PLT) w formacie clarionowym (5 cyfr)
+	@lSposobDostawy int, -- sposób dostawy
+    @lMagazyn int, --Numer magazynu
+	@sFrsId	  varchar(255),  -- oddzielone przecinkami miejsca w strukturze firmy
+	@lZstNumer int, -- numer zestawu (kompletu)
+	@lGIDTyp   int, -- identyfikator pozycji/dokumentu (GID) 
+	@lGIDNumer int, -- 
+	@lGIDLp    int,  -- 
+	@lPromocjaID int, -- zwraca wyłącznie promocję o podanym ID (jeżeli spełni standardowe warunki)
+	@lPromocjaProgID int, -- zwraca wartośc upustu z podanego progu (z tabeli ProgiPromocje)
+	@lPromocjaWTRID int, -- zwraca wyłącznie promocję WTR o podanym ID (jeżeli spełni standardowe warunki)
+	@lProgWTRID int, -- zwraca wartośc upustu z podanego progu WTR (z tabeli ProgiPromocje)
+	@sDsts varchar(max) --lista dostaw
+	
+AS
+
+
+  If (@lNagPoz=2)
+  BEGIN	
+	EXEC CDN.MacierzRabatowaPozycje @lNagPoz,@lRodzajDok,@lData,@lKntTyp,@lKntNumer,@lTwrTyp,@lTwrNumer,@lFormaNr,@lFormaTermin,@lFormaData,@lSposobDostawy,@lMagazyn,@sFrsId,@lZstNumer,@lGIDTyp,@lGIDNumer,@lGIDLp,@lPromocjaID,@lPromocjaProgID,@lPromocjaWTRID,@lProgWTRID,@sDsts
+  END
+  ELSE
+  BEGIN
+	EXEC CDN.MacierzRabatowaNaglowek @lNagPoz,@lRodzajDok,@lData,@lKntTyp,@lKntNumer,@lTwrTyp,@lTwrNumer,@lFormaNr,@lFormaTermin,@lFormaData,@lSposobDostawy,@lMagazyn,@sFrsId,@lZstNumer,@lGIDTyp,@lGIDNumer,@lGIDLp,@lPromocjaID,@lPromocjaProgID,@lPromocjaWTRID,@lProgWTRID,@sDsts
+  END		
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="MacierzRabatowaPozycje"></A><PRE>
+          <FONT SIZE="2"><I>/* MacierzRabatowaPozycje */</I><BR>
+CREATE PROCEDURE CDN.MacierzRabatowaPozycje
+	@lNagPoz  int ,  -- miejsce stosowania nagłówek (1)/pozycja(2)       
+	@lRodzajDok smallint, --  rodzaj dokumentu (przychód/rozchód)
+	@lData int, 	 -- bieżąca data i czas jako timestamp
+	@lKntTyp smallint,  -- dane kontrahenta (KNT,KNU,PRM)
+	@lKntNumer int,
+	@lTwrTyp smallint,  -- dane towaru (TWU,PRM)
+	@lTwrNumer int,
+	@lFormaNr int, -- numer	formy płatności (PLT)
+	@lFormaTermin int, -- termin formy płatności (PLT)
+	@lFormaData int, -- data płatności (PLT) w formacie clarionowym (5 cyfr)
+	@lSposobDostawy int, -- sposób dostawy
+    @lMagazyn int, --Numer magazynu
+	@sFrsId	  varchar(255),  -- oddzielone przecinkami miejsca w strukturze firmy
+	@lZstNumer int, -- numer zestawu (kompletu)
+	@lGIDTyp   int, -- identyfikator pozycji/dokumentu (GID) 
+	@lGIDNumer int, -- 
+	@lGIDLp    int,  -- 
+	@lPromocjaID int, -- zwraca wyłącznie promocję o podanym ID (jeżeli spełni standardowe warunki)
+	@lPromocjaProgID int, -- zwraca wartośc upustu z podanego progu (z tabeli ProgiPromocje)
+	@lPromocjaWTRID int, -- zwraca wyłącznie promocję WTR o podanym ID (jeżeli spełni standardowe warunki)
+	@lProgWTRID int, -- zwraca wartośc upustu z podanego progu WTR (z tabeli ProgiPromocje)
+	@sDsts varchar(max) --lista dostaw
+	
+AS
+
+DECLARE @TwrGIDTyp smallint
+DECLARE @TwrGRPTyp smallint
+DECLARE @KntGRPTyp smallint
+
+Set @TwrGIDTyp = 16
+Set @TwrGRPTyp = -16
+Set @KntGRPTyp = -32
+
+  IF @lKntTyp = -32000 AND @lKntNumer = -32000 --nieokreślony kontrahent
+  BEGIN
+	SET @lKntTyp = 0
+	SET @lKntNumer = 0
+  END
+
+  
+	Select PRM_ID, PRM_AKRONIM, PRM_TYP, PRM_PRIORYTET, PRM_PRIORYTETLP, TWG_NUMER, TWR_NUMER, UPUST_TYP, UPUST_WARTOSC, UPUST_WALUTA, UPUST_FLAGANB, UPUST_PROG, KNT_NUMER, PRM_OPERACJA, PRM_POMIN, UPUST_ID, ZEST_NUMER, UPUST_SORT, BUDZET_MAKS, TPR_ID, PRM_LIMITTYP, TPR_LIMITTYP, PRM_LIMITWARTOSC, TPR_LIMITWARTOSC, PRMPROGTYP,PRMPROGWARTOSC,OKRESTRANSAKCJIOD,OKRESTRANSAKCJIDO,PROGTPR,PRM_WarunekProgSQL,LIMITRODZAJ
+	from (
+	Select  Prm_Id 			as PRM_ID,
+		Prm_Akronim		as PRM_AKRONIM, 
+		Prm_Typ			as PRM_TYP,		
+		CASE WHEN PrM_Typ IN (9,10) THEN 0x7FFFFFFF ELSE Prm_Priorytet END		as PRM_PRIORYTET, 
+		Prm_PriorytetLp		as PRM_PRIORYTETLP, 
+		Tpr_TwGNumer		as TWG_NUMER, 
+		Tpr_TwrNumer		as TWR_NUMER, 
+		Tpr_Typ			as UPUST_TYP, 
+		CASE WHEN (@lPromocjaProgID &gt; 0 AND @lPromocjaID &gt; 0) THEN ISNULL(PTP_Wartosc,0) ELSE Tpr_Wartosc END as UPUST_WARTOSC, 
+		Tpr_Waluta		as UPUST_WALUTA, 
+		Tpr_FlagaNB		as UPUST_FLAGANB, 
+		Tpr_Prog 		as UPUST_PROG,
+		@lKntNumer		as KNT_NUMER,
+		Prm_Sposobstosowania	as PRM_OPERACJA,
+		Prm_PominPozostale	as PRM_POMIN,
+		IsNull(CASE WHEN PrM_Typ = 9 THEN OPm_Id WHEN PrM_Typ = 10 THEN KPR_Id ELSE Tpr_Lp END,0)	as UPUST_ID,
+		IsNull(Zpr_TwrNumer,0)	as ZEST_NUMER,
+		1000*(case when Tpr_Typ=3 then 2 when Tpr_Typ IN (5,6) then 1 else 3 end)+100*(case when tpr_twrtyp=@TwrGIDTyp then 1 else (case when PRM_GrupaTwrWazniejsza = 1 and TwL_Lisc = 1 then 2 else 3 end) end) as UPUST_SORT,
+		COALESCE(CASE WHEN PRM_Typ = 10 THEN KPR_Wartosc WHEN PRM_Typ = 9 THEN OPM_Wartosc ELSE 0 END,0) as BUDZET_MAKS,
+		TPR_ID AS TPR_ID,
+		PRM_LimitTyp AS PRM_LIMITTYP,
+		ISNULL(TPR_LimitTyp,0) AS TPR_LIMITTYP,
+		PRM_LimitWartosc AS PRM_LIMITWARTOSC,
+		ISNULL(TPR_LimitWartosc,0) AS TPR_LIMITWARTOSC,
+		CDN.CzyPromocjaObowiazuje(PRM_DataOd,PRM_DataDo,PRM_Cykliczna, @lData,PRM_CyklRodzaj, PRM_CyklCzestotliwosc,PRM_CyklWystepowanie, PRM_CyklDniOd, PRM_CyklDniDo) as OBOWIAZUJE,
+		CASE WHEN ISNULL(PRM_ProgTyp,0) &gt; 0 THEN ISNULL(PRM_ProgTyp,0) ELSE ISNULL(TPR_ProgTyp,0) END AS PRMPROGTYP,
+		CASE WHEN ISNULL(PRM_ProgTyp,0) &gt; 0 THEN ISNULL(PRM_ProgWartosc,0) ELSE ISNULL(TPR_ProgWartosc,0) END AS PRMPROGWARTOSC,
+		CASE WHEN ISNULL(PRM_ProgTyp,0) &gt; 0 THEN ISNULL(PRM_OkresTransakcjiOd,0) ELSE ISNULL(KPR_OkresTransakcjiOd,0) END AS OKRESTRANSAKCJIOD,
+		CASE WHEN ISNULL(PRM_ProgTyp,0) &gt; 0 THEN ISNULL(PRM_OkresTransakcjiDo,2147483647) ELSE (CASE WHEN KPR_KntTyp = @KntGRPTyp THEN 2147483647 ELSE ISNULL(KPR_OkresTransakcjiDo,2147483647) END) END AS OKRESTRANSAKCJIDO,
+		CASE WHEN ISNULL(PRM_ProgTyp,0) &gt; 0 THEN 0 ELSE 1 END AS PROGTPR,
+		ISNULL(PRM_WarunekProgSQL,'') AS PRM_WarunekProgSQL,
+		ISNULL((CASE WHEN PRM_LimitRodzaj = 0 THEN TPR_LimitRodzaj ELSE PRM_LimitRodzaj END),0) AS LIMITRODZAJ
+	from (
+		select TPRA.TPr_PrmId, TPRA.TPr_TwGNumer, TPRA.TPr_TwrTyp, TPRA.TPr_TwrNumer, TPRA.TPr_Typ, TPRA.TPr_Wartosc, TPRA.TPr_Waluta, TPRA.TPr_FlagaNB, TPRA.TPr_Prog, TPRA.TPr_Lp, TPRA.TPr_ZstId, TPRA.TPR_ID, TwL_Lisc,ISNULL(TPRTWR.TPR_LimitTyp,TPRA.TPR_LimitTyp) AS TPR_LimitTyp,ISNULL(TPRTWR.TPR_LimitWartosc,TPRA.TPR_LimitWartosc) AS TPR_LimitWartosc, TPRA.TPR_ProgTyp AS TPR_ProgTyp,TPRA.TPR_ProgWartosc AS TPR_ProgWartosc,TPRA.TPR_LimitRodzaj AS TPR_LimitRodzaj
+		from (
+			select TwL_GROTyp TwrTyp, TwL_GRONumer TwrNumer,TwL_Lisc
+			from CDN.TwrLinki (NOLOCK)
+			where TwL_GIDTyp=@lTwrTyp and TwL_GIDNumer=@lTwrNumer
+			union all
+			select @lTwrTyp, @lTwrNumer,1
+		) Twr
+		inner join CDN.TwrPromocje TPRA (NOLOCK) on TPRA.TPr_TwrTyp=TwrTyp and TPRA.TPr_TwrNumer=TwrNumer
+		left join CDN.TwrPromocje TPRTWR (NOLOCK) ON TPRTWR.TPr_TwrTyp=@lTwrTyp and TPRTWR.TPr_TwrNumer=@lTwrNumer AND TPRTWR.TPr_PrmId = TPRA.TPR_PrmId AND TPRA.TPR_TwrTyp = @TwrGRPTyp -- Limit dla grupy ustal na podstawie towaru z grupy
+		WHERE TPRA.TPr_Aktywny = 1
+	) TPr
+	inner join CDN.PrmKarty (NOLOCK) on Prm_Id=TPR_PrmId and Prm_Stan=1
+	left outer join CDN.PltPromocje (NOLOCK) on PPr_PrmID = Prm_ID
+	left outer join CDN.SpDPromocje (NOLOCK) on SpD_PrmID = Prm_ID
+	left outer join CDN.MagPromocje (NOLOCK) on MPR_PrmID = Prm_ID
+	left outer join CDN.DstPromocje (NOLOCK) on DPR_TPRID = TPR_ID
+	left outer join (
+		select KPr_PrmId,Kpr_ID,KPR_Wartosc,KPR_OkresTransakcjiOd,KPR_OkresTransakcjiDo,KPR_KntTyp
+		from (
+			select KnL_GROTyp KntTyp, KnL_GRONumer KntNumer
+			from CDN.KntLinki (NOLOCK)
+			where KnL_GIDTyp=@lknttyp and KnL_GIDNumer=@lkntnumer
+			union all
+			select @lknttyp, @lkntnumer
+		) Knt
+		inner join CDN.KntPromocje (NOLOCK) on KPr_KntTyp=KntTyp and KPr_KntNumer=KntNumer
+	) KPr on KPr_PrmId=Prm_Id and PrM_Typ&lt;&gt;3
+	left outer join (
+		select FPr_PrmId
+		from CDN.Str2List(@sfrsid)
+		inner join CDN.FrsPromocje (NOLOCK) on FPr_FrsId=Num
+	) FPr on FPr_PrmId=Prm_Id and PrM_Typ not in (3,4)
+    left outer join CDN.ZstPromocje (NOLOCK) on TPr_ZstId=ZPr_Id -- and Zpr_TwrNumer=@lZstNumer
+    left outer join CDN.ProgiTwrPromocje (NOLOCK) ON PTP_PRPID = @lPromocjaProgID AND PTP_TPRID = TPR_ID
+    left outer join CDN.OpePromocje (NOLOCK) on OPm_PrmID = Prm_ID
+	where (case when (@lPromocjaID = 0 and PRM_Pakietowa = 0) or PrM_ID = @lPromocjaID then 1 else 0 end) = 1 and PrM_Typ not in (4,7) and (PrM_Typ=3 or KPr_PrmId is not null) and (PrM_Typ in (3,4) or FPr_PrmId is not null) 
+		and (PrM_Typ IN (5,9,10) and (isnull(PPr_PltID,@lFormaNr) in (@lFormaNr,-1) and 
+			((PPr_Typ IN (0,1) and (PPr_TerminMaks &gt; @lFormaTermin or isnull(PPr_TerminMaks,@lFormaTermin) in (@lFormaTermin,-1))) or (PPr_Typ = 2 and @lFormaData &gt; 0 and (@lFormaData+@lFormaTermin) BETWEEN PPr_DataOd AND PPr_DataDo))))
+		and (PrM_Typ IN (5,9,10) and (isnull(SpD_SpDLp,-1) = @lSposobDostawy or isnull(SpD_SpDLp,-1) = -1))
+		and (PrM_Typ IN (5,9,10) and (isnull(MPR_MagNumer,-1) = @lMagazyn or isnull(MPR_MagNumer,-1) = -1))
+		AND (@sDsts &lt;&gt; '' AND NOT EXISTS(SELECT * FROM CDN.Str2List(@sDsts) LEFT JOIN CDN.DstPromocje DPRCHK (NOLOCK) ON DPRCHK.DPR_DstNumer = num AND DPRCHK.DPR_TPRID = TPR_ID WHERE DPRCHK.DPR_TPRID IS NULL) OR DPR_TPRID IS NULL)
+       	and (Prm_Dokument=0 or @lRodzajDok=0 or Prm_Dokument=@lRodzajDok) and (isnull(Zpr_TwrNumer,0) = 0 or isnull(Zpr_TwrNumer,0) = @lZstNumer)) as Dane where OBOWIAZUJE=1
+	union all
+	Select PRM_ID, PRM_AKRONIM, PRM_TYP, PRM_PRIORYTET, PRM_PRIORYTETLP, TWG_NUMER, TWR_NUMER, UPUST_TYP, UPUST_WARTOSC, UPUST_WALUTA, UPUST_FLAGANB, UPUST_PROG, KNT_NUMER, PRM_OPERACJA, PRM_POMIN, UPUST_ID, ZEST_NUMER, UPUST_SORT, BUDZET_MAKS, TPR_ID, PRM_LIMITTYP, TPR_LIMITTYP, PRM_LIMITWARTOSC, TPR_LIMITWARTOSC,0,0,0,0,0,'',0
+	from (
+	Select  Prm_Id 			as PRM_ID,
+		Prm_Akronim		as PRM_AKRONIM, 
+		Prm_Typ			as PRM_TYP,		
+		Prm_Priorytet		as PRM_PRIORYTET, 
+		Prm_PriorytetLp		as PRM_PRIORYTETLP, 
+		Tpr_TwGNumer		as TWG_NUMER, 
+		Tpr_TwrNumer		as TWR_NUMER, 
+		Tpr_Typ			as UPUST_TYP, 
+		Tpr_Wartosc		as UPUST_WARTOSC, 
+		Tpr_Waluta		as UPUST_WALUTA, 
+		Tpr_FlagaNB		as UPUST_FLAGANB, 
+		Tpr_Prog 		as UPUST_PROG,
+		@lKntNumer		as KNT_NUMER,
+		Prm_Sposobstosowania	as PRM_OPERACJA,
+		Prm_PominPozostale	as PRM_POMIN,
+		IsNull(Tpr_Lp,0)	as UPUST_ID,
+		IsNull(Zpr_TwrNumer,0)	as ZEST_NUMER,
+		1000*(case when Tpr_Typ=3 then 2 when Tpr_Typ IN (5,6) then 1 else 3 end)+100*(case when tpr_twrtyp=@TwrGIDTyp then 1 else 2 end) as UPUST_SORT,
+		0 as BUDZET_MAKS,
+		0 AS TPR_ID,
+		0 AS PRM_LIMITTYP,
+		0 AS TPR_LIMITTYP,
+		0 AS PRM_LIMITWARTOSC,
+		0 AS TPR_LIMITWARTOSC,
+		0 AS PROGTPR,
+		CDN.CzyPromocjaObowiazuje(PRM_DataOd,PRM_DataDo,PRM_Cykliczna, @lData,PRM_CyklRodzaj, PRM_CyklCzestotliwosc,PRM_CyklWystepowanie, PRM_CyklDniOd, PRM_CyklDniDo) as OBOWIAZUJE,
+		'' AS PRM_WarunekProgSQL
+	from (
+		select KPr_PrmId
+		from (
+			select KnL_GROTyp KntTyp, KnL_GRONumer KntNumer
+			from CDN.KntLinki (NOLOCK)
+			where KnL_GIDTyp=@lknttyp and KnL_GIDNumer=@lkntnumer
+			union all
+			select @lknttyp, @lkntnumer
+		) Knt
+		inner join CDN.KntPromocje (NOLOCK) on KPr_KntTyp=KntTyp and KPr_KntNumer=KntNumer
+	) KPr
+	inner join CDN.PrmKarty on Prm_Id=KPr_PrmId and Prm_Typ=4
+	inner join (
+		select TPr_PrmId, TPr_TwGNumer, TPr_TwrTyp, TPr_TwrNumer, TPr_Typ, TPr_Wartosc, TPr_Waluta, TPr_FlagaNB, TPr_Prog, TPr_Lp, TPr_ZstId
+		from (
+			select TwL_GROTyp TwrTyp, TwL_GRONumer TwrNumer
+			from CDN.TwrLinki (NOLOCK)
+			where TwL_GIDTyp=@ltwrtyp and TwL_GIDNumer=@ltwrnumer
+			union all
+			select @ltwrtyp, @ltwrnumer
+		) Twr
+		inner join CDN.TwrPromocje (NOLOCK) on TPr_TwrTyp=TwrTyp and TPr_TwrNumer=TwrNumer
+		WHERE TPr_Aktywny = 1
+	) TPr on TPr_PrmId=Prm_Id
+	left outer join CDN.ZstPromocje (NOLOCK) on TPr_ZstId=ZPr_Id -- and Zpr_TwrNumer=@lZstNumer
+	where PrM_Typ&lt;7
+       	AND (Prm_Dokument=0 or @lRodzajDok=0 or Prm_Dokument=@lRodzajDok) and (isnull(Zpr_TwrNumer,0) = 0 or isnull(Zpr_TwrNumer,0) = @lZstNumer)) as Dane where OBOWIAZUJE=1
+    union all -- i jeszcze rekord typu GLO
+	select  Prm_Id 			as PRM_ID,
+		Prm_Akronim		as PRM_AKRONIM, 
+		Prm_Typ			as PRM_TYP,		
+		Prm_Priorytet		as PRM_PRIORYTET, 
+		Prm_PriorytetLp		as PRM_PRIORYTETLP, 
+		0			as TWG_NUMER, 
+		0			as TWR_NUMER, 
+		1			as UPUST_TYP, 
+		0			as UPUST_WARTOSC, 
+		'PLN'			as UPUST_WALUTA, 
+		'N'			as UPUST_FLAGANB, 
+		0			as UPUST_PROG,
+		0			as KNT_NUMER,
+		Prm_Sposobstosowania	as PRM_OPERACJA,
+		Prm_PominPozostale	as PRM_POMIN,
+		99999 			as UPUST_ID, -- ,*
+		0			as ZEST_NUMER,-- *
+		99999 as UPUST_SORT,
+		0 as BUDZET_MAKS,
+		0 AS TPR_ID,
+		0 AS PRM_LIMITTYP,
+		0 AS TPR_LIMITTYP,
+		0 AS PRM_LIMITWARTOSC,
+		0 AS TPR_LIMITWARTOSC,
+		0,0,0,0,0,'',0
+        from CDN.PrmKarty (NOLOCK)
+        where Prm_Typ=6
+        	and (Prm_Dokument=0 or @lRodzajDok=0 or Prm_Dokument=@lRodzajDok)
+	order by Prm_Priorytet, PRM_PriorytetLP, 
+		 ZEST_NUMER DESC, UPUST_SORT, UPUST_PROG DESC, UPUST_Id
+
+  	
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="MacierzRabatowaNaglowek"></A><PRE>
+          <FONT SIZE="2"><I>/* MacierzRabatowaNaglowek */</I><BR>
+CREATE PROCEDURE CDN.MacierzRabatowaNaglowek
+	@lNagPoz  int ,  -- miejsce stosowania nagłówek (1)/pozycja(2)       
+	@lRodzajDok smallint, --  rodzaj dokumentu (przychód/rozchód)
+	@lData int, 	 -- bieżąca data i czas jako timestamp
+	@lKntTyp smallint,  -- dane kontrahenta (KNT,KNU,PRM)
+	@lKntNumer int,
+	@lTwrTyp smallint,  -- dane towaru (TWU,PRM)
+	@lTwrNumer int,
+	@lFormaNr int, -- numer	formy płatności (PLT)
+	@lFormaTermin int, -- termin formy płatności (PLT)
+	@lFormaData int, -- data płatności (PLT) w formacie clarionowym (5 cyfr)
+	@lSposobDostawy int, -- sposób dostawy
+    @lMagazyn int, --Numer magazynu
+	@sFrsId	  varchar(255),  -- oddzielone przecinkami miejsca w strukturze firmy
+	@lZstNumer int, -- numer zestawu (kompletu)
+	@lGIDTyp   int, -- identyfikator pozycji/dokumentu (GID) 
+	@lGIDNumer int, -- 
+	@lGIDLp    int,  -- 
+	@lPromocjaID int, -- zwraca wyłącznie promocję o podanym ID (jeżeli spełni standardowe warunki)
+	@lPromocjaProgID int, -- zwraca wartośc upustu z podanego progu (z tabeli ProgiPromocje)
+	@lPromocjaWTRID int, -- zwraca wyłącznie promocję WTR o podanym ID (jeżeli spełni standardowe warunki)
+	@lProgWTRID int, -- zwraca wartośc upustu z podanego progu WTR (z tabeli ProgiPromocje)
+	@sDsts varchar(max) --lista dostaw
+	
+AS
+
+DECLARE @TwrGIDTyp smallint
+DECLARE @TwrGRPTyp smallint
+DECLARE @KntGRPTyp smallint
+
+Set @TwrGIDTyp = 16
+Set @TwrGRPTyp = -16
+Set @KntGRPTyp = -32
+
+  IF @lKntTyp = -32000 AND @lKntNumer = -32000 --nieokreślony kontrahent
+  BEGIN
+	SET @lKntTyp = 0
+	SET @lKntNumer = 0
+  END
+
+	Select  Prm_Id 			as PRM_ID,
+		Prm_Akronim		as PRM_AKRONIM, 
+		Prm_Typ			as PRM_TYP,		
+		Prm_Priorytet		as PRM_PRIORYTET, 
+		Prm_PriorytetLp		as PRM_PRIORYTETLP, 
+		0			as TWG_NUMER, 
+		0			as TWR_NUMER, 
+		Kpr_Typ			as UPUST_TYP, 
+		Kpr_wartosc		as UPUST_WARTOSC, 
+		'PLN'			as UPUST_WALUTA, 
+		'N'			as UPUST_FLAGANB, 
+		0			as UPUST_PROG,
+		@lKntNumer		as KNT_NUMER,
+		Prm_Sposobstosowania	as PRM_OPERACJA,
+		Prm_PominPozostale	as PRM_POMIN,
+		IsNull(Kpr_Id,0)	as UPUST_ID,-- *
+		0			as ZEST_NUMER,-- *
+		99999 as UPUST_SORT,
+		0 as BUDZET_MAKS,
+		0 AS TPR_ID,
+		0 AS PRM_LIMITTYP,
+		0 AS TPR_LIMITTYP,
+		0 AS PRM_LIMITWARTOSC,
+		0 AS TPR_LIMITWARTOSC,
+		0 AS PRMPROGTYP,
+		0 AS PRMPROGWARTOSC,
+		0 AS OKRESTRANSAKCJIOD,
+		0 AS OKRESTRANSAKCJIDO,
+		0 AS PROGTPR,
+		'' AS PRM_WarunekProgSQL,
+		0 AS LIMITRODZAJ
+	From Cdn.KntPromocje (NOLOCK)
+	join Cdn.PrmKarty (NOLOCK) on Prm_Id = KPR_PrmId
+	Where (Prm_Dokument in (0, @lRodzajDok) OR @lRodzajDok=0)
+	and Prm_Stan=1
+	and Prm_Typ=1
+	and  (case 
+		when Kpr_KntTyp=@lKntTyp and Kpr_KntNumer=@lKntNumer then 1
+		when Kpr_KntTyp=@KntGRPTyp and exists(
+						Select 	KnL_GIDNumer
+						From CDN.KntLinki (NOLOCK)
+						Where 	KnL_GroTyp   = KPR_KntTyp 
+						and 	KnL_GroNumer = KPR_KntNumer
+						and 	KnL_GIDTyp = @lKntTyp
+						and	KnL_GIDNumer = @lKntNumer 
+					) then 1
+		End) = 1
+	
+	Union
+	Select  Prm_Id 			as PRM_ID,
+		Prm_Akronim		as PRM_AKRONIM, 
+		Prm_Typ			as PRM_TYP,		
+		Prm_Priorytet		as PRM_PRIORYTET, 
+		Prm_PriorytetLp		as PRM_PRIORYTETLP, 
+		0			as TWG_NUMER, 
+		0			as TWR_NUMER, 
+		1			as UPUST_TYP, 
+		Ppr_wartosc		as UPUST_WARTOSC, 
+		'PLN'			as UPUST_WALUTA, 
+		'N'			as UPUST_FLAGANB, 
+		0			as UPUST_PROG,
+		@lKntNumer		as KNT_NUMER,
+		Prm_Sposobstosowania	as PRM_OPERACJA,
+		Prm_PominPozostale	as PRM_POMIN,
+		IsNull(Ppr_Id,0)	as UPUST_ID, -- *
+		0			as ZEST_NUMER,-- *
+		99999 as UPUST_SORT,
+		0 as BUDZET_MAKS,
+		0 AS TPR_ID,
+		0 AS PRM_LIMITTYP,
+		0 AS TPR_LIMITTYP,
+		0 AS PRM_LIMITWARTOSC,
+		0 AS TPR_LIMITWARTOSC,
+		0 AS PRMPROGTYP,
+		0 AS PRMPROGWARTOSC,
+		0 AS OKRESTRANSAKCJIOD,
+		0 AS OKRESTRANSAKCJIDO,
+		0 AS PROGTPR,
+		'' AS PRM_WarunekProgSQL,
+		0 AS LIMITRODZAJ
+	From Cdn.PltPromocje (NOLOCK)
+	join Cdn.PrmKarty (NOLOCK) on Prm_Id = PPR_PrmId
+	Where (Prm_Dokument in (0, @lRodzajDok) OR @lRodzajDok=0)
+	and Prm_Stan=1
+	and Prm_typ=2
+	and PPR_PltId = @lFormaNr
+	union all
+		Select PRM_ID, PRM_AKRONIM, PRM_TYP, PRM_PRIORYTET, PRM_PRIORYTETLP, TWG_NUMER, TWR_NUMER, UPUST_TYP, UPUST_WARTOSC, UPUST_WALUTA, UPUST_FLAGANB, UPUST_PROG, KNT_NUMER, PRM_OPERACJA, PRM_POMIN, UPUST_ID, ZEST_NUMER, UPUST_SORT, BUDZET_MAKS, TPR_ID, PRM_LIMITTYP, TPR_LIMITTYP, PRM_LIMITWARTOSC, TPR_LIMITWARTOSC, PRMPROGTYP, PRMPROGWARTOSC, OKRESTRANSAKCJIOD, OKRESTRANSAKCJIDO, PROGTPR,PRM_WarunekProgSQL,0
+		from (
+		Select  Prm_Id 			as PRM_ID,
+		Prm_Akronim		as PRM_AKRONIM, 
+		Prm_Typ			as PRM_TYP,		
+		Prm_Priorytet		as PRM_PRIORYTET, 
+		Prm_PriorytetLp		as PRM_PRIORYTETLP, 
+		0			as TWG_NUMER, 
+		0			as TWR_NUMER, 
+		1			as UPUST_TYP, 
+		ISNULL(PTP_Wartosc,0) as UPUST_WARTOSC, 
+		'PLN'			as UPUST_WALUTA, 
+		'N'			as UPUST_FLAGANB, 
+		0			as UPUST_PROG,
+		@lKntNumer		as KNT_NUMER,
+		Prm_Sposobstosowania	as PRM_OPERACJA,
+		Prm_PominPozostale	as PRM_POMIN,
+		0			as UPUST_ID,
+		0			as ZEST_NUMER,
+		99999 			as UPUST_SORT,
+		0 as BUDZET_MAKS,
+		0 AS TPR_ID,
+		0 AS PRM_LIMITTYP,
+		0 AS TPR_LIMITTYP,
+		0 AS PRM_LIMITWARTOSC,
+		0 AS TPR_LIMITWARTOSC,
+		CDN.CzyPromocjaObowiazuje(PRM_DataOd,PRM_DataDo,PRM_Cykliczna, @lData,PRM_CyklRodzaj, PRM_CyklCzestotliwosc,PRM_CyklWystepowanie, PRM_CyklDniOd, PRM_CyklDniDo) as OBOWIAZUJE,
+		0 AS PRMPROGTYP,
+		0 AS PRMPROGWARTOSC,
+		0 AS OKRESTRANSAKCJIOD,
+		0 AS OKRESTRANSAKCJIDO,
+		0 AS PROGTPR,
+		'' AS PRM_WarunekProgSQL,
+		0 AS LIMITRODZAJ
+	FROM CDN.PrmKarty (NOLOCK)
+	left outer join CDN.PltPromocje (NOLOCK) on PPr_PrmID = Prm_ID
+	left outer join CDN.SpDPromocje (NOLOCK) on SpD_PrmID = Prm_ID
+	left outer join CDN.MagPromocje (NOLOCK) on MPR_PrmID = Prm_ID
+	left outer join (
+		select KPr_PrmId
+		from (
+			select KnL_GROTyp KntTyp, KnL_GRONumer KntNumer
+			from CDN.KntLinki (NOLOCK)
+			where KnL_GIDTyp=@lknttyp and KnL_GIDNumer=@lkntnumer
+			union all
+			select @lknttyp, @lkntnumer
+		) Knt
+		inner join CDN.KntPromocje (NOLOCK) on KPr_KntTyp=KntTyp and KPr_KntNumer=KntNumer
+	) KPr on KPr_PrmId=Prm_Id
+	left outer join (
+		select FPr_PrmId
+		from CDN.Str2List(@sfrsid)
+		inner join CDN.FrsPromocje (NOLOCK) on FPr_FrsId=Num
+	) FPr on FPr_PrmId=Prm_Id
+        left outer join CDN.ProgiTwrPromocje (NOLOCK) ON PTP_PRPID = @lProgWTRID AND PTP_TPRID = 0
+	where Prm_ID = @lPromocjaWTRID AND Prm_Stan = 1 AND Prm_Typ = 8
+		and ((isnull(PPr_PltID,@lFormaNr) in (@lFormaNr,-1) and (PPr_TerminMaks &gt; @lFormaTermin or isnull(PPr_TerminMaks,@lFormaTermin) in (@lFormaTermin,-1))))
+		and ((isnull(SpD_SpDLp,-1) = @lSposobDostawy or isnull(SpD_SpDLp,-1) = -1))
+		and ((isnull(MPR_MagNumer,-1) = @lMagazyn or isnull(MPR_MagNumer,-1) = -1))
+       	and (Prm_Dokument=0 or @lRodzajDok=0 or Prm_Dokument=@lRodzajDok)) as Dane where OBOWIAZUJE=1
+
+	order by Prm_Priorytet, PRM_PriorytetLP, 
+		 ZEST_NUMER DESC, UPUST_SORT, UPUST_PROG DESC, UPUST_Id
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,364 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[Rozliczenia_PicoUsuniete]"></A><PRE>
+          <FONT SIZE="2"><I>/* [Rozliczenia_PicoUsuniete] */</I><BR>
+CREATE TRIGGER [CDN].[Rozliczenia_PicoUsuniete]
+   ON  [CDN].[Rozliczenia]
+   AFTER DELETE
+AS 
+BEGIN
+
+        SET NOCOUNT ON;
+
+    IF NOT EXISTS(SELECT * FROM CDN.PicoKonfig WHERE PcK_Typ = 5) RETURN
+
+    DECLARE @Count              INT
+            ,@Indeks    INT
+
+    DECLARE @PcKId      INT
+            ,@ObiTyp    SMALLINT
+            ,@ObiNumer  INT
+            ,@ZewnetrznyId INT
+            ,@ObiektTyp INT
+
+        -- Szukamy unikalnych id rozlicznien, zeby wyeliminowac przypadki dwoch obiektow z Retail dodanych na dokument kompensaty
+/*
+        SELECT case when coalesce(max(KAZ_ZewnetrznyId),0)&gt;0 then max(r2_id) else min(r2_id) end as wybraneid into #DeletedID from deleted
+        LEFT OUTER join cdn.TraNag on (TrN_GIDTyp = R2_Dok1Typ and TrN_GIDNumer = R2_Dok1Numer) OR (TrN_GIDTyp = R2_Dok2Typ and TrN_GIDNumer = R2_Dok2Numer)
+        LEFT OUTER join cdn.Zapisy on (KAZ_GIDTyp = R2_Dok1Typ and KAZ_GIDNumer = R2_Dok1Numer) OR (KAZ_GIDTyp = R2_Dok2Typ and KAZ_GIDNumer = R2_Dok2Numer)
+        where coalesce(TrN_OddDokId, KAZ_ZewnetrznyId) &gt; 0
+        group by R2_ParID
+*/
+        select case when MIN(zap) &gt; 0 then MIN(zap) else MIN(dok) end id into #DeletedID
+        from (
+                SELECT R2_ParID
+                ,case when coalesce(TrN_OddDokId,0) &gt; 0 then r2_id else 0 end as dok
+                ,0 as zap
+                from deleted
+                join cdn.TraNag on (TrN_GIDTyp = R2_Dok1Typ and TrN_GIDNumer = R2_Dok1Numer) OR (TrN_GIDTyp = R2_Dok2Typ and TrN_GIDNumer = R2_Dok2Numer)
+                where coalesce(TrN_OddDokId, 0) &gt; 0 AND ISNULL(deleted.R2_ZewnetrznyId,0) &gt; 0
+                union all
+                SELECT R2_ParID
+                ,0
+                ,case when coalesce(KAZ_ZewnetrznyId,0) &gt; 0 then r2_id else 0 end
+                from deleted
+                join cdn.Zapisy on (KAZ_GIDTyp = R2_Dok1Typ and KAZ_GIDNumer = R2_Dok1Numer) OR (KAZ_GIDTyp = R2_Dok2Typ and KAZ_GIDNumer = R2_Dok2Numer)
+                where coalesce(KAZ_ZewnetrznyId,0) &gt; 0 AND ISNULL(deleted.R2_ZewnetrznyId,0) &gt; 0
+        ) wyniki
+        group by R2_ParID
+
+
+        SELECT *
+        INTO #Deleted
+        FROM (
+                SELECT -- Dokument kompensaty: zapis Retail, dokument XL (wyjatek)
+                        PcK_PicoID
+                        ,Retail.R2_ID as DokNumer
+                        ,ROW_NUMBER() OVER( ORDER BY PcK_PicoID) Indeks
+                        ,-434 AS DokTyp
+                        ,coalesce(Retail.R2_ZewnetrznyId,0) as KAZ_ZewnetrznyId
+                        ,KAZ_GIDTyp AS ObiektTyp
+                FROM DELETED Retail
+                        JOIN CDN.Zapisy ON (KAZ_GIDTyp=Retail.R2_Dok1Typ AND KAZ_GIDNumer=Retail.R2_Dok1Numer AND Retail.R2_Dok1Typ=784)
+                                                OR (KAZ_GIDTyp=Retail.R2_Dok2Typ AND KAZ_GIDNumer=Retail.R2_Dok2Numer AND Retail.R2_Dok2Typ=784)
+                        JOIN CDN.Raporty ON KAZ_KRPTyp = KRP_GIDTyp and KAZ_KRPNumer = KRP_GIDNumer
+                        JOIN CDN.PicoKonfig on KRP_ZewnetrznySys = PcK_PicoID -- To wbrew pozorom poprawne polaczenie, przy zapisie
+                        -- przychodzacego zapisu do Rozliczeniaa w cdn_offl w pole zewnetrznysys wpisywana jest wartosc ID oddzialu
+                        JOIN DELETED XL ON Retail.R2_ParID = XL.R2_ParID AND Retail.R2_ID &lt;&gt; XL.R2_ID
+                        JOIN cdn.TraNag ON (XL.R2_Dok1Typ=TrN_GIDTyp and XL.R2_Dok1Numer=TrN_GIDNumer)
+                                OR (XL.R2_Dok2Typ=TrN_GIDTyp and XL.R2_Dok2Numer=TrN_GIDNumer)
+                WHERE PcK_Typ = 5 AND TrN_OddDokId = 0 ANd KAZ_ZewnetrznyId &lt;&gt; 0
+                AND Retail.R2_ID in (select * from #DeletedID)
+
+                UNION ALL
+
+                SELECT -- Dokument kompensaty: zapis Retail, zapis
+                        PcK_PicoID
+                        ,Retail.R2_ID
+                        ,ROW_NUMBER() OVER( ORDER BY PcK_PicoID)
+                        ,-434
+                        ,coalesce(Retail.R2_ZewnetrznyId,0)
+                        ,Pierwszy.KAZ_GIDTyp
+                FROM DELETED Retail
+                        JOIN CDN.Zapisy Pierwszy ON (Pierwszy.KAZ_GIDTyp=Retail.R2_Dok1Typ AND Pierwszy.KAZ_GIDNumer=Retail.R2_Dok1Numer AND Retail.R2_Dok1Typ=784)
+                                                OR (Pierwszy.KAZ_GIDTyp=Retail.R2_Dok2Typ AND Pierwszy.KAZ_GIDNumer=Retail.R2_Dok2Numer AND Retail.R2_Dok2Typ=784)
+                        JOIN CDN.Raporty ON KAZ_KRPTyp = KRP_GIDTyp and KAZ_KRPNumer = KRP_GIDNumer
+                        JOIN CDN.PicoKonfig on KRP_ZewnetrznySys = PcK_PicoID -- To wbrew pozorom poprawne polaczenie, przy zapisie
+                        -- przychodzacego zapisu do Rozliczeniaa w cdn_offl w pole zewnetrznysys wpisywana jest wartosc ID oddzialu
+                        JOIN DELETED XL ON Retail.R2_ParID = XL.R2_ParID AND Retail.R2_ID &lt;&gt; XL.R2_ID
+                        JOIN CDN.Zapisy Drugi ON (Drugi.KAZ_GIDTyp=XL.R2_Dok1Typ AND Drugi.KAZ_GIDNumer=XL.R2_Dok1Numer AND XL.R2_Dok1Typ=784)
+                                                OR (Drugi.KAZ_GIDTyp=XL.R2_Dok2Typ AND Drugi.KAZ_GIDNumer=XL.R2_Dok2Numer AND XL.R2_Dok2Typ=784)
+                WHERE PcK_Typ = 5 and Pierwszy.KAZ_ZewnetrznyId &lt;&gt; 0
+                AND Retail.R2_ID in (select * from #DeletedID)
+
+                UNION ALL
+
+                SELECT -- Dokument kompensaty: zapis Retail, dokument Retail
+                        PcK_PicoID
+                        ,Retail.R2_ID
+                        ,ROW_NUMBER() OVER( ORDER BY PcK_PicoID)
+                        ,-433
+                        ,coalesce(Retail.R2_ZewnetrznyId,0)
+                        ,TrN_GIDTyp
+                FROM DELETED Retail
+                        JOIN CDN.Zapisy ON (KAZ_GIDTyp = R2_Dok1Typ AND KAZ_GIDNumer=R2_Dok1Numer AND R2_Dok1Typ = 784)
+                                                OR (KAZ_GIDTyp = R2_Dok2Typ AND KAZ_GIDNumer=R2_Dok2Numer AND R2_Dok2Typ = 784)
+                        JOIN CDN.Raporty ON KAZ_KRPTyp = KRP_GIDTyp and KAZ_KRPNumer = KRP_GIDNumer
+                        JOIN CDN.PicoKonfig on KRP_ZewnetrznySys = PcK_PicoID -- To wbrew pozorom poprawne polaczenie, przy zapisie
+                        -- przychodzacego zapisu do Rozliczeniaa w cdn_offl w pole zewnetrznysys wpisywana jest wartosc ID oddzialu
+                        JOIN DELETED XL ON Retail.R2_ParID = XL.R2_ParID AND Retail.R2_ID &lt;&gt; XL.R2_ID
+                        JOIN cdn.TraNag ON (XL.R2_Dok1Typ=TrN_GIDTyp and XL.R2_Dok1Numer=TrN_GIDNumer)
+                                OR (XL.R2_Dok2Typ=TrN_GIDTyp and XL.R2_Dok2Numer=TrN_GIDNumer)
+                WHERE PcK_Typ = 5 AND TrN_OddDokId &lt;&gt; 0 and KAZ_ZewnetrznyId &lt;&gt; 0
+                AND Retail.R2_ID in (select * from #DeletedID)
+
+                UNION ALL
+
+                SELECT -- Dokument kompensaty: dokument Retail, zapis
+                        PcK_PicoID
+                        ,Retail.R2_ID
+                        ,ROW_NUMBER() OVER( ORDER BY PcK_PicoID)
+                        ,-433
+                        ,coalesce(Retail.R2_ZewnetrznyId,0)
+                        ,TrN_GIDTyp
+                FROM DELETED Retail
+                        JOIN cdn.TraNag ON (Retail.R2_Dok1Typ=TrN_GIDTyp and Retail.R2_Dok1Numer=TrN_GIDNumer)
+                                OR (Retail.R2_Dok2Typ=TrN_GIDTyp and Retail.R2_Dok2Numer=TrN_GIDNumer)
+                        JOIN cdn.FrmStruktura ON TrN_FrsID = FRS_ID
+                        JOIN cdn.PicoKonfig ON PcK_CentrumID = FRS_ID
+                        JOIN DELETED XL ON Retail.R2_ParID = XL.R2_ParID AND Retail.R2_ID &lt;&gt; XL.R2_ID
+                        JOIN CDN.Zapisy ON (KAZ_GIDTyp = XL.R2_Dok1Typ AND KAZ_GIDNumer=XL.R2_Dok1Numer AND XL.R2_Dok1Typ = 784)
+                                                OR (KAZ_GIDTyp = XL.R2_Dok2Typ AND KAZ_GIDNumer=XL.R2_Dok2Numer AND XL.R2_Dok2Typ = 784)
+                WHERE PcK_Typ = 5 AND TrN_OddDokId &lt;&gt; 0 AND KAZ_ZewnetrznyId=0
+                AND Retail.R2_ID in (select * from #DeletedID)
+
+                UNION ALL
+
+                SELECT -- Dokument kompensaty: dokument Retail, dokument
+                        PcK_PicoID
+                        ,Retail.R2_ID
+                        ,ROW_NUMBER() OVER( ORDER BY PcK_PicoID)
+                        ,-434
+                        ,coalesce(Retail.R2_ZewnetrznyId,0)
+                        ,drugi.TrN_GIDTyp
+                FROM DELETED Retail
+                        JOIN cdn.TraNag pierwszy ON (Retail.R2_Dok1Typ=pierwszy.TrN_GIDTyp and Retail.R2_Dok1Numer=pierwszy.TrN_GIDNumer)
+                                OR (Retail.R2_Dok2Typ=pierwszy.TrN_GIDTyp and Retail.R2_Dok2Numer=pierwszy.TrN_GIDNumer)
+                        JOIN cdn.FrmStruktura ON pierwszy.TrN_FrsID = FRS_ID
+                        JOIN cdn.PicoKonfig ON PcK_CentrumID = FRS_ID
+                        JOIN DELETED XL ON Retail.R2_ParID = XL.R2_ParID AND Retail.R2_ID &lt;&gt; XL.R2_ID
+                        JOIN cdn.TraNag drugi ON (XL.R2_Dok1Typ=drugi.TrN_GIDTyp and XL.R2_Dok1Numer=drugi.TrN_GIDNumer)
+                                OR (XL.R2_Dok2Typ=drugi.TrN_GIDTyp and XL.R2_Dok2Numer=drugi.TrN_GIDNumer)
+                WHERE PcK_Typ = 5 AND pierwszy.TrN_OddDokId &lt;&gt; 0
+                AND Retail.R2_ID in (select * from #DeletedID)
+
+                UNION ALL
+
+                SELECT -- zapis Retail, dokument XL (wyjatek)
+                        PcK_PicoID
+                        ,R2_ID
+                        ,ROW_NUMBER() OVER( ORDER BY PcK_PicoID)
+                        ,-434
+                        ,coalesce(R2_ZewnetrznyId,0)
+                        ,-TrN_GIDTyp -- zeby odroznic od pozostalych sytuacji
+                FROM DELETED
+                        JOIN CDN.Zapisy ON (KAZ_GIDTyp = R2_Dok1Typ AND KAZ_GIDNumer=R2_Dok1Numer AND R2_Dok1Typ = 784)
+                                                OR (KAZ_GIDTyp = R2_Dok2Typ AND KAZ_GIDNumer=R2_Dok2Numer AND R2_Dok2Typ = 784)
+                        JOIN CDN.Raporty ON KAZ_KRPTyp = KRP_GIDTyp and KAZ_KRPNumer = KRP_GIDNumer
+                        JOIN CDN.PicoKonfig on KRP_ZewnetrznySys = PcK_PicoID -- To wbrew pozorom poprawne polaczenie, przy zapisie
+                        -- przychodzacego zapisu do Rozliczeniaa w cdn_offl w pole zewnetrznysys wpisywana jest wartosc ID oddzialu
+                        JOIN cdn.TraNag ON (R2_Dok1Typ=TrN_GIDTyp and R2_Dok1Numer=TrN_GIDNumer AND R2_Dok1Typ &lt;&gt; 784)
+                                OR (R2_Dok2Typ=TrN_GIDTyp and R2_Dok2Numer=TrN_GIDNumer AND R2_Dok2Typ &lt;&gt; 784)
+                WHERE PcK_Typ = 5 AND TrN_OddDokId = 0 ANd KAZ_ZewnetrznyId &lt;&gt; 0 AND ISNULL(deleted.R2_ZewnetrznyId,0) &gt; 0
+
+                UNION ALL
+
+                SELECT -- zapis Retail, zapis
+                        PcK_PicoID
+                        ,R2_ID
+                        ,ROW_NUMBER() OVER( ORDER BY PcK_PicoID)
+                        ,-434
+                        ,coalesce(R2_ZewnetrznyId,0)
+                        ,drugi.KAZ_GIDTyp
+                FROM DELETED
+                        JOIN CDN.Zapisy Pierwszy ON Pierwszy.KAZ_GIDTyp=R2_Dok1Typ AND Pierwszy.KAZ_GIDNumer=R2_Dok1Numer AND R2_Dok1Typ=784
+                        JOIN CDN.Raporty ON KAZ_KRPTyp = KRP_GIDTyp and KAZ_KRPNumer = KRP_GIDNumer
+                        JOIN CDN.PicoKonfig on KRP_ZewnetrznySys = PcK_PicoID -- To wbrew pozorom poprawne polaczenie, przy zapisie
+                        -- przychodzacego zapisu do Rozliczeniaa w cdn_offl w pole zewnetrznysys wpisywana jest wartosc ID oddzialu
+                        JOIN CDN.Zapisy Drugi ON (Drugi.KAZ_GIDTyp=R2_Dok2Typ AND Drugi.KAZ_GIDNumer=R2_Dok2Numer AND R2_Dok1Typ=784)
+                WHERE PcK_Typ = 5 and (Pierwszy.KAZ_ZewnetrznyId &lt;&gt; 0 OR Drugi.KAZ_ZewnetrznyId&lt;&gt;0) AND ISNULL(deleted.R2_ZewnetrznyId,0) &gt; 0
+
+				UNION ALL
+
+                SELECT -- zapis XL.zapis Retail TFSID:222116
+                        PcK_PicoID
+                        ,R2_ID
+                        ,ROW_NUMBER() OVER( ORDER BY PcK_PicoID)
+                        ,-434
+                        ,coalesce(R2_ZewnetrznyId,0)
+                        ,drugi.KAZ_GIDTyp
+                FROM DELETED
+                        JOIN CDN.Zapisy Pierwszy ON Pierwszy.KAZ_GIDTyp=R2_Dok2Typ AND Pierwszy.KAZ_GIDNumer=R2_Dok2Numer AND R2_Dok2Typ=784
+                        JOIN CDN.Raporty ON KAZ_KRPTyp = KRP_GIDTyp and KAZ_KRPNumer = KRP_GIDNumer
+                        JOIN CDN.PicoKonfig on KRP_ZewnetrznySys = PcK_PicoID -- To wbrew pozorom poprawne polaczenie, przy zapisie
+                        -- przychodzacego zapisu do Rozliczeniaa w cdn_offl w pole zewnetrznysys wpisywana jest wartosc ID oddzialu
+                        JOIN CDN.Zapisy Drugi ON (Drugi.KAZ_GIDTyp=R2_Dok1Typ AND Drugi.KAZ_GIDNumer=R2_Dok1Numer AND R2_Dok1Typ=784)
+                WHERE PcK_Typ = 5 and (Pierwszy.KAZ_ZewnetrznyId &lt;&gt; 0 OR Drugi.KAZ_ZewnetrznyId&lt;&gt;0) AND ISNULL(deleted.R2_ZewnetrznyId,0) &gt; 0
+
+                UNION ALL
+
+                SELECT -- zapis Retail, dokument Retail
+                        PcK_PicoID
+                        ,R2_ID
+                        ,ROW_NUMBER() OVER( ORDER BY PcK_PicoID)
+                        ,-433
+                        ,coalesce(R2_ZewnetrznyId,0)
+                        ,TrN_GIDTyp
+                FROM DELETED
+                        JOIN CDN.Zapisy ON (KAZ_GIDTyp = R2_Dok1Typ AND KAZ_GIDNumer=R2_Dok1Numer AND R2_Dok1Typ = 784)
+                                                OR (KAZ_GIDTyp = R2_Dok2Typ AND KAZ_GIDNumer=R2_Dok2Numer AND R2_Dok2Typ = 784)
+                        JOIN CDN.Raporty ON KAZ_KRPTyp = KRP_GIDTyp and KAZ_KRPNumer = KRP_GIDNumer
+                        JOIN CDN.PicoKonfig on KRP_ZewnetrznySys = PcK_PicoID -- To wbrew pozorom poprawne polaczenie, przy zapisie
+                        -- przychodzacego zapisu do Rozliczeniaa w cdn_offl w pole zewnetrznysys wpisywana jest wartosc ID oddzialu
+                        JOIN cdn.TraNag ON (R2_Dok1Typ=TrN_GIDTyp and R2_Dok1Numer=TrN_GIDNumer AND R2_Dok1Typ &lt;&gt; 784)
+                                OR (R2_Dok2Typ=TrN_GIDTyp and R2_Dok2Numer=TrN_GIDNumer AND R2_Dok2Typ &lt;&gt; 784)
+                WHERE PcK_Typ = 5 AND TrN_OddDokId &lt;&gt; 0 and KAZ_ZewnetrznyId &lt;&gt; 0 AND ISNULL(deleted.R2_ZewnetrznyId,0) &gt; 0
+
+                UNION ALL
+
+                SELECT -- dokument Retail, zapis
+                        PcK_PicoID
+                        ,R2_ID
+                        ,ROW_NUMBER() OVER( ORDER BY PcK_PicoID)
+                        ,-433
+                        ,coalesce(R2_ZewnetrznyId,0)
+                        ,KAZ_GIDTyp
+                FROM DELETED
+                        JOIN cdn.TraNag ON (R2_Dok1Typ=TrN_GIDTyp and R2_Dok1Numer=TrN_GIDNumer AND R2_Dok1Typ &lt;&gt; 784)
+                                OR (R2_Dok2Typ=TrN_GIDTyp and R2_Dok2Numer=TrN_GIDNumer AND R2_Dok2Typ &lt;&gt; 784)
+                        JOIN cdn.FrmStruktura ON TrN_FrsID = FRS_ID
+                        JOIN cdn.PicoKonfig ON PcK_CentrumID = FRS_ID
+                        JOIN CDN.Zapisy ON (KAZ_GIDTyp = R2_Dok1Typ AND KAZ_GIDNumer=R2_Dok1Numer AND R2_Dok1Typ = 784)
+                                                OR (KAZ_GIDTyp = R2_Dok2Typ AND KAZ_GIDNumer=R2_Dok2Numer AND R2_Dok2Typ = 784)
+                WHERE PcK_Typ = 5 AND TrN_OddDokId &lt;&gt; 0 /*TFSID:210668 AND KAZ_ZewnetrznyId=0*/ AND ISNULL(deleted.R2_ZewnetrznyId,0) &gt; 0
+
+                UNION ALL
+
+                SELECT -- dokument Retail, dokument
+                        PcK_PicoID
+                        ,R2_ID
+                        ,ROW_NUMBER() OVER( ORDER BY PcK_PicoID)
+                        ,-434
+                        ,coalesce(R2_ZewnetrznyId,0)
+                        ,drugi.TrN_GIDTyp
+                FROM DELETED
+                        JOIN cdn.TraNag pierwszy ON R2_Dok1Typ=pierwszy.TrN_GIDTyp and R2_Dok1Numer=pierwszy.TrN_GIDNumer
+                        JOIN cdn.TraNag drugi ON R2_Dok2Typ=drugi.TrN_GIDTyp and R2_Dok2Numer=drugi.TrN_GIDNumer
+                        JOIN cdn.FrmStruktura ON (pierwszy.TrN_FrsID = FRS_ID) OR (drugi.TrN_FrsID = FRS_ID)
+                        JOIN cdn.PicoKonfig ON PcK_CentrumID = FRS_ID
+                WHERE PcK_Typ = 5 AND (pierwszy.TrN_OddDokId &lt;&gt; 0 OR drugi.TrN_OddDokId &lt;&gt; 0) AND ISNULL(deleted.R2_ZewnetrznyId,0) &gt; 0
+
+		UNION ALL
+		
+		SELECT -- dokument Retail, zapis TFSID:215123
+                        PcK_PicoID
+                        ,deleted.R2_ID
+                        ,ROW_NUMBER() OVER( ORDER BY PcK_PicoID)
+                        ,-433
+                        ,coalesce(deleted.R2_ZewnetrznyId,0)
+                        ,KAZ_GIDTyp
+                FROM deleted
+			JOIN deleted KOMPDOK ON KOMPDOK.R2_Dok1Typ = deleted.r2_Dok2Typ AND KOMPDOK.r2_Dok1Numer = deleted.r2_Dok2Numer AND deleted.r2_Dok2Typ = 434
+			JOIN CDN.TraNag ON TrN_GIDTyp = KOMPDOK.r2_Dok2Typ AND TrN_GIDNumer = KOMPDOK.r2_Dok2Numer
+                        JOIN cdn.FrmStruktura ON TrN_FrsID = FRS_ID
+                        JOIN cdn.PicoKonfig ON PcK_CentrumID = FRS_ID
+                        JOIN CDN.Zapisy ON (KAZ_GIDTyp = deleted.R2_Dok1Typ AND KAZ_GIDNumer=deleted.R2_Dok1Numer AND deleted.R2_Dok1Typ = 784)
+                WHERE PcK_Typ = 5 AND ISNULL(deleted.R2_ZewnetrznyId,0) &gt; 0
+		
+		UNION ALL
+		
+		SELECT -- dokument Retail, zapis TFSID:222087
+			PcK_PicoID
+                        ,deleted.R2_ID
+                        ,ROW_NUMBER() OVER( ORDER BY PcK_PicoID)
+                        ,-433
+                        ,coalesce(deleted.R2_ZewnetrznyId,0)
+                        ,KAZ_GIDTyp
+                FROM deleted
+			JOIN deleted KOMPDOK ON KOMPDOK.R2_Dok2Typ = deleted.r2_Dok1Typ AND KOMPDOK.r2_Dok2Numer = deleted.r2_Dok1Numer AND deleted.r2_Dok1Typ = 434
+			JOIN cdn.TraNag ON (KOMPDOK.R2_Dok1Typ=TrN_GIDTyp and KOMPDOK.R2_Dok1Numer=TrN_GIDNumer AND KOMPDOK.R2_Dok1Typ &lt;&gt; 784)
+                        JOIN cdn.FrmStruktura ON TrN_FrsID = FRS_ID
+                        JOIN cdn.PicoKonfig ON PcK_CentrumID = FRS_ID
+                     	JOIN CDN.Zapisy ON (KAZ_GIDTyp = deleted.R2_Dok2Typ AND KAZ_GIDNumer=deleted.R2_Dok2Numer AND deleted.R2_Dok2Typ = 784)
+                WHERE PcK_Typ = 5 AND ISNULL(deleted.R2_ZewnetrznyId,0) &gt; 0
+        ) as Wyniki
+
+        SELECT
+                @Count = COUNT(*)
+                ,@Indeks = 1
+        FROM #Deleted
+
+        WHILE @Indeks &lt;= @Count
+    BEGIN
+
+                SELECT
+                        @PcKId = PcK_PicoID
+                        ,@ObiNumer = DokNumer
+                        ,@ObiTyp = DokTyp
+                        ,@ZewnetrznyId = KAZ_ZewnetrznyId
+                        ,@ObiektTyp = ObiektTyp
+                FROM #Deleted
+                WHERE Indeks = @Indeks
+
+
+                -- Dopisanie do usuniętych obiektów
+        IF ISNULL(@PcKId,0) &lt;&gt; 0 AND ISNULL(@ObiTyp,0) &lt;&gt; 0 AND ISNULL(@ObiNumer,0) &lt;&gt; 0
+        AND NOT EXISTS (select * from cdn.PicoUsuniete where PcU_ObiTyp=@ObiTyp AND PcU_ObiNumer=@ObiNumer
+                        AND PcU_PcKId=@PcKId)
+        BEGIN
+                        EXEC CDN.OFFLXLSrv_LogUsunObiekt @PcKId, @ObiTyp, @ObiNumer, @ObiektTyp, @ZewnetrznyId
+        END
+
+                -- Zwiększenie indeksu
+        SET @Indeks = @Indeks + 1
+    END
+
+    DROP TABLE #Deleted
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[Rozliczenia_PicoBlokada]"></A><PRE>
+          <FONT SIZE="2"><I>/* [Rozliczenia_PicoBlokada] */</I><BR>
+CREATE TRIGGER [CDN].[Rozliczenia_PicoBlokada]
+   ON  [CDN].[Rozliczenia]
+   FOR DELETE
+AS 
+BEGIN
+    SET NOCOUNT ON
+    IF NOT EXISTS(SELECT * FROM CDN.PicoKonfig WHERE PcK_Typ = 5) RETURN
+    IF EXISTS(SELECT * FROM DELETED WHERE ISNULL(DELETED.R2_ZewnetrznyId,0) = 0 AND DELETED.R2_ZewnetrznySys &lt;&gt; 0)
+    BEGIN
+        RAISERROR('#CDN_INFO/##CDN_1=Nie można usunąć rozliczenia. Rozliczenie oczekuje na potwierdzenie z oddziału./#',16,1)
+        ROLLBACK TRAN
+    END
+    SET NOCOUNT OFF
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

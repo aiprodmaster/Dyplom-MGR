@@ -1,0 +1,126 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[ZapiszWskaznikStrukturySprzedazy]"></A><PRE>
+          <FONT SIZE="2"><I>/* [ZapiszWskaznikStrukturySprzedazy] */</I><BR>
+CREATE PROCEDURE [CDN].[ZapiszWskaznikStrukturySprzedazy](
+	@Data			INT,
+	@DataPoprzednia	INT,
+	@Wartosc		INT
+)
+AS
+BEGIN
+	DECLARE @nkWskaznikStrukturySprzedazy INT;
+	DECLARE @DodajPoprzedni TINYINT;
+	DECLARE @NastepnyUzytkownika INT;
+	DECLARE @NastepnySystemowy INT;
+
+	SET @nkWskaznikStrukturySprzedazy = 20110;
+	-- Najpierw sprawdzany czy należy dodać poprzedni wpis, jeżeli istnieje poprzedni wpis
+	-- to nie dodajemy, jeżeli natomiast nie istnieje to dodajemy tak jakby systemowy
+	IF NOT EXISTS
+	(
+		SELECT * 
+		FROM CDN.Konfig 
+		WHERE Kon_Numer = @nkWskaznikStrukturySprzedazy 
+				AND Kon_Lp = @DataPoprzednia
+	)
+	BEGIN
+		DECLARE @Retval INT;
+		SELECT TOP 1 @Retval = ISNULL(CAST(Kon_Wartosc AS INT),0)
+		FROM CDN.Konfig
+		WHERE Kon_Numer = @nkWskaznikStrukturySprzedazy AND Kon_Lp &gt;= @Data
+		ORDER BY Kon_Lp ASC;
+		INSERT INTO CDN.Konfig(Kon_Numer, Kon_Lp, Kon_System, Kon_Status, Kon_Wartosc, Kon_Komentarz,Kon_Archiwalny)
+		VALUES(@nkWskaznikStrukturySprzedazy,@DataPoprzednia,1,0,CAST(ISNULL(@Retval,0) AS VARCHAR(1)),'',0);
+	END
+	-- Sprawdzamy czy aktualizujemy wartość czy dodajemy nowy wpis do tabeli
+	IF EXISTS
+	(
+		SELECT * 
+		FROM CDN.Konfig 
+		WHERE Kon_Numer = @nkWskaznikStrukturySprzedazy AND Kon_Lp = @Data
+	)
+	BEGIN
+		UPDATE CDN.Konfig SET Kon_Wartosc=@Wartosc, Kon_System = 0
+	    WHERE Kon_Numer = @nkWskaznikStrukturySprzedazy AND Kon_Lp = @Data
+	END
+	ELSE
+	BEGIN
+		INSERT INTO CDN.Konfig(Kon_Numer, Kon_Lp, Kon_System, Kon_Status, Kon_Wartosc, Kon_Komentarz, Kon_Archiwalny)
+	    VALUES(@nkWskaznikStrukturySprzedazy,@Data,0,0,CAST(@Wartosc AS VARCHAR(1)),'',0);
+	END
+	
+	-- Szukamy następnego, który nie jest systemowym
+	SELECT TOP 1 @NastepnyUzytkownika = Kon_Lp
+	FROM CDN.Konfig
+	WHERE Kon_Numer = @nkWskaznikStrukturySprzedazy AND Kon_Lp &gt; @Data AND Kon_System = 0
+	ORDER BY Kon_Lp ASC
+	-- Jeżeli nie ma następnego użytkownika
+	IF ISNULL(@NastepnyUzytkownika,0) = 0
+	BEGIN
+		-- jeżeli nie ma następnego użytkownika to szukam ostatniego systemowego
+		SELECT TOP 1 @NastepnySystemowy = Kon_Lp
+		FROM CDN.Konfig
+		WHERE Kon_Numer = @nkWskaznikStrukturySprzedazy AND Kon_Lp &gt; @Data AND Kon_System = 1
+		ORDER BY Kon_Lp DESC
+		-- usuwam wszystkie systemowe pomiędzy
+		IF ISNULL(@NastepnySystemowy,0) &gt; 0
+			DELETE FROM CDN.Konfig
+			WHERE Kon_Numer = @nkWskaznikStrukturySprzedazy AND Kon_System = 1
+				AND Kon_Lp &gt; @Data AND Kon_Lp &lt; @NastepnySystemowy
+		-- ostatniemy systemowemu zmieniam wartość na taką jak przekazana
+		UPDATE CDN.Konfig
+		SET Kon_Wartosc = @Wartosc
+		WHERE Kon_Numer = @nkWskaznikStrukturySprzedazy AND Kon_System = 1 AND Kon_Lp = @NastepnySystemowy
+	END
+	-- Znalazłęm następny użytkownika
+	ELSE
+	BEGIN
+		-- jeżeli jest następny użytkownika to szukam ostatniego systemowego mniejszego od tego użytkownika
+		SELECT TOP 1 @NastepnySystemowy = Kon_Lp
+		FROM CDN.Konfig
+		WHERE Kon_Numer = @nkWskaznikStrukturySprzedazy AND Kon_Lp &lt; @NastepnyUzytkownika AND Kon_System = 1
+		ORDER BY Kon_Lp DESC
+		-- usuwam wszystkie systemowe pomiędzy
+		IF ISNULL(@NastepnySystemowy,0) &gt; 0
+			DELETE FROM CDN.Konfig
+			WHERE Kon_Numer = @nkWskaznikStrukturySprzedazy AND Kon_System = 1
+				AND Kon_Lp &gt; @Data AND Kon_Lp &lt; @NastepnySystemowy
+		-- ostatniemy systemowemu zmieniam wartość na taką jak przekazana
+		UPDATE CDN.Konfig
+		SET Kon_Wartosc = @Wartosc
+		WHERE Kon_Numer = @nkWskaznikStrukturySprzedazy AND Kon_System = 1 AND Kon_Lp = @NastepnySystemowy
+	END
+	
+	-- Sprawdzamy czy następny wpis większy od @Data jest wpisem systemowym
+	--DECLARE @Kon_Lp SMALLINT;
+	--DECLARE @Kon_System TINYINT;
+	--SELECT TOP 1 @Kon_Lp = Kon_Lp, @Kon_System = ISNULL(Kon_System,0)
+	--FROM CDN.Konfig
+	--WHERE Kon_Numer = @nkWskaznikStrukturySprzedazy AND Kon_Lp &gt; @Data
+	--ORDER BY Kon_Lp ASC;
+	--IF ISNULL(@Kon_System,0) = 1 AND EXISTS
+	--(
+	--	SELECT * FROM CDN.Konfig
+	--	WHERE Kon_Numer = @nkWskaznikStrukturySprzedazy AND Kon_Lp &gt; @Kon_Lp
+	--)
+	--	UPDATE CDN.Konfig SET Kon_Wartosc = @Wartosc
+	--	WHERE Kon_Numer = @nkWskaznikStrukturySprzedazy AND Kon_Lp = @Kon_Lp
+	--	--DELETE FROM CDN.Konfig WHERE Kon_Numer = @nkWskaznikStrukturySprzedazy AND Kon_Lp = @Kon_Lp
+
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

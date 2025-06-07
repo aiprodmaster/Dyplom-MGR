@@ -1,0 +1,296 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="DPEListaPrzestaw"></A><PRE>
+          <FONT SIZE="2"><I>/* DPEListaPrzestaw */</I><BR>
+CREATE PROCEDURE CDN.DPEListaPrzestaw 
+@PONGIDNumer int
+,@POEGIDLp smallint
+,@PONDataOd int
+,@PONDataDo int
+,@PONRok smallint
+,@PONMiesiac tinyint
+,@PONKwartal tinyint
+,@FAKryteriumDatSprzedazy varchar(100)
+,@FAKryteriumDatZakupu varchar(100)
+,@KRKryteriumDat varchar(100)
+,@KRZapisyWBuforze int
+,@VATWskStrukturySpr smallint
+,@VATWskSzacunkowy tinyint
+,@MAGKryteriumDatSprzedazy varchar(100)
+,@MAGKryteriumDatZakupu varchar(100)
+,@MAGTyp int
+,@MAGMagazyn int
+,@WBRejestr int
+,@Waluta varchar(10)
+AS
+begin
+set nocount on
+
+declare @sSQL nvarchar(max)
+declare @Kolumny nvarchar(max)
+declare @KolumnySelect nvarchar(max)
+declare @KolumnyOrder nvarchar(max)
+declare @WyrazenieSQL nvarchar(max)
+declare @rv int
+declare @PONGIDTyp smallint = 7691
+declare @PONDPNID int
+declare @DPELp smallint
+declare @DPENazwa varchar(100)
+
+declare @bAgregat tinyint = 0
+
+	select 
+		@PONDPNID = PON_DPNID
+		,@DPELp=DPE_Lp
+		,@DPENazwa=DPE_Nazwa
+		,@WyrazenieSQL = DPE_Wyrazenie
+	from cdn.PodElem
+				join cdn.PodNag on POE_GIDTyp=PON_GIDTyp and POE_GIDNumer=PON_GIDNumer
+				join cdn.DefPodNag on PON_DPNID=DPN_ID
+				join cdn.DefPodElem on DPN_ID=DPE_DPNID and POE_GIDLp=DPE_ID
+	where PON_GIDNumer = @PONGIDNumer and POE_GIDLp=@POEGIDLp and DPE_Typ=11
+
+	
+
+	if @@ROWCOUNT=0 or ISNULL(@WyrazenieSQL,'') = ''
+		return
+		
+	set @WyrazenieSQL = replace(@WyrazenieSQL,'@PRE_PONGIDNumer',convert(varchar,@PONGIDNumer)) 	
+	
+	set @KolumnyOrder = ''
+	select
+		@KolumnyOrder = @KolumnyOrder + ISNULL(DPK_NazwaPola+',','')	
+	from cdn.DefPodElemKolumny
+	where DPK_DPNId=@PONDPNId and DPK_DPELp=@DPELp and DPK_Sortowanie&lt;&gt;0
+	order by DPK_Sortowanie
+	
+	if @KolumnyOrder &lt;&gt; ''
+		set @KolumnyOrder = LEFT(@KolumnyOrder, len(@KolumnyOrder)-1)	
+			
+	select @bAgregat = DPE_Agreguj from cdn.DefPodElemKolumny join cdn.DefPodElem on DPK_DPNId = DPE_DPNId and DPK_DPELp = DPE_Lp where DPK_DPNId=@PONDPNId and DPK_DPELp=@DPELp and DPK_KluczGlowny=0		
+	
+
+	if not exists(select 1 from cdn.DefPodElemKolumny where DPK_DPNId=@PONDPNId and DPK_DPELp=@DPELp and DPK_KluczGlowny&lt;&gt;0) and @bAgregat = 0
+	begin
+			INSERT INTO [CDN].[PodElemNagListy]
+			   ([PEN_PONTyp]
+			   ,[PEN_PONNumer]
+			   ,[PEN_POELp]
+			   ,[PEN_Id]
+			   ,[PEN_ObiTyp]
+			   ,[PEN_ObiNumer]
+			   ,[PEN_ObiLp]
+			   ,[PEN_ObiLp1])
+			VALUES(@PONGIDTyp,@PONGIDNumer,@POEGIDLp,1,0,0,0,0)       
+			
+	end
+	else
+	begin 
+			
+			
+			set @sSQL = N';with Zrd as ('
+				+@WyrazenieSQL+N')	
+			INSERT INTO [CDN].[PodElemNagListy]
+			   ([PEN_PONTyp]
+			   ,[PEN_PONNumer]
+			   ,[PEN_POELp]
+			   ,[PEN_Id]
+			   ,[PEN_ObiTyp]
+			   ,[PEN_ObiNumer]
+			   ,[PEN_ObiLp]
+			   ,[PEN_ObiLp1])				
+			select '+convert(nvarchar,@PONGIDTyp) +N',@PONGIDNumer,@POEGIDLp
+					,ROW_NUMBER() OVER (order by ' + case when @KolumnyOrder&lt;&gt;'' then @KolumnyOrder  + case when @bAgregat = 1 then ', PENId' else N'' end else  + case when @bAgregat = 1 then ', PENId' else N'1' end end + N')
+					,'+convert(nvarchar,(isnull((select DPK_NazwaPola from cdn.DefPodElemKolumny where DPK_DPNId=@PONDPNId and DPK_DPELp=@DPELp and DPK_KluczGlowny=1),'0')))+
+					N','+convert(nvarchar,(isnull((select DPK_NazwaPola from cdn.DefPodElemKolumny where DPK_DPNId=@PONDPNId and DPK_DPELp=@DPELp and DPK_KluczGlowny=2),'0')))+
+					N','+convert(nvarchar,(isnull((select DPK_NazwaPola from cdn.DefPodElemKolumny where DPK_DPNId=@PONDPNId and DPK_DPELp=@DPELp and DPK_KluczGlowny=3),'0')))+
+					N','+convert(nvarchar,(isnull((select DPK_NazwaPola from cdn.DefPodElemKolumny where DPK_DPNId=@PONDPNId and DPK_DPELp=@DPELp and DPK_KluczGlowny=4),'0')))+
+			N' from Zrd' + 
+			case when @KolumnyOrder&lt;&gt;'' then N' order by ' + @KolumnyOrder else N'' end 
+						
+			--select @sSQL, @bAgregat 'DF'
+			
+			
+			EXECUTE @rv = sp_executesql @sSQL, 
+						N'@PONGIDNumer int
+						,@POEGIDLp smallint
+						,@PONDPNId int
+						,@DPELp smallint
+						,@PONDataOd int
+						,@PONDataDo int
+						,@PONRok smallint
+						,@PONMiesiac tinyint
+						,@PONKwartal tinyint
+						,@FAKryteriumDatSprzedazy varchar(100)
+						,@FAKryteriumDatZakupu varchar(100)
+						,@KRKryteriumDat varchar(100)
+						,@KRZapisyWBuforze int
+						,@VATWskStrukturySpr smallint
+						,@VATWskSzacunkowy tinyint
+						,@MAGKryteriumDatSprzedazy varchar(100)
+						,@MAGKryteriumDatZakupu varchar(100)
+						,@MAGTyp int
+						,@MAGMagazyn int
+						,@WBRejestr int
+						,@Waluta varchar(10)'
+						,@PONGIDNumer = @PONGIDNumer
+						,@POEGIDLp = @POEGIDLp
+						,@PONDPNId = @PONDPNId
+						,@DPELp = @DPELp
+						,@PONDataOd = @PONDataOd
+						,@PONDataDo = @PONDataDo
+						,@PONRok = @PONRok
+						,@PONMiesiac = @PONMiesiac
+						,@PONKwartal = @PONKwartal
+						,@FAKryteriumDatSprzedazy = @FAKryteriumDatSprzedazy
+						,@FAKryteriumDatZakupu = @FAKryteriumDatZakupu
+						,@KRKryteriumDat = @KRKryteriumDat
+						,@KRZapisyWBuforze = @KRZapisyWBuforze
+						,@VATWskStrukturySpr = @VATWskStrukturySpr
+						,@VATWskSzacunkowy = @VATWskSzacunkowy
+						,@MAGKryteriumDatSprzedazy = @MAGKryteriumDatSprzedazy
+						,@MAGKryteriumDatZakupu = @MAGKryteriumDatZakupu
+						,@MAGTyp = @MAGTyp
+						,@MAGMagazyn = @MAGMagazyn
+						,@WBRejestr = @WBRejestr
+						,@Waluta = @Waluta
+
+
+				if @rv &lt;&gt; 0
+				begin 				
+					raiserror('Błąd obliczania pola listy : %s', 16, 1, @DPENazwa)	
+					return 1
+				end
+				
+				--select @sSQL as a1
+				--return		
+	end
+	 
+	 
+	set @Kolumny = ''
+	set @KolumnySelect = ''
+
+
+
+	select
+		@Kolumny = @Kolumny + ISNULL(DPK_NazwaPola+',','')
+		--,@KolumnySelect = @KolumnySelect + 'isnull(convert(varchar(512),'+ISNULL(DPK_NazwaPola,'')+'),'''') '+ISNULL(DPK_NazwaPola+',','')
+		,@KolumnySelect = @KolumnySelect + 'isnull(cast('+ISNULL(DPK_NazwaPola,'')+case when DPK_Typ=1 then ' collate database_default ' else '' end + ' as varchar(512)),'''') '+ISNULL(DPK_NazwaPola+',','')
+	from cdn.DefPodElemKolumny
+	where DPK_DPNId=@PONDPNId and DPK_DPELp=@DPELp and DPK_PominKolumne=0 and DPK_KluczGlowny=0
+	order by DPK_Id
+
+
+	set @Kolumny = LEFT(@Kolumny, len(@Kolumny)-1)	
+	set @KolumnySelect = LEFT(@KolumnySelect, len(@KolumnySelect)-1)	
+
+
+	set @sSQL = N';with Zrd as ('
+		+@WyrazenieSQL+
+	N')			
+	INSERT INTO [CDN].[PodElemListy]
+	   ([PEL_PONTyp]
+	   ,[PEL_PONNumer]
+	   ,[PEL_POELp]
+	   ,[PEL_PENId]
+	   ,[PEL_DPKId]
+	   ,[PEL_LpKolumny]
+	   ,[PEL_WartoscString])   
+	select
+		'+convert(nvarchar,@PONGIDTyp) +N',@PONGIDNumer,@POEGIDLp        
+		,PEN_ID
+		,DPK_ID
+		,DPK_NrKolumny
+		,Wartosc
+	from
+	(
+	select PEN_ID,'+@KolumnySelect+
+	N' from Zrd join cdn.PodElemNagListy on PEN_PONTyp='+convert(nvarchar,@PONGIDTyp) + N' and PEN_PONNumer=@PONGIDNumer and PEN_POELp=@POEGIDLp'+
+		N' and PEN_ObiTyp='+convert(nvarchar,(isnull((select DPK_NazwaPola from cdn.DefPodElemKolumny where DPK_DPNId=@PONDPNId and DPK_DPELp=@DPELp and DPK_KluczGlowny=1),'0')))+
+		N' and PEN_ObiNumer='+convert(nvarchar,(isnull((select DPK_NazwaPola from cdn.DefPodElemKolumny where DPK_DPNId=@PONDPNId and DPK_DPELp=@DPELp and DPK_KluczGlowny=2),'0')))+
+		N' and PEN_ObiLp='+convert(nvarchar,(isnull((select DPK_NazwaPola from cdn.DefPodElemKolumny where DPK_DPNId=@PONDPNId and DPK_DPELp=@DPELp and DPK_KluczGlowny=3),'0')))+
+		N' and PEN_ObiLp1='+convert(nvarchar,(isnull((select DPK_NazwaPola from cdn.DefPodElemKolumny where DPK_DPNId=@PONDPNId and DPK_DPELp=@DPELp and DPK_KluczGlowny=4),'0')))+
+		case when @bAgregat = 1 then N' and PEN_Id = PENId' else N'' end +
+	--case when @KolumnyOrder&lt;&gt;'' then N' order by ' + @KolumnyOrder else N'' end+		
+	N') a
+	UNPIVOT (Wartosc for kolumna 
+		in ('+@Kolumny+N')
+	) unpvt
+		join cdn.DefPodElemKolumny on DPK_DPNId=@PONDPNId and DPK_DPELp=@DPELp and DPK_NazwaPola=unpvt.Kolumna
+	order by PEN_ID, DPK_NrKolumny'
+		
+			
+	--select @sSQL as a1, @dpelp, @bAgregat 'DF'
+	--			return		
+
+
+
+
+	EXECUTE @rv = sp_executesql @sSQL, 
+			N'@PONGIDNumer int
+			,@POEGIDLp smallint
+			,@PONDPNId int
+			,@DPELp smallint
+			,@PONDataOd int
+			,@PONDataDo int
+			,@PONRok smallint
+			,@PONMiesiac tinyint
+			,@PONKwartal tinyint
+			,@FAKryteriumDatSprzedazy varchar(100)
+			,@FAKryteriumDatZakupu varchar(100)
+			,@KRKryteriumDat varchar(100)
+			,@KRZapisyWBuforze int
+			,@VATWskStrukturySpr smallint
+			,@VATWskSzacunkowy tinyint
+			,@MAGKryteriumDatSprzedazy varchar(100)
+			,@MAGKryteriumDatZakupu varchar(100)
+			,@MAGTyp int
+			,@MAGMagazyn int
+			,@WBRejestr int
+			,@Waluta varchar(10)'
+			,@PONGIDNumer = @PONGIDNumer
+			,@POEGIDLp = @POEGIDLp
+			,@PONDPNId = @PONDPNId
+			,@DPELp = @DPELp
+			,@PONDataOd = @PONDataOd
+			,@PONDataDo = @PONDataDo
+			,@PONRok = @PONRok
+			,@PONMiesiac = @PONMiesiac
+			,@PONKwartal = @PONKwartal
+			,@FAKryteriumDatSprzedazy = @FAKryteriumDatSprzedazy
+			,@FAKryteriumDatZakupu = @FAKryteriumDatZakupu
+			,@KRKryteriumDat = @KRKryteriumDat
+			,@KRZapisyWBuforze = @KRZapisyWBuforze
+			,@VATWskStrukturySpr = @VATWskStrukturySpr
+			,@VATWskSzacunkowy = @VATWskSzacunkowy
+			,@MAGKryteriumDatSprzedazy = @MAGKryteriumDatSprzedazy
+			,@MAGKryteriumDatZakupu = @MAGKryteriumDatZakupu
+			,@MAGTyp = @MAGTyp
+			,@MAGMagazyn = @MAGMagazyn
+			,@WBRejestr = @WBRejestr
+			,@Waluta = @Waluta
+
+
+	if @rv &lt;&gt; 0
+	begin 				
+		raiserror('Błąd obliczania pola listy : %s', 16, 1, @DPENazwa)	
+		return 1
+	end
+			
+						
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

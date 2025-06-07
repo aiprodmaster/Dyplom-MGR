@@ -1,0 +1,173 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="DodajProjekt4"></A><PRE>
+          <FONT SIZE="2"><I>/* DodajProjekt4 */</I><BR>
+CREATE PROCEDURE CDN.DodajProjekt4 
+	@OptimaID INT, 			-- ID rekordu w bazie Optimy
+	@ParentID INT, 			-- ID rodzica w bazie Optimy
+	@Kod VARCHAR(40), 		-- Kod projektu
+	@Nazwa VARCHAR(255), 	-- Nazwa projektu
+	@Nieaktywny TINYINT,	-- u nas Archiwalny
+	@Konto NVARCHAR(51)		-- konto księgowe
+AS SET NOCOUNT ON
+
+if  @OptimaID=0
+begin
+	RAISERROR('OptimaID nie może byc zerowy.',16,1)
+	return
+end
+
+if  @OptimaID=1
+	return		-- nie przenosimy roota
+
+
+if  @ParentID=1
+	set @ParentID=0
+
+DECLARE
+	@XLParentNumer	INT,
+	@XLParentID INT
+
+if @ParentID&lt;&gt;0  -- jeśli nie jest to najwyższy poziom
+begin
+	select @XLParentNumer=PRJ_GIDNumer,@XLParentID=PRJ_ID from CDN.PrjStruktura where PRJ_OptimaID=@ParentID -- szukamy rodzica 
+	if  @XLParentID is NULL
+	begin
+		RAISERROR('Brak rodzica.',16,1)
+		return
+	end
+end
+else
+begin
+	SET @XLParentNumer = 0
+	SET @XLParentID =0
+end
+
+DECLARE
+	@GIDFirma INT,
+	@GIDNumer INT,
+	@PrjID INT
+select top 1 @GIDFirma=FRS_GIDFirma from CDN.FrmStruktura -- lepiej pobrać GIDFirma z CDN.FrmStruktura bo tam NA PEWNO będą co najmniej trzy rekordy (rooty)
+select @PrjID=IsNull(Max(PRJ_ID),0)+1, @GIDNumer=IsNull(Max(PRJ_GIDNumer),0)+1 from CDN.PrjStruktura -- autonumeracja RPJ_ID i PRJ_GIDNumer
+
+DECLARE	
+	@DataWystawienia INT,
+	@DataZamkniecia int
+SET @DataZamkniecia = 0
+
+SELECT @DataWystawienia =DATEDIFF(day,'18001228',GETDATE()) -- data wystawienia ustawiona na datę synchronizacji
+
+if  @Nieaktywny&lt;&gt;0	-- jeśli archiwalny
+	SET @DataZamkniecia = @DataWystawienia -- data zamknięcia ustawiana na datę wystawienia; jeśli nie archiwalny - pozostaje 0
+
+DECLARE
+	@PrjRok SMALLINT,
+	@PrjSeria varchar(6),
+	@PrjNumer INT
+	
+select @PrjRok=year(GETDATE()) -- bieżący rok
+
+select @PrjSeria=SER_Nazwa from Cdn.Serie 
+inner join Cdn.DokDefinicje on Dok_SerTyp=SER_GIDTyp and Dok_SerFirma=SER_GIDFirma and Dok_SerNumer=SER_GIDNumer and Dok_SerLp=SER_GIDLp
+where Dok_GIDTyp=4592 AND Dok_FrsId = 1 -- pobranie nazwy serii dla definicji dokumentu projektu
+	
+select @PrjNumer=IsNull(max(Prj_Numer),0)+1 from Cdn.PrjStruktura  -- autonumeracja 
+where Prj_Seria=@PrjSeria and Prj_Rok=@PrjRok
+
+begin try
+
+	DECLARE
+		@XLOptimaID INT,
+		@XLOldParentID INT,
+		@XLOldPrjID INT,
+		@OpeIdent VARCHAR(9),
+        @OpeGNumer INT
+
+
+	select @XLOptimaID=PRJ_OptimaID, @XLOldParentID=PRJ_GROID, @XLOldPrjID=PRJ_ID from CDN.PrjStruktura 
+	where PRJ_Kod=@Kod and PRJ_GROID=@XLParentID and PRJ_GRONumer=@XLParentNumer
+	
+	if exists(select 1 from cdn.Konfig where Kon_Numer = 20121)
+    begin
+        select @OpeIdent = rtrim(kon_wartosc) from cdn.Konfig where Kon_Numer = 20121       
+            if @OpeIdent &lt;&gt; ''
+                begin
+                    select @OpeGNumer = Ope_GIDNumer from cdn.OpeKarty where Ope_Ident = @OpeIdent                    
+                end    
+            else
+                set @OpeGNumer = 0
+                                              
+    end 
+    else
+        set @OpeGNumer = 0
+
+	
+	if @XLOptimaID is NULL
+		begin
+		insert into CDN.PrjStruktura
+			(PRJ_ID,PRJ_GIDTyp,PRJ_GIDFirma,PRJ_GIDNumer,PRJ_GIDLp, PRJ_GROID,PRJ_GROTyp,PRJ_GROFirma,PRJ_GRONumer,PRJ_GROLp, PRJ_Kod,PRJ_Nazwa,PRJ_Symbol,
+			PRJ_DataOtwarcia,PRJ_DataZamkniecia, PRJ_URL,PRJ_Konto,PRJ_Opis, PRJ_OptimaID, PRJ_KntTyp,PRJ_KntNumer,PRJ_KndTyp,PRJ_KndNumer,
+			PRJ_Rok,PRJ_Miesiac,PRJ_Seria,PRJ_Numer,PRJ_Lp, PRJ_DokumentObcy,PRJ_DataWystawienia,PRJ_OpWNumer,PRJ_FrsId, PRJ_Archiwalny)
+		values 
+			(@PrjID,-4592,@GIDFirma,@GIDNumer,0, @XLParentID,-4592,@GIDFirma,@XLParentNumer,0, @Kod,@Nazwa,'',
+			0,@DataZamkniecia, '',@Konto,'', @OptimaID, 0,0,0,0,
+			@PrjRok,0,@PrjSeria,@PrjNumer,0, '',@DataWystawienia,@OpeGNumer,1, @Nieaktywny)
+		end
+	else if @XLOptimaID=0 
+		if @XLOldParentID=@XLParentID
+			begin
+			update CDN.PrjStruktura
+			set 
+				PRJ_OptimaID=@OptimaID,
+				PRJ_Kod=@Kod,
+				PRJ_Nazwa=@Nazwa,
+				PRJ_Konto=@Konto,
+				PRJ_Archiwalny=@Nieaktywny,
+				PRJ_DataZamkniecia=@DataZamkniecia,
+				PRJ_OpWNumer = @OpeGNumer 
+			where
+				PRJ_ID=@XLOldPrjID
+			end
+		else
+		begin
+			RAISERROR('Istnieje już obiekt o tym samym kodzie w innej gałęzi. Nie można go powiązać z projektem',16,1)
+			return
+		end
+	else
+		begin
+			RAISERROR('Istnieje już obiekt powiązany z tym projektem. Nie można dodać go ponownie',16,1)
+			return
+		end
+		
+end try
+
+begin catch
+
+  DECLARE
+    @ErrorMessage     NVARCHAR(4000),
+    @ErrorSeverity    INT,
+    @ErrorState       INT
+
+  SELECT 
+    @ErrorMessage = ERROR_MESSAGE(),
+    @ErrorSeverity = ERROR_SEVERITY(),
+    @ErrorState = ERROR_STATE();
+
+  RAISERROR(@ErrorMessage,@ErrorSeverity,@ErrorState);
+
+end catch
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

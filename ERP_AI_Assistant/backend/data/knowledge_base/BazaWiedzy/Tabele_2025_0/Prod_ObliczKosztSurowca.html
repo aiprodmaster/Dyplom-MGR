@@ -1,0 +1,115 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[Prod_ObliczKosztSurowca]"></A><PRE>
+          <FONT SIZE="2"><I>/* [Prod_ObliczKosztSurowca] */</I><BR>
+CREATE function [CDN].[Prod_ObliczKosztSurowca]
+(
+@TwrTyp int,
+@TwrNumer int,
+@termRozp int,
+@sposobObliczenia int,
+@KursuNr	int,
+@KursMianownik	int,
+@KursLicznik	decimal(13,2)
+) 
+
+RETURNS decimal(20,4)
+AS
+BEGIN
+
+    declare @najniszaCena tinyint 
+    set     @najniszaCena  = 1 
+	declare	@sredniaCena  tinyint  
+	set	    @sredniaCena  = 2		   
+	declare	@ostatniaCena tinyint
+	set	    @ostatniaCena  = 3		   
+	declare	@najkrotszyCzasDostawy tinyint
+	set	    @najkrotszyCzasDostawy  = 4 		   
+	declare	@wgUstawienKartyMaterialu tinyint 
+	set	    @wgUstawienKartyMaterialu  = 5
+		   
+   declare @kosztCalkowity decimal(20,4)
+   declare @WalutaSystemowa VARCHAR(3)
+   
+   SET @WalutaSystemowa =  (select top 1 Kon_Wartosc from cdn.Konfig where Kon_Komentarz = 'Waluta systemowa') 
+         
+    if @sposobObliczenia = @najniszaCena 
+    begin
+		select  
+	    @kosztCalkowity = MIN(
+							CASE WHEN @KursuNr = 0 THEN
+								CASE WHEN @WalutaSystemowa = TCH_Waluta THEN TCH_Wartosc ELSE TCH_Wartosc * (@KursLicznik / CASE WHEN @KursMianownik = 0 THEN 1 ELSE @KursMianownik END) END
+							ELSE 
+								TCH_Wartosc--CDN.WartoscWWalucieSys(TCH_Wartosc,TCH_Waluta,@KursuNr, @termRozp) 
+						    END
+							)
+		from CDN.TwrCenyHist 
+		Where TCH_TwrNumer = @TwrNumer and TCH_TwrTyp = @TwrTyp and TCH_TwrLp = 0   
+		RETURN IsNull(@kosztCalkowity,0) 
+    end
+          
+    if @sposobObliczenia = @sredniaCena 
+    begin
+    --obecna cena ważona
+	    Select 
+	    @kosztCalkowity = 	    
+			case 
+			  when sum(Twz_Ilspr)= 0 or sum(TWZ_IlSPR) is null then  
+				0--CDN.Prod_ObliczKosztSurowca(@TwrTyp,@TwrNumer,@termRozp,@ostatniaCena)
+				---jesli ilosc tego towaru na magazynie=0 wtedy pobierz ostatnia cene zakupu
+			  else
+				Sum(Twz_KsiegowaNetto)/ CASE WHEN Sum(Twz_Ilspr) = 0 THEN 1 ELSE Sum(Twz_Ilspr) END 
+			end
+		from CDN.TwrKarty
+		--left outer join CDN.TwrCeny on  Twc_TwrTyp = Twr_GIDTyp and Twc_TwrNumer = Twr_GIDNumer and Twc_TwrLp = 0 
+		left outer join CDN.TwrZasoby  on Twz_TwrNumer = Twr_GIDNumer and Twz_TwrTyp = Twr_GIDTyp and Twz_TwrLp = 0 
+		Where Twr_GIDNumer = @TwrNumer AND Twr_GIDTyp = @TwrTyp
+		RETURN IsNull(@kosztCalkowity,0)		
+    end    
+       
+
+    if @sposobObliczenia = @ostatniaCena 
+    begin
+	  select 
+	  @kosztCalkowity = CASE WHEN @KursuNr = 0 THEN
+							CASE WHEN @WalutaSystemowa = TwC_Waluta THEN TwC_Wartosc ELSE TwC_Wartosc * (@KursLicznik / CASE WHEN @KursMianownik = 0 THEN 1 ELSE @KursMianownik END) END
+						ELSE 
+							CDN.WartoscWWalucieSys(TwC_Wartosc,Twc_Waluta,@KursuNr, @termRozp) 
+						END
+	  from CDN.TwrCeny 
+      Where Twc_TwrNumer = @TwrNumer AND Twc_TwrTyp = @TwrTyp and Twc_TwrLp = 0
+      RETURN IsNull(@kosztCalkowity,0)
+    end
+   
+    if @sposobObliczenia = @najkrotszyCzasDostawy 
+    begin
+	    select top 1
+	    @kosztCalkowity =	CASE WHEN @KursuNr = 0 THEN
+								CASE WHEN @WalutaSystemowa = TWD_Waluta THEN TWD_Cena ELSE TWD_Cena * (@KursLicznik / CASE WHEN @KursMianownik = 0 THEN 1 ELSE @KursMianownik END) END
+							ELSE 
+								CDN.WartoscWWalucieSys(TWD_Cena,TWD_Waluta,@KursuNr, @termRozp) 
+							END
+	    from CDN.TwrKarty 
+		join CDN.TwrDost on TWD_TwrNumer = @TwrNumer 
+		where Twr_GIDNumer = @TwrNumer
+		order by TWD_Czas ASC, Twr_DstDomyslny DESC, TWD_Cena ASC  
+		RETURN IsNull(@kosztCalkowity,0)
+    end
+	RETURN IsNull(@kosztCalkowity,0)
+
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

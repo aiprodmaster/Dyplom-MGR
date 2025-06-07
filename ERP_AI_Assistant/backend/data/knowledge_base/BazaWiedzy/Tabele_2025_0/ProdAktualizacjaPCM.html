@@ -1,0 +1,145 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="ProdAktualizacjaPCM"></A><PRE>
+          <FONT SIZE="2"><I>/* ProdAktualizacjaPCM */</I><BR>
+CREATE PROCEDURE CDN.ProdAktualizacjaPCM @PCZId int,@Realizacja INT,@PZAId INT = NULL,@Ilosc DECIMAL(15,4) = NULL,@UsuwaniePZA TINYINT = 0,
+	@TylkoZrealizowana TINYINT = 0,@KlasaCechyNew INT = NULL,@CechaNew VARCHAR(255) = NULL,@TwrNumerNew INT = NULL,@UsuwaniePCZ TINYINT = 0
+AS
+begin
+	
+	IF @Realizacja = 0
+	BEGIN	
+		SELECT Towary.NumerTwr,Towary.KlasaC,Towary.Cecha,SUM(Towary.Ilosc) Ilosc,MAX(PTZId) PTZId INTO #Pomocnicza FROM (
+			SELECT Rez_TwrNumer NumerTwr,Rez_CCHNumer KlasaC,Rez_Cecha Cecha,SUM(Rez_Ilosc) Ilosc,Rez_PTZID PTZId
+			FROM CDN.Rezerwacje WHERE Rez_ZrdTyp = 14345 AND Rez_ZrdNumer = @PCZId AND Rez_GIDTyp = 2576
+			GROUP BY Rez_TwrNumer,Rez_TwrTyp,Rez_CCHNumer,Rez_Cecha,Rez_PTZID
+			UNION ALL
+			SELECT TrE_TwrNumer,TrS_CChNumer,TrS_Cecha,SUM(TrS_Ilosc),0 FROM CDN.TraSElem 
+			JOIN CDN.TraElem ON TrE_GIDTyp = TrS_GIDTyp AND TrE_GIDNumer = TrS_GIDNumer AND TrE_GIDLp = TrS_GIDLp 
+			JOIN CDN.TraNag ON TrN_GIDTyp = TrS_GIDTyp AND TrN_GIDNumer = TrS_GIDNumer
+			WHERE TrS_ZlcTyp = 14345 AND TrS_ZlcNumer = @PCZId AND Trn_Stan IN (3,5)
+			GROUP BY TrE_TwrNumer,TrS_CChNumer,TrS_Cecha
+			) Towary
+		GROUP BY Towary.NumerTwr,Towary.KlasaC,Towary.Cecha
+
+		UPDATE CDN.ProdCzynnosciMaterialy
+		SET PCM_Ilosc = Ilosc
+		FROM #Pomocnicza
+		JOIN CDN.ProdCzynnosciMaterialy ON PCM_PCZId = @PCZId AND NumerTwr = PCM_TwrNumer AND KlasaC = PCM_KlasaCechy AND Cecha = PCM_Cecha
+
+		INSERT INTO CDN.ProdCzynnosciMaterialy(PCM_PCZId,PCM_TwrNumer,PCM_Ilosc,PCM_Zrealizowana,PCM_Jm,PCM_KlasaCechy,PCM_Cecha,PCM_TechnologiaZasob)
+		SELECT @PCZId,NumerTwr,Ilosc,0,'',KlasaC,Cecha,PTZId
+		FROM #Pomocnicza WHERE NOT EXISTS(SELECT * FROM CDN.ProdCzynnosciMaterialy 
+		WHERE PCM_PCZId = @PCZId AND NumerTwr = PCM_TwrNumer AND KlasaC = PCM_KlasaCechy AND Cecha = PCM_Cecha)
+						
+		DELETE FROM CDN.ProdCzynnosciMaterialy 
+		WHERE  PCM_PCZId = @PCZId AND NOT EXISTS(
+		SELECT * FROM #Pomocnicza WHERE PCM_PCZId = @PCZId AND NumerTwr = PCM_TwrNumer AND KlasaC = PCM_KlasaCechy AND Cecha = PCM_Cecha)
+			AND PCM_Zrealizowana = 0
+
+		UPDATE CDN.ProdCzynnosciMaterialy SET PCM_Ilosc = 0
+		WHERE  PCM_PCZId = @PCZId AND NOT EXISTS(
+		SELECT * FROM #Pomocnicza WHERE PCM_PCZId = @PCZId AND NumerTwr = PCM_TwrNumer AND KlasaC = PCM_KlasaCechy AND Cecha = PCM_Cecha)
+			AND PCM_Zrealizowana &gt; 0
+
+		DROP TABLE #Pomocnicza
+	END
+	ELSE
+	BEGIN
+		DECLARE @SumaZrealizPZA DECIMAL(11,4),@BiezCzynnoscPZA DECIMAL(11,4)
+		DECLARE @PCZRealizowana INT,@KlasaCechy INT,@Cecha VARCHAR(255),@TwrNumer INT,@PTZId INT,@PZAZasob INT,@IstniejePZP TINYINT
+		SELECT @PCZRealizowana = PCZ_Realizuje FROM CDN.ProdCzynnosci WHERE PCZ_Id = @PCZId
+		select @KlasaCechy = PZA_KlasaCechy,@Cecha = PZA_Cecha, @TwrNumer = PZA_TwrNumer, @PTZId = ISNULL(PZA_TechnologiaZasob,0),@PZAZasob = PZA_Zasob,
+		@IstniejePZP = CASE WHEN EXISTS(SELECT * FROM CDN.ProdZwiazanePolprodukty WHERE PZP_PZAIDPlanowany = @PZAId) THEN 1 ELSE 0 END from CDN.ProdZasoby where PZA_Id = @PZAId
+		IF @IstniejePZP = 0 AND @PZAZasob = 0 
+		BEGIN			
+			SELECT @SumaZrealizPZA = ISNULL(WszystkieRealiz,0),@BiezCzynnoscPZA = ISNULL(BiezCzynnosc,0) 
+			FROM (select ISNULL(SUM(ZasobyZrealizowane.PZA_Ilosc),0) WszystkieRealiz,SUM(ISNULL(CASE WHEN PZA_Czynnosc = @PCZId THEN PZA_Ilosc ELSE 0 END,0)) BiezCzynnosc 
+			from cdn.ProdCzynnosci WszystkieRealizacje
+			left join cdn.ProdZasoby ZasobyZrealizowane on ZasobyZrealizowane.PZA_Czynnosc = WszystkieRealizacje.PCZ_Id
+			--left join cdn.ProdZasoby Zasob on Zasob.PZA_ID = @PZAID
+			where WszystkieRealizacje.PCZ_Realizuje = @PCZRealizowana and ZasobyZrealizowane.PZA_TypZasobu = 1 AND ZasobyZrealizowane.PZA_TwrNumer = @TwrNumer AND ZasobyZrealizowane.PZA_Cecha = @Cecha
+				  AND @KlasaCechy = ZasobyZrealizowane.PZA_KlasaCechy AND (@PZAId &lt;&gt; ZasobyZrealizowane.PZA_Id OR @UsuwaniePZA = 0) AND ZasobyZrealizowane.PZA_Zasob = 0 AND 
+				  NOT EXISTS(SELECT * FROM CDN.ProdZwiazanePolprodukty WHERE PZP_PZAIDPlanowany = ZasobyZrealizowane.PZA_Id)
+			GROUP BY ZasobyZrealizowane.PZA_KlasaCechy,ZasobyZrealizowane.PZA_Cecha, ZasobyZrealizowane.PZA_TwrNumer) Realiz
+			
+			SET @SumaZrealizPZA = ISNULL(@SumaZrealizPZA,0)
+			SET @BiezCzynnoscPZA = ISNULL(@BiezCzynnoscPZA,0)	
+			IF EXISTS(SELECT * FROM CDN.ProdCzynnosciMaterialy 
+				WHERE PCM_PCZId = @PCZRealizowana AND @TwrNumer = PCM_TwrNumer AND @KlasaCechy = PCM_KlasaCechy AND @Cecha = PCM_Cecha)
+			BEGIN
+				UPDATE CDN.ProdCzynnosciMaterialy			
+				SET PCM_Ilosc = CASE WHEN @TylkoZrealizowana = 0 THEN
+				CASE WHEN @Ilosc &gt; 0 THEN 
+					CASE WHEN PCM_Ilosc - @Ilosc &gt; 0 THEN PCM_Ilosc - @Ilosc ELSE 0 END
+				ELSE
+					CASE WHEN @UsuwaniePCZ = 1 THEN
+						PCM_Ilosc + PCM_Zrealizowana - (@SumaZrealizPZA - @BiezCzynnoscPZA)
+					ELSE 
+						CASE WHEN @UsuwaniePZA = 1 THEN
+							PCM_ILosc - @Ilosc						
+						ELSE
+							CASE WHEN PCM_Ilosc + (PCM_Zrealizowana - @SumaZrealizPZA) &gt; 0 THEN
+								PCM_Ilosc + (PCM_Zrealizowana - @SumaZrealizPZA) 
+							ELSE 0 END
+						END
+					END
+				END
+				ELSE PCM_Ilosc END,
+				PCM_Zrealizowana = 
+					CASE WHEN @Ilosc &gt; 0 THEN 
+						PCM_Zrealizowana + @Ilosc
+					ELSE 
+						CASE WHEN @UsuwaniePCZ = 1 THEN		
+							@SumaZrealizPZA - @BiezCzynnoscPZA
+						ELSE
+							CASE WHEN @SumaZrealizPZA &gt;= PCM_Zrealizowana THEN PCM_Zrealizowana ELSE @SumaZrealizPZA END
+						END 
+					END
+				WHERE PCM_PCZId = @PCZRealizowana AND @TwrNumer = PCM_TwrNumer AND @KlasaCechy = PCM_KlasaCechy AND @Cecha = PCM_Cecha			
+					
+			END
+			ELSE
+			BEGIN
+				IF @SumaZrealizPZA &gt; 0
+				BEGIN
+					INSERT INTO CDN.ProdCzynnosciMaterialy(PCM_PCZId,PCM_TwrNumer,PCM_Ilosc,PCM_Zrealizowana,PCM_Jm,PCM_KlasaCechy,
+						PCM_Cecha,PCM_TechnologiaZasob)
+					VALUES (@PCZRealizowana,@TwrNumer,0,@SumaZrealizPZA,'',@KlasaCechy,@Cecha,@PTZId)
+				END
+				
+			END
+			IF @KlasaCechyNew IS NOT NULL AND @CechaNew IS NOT NULL AND @TwrNumerNew IS NOT NULL AND @TwrNumerNew &gt; 0
+			BEGIN
+				IF EXISTS(SELECT * FROM CDN.ProdCzynnosciMaterialy 
+					WHERE PCM_PCZId = @PCZRealizowana AND @TwrNumerNew = PCM_TwrNumer AND @KlasaCechyNew = PCM_KlasaCechy AND  @CechaNew = PCM_Cecha)
+				BEGIN
+					UPDATE CDN.ProdCzynnosciMaterialy			
+					SET PCM_Zrealizowana = PCM_Zrealizowana - @Ilosc	--jeśli przekazana jest klasa cechy albo cecha - podana jest ujemna				
+					WHERE PCM_PCZId = @PCZRealizowana AND @TwrNumerNew = PCM_TwrNumer AND @KlasaCechyNew = PCM_KlasaCechy AND @CechaNew = PCM_Cecha		
+				END
+				ELSE
+				BEGIN
+					INSERT INTO CDN.ProdCzynnosciMaterialy(PCM_PCZId,PCM_TwrNumer,PCM_Ilosc,PCM_Zrealizowana,PCM_Jm,PCM_KlasaCechy,
+						PCM_Cecha,PCM_TechnologiaZasob)
+					VALUES (@PCZRealizowana,@TwrNumerNew,0,-@Ilosc,'',@KlasaCechyNew,@CechaNew,@PTZId)
+				END			
+			END
+		END
+	END
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

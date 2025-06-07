@@ -1,0 +1,219 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[XLZakonczKntWEtapieCRM]"></A><PRE>
+          <FONT SIZE="2"><I>/* [XLZakonczKntWEtapieCRM] */</I><BR>
+CREATE PROCEDURE [CDN].[XLZakonczKntWEtapieCRM] 
+	@CekId				int, --id kontrahenta w etapie		
+	@KntNumer			int,
+	@KntLp				smallint,						
+	@KampNumer			int,				
+	@EtapNumer			smallint, --lp etapu w kampanii												
+
+	@Status				int = NULL,
+	@FiaskoID			int = NULL,
+	@AkwLpKoniec		smallint = NULL, --osoba nadzorowana (akwizytora), która zakończyła kontrahenta
+	@IgnorujBledy		tinyint = NULL
+	
+AS
+declare @AkwNumer		int --numer akwizytora
+declare @OpeNumer		int --operator prowadzacy etap	
+declare @Today			int
+declare @DataAkcji		int --data akcji dla nowododanego knt w przypadku cykliczności
+declare @DataWejscia	int	--data wejscia dla nowododanego knt w przypadku cykliczności
+declare @NumerCyklu		int
+declare @CekIdNew		int
+declare @OpeNumerM		int	
+declare @Error			int
+declare	@KntOsobaLp			smallint
+declare	@AkwOsobaLp			smallint
+declare	@Url				varchar(255)
+declare	@OpeNumerA			int
+declare	@KopiujAtrybuty		tinyint
+declare	@KnANumer			int
+declare	@KnATyp				smallint
+declare	@KopiujBinarne		tinyint
+declare @CzkWarunek			tinyint
+declare @AntId				int
+declare @AntZadId			int
+declare @CKEKntKoszt		DECIMAL(8,2)
+if @KntNumer is null
+	set @KntNumer = 0
+if @KntLp is null
+	set @KntLp = 0
+if @KampNumer is null
+	set @KampNumer = 0
+if @EtapNumer is null
+	set @EtapNumer = 0
+if @CekId is null
+	set @CekId = 0
+
+SET NOCOUNT ON
+select @Today = datediff(d,'18001228',getdate())
+
+BEGIN TRAN XLZakonczKntWEtapieCRM
+if exists(select * from cdn.CrmKntEtapy where CEK_Id = @CekId and CEK_Status in (0,1,2,3))
+	begin
+		set @AkwNumer = isnull((select CEK_AkwNumer from cdn.CrmKntEtapy where CEK_Id = @CekId ),0)
+		set @KntNumer = isnull((select CEK_KntNumer from cdn.CrmKntEtapy where CEK_Id = @CekId ),0)
+	end
+else
+	if exists(select * from cdn.CrmKntEtapy where CEK_Status in (0,1) and CEK_KntNumer = @KntNumer 
+	and CEK_KntLp = @KntLp and CEK_CkeNumer = @KampNumer and CEK_CkeLp = @EtapNumer)
+		begin
+			set @CekId = isnull((select CEK_Id from cdn.CrmKntEtapy where CEK_KntNumer = @KntNumer 
+			and CEK_CkeNumer = @KampNumer and CEK_CkeLp = @EtapNumer ),0)
+			set @AkwNumer = isnull((select CEK_AkwNumer from cdn.CrmKntEtapy where CEK_Id = @CekId ),0)
+		end
+	else
+		begin
+			rollback tran XLZakonczKntWEtapieCRM
+			if @IgnorujBledy is null
+				raiserror('Nie znaleziono kontrahenta w etapie - (-1)',16,1)
+			return -1
+		end
+
+if @Status is null or @Status not in (2,3,4)
+	select @FiaskoId = 0, @AkwLpKoniec = 0, @Status = 3
+else
+	if @Status = 2 and (@FiaskoId is null or @FiaskoId &lt;= 0 or not exists(select * from CDN.SlownikiStruktura 
+	join CDN.Slowniki on Slw_SlsId = SlS_Id where Slw_Id = @FiaskoId and SlS_Predefiniowany = 115)) --e_sls_CRMKodPorazki
+		begin
+			rollback tran XLZakonczKntWEtapieCRM
+			if @IgnorujBledy is null
+				raiserror('Błędny kod porażki - (-2)',16,1)
+			return -2
+		end
+	if @Status = 3 and (IsNull(@FiaskoId,0) &gt; 0 and not exists(select * from CDN.SlownikiStruktura 
+	join CDN.Slowniki on Slw_SlsId = SlS_Id where Slw_Id = @FiaskoId and SlS_Predefiniowany = 116)) --e_sls_CRMKodSukcesu
+		begin
+			rollback tran XLZakonczKntWEtapieCRM
+			if @IgnorujBledy is null
+				raiserror('Błędny kod sukcesu - (-5)',16,1)
+			return -5
+		end
+	if @AkwLpKoniec &gt; 0 and not exists(select * from cdn.KntOsoby where KnS_KntLp = @AkwLpKoniec and KnS_KntNumer = @AkwNumer and KnS_KntTyp = 32)
+		begin
+			rollback tran XLZakonczKntWEtapieCRM
+			if @IgnorujBledy is null
+				raiserror('Błędna osoba nadzorowana - (-3)',16,1)
+			return -3
+		end
+
+if @AkwLpKoniec is null
+	set @AkwLpKoniec = 0;
+
+update cdn.CrmKntEtapy set
+CEK_Status  = @Status,
+CEK_FiaskoID = @FiaskoId,
+CEK_AkwLpKoniec = @AkwLpKoniec,
+CEK_DataKoniec = @Today
+where
+CEK_Id = @CekId
+
+if @@error &lt;&gt; 0  
+	begin
+		rollback tran XLZakonczKntWEtapieCRM
+		if @IgnorujBledy is null
+			raiserror('Błąd podczas zakańczania kontrahenta w etapie - (-33)', 16, 1)
+		return -33
+	end
+
+COMMIT TRAN XLZakonczKntWEtapieCRM
+if exists(select * from cdn.CrmKntEtapy where CEK_Cykliczna = 1 and CEK_Id = @CekId and
+(( CEK_NumerCyklu &lt; CEK_IloscCykli and CEK_IloscCykli &gt; 0) or 
+(@Today &lt; CEK_CyklKoniec and CEK_CyklKoniec &gt; 0) or (CEK_IloscCykli = 0 and CEK_CyklKoniec = 0)))
+	begin
+		if exists(select * from cdn.CrmKntEtapy where CEK_Id = @CekId and CEK_Interwal &gt; 0 and CEK_CyklTyp &gt; 0)
+			select @DataWejscia = datediff(d,'18001228',(select case CEK_CyklTyp when 1 then dateadd(dd,CEK_Interwal,getdate()) 
+			when 2 then dateadd(wk,CEK_Interwal,getdate()) when 3 then dateadd(mm,CEK_Interwal,getdate()) 
+			when 4 then dateadd(yy,CEK_Interwal,getdate()) end)) from CrmKntEtapy where CEK_Id = @CekId
+		else
+			select @DataWejscia = @Today
+
+		--ustalenie wartości niezbędnych parametrów
+		select @DataAkcji = @DataWejscia + CKE_AkcjaZa, @KntLp = CEK_KntLp, @NumerCyklu = CEK_NumerCyklu + 1 ,@OpeNumerM = CEK_OpeNumerM,
+		@KntOsobaLp = CEK_KntOsobaLp, @AkwNumer = CEK_AkwNumer, @AkwOsobaLp = CEK_AkwOsobaLp, @Url = CEK_Url, @KopiujAtrybuty = CEK_KopiujAtrybuty,
+		 @OpeNumerA = CEK_OpeNumerA, @KnANumer = CEK_KnANumer, @KnATyp = CEK_KnATyp, @KopiujBinarne = CEK_KopiujBinarne, @AntId = CEK_AntId,
+		 @AntZadId = CEK_AntZadId, @CKEKntKoszt = CKE_KntKoszt
+		from cdn.CrmKntEtapy join cdn.CrmKampEtapy on CEK_CkeNumer = CKE_GidNumer and CEK_CkeLp = CKE_GidLp where CEK_Id = @CekId
+		
+		--wybiera pierwszy poprawny etap do którego można przenieść knt
+		select top 1 @KampNumer = CKE_GidNumer, @EtapNumer = CKE_GidLp from cdn.CrmKntEtapy join cdn.CrmKampEtapy 
+		on CEK_CkeNumer = CKE_GidNumer where CEK_Id = @CekId and CKE_Archiwalny = 0 and CKE_EtapBezKnt = 0 order by CKE_GidLp
+
+		if @KampNumer is not null and @EtapNumer is not null
+			begin
+				select @CekIdNew = isnull(max(CEK_id),0)+1 from cdn.CrmKntEtapy --ustalenie CekId nowododawanego knt w etapie
+
+				select @CzkWarunek = case @Status when 2 then 3 when 3 then 2 end --bo oczywiście status z cek musiał być odwrotnie niż warunek z czk...
+
+				execute @Error = cdn.XLDolaczKntDoEtapuCRM @KntNumer = @KntNumer , @KampNumer = @KampNumer, @EtapNumer = @EtapNumer, @OsobaOdp = 0,
+				@OpeNumerM = @OpeNumerM, @DataStart = @DataWejscia, @DataAkcji = @DataAkcji, @KntLp = @KntLp, @NumerCyklu = @NumerCyklu,
+				@KntOsobaLp = @KntOsobaLp, @AkwNumer = @AkwNumer, @AkwOsobaLp = @AkwOsobaLp, @Url = @Url, @KopiujAtrybuty = @KopiujAtrybuty,
+				@OpeNumerA = @OpeNumerA, @KnANumer = @KnANumer, @KnATyp = @KnATyp, @KopiujBinarne = @KopiujBinarne, @IgnorujBledy = 1,
+				@CzkWarunek = @CzkWarunek, @CzkFiaskoId = @FiaskoId, @KntKoszt = @CKEKntKoszt
+				if @Error &lt;&gt; 0  
+					begin
+						if @IgnorujBledy is null
+							raiserror('Błąd podczas przenoszenia knt do następnego cyklu - (-4)', 16, 1)
+						return -4
+					end
+			end
+	end
+select CekId = @CekId
+
+BEGIN TRAN XLZakonczKntWEtapieCRM_Atrybuty
+if @CekIdNew is not null and @Error  = 0
+	begin
+		insert into cdn.Atrybuty (Atr_ObiTyp, Atr_ObiFirma, Atr_ObiNumer, Atr_ObiLp,Atr_ObiSubLp,
+		Atr_AtkId, Atr_Wartosc, Atr_AtrTyp, Atr_AtrFirma, Atr_AtrNumer, Atr_AtrLp, Atr_AtrSubLp, Atr_OptimaId) 
+		select Atr_ObiTyp, Atr_ObiFirma, @CekIdNew, Atr_ObiLp,Atr_ObiSubLp,
+		Atr_AtkId, Atr_Wartosc, Atr_AtrTyp, Atr_AtrFirma, Atr_AtrNumer, Atr_AtrLp, Atr_AtrSubLp, Atr_OptimaId
+		from cdn.Atrybuty where Atr_ObiTyp = 4176 and Atr_ObiNumer = @CekId and Atr_ObiSubLp = 32
+		if @@error &lt;&gt; 0  
+			begin
+				rollback tran XLZakonczKntWEtapieCRM_Atrybuty
+				if @IgnorujBledy is null
+					raiserror('Błąd podczas kopiowania atrybutów - (-6)', 16, 1)
+				return -6
+			end
+	end
+COMMIT TRAN XLZakonczKntWEtapieCRM_Atrybuty
+
+BEGIN TRAN XLZakonczKntWEtapieCRM_DaneB
+if @CekIdNew is not null and @Error  = 0
+	begin
+		Declare @DAO_Pozycja tinyint
+		select @DAO_Pozycja = max(isNull(DAO_Pozycja,0))+1 from CDN.DaneObiekty where DAO_ObiTyp = 341 and DAO_ObiNumer = @CekId
+																
+
+		insert into cdn.DaneObiekty (DaO_DabId,DaO_ObiTyp,DaO_ObiNumer,DaO_ObiLp,DAO_ObiSubLp,DaO_Domyslna,DaO_Blokada,DAO_PPPrawa,DAO_PKPrawa,DAO_eSklep,DAO_iMall,DAO_MobSpr,DAO_Retail,DAO_Pozycja) 
+							  select DaO_DabId,DaO_ObiTyp,@CekIdNew,DaO_ObiLp,DAO_ObiSubLp,DaO_Domyslna,DaO_Blokada,DAO_PPPrawa,DAO_PKPrawa,DAO_eSklep,DAO_iMall,DAO_MobSpr,DAO_Retail,@DAO_Pozycja
+		from cdn.DaneObiekty where DaO_ObiTyp = 341 and DaO_ObiNumer = @CekId --341 Typ_KontrahentWEtapie
+		if @@error &lt;&gt; 0  
+			begin
+				rollback tran XLZakonczKntWEtapieCRM_DaneB
+				if @IgnorujBledy is null
+					raiserror('Błąd podczas kopiowania załączników - (-7)', 16, 1)
+				return -7
+			end
+	end
+COMMIT TRAN XLZakonczKntWEtapieCRM_DaneB
+
+SET NOCOUNT OFF
+RETURN 0
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

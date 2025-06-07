@@ -1,0 +1,497 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[ZwrocDaneNormatywowDlaTowarow]"></A><PRE>
+          <FONT SIZE="2"><I>/* [ZwrocDaneNormatywowDlaTowarow] */</I><BR>
+CREATE FUNCTION [CDN].[ZwrocDaneNormatywowDlaTowarow] (
+	@p_TwrNumer INT
+	, @p_MagNumer INT
+	)
+RETURNS TABLE
+AS
+RETURN (
+		SELECT Twr_GIDNumer TwrNumer
+			, CASE 
+				WHEN @p_MagNumer &gt; 0
+					THEN isnull(A.SLW_WartoscS, '')
+				ELSE isnull(B.SLW_WartoscS, '')
+				END RodzajNazwa
+			, CASE 
+				WHEN @p_MagNumer &gt; 0
+					THEN isnull(Tpm_KategoriaABCXYZ, '')
+				ELSE isnull(Twr_KategoriaABCXYZ, '')
+				END KatergoriaABCXYZ
+		FROM CDN.TwrKarty
+		LEFT JOIN CDN.TwrParMag
+			ON Twr_GIDNumer = Tpm_TwrNumer
+				AND Tpm_MagNumer = @p_MagNumer
+		LEFT JOIN CDN.Slowniki A
+			ON Tpm_RodzajId = A.SLW_ID
+		LEFT JOIN CDN.Slowniki B
+			ON Twr_RodzajId = B.SLW_ID
+		WHERE Twr_GIDNumer = @p_TwrNumer
+		)
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[ZwrocCzyJestZamiennikDlaTowaru]"></A><PRE>
+          <FONT SIZE="2"><I>/* [ZwrocCzyJestZamiennikDlaTowaru] */</I><BR>
+CREATE FUNCTION [CDN].[ZwrocCzyJestZamiennikDlaTowaru] (
+	@p_TwrNumer INT
+	, @p_FrsId INT
+	)
+RETURNS TABLE
+AS
+RETURN (
+		SELECT CASE 
+				WHEN EXISTS (
+						SELECT *
+						FROM cdn.TwrPodm
+						INNER JOIN cdn.FrsZamienniki
+							ON TwP_Id = FRZ_TwPId
+						WHERE FRZ_FrsId IN (
+								SELECT FrS_Id
+								FROM CDN.FrsCentra(1, - 4272, @p_FrsId, 0, 0) --TS wywóanie CDN.FrsCentra tutaj powoduje buga w MS SQL: http://connect.microsoft.com/SQLServer/feedbackdetail/view/915300/a-system-assertion-check-has-failed
+								)
+							AND (
+								(
+									TwP_ZamNumer = @p_TwrNumer
+									AND TwP_TwrNumer = 0
+									AND TwP_Warstwa &gt; 1
+									)
+								OR (
+									TwP_TwrNumer = @p_TwrNumer
+									AND TwP_Warstwa &lt;&gt; 1
+									)
+								)
+						)
+					THEN 1
+				ELSE 0
+				END JestZamiennik
+		)
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[ZwrocDaneZasobowDlaTowarow]"></A><PRE>
+          <FONT SIZE="2"><I>/* [ZwrocDaneZasobowDlaTowarow] */</I><BR>
+CREATE FUNCTION [CDN].[ZwrocDaneZasobowDlaTowarow] (
+	@p_TwrNumer INT
+	, @p_IloscDostepna INT
+	, @p_MagFirma INT
+	, @p_MagNumer INT
+	, @p_DstNumer INT
+	, @p_FrsId INT
+	, @p_FrsIdW INT = 0
+	, @p_TypDok SMALLINT = 0
+	, @p_ZrdTyp SMALLINT
+	, @p_ZrdNumer INT
+	, @p_FrsIDZrd INT
+	, @p_TypDokZrd SMALLINT
+	)
+RETURNS TABLE
+AS
+RETURN (
+		SELECT CASE @p_IloscDostepna
+				WHEN 1
+					THEN SUM(CASE 
+								WHEN TwZ_IlSpr &lt; TwZ_Ilosc
+									THEN TwZ_IlSpr
+								ELSE TwZ_Ilosc
+								END)
+				ELSE SUM(TwZ_IlSpr)
+				END IloscSpr
+			, CASE @p_IloscDostepna
+				WHEN 1
+					THEN SUM(CASE 
+								WHEN MAG_WMS = 0
+									THEN CASE 
+											WHEN TwZ_IlMag &lt; TwZ_Ilosc
+												THEN TwZ_IlMag
+											ELSE TwZ_Ilosc
+											END
+								ELSE 0
+								END)
+				ELSE SUM(TwZ_IlMag)
+				END IloscMag
+			, SUM(TwZ_KsiegowaNetto) Ksiegowa
+			, SUM(TwZ_RzeczywistaNetto) Rzeczywista
+		FROM CDN.TwrZasoby --WITH (INDEX(TwZStany))
+		INNER JOIN cdn.Magazyny
+			ON MAG_GIDNumer = TwZ_MagNumer
+		WHERE TwZ_TwrNumer = @p_TwrNumer
+			AND (
+				(
+					@p_MagNumer &gt; 0 --konkretny magazyn
+					AND TwZ_MagNumer = @p_MagNumer
+					)
+				OR (
+					@p_MagNumer = 0 --wszystkie dostępne
+					AND CDN.DokSprawdzDostepnyMagazyn(@p_FrSID, @p_FrSIDW, @p_typDok, @p_ZrdTyp, @p_ZrdNumer, @p_FrsIDZrd, @p_TypDokZrd, TwZ_MagTyp, TwZ_MAgNumer, - 1) &gt; 0
+					)
+				OR (
+					@p_MagNumer &lt; 0 --wybrane magazyny
+					AND EXISTS (
+						SELECT *
+						FROM CDN.MagWybor
+						WHERE MgW_SesjaID = - @p_MagFirma
+							AND MgW_Watek = - @p_MagNumer
+							AND MgW_MagNumer = TwZ_MagNumer
+						)
+					)
+				)
+			AND (
+				@p_DstNumer = 0 --wszystkie dostawy
+				OR TwZ_DstNumer = @p_DstNumer --konkretna dostawa
+				)
+			--GROUP BY TwZ_TwrNumer
+		)
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[ZwrocDaneRezerwacjiDlaTowarow]"></A><PRE>
+          <FONT SIZE="2"><I>/* [ZwrocDaneRezerwacjiDlaTowarow] */</I><BR>
+CREATE FUNCTION [CDN].[ZwrocDaneRezerwacjiDlaTowarow] (
+	@p_TwrNumer INT
+	, @p_TypIlosci INT
+	, @p_BiezacaData INT
+	, @p_RezDst INT
+	, @p_MagFirma INT
+	, @p_MagNumer INT
+	, @p_DstNumer INT
+	, @p_FrsId INT
+	, @p_FrsIdW INT = 0
+	, @p_TypDok SMALLINT = 0
+	, @p_ZrdTyp SMALLINT
+	, @p_ZrdNumer INT
+	, @p_FrsIDZrd INT
+	, @p_TypDokZrd SMALLINT
+	)
+RETURNS TABLE
+AS
+RETURN (
+		SELECT SUM(CASE 
+					WHEN @p_TypIlosci = 1
+						OR @p_TypIlosci = 2
+						OR @p_DstNumer = 0 --czy napewno OR @p_DstNumer = 0 dodane z TID:181759 jest ok?
+						--TID: 123817 - dodałem w poniższej linii: OR @p_TypIlosci = 2 -- czy na pewno tu???
+						THEN Rez_Ilosc - Rez_Zrealizowano - (
+								CASE 
+									WHEN IsNull(MAG_WMS, 0) = 0
+										THEN Rez_IloscMag
+									ELSE 0
+									END
+								)
+					ELSE Rez_Ilosc - Rez_Zrealizowano
+					END) IloscRez
+		FROM cdn.Rezerwacje
+		LEFT JOIN cdn.Magazyny
+			ON MAG_GIDNumer = Rez_MagNumer
+		WHERE Rez_TwrNumer = @p_TwrNumer
+			AND Rez_GIDTyp = 2576 --Typ_Rez
+			AND (
+				(
+					--Czy CDN.RezMagazyny jest zawsze wypełnione jak jest tylko jeden magazyn? Lepiej sprawdzać istnienie ReM_MagNumer czy Rez_MagNumer?
+					@p_MagNumer &gt; 0 --konkretny magazyn
+					AND ReZ_MagNumer = @p_MagNumer
+					OR EXISTS (
+						SELECT *
+						FROM CDN.RezMagazyny
+						WHERE Rez_GIDNumer = ReM_RezNumer
+							AND ReM_MagNumer = @p_MagNumer
+							--AND CDN.DokSprawdzDostepnyMagazyn(@p_FrSID, @p_FrSIDW, @p_typDok, @p_ZrdTyp, @p_ZrdNumer, @p_FrsIDZrd, @p_TypDokZrd, ReM_MagTyp, ReM_MagNumer, - 1) &gt; 0 skoro wybrany to zawsze dostępny?
+						)
+					)
+				OR (
+					@p_MagNumer = 0 --wszystkie dostępne
+					AND EXISTS (
+						SELECT *
+						FROM CDN.RezMagazyny
+						WHERE Rez_GIDNumer = ReM_RezNumer -- założenie że w RezMagazyny są wpisy też dla pojedyńczych magazynów
+							AND CDN.DokSprawdzDostepnyMagazyn(@p_FrSID, @p_FrSIDW, @p_typDok, @p_ZrdTyp, @p_ZrdNumer, @p_FrsIDZrd, @p_TypDokZrd, ReM_MagTyp, ReM_MagNumer, - 1) &gt; 0
+						)
+					)
+				OR (
+					@p_MagNumer &lt; 0 --wybrane magazyny
+					AND EXISTS (
+						SELECT *
+						FROM CDN.MagWybor
+						WHERE MgW_SesjaID = - @p_MagFirma
+							AND MgW_Watek = - @p_MagNumer
+							AND MgW_MagNumer = Rez_MagNumer
+						)
+					)
+				)
+			AND (
+				@p_DstNumer = 0 --wszystkie dostawy
+				OR Rez_DstNumer = @p_DstNumer --konkretna dostawa
+				)
+			AND Rez_DataWaznosci &gt;= @p_BiezacaData -- data waznosci &gt; dzis
+			AND (
+				Rez_DstNumer &lt;&gt; 0
+				OR (
+					Rez_DstNumer = 0
+					AND Rez_DataAktywacji &lt;= @p_BiezacaData
+					)
+				)
+			AND Rez_Typ = 1 --@lTypRez
+			AND Rez_Aktywna = 1
+			AND Rez_Ilosc &lt;&gt; 0 -- aby nie brac anulowanych zamowien
+			AND (
+				@p_RezDst = 0
+				OR (
+					@p_RezDst = 1
+					AND Rez_DstNumer &lt;&gt; 0
+					)
+				OR (
+					@p_RezDst = 2
+					AND Rez_DstNumer = 0
+					)
+				)
+			--GROUP BY Rez_TwrNumer
+		)
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[ZwrocDaneCenyDlaTowaru]"></A><PRE>
+          <FONT SIZE="2"><I>/* [ZwrocDaneCenyDlaTowaru] */</I><BR>
+CREATE FUNCTION [CDN].[ZwrocDaneCenyDlaTowaru] (
+	@p_TwrNumer INT
+	, @p_BiezacaDataTS INT
+	, @p_CenaLp INT
+	--, @p_NrKursu INT
+	, @p_WalutaSys VARCHAR(3)
+	--, @p_FlagaNB VARCHAR(1)
+	, @p_CzyBrutto TINYINT
+	, @p_StawkaPodSpr DECIMAL(5, 2)
+	, @p_DodajKosztyDod TINYINT
+	)
+RETURNS TABLE
+AS
+RETURN (
+		SELECT CASE 
+				WHEN @p_DodajKosztyDod = 1
+					THEN TwC_Wartosc * coalesce((
+								SELECT TOP 1 TrN_KursL / TrN_KursM
+								FROM cdn.TraNag
+								WHERE TwC_DokTyp &gt; 0
+									AND TrN_GidNumer = TwC_DokNumer
+								), (
+								SELECT TOP 1 WaE_KursL / WaE_KursM
+								FROM CDN.WalElem
+								WHERE WaE_Symbol = TwC_Waluta
+									AND WaE_Lp = TwC_NrKursu
+									AND WaE_KursTS &lt;= @p_BiezacaDataTS
+								ORDER BY - WaE_KursTS
+								), 1) + TwC_KosztyDodatkowe
+				ELSE TwC_Wartosc
+				END * CASE isnull(CzyBrutto, 0)
+				WHEN @p_CzyBrutto
+					THEN 1
+				WHEN 1
+					THEN 1 / (1 + @p_StawkaPodSpr / 100)
+				WHEN 0
+					THEN (1 + @p_StawkaPodSpr / 100)
+				END Wartosc
+			, CASE 
+				WHEN @p_DodajKosztyDod = 1
+					THEN @p_WalutaSys
+				ELSE TwC_Waluta
+				END Waluta
+		FROM CDN.ZwrocCeneAktualna(@p_TwrNumer, @p_CenaLp, @p_BiezacaDataTS)
+		LEFT JOIN (
+			SELECT Naz_GIDLp Lp
+				, CASE 
+					WHEN SUBSTRING(Naz_Nazwa, 11, 1) = 'B'
+						THEN 1
+					ELSE 0
+					END CzyBrutto
+				, SUBSTRING(Naz_Nazwa, LEN(Naz_Nazwa), 1) CzyDokladnoscGrosze
+			FROM CDN.Nazwy
+			WHERE Naz_GIDTyp = 64
+			) CenyDef
+			ON CenyDef.Lp = TwC_TwrLp
+				--WHERE TwC_TwrNumer = @p_TwrNumer
+				--AND TwC_TwrLp = @p_CenaLp
+		)
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[DokSumaStanowTowarow]"></A><PRE>
+          <FONT SIZE="2"><I>/* [DokSumaStanowTowarow] */</I><BR>
+CREATE FUNCTION [CDN].[DokSumaStanowTowarow] (
+	@p_TwrNumer INT
+	, @p_IloscDostepna INT
+	, @p_TypIlosci INT
+	, @p_BiezacaDataTS INT
+	, @p_RezDst INT
+	, @p_MagFirma INT
+	, @p_MagNumer INT
+	, @p_DstNumer INT
+	, @p_FrsId INT
+	, @p_FrsIdW INT = 0
+	, @p_TypDok SMALLINT = 0
+	, @p_ZrdTyp SMALLINT
+	, @p_ZrdNumer INT
+	, @p_FrsIDZrd INT
+	, @p_TypDokZrd SMALLINT
+	, @p_CenaLp INT
+	, @p_WalutaSys VARCHAR(3)
+	, @p_CzyBrutto TINYINT
+	, @p_DodajKosztyDod TINYINT
+	, @p_StawkaPodSpr TINYINT
+	)
+RETURNS TABLE
+AS
+RETURN (
+		SELECT cast(isnull(Zasoby.IloscSpr, 0) AS DECIMAL(28, 4)) DSSV_ZasobyIloscSpr
+			, cast(isnull(Zasoby.IloscMag, 0) AS DECIMAL(28, 4)) DSSV_ZasobyIloscMag
+			, cast(isnull(Zasoby.Ksiegowa, 0) AS DECIMAL(28, 4)) DSSV_ZasobyKsiegowa
+			, cast(isnull(Zasoby.Rzeczywista, 0) AS DECIMAL(28, 4)) DSSV_ZasobyRzeczywista
+			, cast(isnull(Rezerwacje.IloscRez, 0) AS DECIMAL(28, 4)) DSSV_RezerwacjeIloscRez
+			, isnull(Normatywy.RodzajNazwa, '') DSSV_NormatywyRodzajNazwa
+			, isnull(Normatywy.KatergoriaABCXYZ, '') DSSV_NormatywyKatergoriaABCXYZ
+			--, isnull(Zamiennik.JestZamiennik, 0) DSSV_ZamiennikJestZamiennik
+			, cast(isnull(Cena.Wartosc, 0) AS DECIMAL(28, 4)) DSSV_CenaWartosc
+			, isnull(Cena.Waluta, '') DSSV_CenaWaluta
+		FROM CDN.ZwrocDaneZasobowDlaTowarow(@p_TwrNumer, @p_IloscDostepna, @p_MagFirma, @p_MagNumer, @p_DstNumer, @p_FrsId, @p_FrsIdW, @p_TypDok, @p_ZrdTyp, @p_ZrdNumer, @p_FrsIDZrd, @p_TypDokZrd) Zasoby
+		OUTER APPLY CDN.ZwrocDaneRezerwacjiDlaTowarow(@p_TwrNumer, @p_TypIlosci, 69035 + @p_BiezacaDataTS / 86400, @p_RezDst, @p_MagFirma, @p_MagNumer, @p_DstNumer, @p_FrsId, @p_FrsIdW, @p_TypDok, @p_ZrdTyp, @p_ZrdNumer, @p_FrsIDZrd, @p_TypDokZrd) Rezerwacje
+		OUTER APPLY CDN.ZwrocDaneNormatywowDlaTowarow(@p_TwrNumer, @p_MagNumer) Normatywy
+		--OUTER APPLY CDN.ZwrocCzyJestZamiennikDlaTowaru(@p_TwrNumer, @p_FrsId) Zamiennik  --TS na sql 2016 to nie działa prawdopodbnie z powodu buga w MS SQL: http://connect.microsoft.com/SQLServer/feedbackdetail/view/915300/a-system-assertion-check-has-failed
+		OUTER APPLY CDN.ZwrocDaneCenyDlaTowaru(@p_TwrNumer, @p_BiezacaDataTS, @p_CenaLp, @p_WalutaSys, @p_CzyBrutto, @p_StawkaPodSpr, @p_DodajKosztyDod) Cena
+		)
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="DokSumaStanowTowarow_Decimal"></A><PRE>
+          <FONT SIZE="2"><I>/* DokSumaStanowTowarow_Decimal */</I><BR>
+CREATE FUNCTION CDN.DokSumaStanowTowarow_Decimal (
+	@p_TwrNumer INT
+	, @p_IloscDostepna INT
+	, @p_TypIlosci INT
+	, @p_BiezacaDataTS INT
+	, @p_RezDst INT
+	, @p_MagFirma INT
+	, @p_MagNumer INT
+	, @p_DstNumer INT
+	, @p_FrsId INT
+	, @p_FrsIdW INT = 0
+	, @p_TypDok SMALLINT = 0
+	, @p_ZrdTyp SMALLINT
+	, @p_ZrdNumer INT
+	, @p_FrsIDZrd INT
+	, @p_TypDokZrd SMALLINT
+	, @p_CenaLp INT
+	, @p_WalutaSys VARCHAR(3)
+	, @p_CzyBrutto TINYINT
+	, @p_DodajKosztyDod TINYINT
+	, @p_StawkaPodSpr TINYINT
+	, @p_JakaKolumna TINYINT
+	)
+RETURNS DECIMAL(28, 4)
+AS
+BEGIN
+	RETURN (
+			SELECT CASE @p_JakaKolumna
+					WHEN 1
+						THEN cast(isnull(Zasoby.Ksiegowa, 0) AS DECIMAL(28, 4))
+							--WHEN 2
+							--	THEN cast(isnull(Cena.Wartosc, 0) AS DECIMAL(28, 4))
+					WHEN 3
+						THEN cast(isnull(Zasoby.IloscMag, 0) AS DECIMAL(28, 4))
+					WHEN 4
+						THEN cast(isnull(Zasoby.IloscSpr, 0) AS DECIMAL(28, 4))
+					WHEN 5 --uwzględnia rezerwacje
+						THEN cast(isnull(Zasoby.IloscSpr, 0) AS DECIMAL(28, 4)) - cast(isnull(Rezerwacje.IloscRez, 0) AS DECIMAL(28, 4))
+					WHEN 6
+						THEN cast(isnull(Rezerwacje.IloscRez, 0) AS DECIMAL(28, 4))
+					WHEN 7
+						THEN cast(isnull(Zasoby.Rzeczywista, 0) AS DECIMAL(28, 4))
+					ELSE 0
+					END
+			FROM CDN.ZwrocDaneZasobowDlaTowarow(@p_TwrNumer, @p_IloscDostepna, @p_MagFirma, @p_MagNumer, @p_DstNumer, @p_FrsId, @p_FrsIdW, @p_TypDok, @p_ZrdTyp, @p_ZrdNumer, @p_FrsIDZrd, @p_TypDokZrd) Zasoby
+			LEFT JOIN CDN.ZwrocDaneRezerwacjiDlaTowarow(@p_TwrNumer, @p_TypIlosci, 69035 + @p_BiezacaDataTS / 86400, @p_RezDst, @p_MagFirma, @p_MagNumer, @p_DstNumer, @p_FrsId, @p_FrsIdW, @p_TypDok, @p_ZrdTyp, @p_ZrdNumer, @p_FrsIDZrd, @p_TypDokZrd) Rezerwacje
+				ON @p_JakaKolumna IN (
+						5
+						, 6
+						)
+					--LEFT JOIN CDN.ZwrocDaneCenyDlaTowaru(@p_TwrNumer, @p_BiezacaDataTS, @p_CenaLp, @p_WalutaSys, @p_CzyBrutto, @p_StawkaPodSpr, @p_DodajKosztyDod) Cena
+					--	ON @p_JakaKolumna = 2
+			)
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="DokSumaStanowTowarow_String"></A><PRE>
+          <FONT SIZE="2"><I>/* DokSumaStanowTowarow_String */</I><BR>
+CREATE FUNCTION CDN.DokSumaStanowTowarow_String (
+	@p_TwrNumer INT
+	, @p_IloscDostepna INT
+	, @p_TypIlosci INT
+	, @p_BiezacaDataTS INT
+	, @p_RezDst INT
+	, @p_MagFirma INT
+	, @p_MagNumer INT
+	, @p_DstNumer INT
+	, @p_FrsId INT
+	, @p_FrsIdW INT = 0
+	, @p_TypDok SMALLINT = 0
+	, @p_ZrdTyp SMALLINT
+	, @p_ZrdNumer INT
+	, @p_FrsIDZrd INT
+	, @p_TypDokZrd SMALLINT
+	, @p_CenaLp INT
+	, @p_WalutaSys VARCHAR(3)
+	, @p_CzyBrutto TINYINT
+	, @p_DodajKosztyDod TINYINT
+	, @p_StawkaPodSpr TINYINT
+	, @p_JakaKolumna TINYINT
+	)
+RETURNS VARCHAR(255)
+AS
+BEGIN
+	RETURN (
+			SELECT CASE @p_JakaKolumna
+					WHEN 1
+						THEN isnull(Normatywy.KatergoriaABCXYZ, '')
+					WHEN 2
+						THEN isnull(Normatywy.RodzajNazwa, '')
+					ELSE ''
+					END
+			FROM CDN.ZwrocDaneNormatywowDlaTowarow(@p_TwrNumer, @p_MagNumer) Normatywy
+			)
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

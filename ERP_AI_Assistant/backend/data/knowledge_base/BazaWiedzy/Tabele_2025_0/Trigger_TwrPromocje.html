@@ -1,0 +1,211 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[TwrPromocje_InsertHandlerTwG]"></A><PRE>
+          <FONT SIZE="2"><I>/* [TwrPromocje_InsertHandlerTwG] */</I><BR>
+CREATE TRIGGER [CDN].[TwrPromocje_InsertHandlerTwG]
+ON [CDN].[TwrPromocje]
+FOR INSERT
+AS
+BEGIN
+	IF EXISTS(Select * from inserted inner join CDN.PrmKarty on PRM_Id = inserted.TPR_PrmId where PRM_RodzajPakietu = 1)
+	BEGIN
+		declare @lTwrNumer INT;
+		declare @lTwrTyp INT;
+		declare @lTwgNumer INT;
+		declare @lTwgTyp INT;
+		declare @lNoweLp INT;
+		declare @lStareLp INT;
+		declare	@lPrmId INT;
+        DECLARE @lLP INT;
+		
+		DECLARE inserted_cursor CURSOR
+        FOR SELECT TPR_PrmId, TPR_TwrNumer, TPR_TwrTyp, TPR_TwgNumer, TPR_TwgTyp FROM inserted
+        inner join CDN.PrmKarty on PRM_Id = inserted.TPR_PrmId where PRM_RodzajPakietu = 1
+        
+		OPEN inserted_cursor
+
+		FETCH NEXT FROM inserted_cursor INTO @lPrmId, @lTwrNumer, @lTwrTyp, @lTwgNumer, @lTwgTyp
+
+		WHILE @@FETCH_STATUS = 0
+		BEGIN
+                IF @lTwrTyp = 16
+                BEGIN
+					SET @lTwgNumer = CASE WHEN EXISTS(Select * From CDN.TwrPromocje where TPR_PrmId = @lPrmId and TPR_TwrTyp = @lTwgTyp AND TPR_TwrNumer = @lTwgNumer) THEN 
+														@lTwgNumer
+													ELSE 
+														(select TOP 1 TwG_GrONumer from CDN.TwrGrupy 
+														inner join CDN.TwrPromocje on TPR_TwrNumer = TwG_GrONumer AND TPR_TwrTyp = TwG_GrOTyp	
+														left join CDN.TwrGrupyDom on TGD_GIDTyp = TwG_GIDTyp and TGD_GIDNumer = TwG_GIDNumer and TGD_GrONumer = TwG_GrONumer and TGD_GrOTyp = TwG_GrOTyp
+														where TwG_GIDTyp = 16 and TwG_GIDNumer = @lTwrNumer  AND TPR_PrmId = @lPrmId order by  TGD_GIDTyp DESC,TPR_LP) END;
+					IF @lTwgNumer IS NOT NULL
+					BEGIN
+						select @lNoweLp = 
+						ISNULL(MAX(TPR_LP)+1,(select TPR_LP from CDN.TwrPromocje where TPR_PrmId = @lPrmId and TPR_TwrNumer = @lTwrNumer and TPR_TwrTyp = 16) ),
+						@lStareLp =(select TPR_LP from CDN.TwrPromocje where TPR_PrmId = @lPrmId and TPR_TwrNumer = @lTwrNumer and TPR_TwrTyp = 16)
+						from CDN.TwrPromocje where TPR_PrmId = @lPrmId and 
+							((TPR_TwrTyp = -16 AND TPR_TwrNumer = @lTwgNumer) 
+							OR (TPR_TwgNumer = @lTwgNumer and TPR_TwgTyp = -16));
+
+						update TPR set  TPR.TPR_TwgFirma = 3, TPR.TPR_TwgLp = 0, TPR.TPR_TwgTyp = -16, TPR.TPR_TwgNumer = @lTwgNumer,
+										TPR.TPR_RodzajCeny = ISNULL(TPRProm.TPR_RodzajCeny,TPR.TPR_RodzajCeny), TPR.TPR_Typ = ISNULL(TPRProm.TPR_Typ,TPR.TPR_Typ),
+									    TPR.TPR_Waluta = ISNULL(TPRProm.TPR_Waluta,TPR.TPR_Waluta )
+						from CDN.TwrPromocje TPR
+						left join CDN.TwrPromocje TPRProm on TPRProm.TPR_TwrTyp = -16 AND TPRProm.TPR_TwrNumer = @lTwgNumer and TPRProm.TPR_PrmId = @lPrmId
+						where TPR.TPR_PrmId = @lPrmId and TPR.TPR_TwrTyp = 16 and TPR.TPR_TwrNumer = @lTwrNumer;
+							
+						IF @lNoweLp &lt; @lStareLp
+						UPDATE CDN.TwrPromocje SET TPR_LP = CASE WHEN TPR_LP &lt; @lNoweLp THEN TPR_LP WHEN TPR_LP = @lStareLp THEN TPR_LP - (@lStareLp - @lNoweLp) ELSE TPR_LP + 1 END
+						 WHERE TPR_PrmId = @lPrmId;	
+					END
+                END ELSE BEGIN
+					Select @lLP = ISNULL(MAX(TPR_LP),0)+1 FROM CDN.TwrPromocje where TPR_PrmId = @lPrmId and TPR_TwrNumer != @lTwrNumer and (TPR_TwrTyp = -16 OR TPR_TwgTyp !=0)
+
+					select ROW_NUMBER() over (order by TPR_LP) Lp, TPR_PrmId PrmId, TPR_TwrNumer TwrNumer
+					INTO #temp
+					from CDN.TwrPromocje where TPR_PrmId = @lPrmId and TPR_TwrTyp = 16 and TPR_TwgTyp = 0
+														and TPR_TwrNumer IN(select TwG_GIDNumer from CDN.TwrGrupy where TwG_GrOTyp = -16 and TwG_GrONumer = @lTwrNumer)
+
+					update CDN.TwrPromocje set TPR_LP = -TPR_LP where TPR_PrmId = @lPrmId and TPR_TwgTyp = 0 and TPR_TwrTyp = 16
+					update CDN.TwrPromocje set TPR_LP = @lLP where TPR_PrmId = @lPrmId and TPR_TwrNumer = @lTwrNumer and TPR_TwrTyp = -16 	
+
+					update CDN.TwrPromocje set TPR_LP = @lLP + Lp, TPR_TwgFirma = 3, TPR_TwgLp = 0, TPR_TwgTyp = -16, TPR_TwgNumer = @lTwrNumer
+					from CDN.TwrPromocje
+					inner join #temp on TwrNumer = TPR_TwrNumer
+					where TPR_PrmId = @lPrmId and TPR_TwrTyp = 16 	 	
+
+					Select @lLP = ISNULL(MAX(TPR_LP),0) FROM CDN.TwrPromocje where TPR_PrmId = @lPrmId and (TPR_TwrTyp = -16 OR TPR_TwgTyp !=0)
+
+					update CDN.TwrPromocje set TPR_LP = @lLP + Lp
+					from CDN.TwrPromocje
+					inner join (select ROW_NUMBER() over (order by TPR_LP) Lp, TPR_TwrNumer TwrNumer
+					from CDN.TwrPromocje where TPR_PrmId = @lPrmId and TPR_TwrTyp = 16 OR TPR_TwgTyp = 0) TPRPom on TwrNumer = TPR_TwrNumer
+					where TPR_PrmId = @lPrmId and TPR_TwrTyp = 16 and TPR_TwgTyp = 0 								
+														
+					drop table #temp
+                END
+				FETCH NEXT FROM inserted_cursor INTO @lPrmId, @lTwrNumer, @lTwrTyp, @lTwgNumer, @lTwgTyp
+		END
+
+		CLOSE inserted_cursor
+		DEALLOCATE inserted_cursor
+	END
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[TwrPromocje_DeleteHandlerTwG]"></A><PRE>
+          <FONT SIZE="2"><I>/* [TwrPromocje_DeleteHandlerTwG] */</I><BR>
+CREATE TRIGGER [CDN].[TwrPromocje_DeleteHandlerTwG]
+ON [CDN].[TwrPromocje]
+FOR DELETE
+AS
+BEGIN	
+	IF EXISTS(Select * from deleted inner join CDN.PrmKarty on PRM_Id = deleted.TPR_PrmId where PRM_RodzajPakietu = 1 and deleted.TPR_TwrTyp = -16)
+	BEGIN
+
+		UPDATE CDN.TwrPromocje SET 
+		TPR_LP = CASE WHEN EXISTS(Select * FROM deleted where deleted.TPR_TwrNumer = TP.TPR_TwgNumer and deleted.TPR_TwrTyp = TP.TPR_TwgTyp 
+				and deleted.TPR_PrmId = TP.TPR_PrmId) THEN
+					(Select MAX(TPR_LP) from CDN.TwrPromocje where TPR_PrmId = TP.TPR_PrmId)+TP.TPR_LP
+				ELSE
+					TPR_LP
+				END,
+		TPR_TwgNumer = 
+			ISNULL((select TOP 1 TwG_GrONumer from CDN.TwrGrupy 
+					inner join CDN.TwrPromocje on TPR_TwrNumer = TwG_GrONumer AND TPR_TwrTyp = TwG_GrOTyp	
+					left join CDN.TwrGrupyDom on TGD_GIDTyp = TwG_GIDTyp and TGD_GIDNumer = TwG_GIDNumer and TGD_GrONumer = TwG_GrONumer and TGD_GrOTyp = TwG_GrOTyp
+					where TwG_GIDTyp = TP.TPR_TwrTyp and TwG_GIDNumer = TP.TPR_TwrNumer  AND TPR_PrmId = TP.TPR_PrmId and TwG_GIDTyp =16 order by TGD_GIDTyp DESC,TPR_LP),0)
+		,
+		TPR_TwgTyp = 
+			ISNULL((select TOP 1 TwG_GrOTyp from CDN.TwrGrupy 
+					inner join CDN.TwrPromocje on TPR_TwrNumer = TwG_GrONumer AND TPR_TwrTyp = TwG_GrOTyp	
+					left join CDN.TwrGrupyDom on TGD_GIDTyp = TwG_GIDTyp and TGD_GIDNumer = TwG_GIDNumer and TGD_GrONumer = TwG_GrONumer and TGD_GrOTyp = TwG_GrOTyp
+					where TwG_GIDTyp = TP.TPR_TwrTyp and TwG_GIDNumer = TP.TPR_TwrNumer  AND TPR_PrmId = TP.TPR_PrmId and TwG_GIDTyp =16 order by TGD_GIDTyp DESC,TPR_LP),0)
+		,
+		TPR_TwgFirma = 
+			ISNULL((select TOP 1 TwG_GrOFirma from CDN.TwrGrupy 
+					inner join CDN.TwrPromocje on TPR_TwrNumer = TwG_GrONumer AND TPR_TwrTyp = TwG_GrOTyp	
+					left join CDN.TwrGrupyDom on TGD_GIDTyp = TwG_GIDTyp and TGD_GIDNumer = TwG_GIDNumer and TGD_GrONumer = TwG_GrONumer and TGD_GrOTyp = TwG_GrOTyp
+					where TwG_GIDTyp = TP.TPR_TwrTyp and TwG_GIDNumer = TP.TPR_TwrNumer  AND TPR_PrmId = TP.TPR_PrmId and TwG_GIDTyp =16 order by TGD_GIDTyp DESC,TPR_LP),0)
+		FROM CDN.TwrPromocje TP
+		where TP.TPR_PrmId IN
+		(Select deleted.TPR_PrmId FROM deleted 
+		WHERE deleted.TPR_TwrTyp = -16)
+
+		UPDATE CDN.TwrPromocje SET 
+		TPR_LP = TabPom.Lp
+		FROM CDN.TwrPromocje TP
+		inner join (select ROW_NUMBER() over (PARTITION BY TprG.TPR_PrmId order by ISNULL(TprP.TPR_LP,TprG.TPR_LP), TprG.TPR_LP) Lp, TprG.TPR_Id
+		from CDN.TwrPromocje TprG 
+		left join CDN.TwrPromocje TprP on TprP.TPR_PrmId = TprG.TPR_PrmId and TprG.TPR_TwgNumer = TprP.TPR_TwrNumer and TprG.TPR_TwgTyp = TprP.TPR_TwrTyp 
+		where TprG.TPR_PrmId IN(Select deleted.TPR_PrmId FROM deleted WHERE deleted.TPR_TwrTyp = -16)) TabPom on TabPom.TPR_Id = TP.TPR_Id		
+	END
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[TwrPromocje_UpdateHandlerTwG]"></A><PRE>
+          <FONT SIZE="2"><I>/* [TwrPromocje_UpdateHandlerTwG] */</I><BR>
+CREATE TRIGGER [CDN].[TwrPromocje_UpdateHandlerTwG] ON [CDN].[TwrPromocje]
+FOR UPDATE
+AS
+BEGIN
+	IF 
+		UPDATE (TPR_TwgTyp)
+	BEGIN
+		--wyrzucenie towarów odłączanych od grupy na koniec w obrębie promocji
+		UPDATE a
+		SET a.TPR_LP = a.TPR_LP + (
+				SELECT MAX(b.TPR_LP)
+				FROM cdn.TwrPromocje b
+				WHERE b.TPR_PrmId = a.TPR_PrmId
+				)
+		FROM CDN.TwrPromocje a
+		INNER JOIN deleted d ON a.TPR_Id = d.TPR_Id
+		INNER JOIN inserted i ON d.TPR_Id = i.TPR_Id
+		WHERE d.TPR_TwgTyp = - 16
+			AND i.TPR_TwgTyp = 0
+			AND d.TPR_TwrTyp = 16
+
+		--przenumerowanie Lp w obrębie promocji tak by była zachowana ciągłość
+		UPDATE a
+		SET a.TPR_LP = b.Lp
+		FROM cdn.TwrPromocje a
+		INNER JOIN (
+			SELECT ROW_NUMBER() OVER (
+					PARTITION BY c.TPR_PrmId ORDER BY c.TPR_LP
+					) Lp
+				, c.TPR_Id Id
+			FROM CDN.TwrPromocje c
+			WHERE c.TPR_PrmId IN (
+					SELECT d.TPR_PrmId
+					FROM deleted d
+					INNER JOIN inserted i ON d.TPR_Id = i.TPR_Id
+					WHERE d.TPR_TwgTyp = - 16
+						AND i.TPR_TwgTyp = 0
+						AND d.TPR_TwrTyp = 16
+					)
+			) b ON a.TPR_Id = b.Id
+	END
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,133 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="AI_PP_PobierzParametryTowarow"></A><PRE>
+          <FONT SIZE="2"><I>/* AI_PP_PobierzParametryTowarow */</I><BR>
+CREATE PROCEDURE CDN.AI_PP_PobierzParametryTowarow @DataOdDlaPelnejHistorii VARCHAR(10)
+	,@DataOdDlaKrotkiejHistorii  VARCHAR(10)
+	,@DataDo  VARCHAR(10)
+AS
+WITH TransactionsRecords
+AS (
+	SELECT TrE_TwrNumer AS ArticleId
+		,sum(TrS_Ilosc) AS Quantity
+		,DATEADD(day, TrN_Data3, CONVERT(DATETIME, '18001228', 112)) AS ReleaseDate
+		,TrS_MagNumer AS WarehouseId
+		,count(*) OVER (
+			PARTITION BY TrE_TwrNumer
+			,TrS_MagNumer
+			,TrN_Data3
+			) Records
+	--,TrN_GIDNumer AS DocumentId
+	FROM CDN.TraNag
+	INNER JOIN CDN.TraElem ON TrN_GIDNumer = TrE_GIDNumer
+	INNER JOIN CDN.TraSElem ON TrE_GIDNumer = TrS_GIDNumer
+		AND TrE_GIDLp = TrS_GIDLp
+	INNER JOIN CDN.TwrKarty ON Twr_GIDTyp = TrE_TwrTyp
+		AND Twr_GIDNumer = TrE_TwrNumer
+	WHERE Twr_Typ IN (1, 2)
+		AND TrN_GIDTyp IN (2001, 2033, 2037, 2034, 2036, 2005, 1616, 1603) --WZ ,FS, FSE, PA, FWew, WZE, RW, MMW
+		AND DATEADD(day, TrN_Data3, CONVERT(DATETIME, '18001228', 112)) &lt; @DataDo
+		AND NOT (
+			TrN_SpiTyp &lt; 0
+			AND ABS(TrN_SpiTyp) = TrN_GIDTyp
+			) --pominięcie spinaczy 
+	GROUP BY TrE_GIDNumer
+		,TrE_TwrNumer
+		,TrS_MagNumer
+		,TrN_Data3
+	)
+	,Transactions
+AS (
+	SELECT ArticleId
+		,WarehouseId
+		,ReleaseDate
+		,sum(Quantity) Quantity
+		,Records
+	FROM TransactionsRecords
+	GROUP BY ArticleId
+		,WarehouseId
+		,ReleaseDate
+		,Records
+	)
+	,Dates
+AS (
+	SELECT ArticleId
+		,WarehouseId
+		,MIN(ReleaseDate) AS FirstDate
+		,MAX(ReleaseDate) AS LastDate
+	FROM Transactions
+	GROUP BY ArticleId
+		,WarehouseId
+	)
+	,Days
+AS (
+	SELECT ArticleId
+		,WarehouseId
+		,DATEDIFF(DAY, FirstDate, @DataDo) AS HistoryLen
+		,DATEDIFF(DAY, LastDate, @DataDo) AS DaysFromDate
+		,DATEDIFF(DAY, FirstDate, LastDate) + 1 AS ActiveHistoryLen
+	FROM Dates
+	)
+	,TotalShortHist
+AS (
+	SELECT ArticleId
+		,WarehouseId
+		,SUM(Quantity) AS ShortHistQuantity
+		,SUM(Records) AS ShortHistNumberOfRecords
+	FROM Transactions
+	WHERE ReleaseDate &gt; @DataOdDlaKrotkiejHistorii
+		AND ReleaseDate &lt; @DataDo
+	GROUP BY ArticleId
+		,WarehouseId
+	)
+	,TotalFullHist
+AS (
+	SELECT ArticleId
+		,WarehouseId
+		,SUM(Quantity) AS FullHistQuantity
+		,SUM(Records) AS FullHistNumberOfRecords
+	FROM Transactions
+	WHERE ReleaseDate &gt; @DataOdDlaPelnejHistorii
+		AND ReleaseDate &lt; @DataDo
+	GROUP BY ArticleId
+		,WarehouseId
+	)
+SELECT Days.*
+	,ShortHistQuantity
+	,ShortHistNumberOfRecords
+	,FullHistQuantity
+	,FullHistNumberOfRecords
+	,Twr_Nazwa AS Name
+	,Twr_MarkaId AS BrandId
+	,Twr_KategoriaABCXYZ AS ABC_XYZ
+	,Twr_Waga AS Weight
+	,Twr_WJm AS WeightUnit
+	,Twr_ObjetoscL AS Volume
+	,Twr_WymJm AS VolumeUnit
+	,TGD_GrONumer AS ArticleGroup
+FROM Days
+LEFT JOIN TotalShortHist ON TotalShortHist.ArticleId = Days.ArticleId
+	AND TotalShortHist.WarehouseId = Days.WarehouseId
+LEFT JOIN TotalFullHist ON TotalFullHist.ArticleId = Days.ArticleId
+	AND TotalFullHist.WarehouseId = Days.WarehouseId
+LEFT JOIN CDN.TwrGrupyDom ON TGD_GIDNumer = Days.ArticleId
+	AND TGD_GIDTyp = 16 --typ_twr
+INNER JOIN CDN.TwrKarty ON Days.ArticleId = TwrKarty.Twr_GIDNumer
+WHERE ActiveHistoryLen &gt; 1
+	OR DaysFromDate &lt; 30
+ORDER BY Days.ArticleId
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

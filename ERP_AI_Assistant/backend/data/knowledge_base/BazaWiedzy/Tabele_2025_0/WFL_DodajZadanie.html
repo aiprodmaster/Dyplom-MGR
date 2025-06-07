@@ -1,0 +1,473 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="WFL_DodajZadanie"></A><PRE>
+          <FONT SIZE="2"><I>/* WFL_DodajZadanie */</I><BR>
+Create Procedure CDN.WFL_DodajZadanie
+ @p_WFPID integer , 	-- identyfikator procesu
+ @p_WDSID integer,	-- identyfikator nowego statusu
+ @p_Opis varchar(1023),
+
+ @p_DataUtworzenia integer = 0, -- data utworzenia zadania, jeśli nie podana to pobierana aktualna
+ @p_OBITyp   smallint,  -- typ obiektu
+ @p_OBINumer integer,  -- identyfikator obiektu
+ @p_PRCTyp   smallint,  -- typ pracownika
+ @p_PRCNumer integer,  -- identyfikator pracownika
+ @p_OPENumer integer,  -- identyfikator operatora
+ @p_ZwrotWyniku	smallint=0, --  czy zwracać wyynik selectem
+
+ @ret_status integer OUTPUT
+
+
+
+
+
+
+
+
+as 
+begin
+
+
+	DECLARE @lTerminRealizacji integer
+	DECLARE @cTerminRealizacji VarChar(2048)
+	DECLARE @lDataWaznosci integer
+	DECLARE @cDataWaznosci VarChar(2048)
+	DECLARE @lDataRealizacji integer
+	DECLARE @cDataRealizacji VarChar(2048)
+	DECLARE @lCzasRealizacji integer
+	DECLARE @cCzasRealizacji VarChar(2048)
+	DECLARE @lPriorytet integer
+	DECLARE @wyniksql integer
+	DECLARE @cNazwaStatusu VarChar(255)
+	DECLARE @lPrzypomnienie smallint
+	DECLARE @lDataPrzypomnienia integer
+	DECLARE @cDataPrzypomnienia varchar(2048)
+	DECLARE @p_DataRealizacji integer
+	DECLARE @lTerminarz smallint
+	DECLARE @sKod varchar(20)	
+	DECLARE @RodzajDatyRealizacji tinyint
+	DECLARE @RodzajTerminuRealizacji tinyint
+	DECLARE @OpiekunSQL varchar(8000)
+	DECLARE @lWDZId int
+
+	SET @wyniksql = 0
+	SET @ret_status = 0
+	BEGIN TRANSACTION 
+
+	if (@p_DataUtworzenia=0)
+		SET @p_DataUtworzenia = CDN.WFL_PobierzDate(GETDATE())
+
+	Select 	@lDataWaznosci = WDS_DataWaznosciSek+@p_DataUtworzenia, @cDataWaznosci = WDS_DataWaznosci,
+		@lTerminRealizacji = WDS_TerminRealizacjiSek, @cTerminRealizacji = WDS_TerminRealizacji,
+		@lDataRealizacji = WDS_DataRealizacjiSek, @cDataRealizacji = WDS_DataRealizacji,
+		@lCzasRealizacji = WDS_CzasRealizacjiSek, @cCzasRealizacji = WDS_CzasRealizacji,
+		@lPriorytet = WDS_Priorytet,
+		@cNazwaStatusu = WDS_Nazwa,
+		@lPrzypomnienie = WDS_Przypomnienie,
+		@lDataPrzypomnienia = WDS_DataPrzypomnieniaSek,
+		@cDataPrzypomnienia = WDS_DataPrzypomnienia,
+		@lTerminarz = WDS_Terminarz,
+		@sKod = WDS_Kod,
+		@RodzajDatyRealizacji = WDS_RodzajDatyRealizacji,
+		@RodzajTerminuRealizacji = WDS_RodzajTerminuRealizacji
+	From CDN.WF_DefStatusy (NOLOCK)
+	Where WDS_ID = @p_WDSID
+	
+	if(@RodzajDatyRealizacji = 1)		--konkretna godzina, jeśli w danym dniu już minęła ustawiamy tą godzinę następnego dnia
+	    set @lDataRealizacji = case when @p_DataUtworzenia &gt; @p_DataUtworzenia - @p_DataUtworzenia%86400 + @lDataRealizacji
+										then @p_DataUtworzenia - @p_DataUtworzenia%86400 + @lDataRealizacji + 86400
+									else @p_DataUtworzenia - @p_DataUtworzenia%86400 + @lDataRealizacji
+							   end
+	else								--określony czas po utworzeniu zadania
+		set @lDataRealizacji = @lDataRealizacji + @p_DataUtworzenia
+
+	if(@RodzajTerminuRealizacji = 1)	--konkretna godzina, jeśli w danym dniu już minęła ustawiamy tą godzinę następnego dnia
+	    set @lTerminRealizacji = case when @p_DataUtworzenia &gt; @p_DataUtworzenia - @p_DataUtworzenia%86400 + @lTerminRealizacji
+										then @p_DataUtworzenia - @p_DataUtworzenia%86400 + @lTerminRealizacji + 86400
+									else @p_DataUtworzenia - @p_DataUtworzenia%86400 + @lTerminRealizacji
+							   end
+	else								--określony czas po utworzeniu zadania
+		set @lTerminRealizacji = @lTerminRealizacji + @p_DataUtworzenia		
+
+
+	If (len(@cTerminRealizacji)&lt;&gt;0)
+	Begin
+	    EXEC  CDN.WFL_WykonajZapytanie
+		@p_sqlZapytanie =@cTerminRealizacji,
+		@p_OBITyp = @p_OBITyp, 
+		@p_OBINumer  = @p_OBINumer,
+		@p_PRCTyp = @p_PRCTyp,
+		@p_PRCNumer  = @p_PRCNumer,
+		@p_OPENumer  = @p_OPENumer,
+		@p_DataUtworzenia = @p_DataUtworzenia,
+        @p_DataRealizacji = @p_DataUtworzenia,		
+		@wyniksql = @lTerminRealizacji OUTPUT,
+		@ret_status = @ret_status OUTPUT		
+	End
+	if @ret_status&lt;&gt;0
+		GOTO BLAD
+
+	
+	If (len(@cDataWaznosci)&lt;&gt;0)
+	Begin
+	    EXEC  CDN.WFL_WykonajZapytanie
+		@p_sqlZapytanie =@cDataWaznosci,
+		@p_OBITyp = @p_OBITyp, 
+		@p_OBINumer  = @p_OBINumer,
+		@p_PRCTyp = @p_PRCTyp,
+		@p_PRCNumer  = @p_PRCNumer,
+		@p_OPENumer  = @p_OPENumer,
+		@p_DataUtworzenia = @p_DataUtworzenia,
+		@p_DataRealizacji = @p_DataUtworzenia,
+		@wyniksql = @lDataWaznosci OUTPUT,		
+		@ret_status = @ret_status OUTPUT		
+	End
+	if @ret_status&lt;&gt;0
+		GOTO BLAD
+
+	If (len(@cDataRealizacji)&lt;&gt;0)
+	Begin
+	    EXEC  CDN.WFL_WykonajZapytanie
+		@p_sqlZapytanie =@cDataRealizacji,
+		@p_OBITyp = @p_OBITyp, 
+		@p_OBINumer  = @p_OBINumer,
+		@p_PRCTyp = @p_PRCTyp,
+		@p_PRCNumer  = @p_PRCNumer,
+		@p_OPENumer  = @p_OPENumer,
+		@p_DataUtworzenia = @p_DataUtworzenia,
+        @p_DataRealizacji = @p_DataUtworzenia,
+		@wyniksql = @lDataRealizacji OUTPUT,		
+		@ret_status = @ret_status OUTPUT		
+	End
+	if @ret_status&lt;&gt;0
+		GOTO BLAD
+
+	If (len(@cCzasRealizacji)&lt;&gt;0)
+	Begin
+	    EXEC  CDN.WFL_WykonajZapytanie
+		@p_sqlZapytanie =@cCzasRealizacji,
+		@p_OBITyp = @p_OBITyp, 
+		@p_OBINumer  = @p_OBINumer,
+		@p_PRCTyp = @p_PRCTyp,
+		@p_PRCNumer  = @p_PRCNumer,
+		@p_OPENumer  = @p_OPENumer,
+		@p_DataUtworzenia = @p_DataUtworzenia,
+        @p_DataRealizacji = @p_DataUtworzenia,		
+		@wyniksql = @lCzasRealizacji OUTPUT,		
+		@ret_status = @ret_status OUTPUT		
+	End
+	if @ret_status&lt;&gt;0
+		GOTO BLAD
+
+	If (@lPrzypomnienie = 1)	
+	BEGIN
+	        If (len(@cDataPrzypomnienia)&lt;&gt;0)
+        	Begin
+	            EXEC  CDN.WFL_WykonajZapytanie
+        	        @p_sqlZapytanie =@cDataPrzypomnienia,
+	                @p_OBITyp = @p_OBITyp,
+        	        @p_OBINumer  = @p_OBINumer,
+                	@p_PRCTyp = @p_PRCTyp,
+	                @p_PRCNumer  = @p_PRCNumer,
+        	        @p_OPENumer  = @p_OPENumer,
+                	@p_DataUtworzenia = @p_DataUtworzenia,
+	                @p_DataRealizacji = @lDataRealizacji,
+        	        @wyniksql = @lDataPrzypomnienia OUTPUT,
+                	@ret_status = @ret_status OUTPUT
+	        End
+		else
+			set @lDataPrzypomnienia = @lDataRealizacji - @lDataPrzypomnienia
+
+	        if @ret_status&lt;&gt;0
+        	        GOTO BLAD
+	END
+
+if object_id('tempdb..#opiekunowie') is not null
+	DROP TABLE #opiekunowie
+
+CREATE TABLE #opiekunowie (OpiTyp smallint,OpiNumer int,WDZId int)
+
+declare OpiekunCursor cursor fast_forward for
+select wdz_opiekunsql, WDZ_Id from cdn.wf_defzadania where wdz_wdsid = @p_WDSID and wdz_opiekuntyp &gt; 0
+open OpiekunCursor
+fetch next from OpiekunCursor into @OpiekunSQL, @lWDZId
+WHILE @@FETCH_STATUS = 0
+BEGIN	
+	Set @OpiekunSQL = 'insert into #opiekunowie (OpiTyp,OpiNumer,WDZId) select OpiTyp, OpiNumer, '+convert(varchar,@lWDZId)+' from ('+ @OpiekunSQL+') O'
+    EXEC CDN.WFL_WykonajZapytanie
+	@p_sqlZapytanie =@OpiekunSQL,
+	@p_OBITyp = @p_OBITyp, 
+	@p_OBINumer  = @p_OBINumer,
+	@p_PRCTyp = @p_PRCTyp,
+	@p_PRCNumer  = @p_PRCNumer,
+	@p_OPENumer  = @p_OPENumer,
+	@p_DataUtworzenia = @p_DataUtworzenia,
+    @p_DataRealizacji = @p_DataUtworzenia,		
+	@p_WFPID = @p_WFPID,
+	@wyniksql = '',
+	@ret_status = @ret_status OUTPUT
+
+	if @ret_status&lt;&gt;0
+	BEGIN
+		DROP TABLE #opiekunowie
+		CLOSE OpiekunCursor
+		Deallocate OpiekunCursor
+		RAISERROR('Błąd ustalania opiekuna dynamicznego.[%d]',16,1, @ret_status) 
+		GOTO BLAD	
+	END
+
+	fetch next from OpiekunCursor into @OpiekunSQL, @lWDZId
+END
+CLOSE OpiekunCursor
+Deallocate OpiekunCursor 
+
+insert into CDN.WF_Zadania(WFZ_WFPID, 
+		WFZ_WDSID, 
+		WFZ_OPITyp, WFZ_OPINumer, 
+		WFZ_DataUtworzenia, 
+		WFZ_TerminRealizacji,
+		WFZ_DataWaznosci,
+		WFZ_DataRealizacji,
+		WFZ_CzasRealizacji,
+		WFZ_WDZID,
+		WFZ_PRCTyp,
+		WFZ_PRCNumer,
+		WFZ_DataZamkniecia,
+		WFZ_Opis,
+		WFZ_Status,
+		WFZ_Akcja,
+		WFZ_Przypomnienie,
+		WFZ_DataPrzypomnienia,
+		WFZ_Terminarz)
+
+	Select DISTINCT @p_WFPID, @p_WDSID, 
+		case when Ope_PrcTyp = 944 then Ope_PrcTyp else WDO_OPITyp end, 
+		case when Ope_PrcTyp = 944 then Ope_PrcNumer else WDO_OPINumer end,
+		-@p_DataUtworzenia,
+		@lTerminRealizacji,
+		@lDataWaznosci,
+		case when WDO_OPITyp = 12289 then @lDataRealizacji else CDN.WFL_ZnajdzDateRealizacji(@lDataRealizacji, @lCzasRealizacji,
+                                                                         case when Ope_PrcTyp = 944 then Ope_PrcTyp else WDO_OPITyp end,
+                                                                         case when Ope_PrcTyp = 944 then Ope_PrcNumer else WDO_OPINumer end) end,
+		@lCzasRealizacji,
+		0,
+		0,
+		0,
+		0,
+		@p_Opis,
+		@cNazwaStatusu,
+		'',
+		@lPrzypomnienie,
+		@lDataPrzypomnienia,
+		255		
+	FROM CDN.WF_DefZadania (NOLOCK)
+		join CDN.WF_DefOpiekun (NOLOCK) on WDO_WDZID = WDZ_ID		
+		left join CDN.Opekarty on WDO_OpiTyp = Ope_GIDTyp and WDO_OpiNumer = Ope_GIDNumer
+		left outer join #opiekunowie on (WDO_OpiTyp = OPITyp and WDO_OpiNumer = OPINumer) or (Ope_PrcTyp = OPITyp and Ope_PrcNumer = OPINumer)
+	where @p_WDSID = WDZ_WDSID and WDZId is null
+union
+	select DISTINCT @p_WFPID, @p_WDSID, 
+					case when Ope_PrcTyp = 944 then Ope_PrcTyp else OpiTyp end, 
+					case when Ope_PrcTyp = 944 then Ope_PrcNumer else OpiNumer end,
+		-@p_DataUtworzenia,
+		@lTerminRealizacji,
+		@lDataWaznosci,	
+		case when OPITyp = 12289 then @lDataRealizacji else CDN.WFL_ZnajdzDateRealizacji(@lDataRealizacji, @lCzasRealizacji,
+                                                                         case when Ope_PrcTyp = 944 then Ope_PrcTyp else OpiTyp end,
+                                                                         case when Ope_PrcTyp = 944 then Ope_PrcNumer else OpiNumer end) end,
+		@lCzasRealizacji,
+		min(WDZ_Id),			--TID: 177251
+		0,
+		0,
+		0,
+		@p_Opis,
+		@cNazwaStatusu,
+		min(WDA_Nazwa),			--TID: 177251
+		@lPrzypomnienie,
+		@lDataPrzypomnienia,
+		255	
+    from #opiekunowie
+		inner join CDN.WF_DefZadania on WDZ_Id=WDZId
+		inner join CDN.WF_DefAkcje on WDA_Id=WDZ_WDAId
+		left join CDN.OpeKarty on OpiTyp = Ope_GIDTyp and OpiNumer = Ope_GIDNumer
+	group by OpiTyp, OpiNumer, Ope_PrcTyp, Ope_PrcNumer		--TID: 177251
+
+	SET @ret_status = @@ERROR
+	
+	DROP TABLE #opiekunowie
+	
+	If @ret_status&lt;&gt;0
+	BEGIN
+		RAISERROR('Błąd dodawania zadania.[%d]',16,1, @ret_status)		
+		GOTO BLAD
+	END
+
+	IF NOT exists(select * from cdn.wf_zadania where wfz_wfpid = @p_WFPID and wfz_datautworzenia &lt; 0)
+	BEGIN
+		RAISERROR('Błąd dodawania zadania. Nie udało się określić opiekuna zadania.',16,1)
+		set @ret_status = 1
+		GOTO BLAD
+	END
+	
+    IF @lTerminarz in (1,2)
+	BEGIN
+		--tworzenie tabeli zawierającej pracowników
+			declare @obiekty table (wfzid int,obityp smallint,obinumer int,poziom int)
+			declare @poziom int
+			set @poziom = 0
+			insert into @obiekty
+				select distinct min(I.WFZ_Id), Z.WFZ_OpiTyp, Z.WFZ_OpiNumer, 0
+				from CDN.WF_Zadania Z
+				join CDN.WF_Zadania I on 
+					Z.WFZ_WFPID = I.WFZ_WFPID and
+					Z.WFZ_WDSID = I.WFZ_WDSID and
+					Z.WFZ_Status = I.WFZ_Status and
+					Z.WFZ_DataUtworzenia = I.WFZ_DataUtworzenia and
+					Z.WFZ_Terminarz = I.WFZ_Terminarz
+				where Z.WFZ_WFPID = @p_WFPID and Z.WFZ_DataUtworzenia &lt; 0 and Z.WFZ_Terminarz = 255
+				group by
+					Z.WFZ_WDSID,
+					Z.WFZ_Status,
+					Z.WFZ_OpiTyp,
+					Z.WFZ_OpiNumer
+			while @poziom&lt;1000
+			begin
+				insert into @obiekty
+					select WFZId, FRS_GIDTyp, FRS_GIDNumer, Poziom+1
+					from @obiekty
+					inner join CDN.FrmStruktura on FRS_GROTyp=ObiTyp and FRS_GRONumer=ObiNumer
+						and FRS_AktywnyOd&lt;=@p_DataUtworzenia/86400+69035 and (@p_DataUtworzenia/86400+69035&lt;=FRS_AktywnyDo or FRS_AktywnyDo=0)
+					where Poziom = @Poziom and ObiTyp = -4272
+				if @@rowcount=0 break
+				set @poziom = @poziom+1
+			end
+			insert into @obiekty
+				select WFZId, Ope_PrcTyp, Ope_PrcNumer, Poziom+1
+				from @obiekty
+				inner join CDN.OpeKarty on Ope_GIDTyp=ObiTyp and Ope_GIDNumer=ObiNumer
+				where ObiTyp = 128 and Ope_PrcTyp = 944
+				
+			delete @obiekty where ObiTyp&lt;&gt;944
+
+	--dodanie do tabeli CDN.Zadania
+			insert into cdn.zadania (zad_kod,zad_nazwa,zad_priorytet,zad_opis,zad_przypomnienie,zad_czasprzypomnienia,
+									 zad_czasutworzenia,zad_opeutyp,zad_opeunumer,zad_czasmodyfikacji,zad_opemtyp,zad_opemnumer,
+									 zad_czaswykonania,zad_opewtyp,zad_opewnumer,zad_terminod,zad_termindo,zad_powtarzajco,
+									 zad_powtarzajokres,zad_rezerwujczas,zad_zrdtyp,zad_zrdnumer,zad_zrdlp,
+								     zad_czasprzypomnieniajedn,zad_czasplanowanyjedn,zad_obityp,zad_obinumer,zad_zrdpytania,
+								     zad_okresid,zad_notatki,zad_cykliczne)
+			select @sKod,			--zad_kod
+				   @cNazwaStatusu,	--zad_nazwa
+				   (select top 1 slw_wartoscs from cdn.slowniki where slw_kategoria = 'Priorytety zadań' and slw_domyslny = 1),		--zad_priorytet
+				   @p_Opis,			--zad_opis
+				   @lPrzypomnienie,	--zad_przypomnienie
+				   WFZ_DataRealizacji-@lDataPrzypomnienia,	--zad_czasprzypomnienia
+				   @p_DataUtworzenia,	--zad_czasutworzenia
+				   128,					--zad_opeutyp
+				   @p_OPENumer,			--zad_opeunumer
+                   @p_DataUtworzenia,	--zad_czasmodyfikacji
+				   128,					--zad_opemtyp
+                   @p_OPENumer,			--zad_opemnumer,
+				   0,					--zad_czaswykonania
+				   0,					--zad_opewtyp
+				   0,					--zad_opewnumer
+				   WFZ_DataRealizacji, --zad_terminod
+				   WFZ_DataRealizacji+WFZ_CzasRealizacji,	--zad_termindo
+				   0,					--zad_powtarzajco
+				   0,					--zad_powtarzajokres
+				   CASE WHEN @lTerminarz = 2 THEN 1 ELSE 0 END,		--zad_rezerwujczas
+				   12293,				--zad_zrdtyp
+				   min(WFZ_ID),			--zad_zrdnumer
+				   0,					--zad_zrdlp
+				   case when (WFZ_DataRealizacji-@lDataPrzypomnienia) = 0 then 0
+						when (WFZ_DataRealizacji-@lDataPrzypomnienia)%60 &gt; 0 then 0	--sekundy
+						when (WFZ_DataRealizacji-@lDataPrzypomnienia)%3600 &gt; 0 then 1		--minuty
+						when (WFZ_DataRealizacji-@lDataPrzypomnienia)%86400 &gt; 0 then 2		--godziny
+						when (WFZ_DataRealizacji-@lDataPrzypomnienia)%604800 &gt; 0 then 3	--dni
+						else 4															--tygodni
+				   end,					--zad_czasprzypomnieniajedn,
+				   case when WFZ_CzasRealizacji = 0 then 0
+						when WFZ_CzasRealizacji%60 &gt; 0 then 0	--sekundy
+						when WFZ_CzasRealizacji%3600 &gt; 0 then 1		--minuty
+						when WFZ_CzasRealizacji%86400 &gt; 0 then 2		--godziny
+						when WFZ_CzasRealizacji%604800 &gt; 0 then 3	--dni
+						else 4															--tygodni
+				   end,					--zad_czasplanowanyjedn
+				   0,					--zad_obityp
+				   0,					--zad_obinumer
+				   0,					--zad_zrdpytania
+				   0,					--zad_okresid
+				   '',                  --zad_notatki
+				   0                    --zad_cykliczne
+			from cdn.wf_zadania
+			where WFZ_WFPID = @p_WFPID and WFZ_DataUtworzenia &lt; 0 and WFZ_Terminarz = 255 		--może być wiele zadań w procesach, więc trzeba dodać tyle samo zadań w terminarzu - trzeba zrobić select z WF_Zadania i
+						--tworzyć zadania w terminarzu (można prawdopodobnie skorzystać z tego, że data utworzenia jest ujemna w nowo dodanych rekordach)
+						-- z pól OpiTyp i OpiNumer należy rozwinąć listę pracowników i dodać tylu pracowników
+						-- czas przypomnienia jedn - dorobić tutaj wyliczanie tego
+				and exists(select * from @obiekty where WFZId=WFZ_Id)
+			group by
+				WFZ_WDSID,
+				WFZ_Status,
+				WFZ_DataRealizacji,
+				WFZ_CzasRealizacji
+
+			SET @ret_status = @@ERROR
+			If @ret_status&lt;&gt;0
+			BEGIN
+				RAISERROR('Błąd dodawania zadania do terminarza.[%d]',16,1, @ret_status)
+				GOTO BLAD
+			END
+
+		--dodanie do tabeli CDN.ZadaniaObiekty
+			insert into cdn.zadaniaobiekty (zao_zadid,zao_obityp,zao_obinumer,zao_czasutworzenia,
+											zao_przypomnienie,zao_czasprzypomnienia)
+			select distinct
+				   zad_id,				--zao_zadid
+				   obityp,				--zao_obityp
+				   obinumer,			--zao_obinumer
+				   @p_DataUtworzenia,	--zao_czasutworzenia
+				   @lPrzypomnienie,		--zao_przypomnienie
+				   @lDataPrzypomnienia	--zao_czasprzypomnienia
+			from cdn.wf_zadania join cdn.zadania on
+				 wfz_id = zad_zrdnumer and
+				 zad_zrdtyp = 12293
+				 join @obiekty on
+				 WFZId= wfz_id
+			where WFZ_WFPID = @p_WFPID and WFZ_DataUtworzenia &lt; 0 and WFZ_Terminarz = 255
+
+			SET @ret_status = @@ERROR
+			If @ret_status&lt;&gt;0
+			BEGIN
+				RAISERROR('Błąd dodawania obietku do zadania w terminarzu.[%d]',16,1, @ret_status)
+				GOTO BLAD
+			END
+	END
+	
+	update cdn.wf_zadania set wfz_terminarz = @lTerminarz where wfz_wfpid = @p_WFPID and wfz_terminarz = 255 and wfz_datautworzenia &lt; 0
+	
+BLAD: 	
+	if (@ret_status&lt;&gt;0)
+    begin
+		if (@@trancount&gt;0)
+			ROLLBACK TRANSACTION
+	end
+	else
+		COMMIT TRANSACTION
+	
+
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

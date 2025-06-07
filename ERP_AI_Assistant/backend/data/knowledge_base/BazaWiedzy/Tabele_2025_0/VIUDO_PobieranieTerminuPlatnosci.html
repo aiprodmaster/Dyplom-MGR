@@ -1,0 +1,114 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="KalendarzOznaczoneRodzajeDni"></A><PRE>
+          <FONT SIZE="2"><I>/* KalendarzOznaczoneRodzajeDni */</I><BR>
+CREATE FUNCTION CDN.KalendarzOznaczoneRodzajeDni(@rokOd int, @rokDo int)
+returns @Dates table (DataSQL date, DataClarion int, NazwaDnia nvarchar(20), RodzajDniaOpis varchar(20), RodzajDniaId int, NazwaSwieta varchar(80))
+as 
+begin
+
+	declare @DatySwiat table (DataSwieta date, NazwaSwieta nvarchar(100), NazwaDnia nvarchar(20))
+	declare @rok int = @rokOd
+	declare @Wielkanoc date, @a int, @b int, @c int, @d int, @e int, @f int, @g int, @h int, @i int, @k int, @l int, @m int, @p int, @n int
+
+	while (@rok &lt;= @rokDo)
+	begin
+
+		-- wylicz datę Wielkanocy
+		set @a = @rok % 19 
+		set @b = @rok / 100
+		set @c = @rok % 100
+		set @d = @b / 4 set @e = @b % 4
+		set @f = (@b + 8) / 25 set @g = (@b - @f + 1) / 3 set @h = (19 * @a + @b - @d - @g + 15) % 30
+		set @i = @c / 4 set @k = @c % 4
+		set @l = (32 + 2*@e + 2*@i - @h - @k) % 7 
+		set @m = (@a + 11 * @h + 22 * @l) / 451
+		set @p = (@h + @l - 7 * @m + 114) % 31
+		set @p = @p + 1
+		set @n = (@h + @l - 7 * @m + 114) / 31
+		set @Wielkanoc = DATEFROMPARTS(@rok, @n, @p)
+
+		insert into @DatySwiat values 
+			(DATEFROMPARTS(@rok, 1, 1), 'Nowy Rok', datename(weekday, DATEFROMPARTS(@rok, 1, 1))),
+			(DATEFROMPARTS(@rok, 1, 6), 'Trzech Króli (Objawienie Pańskie)', datename(weekday, DATEFROMPARTS(@rok, 1, 6))),
+			(@Wielkanoc, 'Wielkanoc', datename(weekday, @Wielkanoc)),
+			(dateadd(day, 1, @Wielkanoc), 'Poniedziałek Wielkanocny', datename(weekday, dateadd(day, 1, @Wielkanoc))),
+			(DATEFROMPARTS(@rok, 5, 1), 'Międzynarodowe Święto Pracy', datename(weekday, DATEFROMPARTS(@rok, 5, 1))),
+			(DATEFROMPARTS(@rok, 5, 3), 'Święto Konstytucji 3 Maja', datename(weekday, DATEFROMPARTS(@rok, 5, 3))),
+			(dateadd(day, 60, @Wielkanoc), 'Boże Ciało', datename(weekday, dateadd(day, 60, @Wielkanoc))),
+			(DATEFROMPARTS(@rok, 8, 15), 'Święto Wojska Polskiego, Wniebowzięcie Najświętszej Maryi Panny', datename(weekday, DATEFROMPARTS(@rok, 8, 15))),
+			(DATEFROMPARTS(@rok, 11, 1), 'Wszystkich Świętych', datename(weekday, DATEFROMPARTS(@rok, 11, 1))),
+			(DATEFROMPARTS(@rok, 11, 11), 'Narodowe święto Niepodległości', datename(weekday, DATEFROMPARTS(@rok, 11, 11))),
+			(DATEFROMPARTS(@rok, 12, 25), 'Boże Narodzenie (pierwszy dzień)', datename(weekday, DATEFROMPARTS(@rok, 12, 25))),
+			(DATEFROMPARTS(@rok, 12, 26), 'Boże Narodzenie (drugi dzień)', datename(weekday, DATEFROMPARTS(@rok, 12, 26)))
+
+		set @rok += 1
+	end
+
+
+
+	declare @Data date = DateFromParts(@rokOd,1,1)
+
+	;with cte_kalendarz
+	as
+	(
+		select dateadd(dd,number,@Data) DataSQL, datename(weekday, (dateadd(dd, number, @Data))) dzien
+		from master..spt_values 
+		where type = 'p' and YEAR(dateadd(dd, number, @Data)) between @rokOd and @rokDo
+	),
+	cte_oznaczoneDni
+	as
+	(
+		select dr.DataSQL 
+			, DateDiff(d, convert(datetime,'28-12-1800',105),dr.DataSQL)  DataClarion
+			, dr.dzien as NazwaDnia
+			, case when ISNULL(swieta.NazwaSwieta,'')='' and dr.dzien &lt;&gt; 'Sunday' then 'Roboczy' else 'Ustawowo wolny' end RodzajDniaOpis
+			, case when ISNULL(swieta.NazwaSwieta,'')='' and dr.dzien &lt;&gt; 'Sunday' then '0' else '1' end RodzajDniaId
+			, isnull(swieta.NazwaSwieta,'') Nazwa_swieta
+		from cte_kalendarz dr
+		left join @DatySwiat swieta on dr.DataSQL = swieta.DataSwieta
+	)
+	insert into @Dates
+	select * from cte_oznaczoneDni --order by DataSQL
+	
+	return
+
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="NastepnyDzienRoboczy"></A><PRE>
+          <FONT SIZE="2"><I>/* NastepnyDzienRoboczy */</I><BR>
+CREATE FUNCTION CDN.NastepnyDzienRoboczy(@dataNaDzien int)
+returns int
+as
+begin
+	declare @data int, @rokOd int, @rokDo int
+	
+	set @rokOd = year(DateAdd(d,@dataNaDzien,convert(datetime,'28-12-1800',105)) )
+	set @rokDo = @rokOd
+
+	if MONTH(DateAdd(d,@dataNaDzien,convert(datetime,'28-12-1800',105)) )=12 and DAY(DateAdd(d,@dataNaDzien,convert(datetime,'28-12-1800',105)) )=31	-- jeśli 31 grudzień to być może następny dzień roboczy jest w następnym roku
+		set @rokDo = @rokOd + 1		
+
+	select @data = MIN(DataClarion) from cdn.KalendarzOznaczoneRodzajeDni(@rokOd, @rokDo) where DataClarion &gt;= @dataNaDzien and RodzajDniaId = 0 --order by dataSQL
+	return @data
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

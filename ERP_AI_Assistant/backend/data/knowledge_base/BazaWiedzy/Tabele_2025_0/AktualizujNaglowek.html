@@ -1,0 +1,151 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="AktualizujNaglowek"></A><PRE>
+          <FONT SIZE="2"><I>/* AktualizujNaglowek */</I><BR>
+CREATE PROCEDURE CDN.AktualizujNaglowek
+@GIDTyp SMALLINT,
+@GIDNumer INT,
+@UserID INT,
+@GIDFirma INT,
+@EdycjaGIDTyp SMALLINT,
+@EdycjaGIDNumer INT
+
+AS
+
+DECLARE @Rozliczona INT
+DECLARE @Aktywny INT
+
+SET NOCOUNT ON
+BEGIN TRAN
+
+SELECT @Rozliczona = MIN(TRP_Rozliczona) FROM CDN.TraPlat WHERE TRP_GIDTyp=@GIDTyp AND TRP_GIDNumer=@GIDNumer
+IF @GIDTyp IN (4144, 4145, 4146)
+BEGIN
+	COMMIT TRAN
+	SET NOCOUNT OFF
+	return
+END
+ELSE IF @GIDTyp IN(2832,2833)
+  UPDATE CDN.UpoNag SET UPN_Rozliczona = @Rozliczona WHERE UPN_GIDTyp=@GIDTyp AND UPN_GIDNumer=@GIDNumer
+ELSE IF @GIDTyp IN(3376,3377,3378,3379)
+BEGIN
+  UPDATE CDN.SadNag SET SAN_Stan = CASE WHEN @Rozliczona=1 AND SAN_Stan&gt;=3 THEN 5 
+    WHEN @Rozliczona=0 AND SAN_Stan = 5 THEN 3 ELSE SAN_Stan END, 
+    SAN_OpeTypR = CASE WHEN @Rozliczona=1 AND SAN_Stan&gt;=3 THEN 128 WHEN @Rozliczona=0 AND SAN_Stan = 5 THEN 0 ELSE SAN_OpeTypR END,
+    SAN_OpeFirmaR = CASE WHEN @Rozliczona=1 AND SAN_Stan&gt;=3 THEN @GIDFirma WHEN @Rozliczona=0 AND SAN_Stan = 5 THEN 0 ELSE SAN_OpeFirmaR END,
+    SAN_OpeNumerR = CASE WHEN @Rozliczona=1 AND SAN_Stan&gt;=3 THEN @UserID WHEN @Rozliczona=0 AND SAN_Stan = 5 THEN 0 ELSE SAN_OpeNumerR END
+    WHERE SAN_GIDTyp=@GIDTyp AND SAN_GIDNumer=@GIDNumer
+END
+ELSE IF @GIDTyp IN(3344)
+BEGIN
+  UPDATE CDN.ImpNag SET IMN_Stan = CASE WHEN @Rozliczona=1 AND IMN_Stan&gt;=3 THEN 5 
+    WHEN @Rozliczona=0 AND IMN_Stan = 5 THEN 3 ELSE ImN_Stan END, 
+    IMN_OpeTypR = CASE WHEN @Rozliczona=1 AND IMN_Stan&gt;=3 THEN 128 WHEN @Rozliczona=0 AND IMN_Stan = 5 THEN 0 ELSE IMN_OpeTypR END,
+    IMN_OpeFirmaR = CASE WHEN @Rozliczona=1 AND IMN_Stan&gt;=3 THEN @GIDFirma WHEN @Rozliczona=0 AND IMN_Stan = 5 THEN 0 ELSE IMN_OpeFirmaR END,
+    IMN_OpeNumerR = CASE WHEN @Rozliczona=1 AND IMN_Stan&gt;=3 THEN @UserID WHEN @Rozliczona=0 AND IMN_Stan = 5 THEN 0 ELSE IMN_OpeNumerR END
+    WHERE IMN_GIDTyp=@GIDTyp AND IMN_GIDNumer=@GIDNumer
+END
+ELSE IF @GIDTyp &lt;&gt; 784
+BEGIN  
+  --SELECT @Aktywny = TRN_Aktywny FROM CDN.TraNag 
+  --  WHERE TRN_GIDTyp=@GIDTyp AND TRN_GIDNumer=@GIDNumer AND TRN_GIDTyp&lt;&gt;ISNULL(@EdycjaGIDTyp,0) AND TRN_GIDNumer&lt;&gt;ISNULL(@EdycjaGIDNumer,0)
+  IF ISNULL(@Aktywny,0) &lt;&gt; 0
+	BEGIN
+	  RAISERROR( 'Dokument pozostaje w edycji. Nie można go rozliczyć ani skasować rozliczenia', 16, 1) 
+	  ROLLBACK TRAN 
+	  RETURN 
+  END
+
+  --Punkty lojalnościowe
+  DECLARE @ZmianaPunktow 	DECIMAL(11,2)
+  DECLARE @GIDNumerSpi 		INT
+  DECLARE @GIDTypSpi 		SMALLINT
+  DECLARE @RozliczonaSpi	INT
+  declare @SPINumer int;
+		
+  SET @ZmianaPunktow = 0
+  SET @RozliczonaSpi = @Rozliczona
+
+  SELECT @GIDNumerSpi = TrN_SpiNumer, @GIDTypSpi = TrN_SpiTyp FROM cdn.TraNag WHERE TrN_GIDNumer = @GIDNumer
+  SET @SPINumer = @GIDNumerSpi;
+
+  IF @GIDNumerSpi &lt;&gt; 0 AND NOT @GIDTypSpi IN (2035, 2043)
+	  SELECT @RozliczonaSpi = MIN(TRP_Rozliczona) FROM CDN.TraPlat WHERE TrP_SpiNumer=@GIDNumerSpi
+  ELSE 
+  BEGIN
+	  SET @GIDNumerSpi = @GIDNumer
+	  SET @GIDTypSpi = @GIDTyp
+  END
+
+  IF  @GIDTypSpi IN (2033,2041,2034,2042,2037,2045) 
+	AND exists (SELECT * FROM cdn.DokDefinicje JOIN cdn.TraNag ON Dok_FrsId=TrN_FrsID WHERE Dok_GIDTyp = case @GIDTypSpi when 2041 then 2033 when 2042 then 2034 when 2045 then 2037 else @GIDTypSpi end AND TRN_GIDNumer = @GIDNumerSpi AND Dok_NaliczajPunktyLojal=1 )
+	BEGIN
+
+	SELECT @ZmianaPunktow = isnull((
+         			SELECT TrN_Punkty
+         			FROM cdn.TraNag
+         			WHERE TrN_GIDNumer = @GIDNumerSpi
+         			) + (
+         			SELECT isnull(sum(TrE_Punkty), 0)
+         			FROM cdn.TraElem
+         			WHERE TrE_GIDNumer = @GIDNumerSpi
+         			), 0)
+		IF exists(SELECT * FROM CDN.TraNag  WHERE TRN_GIDNumer=@GIDNumerSpi AND @RozliczonaSpi=1 AND TRN_Stan &gt;= 3)
+			UPDATE cdn.KntKarty SET Knt_PunktyNalicz=CASE when Knt_PunktyNalicz+@ZmianaPunktow&gt;0 THEN  Knt_PunktyNalicz+@ZmianaPunktow  ELSE 0 END
+			FROM CDN.KntKarty  JOIN cdn.TraNag ON TrN_KntNumer=Knt_GIDNumer
+			WHERE TRN_GIDNumer=@GIDNumerSpi
+		ELSE IF exists(SELECT * FROM CDN.TraNag  WHERE TRN_GIDNumer=@GIDNumerSpi AND @RozliczonaSpi=0 AND TRN_Stan = 5)
+			UPDATE cdn.KntKarty SET Knt_PunktyNalicz=CASE when Knt_PunktyNalicz-@ZmianaPunktow&gt;0 THEN  Knt_PunktyNalicz-@ZmianaPunktow  ELSE 0 END
+			FROM CDN.KntKarty  JOIN cdn.TraNag ON TrN_KntNumer=Knt_GIDNumer
+			WHERE TRN_GIDNumer=@GIDNumerSpi
+	END
+  --
+
+  UPDATE CDN.TraNag SET TRN_Stan = CASE WHEN @Rozliczona=1 AND TRN_Stan&gt;=3 THEN 5 
+    WHEN @Rozliczona=0 AND TRN_Stan = 5 THEN 3 ELSE TRN_Stan END, 
+    TRN_OpeTypR = CASE WHEN @Rozliczona=1 AND TRN_Stan&gt;=3 THEN 128 WHEN @Rozliczona=0 AND TRN_Stan = 5 THEN 0 ELSE TRN_OpeTypR END,
+    TRN_OpeFirmaR = CASE WHEN @Rozliczona=1 AND TRN_Stan&gt;=3 THEN @GIDFirma WHEN @Rozliczona=0 AND TRN_Stan = 5 THEN 0 ELSE TRN_OpeFirmaR END,
+    TRN_OpeNumerR = CASE WHEN @Rozliczona=1 AND TRN_Stan&gt;=3 THEN @UserID WHEN @Rozliczona=0 AND TRN_Stan = 5 THEN 0 ELSE TRN_OpeNumerR END
+    WHERE TRN_GIDTyp=@GIDTyp AND TRN_GIDNumer=@GIDNumer
+
+
+	--if @GIDTyp in (2001,2009)
+	--begin		
+		if @SPINumer &lt;&gt; 0 and NOT EXISTS(select 1 from cdn.TraNag w where w.TRN_SpiNumer=@SPINumer and w.TRN_Stan&lt;&gt; CASE WHEN @Rozliczona=1 THEN 5 ELSE w.TRN_Stan end)
+		begin
+			UPDATE CDN.TraNag SET TRN_Stan = CASE WHEN @Rozliczona=1 AND TRN_Stan&gt;=3 THEN 5 
+			WHEN @Rozliczona=0 AND TRN_Stan = 5 THEN 4 ELSE TRN_Stan END, 
+			TRN_OpeTypR = CASE WHEN @Rozliczona=1 AND TRN_Stan&gt;=3 THEN 128 WHEN @Rozliczona=0 AND TRN_Stan = 5 THEN 0 ELSE TRN_OpeTypR END,
+			TRN_OpeFirmaR = CASE WHEN @Rozliczona=1 AND TRN_Stan&gt;=3 THEN @GIDFirma WHEN @Rozliczona=0 AND TRN_Stan = 5 THEN 0 ELSE TRN_OpeFirmaR END,
+			TRN_OpeNumerR = CASE WHEN @Rozliczona=1 AND TRN_Stan&gt;=3 THEN @UserID WHEN @Rozliczona=0 AND TRN_Stan = 5 THEN 0 ELSE TRN_OpeNumerR END
+			WHERE TRN_GIDNumer=@SPINumer
+		end
+	--end
+
+
+/*
+  UPDATE CDN.TraNag SET TRN_Stan = CASE WHEN MAX(TRP_Rozliczona)=1 AND TRN_Stan&gt;=3 THEN 5 
+    WHEN MAX(TRP_Rozliczona)=0 AND TRN_Stan = 5 THEN 3 ELSE TRN_Stan END, 
+    TRN_OpeTypR = CASE WHEN MAX(TRP_Rozliczona)=1 AND TRN_Stan&gt;=3 THEN 128 WHEN MAX(TRP_Rozliczona)=0 AND TRN_Stan = 5 THEN 0 ELSE TRN_OpeTypR END,
+    TRN_OpeFirmaR = CASE WHEN MAX(TRP_Rozliczona)=1 AND TRN_Stan&gt;=3 THEN @GIDFirma WHEN MAX(TRP_Rozliczona)=0 AND TRN_Stan = 5 THEN 0 ELSE TRN_OpeFirmaR END,
+    TRN_OpeNumerR = CASE WHEN MAX(TRP_Rozliczona)=1 AND TRN_Stan&gt;=3 THEN @UserID WHEN MAX(TRP_Rozliczona)=0 AND TRN_Stan = 5 THEN 0 ELSE TRN_OpeNumerR END
+    FROM CDN.TraPlat WHERE TRP_GIDTyp=@GIDTyp AND TRP_GIDNumer=@GIDNumer
+*/
+END
+COMMIT TRAN
+SET NOCOUNT OFF
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,129 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="OsoCzasPracyOdDo"></A><PRE>
+          <FONT SIZE="2"><I>/* OsoCzasPracyOdDo */</I><BR>
+CREATE FUNCTION CDN.OsoCzasPracyOdDo(@ObiTyp int,@ObiNumer int,@ObiNumery varchar(8000),@CzasOd int,@CzasDo int)
+returns @CzasPracy table ( OsoNumer int, OsUNumer int, DataOd int, DataDo int,
+	RodzajPracy int, Symbol varchar(2), Nazwa varchar(150),	Praca tinyint, Dni int, Roboczych int,
+	ZEwidencji tinyint, Wymiar int, Godzin int, Ponad int, Ponizej int, Nadg50 int, Nadg100 int, Nocne int)
+as
+begin
+	set @CzasOd=case when @CzasOd&gt;=93890 then @CzasOd/86400+69035 else @CzasOd end
+	set @CzasDo=case when @CzasDo&gt;=93890 then @CzasDo/86400+69035 else @CzasDo end
+	if @ObiNumer&gt;0 set @ObiNumery=convert(varchar,@ObiNumer)
+
+	declare @okresy table (OsoNumer int,Data int,Czas int,RodzajPracy int,Priorytet tinyint,POKId int,TypDnia int)
+	insert into @okresy
+		select Obiekt, Od/86400+69035, Do-Od-Przerwa, RodzajPracy, Priorytet, POKId, TypDnia
+		from CDN.ProdOkresyOdDo(@ObiTyp,0,@ObiNumery,@CzasOd,@CzasDo,4,-1,0)
+
+	declare @praca table (OsoNumer int, OsUNumer int, Data int, Czas int, RodzajPracy int, NadGodziny tinyint)
+	insert into @praca
+	select OCP_OsoNumer, OCP_OsUNumer, OCP_OkresOd/86400+69035,
+		OCP_OkresDo-OCP_OkresOd-OCP_CzasPrzerwy, OCP_RodzajPracy, OCP_NadGodziny
+	from CDN.Str2List(@ObiNumery)
+	left outer join CDN.Wyplaty on WPL_Id=Num and @ObiTyp in (2978,2979,2980,2981)
+	inner join CDN.OsoCzasPracy on OCP_OsoNumer=isnull(WPL_OsoNumer,Num)
+	where OCP_OkresOd/86400+69035 between @CzasOd and @CzasDo
+
+	insert into @CzasPracy
+	select OsoNumer, OsUNumer, DataOd, DataDo, KSl_Id, KSl_Symbol, KSl_Nazwa, KSl_Flaga1,
+		DataDo-DataOd+1, isnull(sum(Roboczych),0), ZEwidencji,
+		coalesce(-sum(OCR_Norma),Wymiar,0), coalesce(-sum(OCR_Praca),Godzin,0),
+		coalesce(-sum(OCR_Ponad),Ponad,0), coalesce(-sum(OCR_Ponizej),Ponizej,0),
+		coalesce(-sum(OCR_Nadgodziny50),Nadg50,0), coalesce(-sum(OCR_Nadgodziny100),Nadg100,0),
+		coalesce(-sum(OCR_GodzinyNocne),Nocne,0)
+	from (
+		select U.OsoNumer, U.OsUNumer, U.RodzajPracy, U.DataOd, U.DataDo, U.ZEwidencji, sum(Roboczy) Roboczych,
+			isnull(sum(Wymiar),0) Wymiar, isnull(sum(Czas),0) Godzin,
+			sum(case when Czas&gt;isnull(Wymiar,0) then Czas-isnull(Wymiar,0) else 0 end) Ponad,
+			sum(case when Wymiar&gt;Czas then Wymiar-Czas else 0 end) Ponizej,
+			isnull(sum(Nadg50),0) Nadg50, isnull(sum(Nadg100),0) Nadg100, isnull(sum(Nocne),0) Nocne
+		from (
+			select U.OsoNumer, U.OsUNumer, O.RodzajPracy, U.DataOd, U.DataDo, max(O.ZEwidencji) ZEwidencji
+			from (
+				select distinct OsoNumer, OsUNumer,
+					isnull(case when Okr=3 then OsU_DataRozwUm+1 when Okr=1 and OsU_DataZatrudnienia&gt;@CzasOd
+					and OsU_DataZatrudnienia&gt;DataOd	then OsU_DataZatrudnienia when @CzasOd&gt;DataOd
+					then @CzasOd else DataOd end,@CzasOd) DataOd, isnull(case when Okr=2
+					then OsU_DataZatrudnienia-1 when Okr=1 and OsU_DataRozwUm between 1 and @CzasDo
+					and OsU_DataRozwUm&lt;DataDo then OsU_DataRozwUm when @CzasDo&lt;DataDo
+					then @CzasDo else DataDo end,@CzasDo) DataDo
+				from (
+					select isnull(OsU_OsoNumer,Num) OsoNumer, isnull(OsU_GIDNumer,0) OsUNumer,
+						OsU_DataZatrudnienia, OsU_DataRozwUm,
+						case when OUb_DataOd&gt;OsU_DataOd then OUb_DataOd else OsU_DataOd end DataOd,
+						case when OUb_DataDo&lt;OsU_DataDo then OUb_DataDo else OsU_DataDo end DataDo
+					from CDN.Str2List(@ObiNumery)
+					left outer join CDN.Wyplaty on WPL_Id=Num and @ObiTyp in (2978,2979,2980,2981)
+					left outer join CDN.OsoUmowy on (OsU_GIDNumer=WPL_UmoNumer or (WPL_Id is null
+						and OsU_OsoNumer=isnull(WPL_OsoNumer,Num) and OsU_TypUmowy=1))
+						and OsU_DataOd&lt;=@CzasDo and @CzasOd&lt;=OsU_DataDo
+						and OsU_DataZatrudnienia&lt;=@CzasDo and (@CzasOd&lt;=OsU_DataRozwUm or OsU_DataRozwUm=0)
+					left outer join CDN.OsoUbezpieczenia on OUb_DataOd&lt;=@CzasDo and @CzasOd&lt;=OUb_DataDo
+						and OUb_OsoNumer=OsU_OsoNumer and OUb_DataOd&lt;=OsU_DataDo and OsU_DataOd&lt;=OUb_DataDo
+				) U
+				cross join (select 1 Okr union all select 2 union all select 3) O
+				where Okr=1 or (Okr=2 and OsU_DataZatrudnienia&gt;@CzasOd and OsU_DataZatrudnienia&gt;DataOd)
+					or (Okr=3 and OsU_DataRozwUm+1 between 2 and @CzasDo and OsU_DataRozwUm&lt;DataDo)
+			) U
+			inner join (
+				select OsoNumer, Data, RodzajPracy, 1 ZEwidencji
+				from @okresy
+				union all
+				select OsoNumer, Data, RodzajPracy, 1
+				from @praca
+				union all
+				select OCR_OsoNumer, OCR_DataOd, OCR_RodzajPracy, 0
+				from CDN.OsoCzasRazem
+				where OCR_DataOd between @CzasOd and @CzasDo
+			) O on O.OsoNumer=U.OsoNumer and O.Data between U.DataOd and U.DataDo
+			group by U.OsoNumer, U.OsUNumer, O.RodzajPracy, U.DataOd, U.DataDo
+		) U
+		left outer join (
+			select isnull(N.OsoNumer,P.OsoNumer) OsoNumer, isnull(N.RodzajPracy,P.RodzajPracy) RodzajPracy,
+				isnull(N.Data,P.Data) Data, N.Roboczy, Wymiar, isnull(P.Czas,N.Czas) Czas, Nadg50, Nadg100, Nocne
+			from (
+				select OsoNumer, RodzajPracy, Data, Roboczy, sum(Czas) Wymiar, sum(Czas*Brak) Czas
+				from (
+					select O.OsoNumer, O.RodzajPracy, O.Data, case when min(O.TypDnia)=1 then 1 else 0 end Roboczy,
+						O.Czas, case when max(P.Data)&gt;0 then 0 else 1 end Brak						
+					from @okresy O
+					left outer join @praca P on P.OsoNumer=O.OsoNumer and P.Data=O.Data
+					group by O.OsoNumer, O.Data, O.RodzajPracy, O.Czas
+				) N
+				group by OsoNumer, Data, RodzajPracy, Roboczy
+			) N
+			full outer join (
+				select OsoNumer, OsUNumer, RodzajPracy, Data, sum(Czas) Czas,
+					sum(case when NadGodziny&amp;1&gt;0 then Czas else 0 end) Nadg50,
+					sum(case when NadGodziny&amp;2&gt;0 then Czas else 0 end) Nadg100,
+					sum(case when NadGodziny&amp;4&gt;0 then Czas else 0 end) Nocne
+				from @praca
+				group by OsoNumer, OsUNumer, RodzajPracy, Data
+			) P on P.OsoNumer=N.OsoNumer and P.RodzajPracy=N.RodzajPracy and P.Data=N.Data
+		) P on P.OsoNumer=U.OsoNumer and P.RodzajPracy=U.RodzajPracy and P.Data between U.DataOd and U.DataDo
+		group by U.OsoNumer, U.OsUNumer, U.RodzajPracy, U.DataOd, U.DataDo, U.ZEwidencji
+	) P
+	left outer join CDN.OsoCzasRazem on OCR_OsoNumer=OsoNumer and OCR_RodzajPracy=RodzajPracy
+		and OCR_DataOd between P.DataOd and P.DataDo
+	inner join CDN.KadrSlowniki on KSl_Id=RodzajPracy
+	group by OsoNumer, OsUNumer, DataOd, DataDo, KSl_Id, KSl_Symbol, KSl_Nazwa, KSl_Flaga1, ZEwidencji,
+		Wymiar, Godzin, Ponad, Ponizej, Nadg50, Nadg100, Nocne
+	return
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

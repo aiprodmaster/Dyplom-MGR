@@ -1,0 +1,120 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="XLRezerwacjeOnline_PobierzZasoby"></A><PRE>
+          <FONT SIZE="2"><I>/* XLRezerwacjeOnline_PobierzZasoby */</I><BR>
+CREATE PROCEDURE CDN.XLRezerwacjeOnline_PobierzZasoby
+(
+	@p_Tryb INT = 0, 
+	@p_FrsId INT,
+	@p_TwrNumer INT,
+	@p_Ilosc DECIMAL(19, 4),
+	@p_MagNumer INT, 
+	@p_TPaId INT,
+	@p_RezZrdTyp int = 0,
+	@p_RezZrdNumer int = 0
+/*
+
+	@p_Tryb - Tryb 
+		0 - przerwij jeśli brak ilości
+		1 - zwróc nawet, jeśli dostępna jest tylko część żądanej ilości
+
+	@p_FrsId - aktualne centrum
+	@p_TwrNumer - identyfikator towaru
+	@p_Ilosc - żądana ilość
+	@p_MagNumer - identyfikator magazynu
+	@p_TPaId - identyfikator partii
+
+	*/
+)
+AS
+BEGIN
+	if (@p_TwrNumer is null) or (@p_Ilosc is null) or (@p_MagNumer is null) begin
+		--RAISERROR('(Operacja anulowana) Brak wymaganych parametrów.',16,1)
+		RETURN -1
+	end
+
+	SET NOCOUNT ON;
+
+	DECLARE @FirmaID INT
+	EXEC @FirmaID = CDN.GIDFirma
+
+	DECLARE @DataAkt INT; SET @DataAkt=DATEDIFF(d,'18001228',GETDATE());
+
+	DECLARE @TwrTyp TINYINT
+	DECLARE @TwrRozliczMag TINYINT --1- FIFO, 2- LIFO, 3- wybór, 4- wg daty ważności 
+
+	SELECT @TwrTyp=Twr_Typ, @TwrRozliczMag=Twr_RozliczMag FROM CDN.TwrKarty WHERE Twr_GIDNumer=@p_TwrNumer
+
+	DECLARE @MAGSposobPracyZWMS SMALLINT
+	SELECT @MAGSposobPracyZWMS=MAG_SposobPracyZWMS FROM CDN.Magazyny WHERE MAG_GIDNumer=@p_MagNumer
+
+	DECLARE @DokUwzgledniajRezerwacje TINYINT
+	DECLARE @DokChronologiaRezerwacji TINYINT
+
+	SELECT @DokUwzgledniajRezerwacje=Dok_UwzgledniajRezerwacje, @DokChronologiaRezerwacji=Dok_ChronologiaRezerwacji FROM cdn.DokDefinicje WHERE DOK_GidTyp=1605 and Dok_FrsId=@p_FrsId
+
+	IF @p_RezZrdNumer &lt;&gt; 0 
+		SET @DokUwzgledniajRezerwacje = 0 -- dla generowania powinno być zawsze 0
+
+	DECLARE @IloscDoSpr DECIMAL(28, 4)
+	DECLARE @WynikStr VARCHAR(255)
+
+	SELECT @WynikStr=cdn.DokSumaDostepnychZasobow(16,@p_TwrNumer,0,@DataAkt,@p_RezZrdTyp,@p_RezZrdNumer,@p_FrsId,@p_FrsId,1605,@p_RezZrdTyp,@p_RezZrdNumer,0,0,@DokChronologiaRezerwacji)
+
+	SELECT @IloscDoSpr = CAST(SUBSTRING(@WynikStr,1,CHARINDEX(':',@WynikStr,1)-1) as DECIMAL(28,4))
+	IF @p_Tryb=0 AND @IloscDoSpr&lt;@p_Ilosc BEGIN
+		SET NOCOUNT OFF;
+		RETURN -2	
+	END ELSE IF @IloscDoSpr=0 BEGIN
+		SET NOCOUNT OFF;
+		RETURN
+	END
+
+	;WITH Zasoby AS (
+		SELECT TwZ_DstNumer, TwZ_Ilosc, TwZ_IlSpr, TwZ_DataP, TwZ_DataW, Dst_TpAId as TpAId,
+			CDN.DokSumaStanowTowaru(16,@FirmaID,@p_TwrNumer,@TwrTyp,0,1,1,@FirmaID,@p_MagNumer,0,1-@DokUwzgledniajRezerwacje,TwZ_DstNumer,@DataAkt,0,0,@p_FrsId,@p_FrsId,1605,@p_RezZrdTyp,@p_RezZrdNumer,0,0,-1) as Zarezerwowane,
+			(SELECT IsNull((SELECT SUM(AMaS_Ilosc)-SUM(MaS_Ilosc) from CDN.MagSElem 
+				JOIN CDN.MagElem on MaE_GIDNumer=MaS_GIDNumer and MaE_GIDLp=MaS_GIDLp 
+				JOIN CDN.MagSElemArc on AMaS_GIDNumer=MaS_GIDNumer and AMaS_GIDLp=MaS_GIDLp and AMaS_SubGIDLp=MaS_SubGIDLp 
+				WHERE MaS_DstNumer=TwZ_DstNumer and mas_magnumer=TwZ_MagNumer and MaS_GIDTyp=1605 and MaS_Ilosc&lt;AMaS_Ilosc and MaE_Status&lt;4),'0')
+			) as NiezrealizoweNaZWM
+		FROM CDN.TwrZasoby
+		LEFT JOIN CDN.Dostawy ON Dst_GidNumer=TwZ_DstNumer
+		WHERE 
+			TwZ_TwrNumer=@p_TwrNumer AND TwZ_MagNumer=@p_MagNumer AND (Dst_TpAId=@p_TPaId OR @MAGSposobPracyZWMS=1)
+	)
+	, ZasobyDostepne AS (	
+		SELECT TwZ_DstNumer as DstNumer, TwZ_DataP, TwZ_DataW, TpAId,
+			(CASE WHEN TwZ_Ilosc&lt;TwZ_IlSpr THEN TwZ_Ilosc ELSE TwZ_IlSpr END)-NiezrealizoweNaZWM-CAST(SUBSTRING(Zarezerwowane,CHARINDEX(':', Zarezerwowane,CHARINDEX(':', Zarezerwowane,1)+1) + 1,CHARINDEX(':', Zarezerwowane,CHARINDEX(':', Zarezerwowane,CHARINDEX(':', Zarezerwowane,1)+1)+1) - CHARINDEX(':', Zarezerwowane,CHARINDEX(':', Zarezerwowane,1)+1) - 1) as DECIMAL(28,4)) as Ilosc
+		FROM Zasoby
+	)
+	SELECT DstNumer, CASE WHEN Ilosc&gt;@IloscDoSpr THEN @IloscDoSpr ELSE Ilosc END as Ilosc
+	FROM ZasobyDostepne
+	WHERE Ilosc&gt;0
+	ORDER BY
+		CASE WHEN TpAId=@p_TPaId THEN 1 ELSE 0 END DESC,
+		CASE WHEN @TwrRozliczMag=1 THEN TwZ_DataP END ASC, 
+		CASE WHEN @TwrRozliczMag=2 THEN TwZ_DataP END DESC, 
+		CASE WHEN @TwrRozliczMag=3 THEN TwZ_DataP END ASC, --wybór jak FIFO? 
+		CASE WHEN @TwrRozliczMag=4 THEN TwZ_DataW END ASC, 
+		DstNumer ASC
+
+	SET NOCOUNT OFF;
+	RETURN
+
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

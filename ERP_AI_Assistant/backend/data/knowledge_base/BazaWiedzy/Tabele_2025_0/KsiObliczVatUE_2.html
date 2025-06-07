@@ -1,0 +1,343 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="KsiObliczVatUE_2"></A><PRE>
+          <FONT SIZE="2"><I>/* KsiObliczVatUE_2 */</I><BR>
+CREATE   PROCEDURE CDN.KsiObliczVatUE_2(@Rok varchar(4), @Miesiac tinyint, @Wersja tinyint, @Kwartalna tinyint=1, @Rodzaj tinyint = 0, @ObcinajGrosze tinyint = 0, @FirmaFiltrId int=0, @DokZaksiegowane tinyint=0)
+AS
+BEGIN
+set nocount on
+set QUOTED_IDENTIFIER OFF
+
+
+	-- @Rodzaj	-	0 - wszystkie, 1 - dostawy, 2 - nabycia, 3 - usługi,
+	-- @FirmaFiltrId	-	dodatkowe filtry : 0 - brak; 1 - PA
+
+
+	declare @e_Rodzaj_Wszystkie	tinyint = 0
+	declare @e_Rodzaj_Dostawy	tinyint = 1
+	declare @e_Rodzaj_Nabycia	tinyint = 2
+	declare @e_Rodzaj_UslugiRO	tinyint = 3
+
+	declare @e_SPR_nNieEksportowy			varchar(2) = 1       --nie eksportowy
+		,@e_SPR_nEksportowyVat0					varchar(2) = 2       --eksportowy VAT0%
+		,@e_SPR_nEksportowyVatDowolny			varchar(2) = 3       --eksportowy VAT dowolny
+		,@e_SPR_nEksportowyVatDowolnyKorekta	varchar(2) = 4       --korekta vat dowolny  -&gt; vat eksportowy
+		,@e_SPR_nEksportowyVat0Korekta			varchar(2) = 5       --korekta vat eksportowy -&gt; vat dowolny
+		,@e_SPR_nWewnatrzwspolnotowyVat0D		varchar(2) = 6       --Wewnątrzwspílnotowy dostawa Vat 0
+		,@e_SPR_nWewnatrzwspolnotowyVatDowolnyD	varchar(2) = 7       --Wewnątrzwspílnotowy dostawa Vat dowolny
+		,@e_SPR_nWewnatrzwspolnotowyVat0DT		varchar(2) = 8       --Wewnątrzwspílnotowa dostawa, trójstronna Vat 0,
+		,@e_SPR_nWewnatrzwspolnotowyVatDowolnyDT varchar(2) = 9      --Wewnątrzwspílnotowa dostawa, trójstronna Vat dowolny,
+		,@e_SPR_nWewnatrzwspolnotowyVat0N		varchar(2) = 10      --Wewnątrzwspílnotowe nabycie Vat 0
+		,@e_SPR_nWewnatrzwspolnotowyVatDowolnyN	varchar(2) = 11      --Wewnątrzwspílnotowe nabycie Vat dowolny
+		,@e_SPR_nWewnatrzwspolnotowyVat0NT		varchar(2) = 12      --Wewnątrzwspílnotowe nabycie, trójstronne Vat 0
+		,@e_SPR_nWewnatrzwspolnotowyVatDowolnyNT varchar(2) = 13     --Wewnątrzwspílnotowe nabycie, trójstronne Vat dowolny
+		,@e_SPR_nImportowyVat0FW				varchar(2) = 14      --eksportowy VAT0% dla FWS
+		,@e_SPR_nImportowyVatDowolnyFW			varchar(2) = 15      --eksportowy VAT dowolny dla FWS
+		,@e_SPR_nWewnatrzwspolnotowyVatDowolnyDKorekta varchar(2) = 16  --korekta wewnątrzwspílnotowy dostawa Vat dowolny
+		,@e_SPR_nWewnatrzwspolnotowyVat0DKorekta varchar(2) = 17		--korekta wewnątrzwspílnotowy dostawa Vat 0
+		,@e_SPR_nWewnatrzwspolnotowyVatDowolnyDTKorekta varchar(2) = 18      --korekta wewnątrzwspílnotowa dostawa  trójstronna Vat dowolny
+		,@e_SPR_nWewnatrzwspolnotowyVat0DTKorekta varchar(2) = 19		--korekta wewnątrzwspílnotowa dostawa  trójstronna Vat 0
+		,@e_SPR_nEksportowyNabywca				varchar(2) = 20			--podatnikiem jest nabywca
+		,@e_SPR_nDostawaOpodatkowanaWWsp		varchar(2) = 21      --dostawa opodatkowana poza terytorium kraju
+		,@e_SPR_nTaxFree						varchar(2) = 22      --tax free
+		,@e_SPR_nDostawaOpodatkowanaInne		varchar(2) = 23      --dostawa opodatkowana poza terytorium kraju
+
+	declare @FirmaIdPA tinyint = 1
+
+	declare @sDostawy varchar(100) = @e_SPR_nWewnatrzwspolnotowyVat0D + ',' + @e_SPR_nWewnatrzwspolnotowyVatDowolnyD + ',' + @e_SPR_nWewnatrzwspolnotowyVat0DT + ',' + @e_SPR_nWewnatrzwspolnotowyVatDowolnyDT + 
+				',' + @e_SPR_nWewnatrzwspolnotowyVatDowolnyDKorekta + ',' + @e_SPR_nWewnatrzwspolnotowyVat0DKorekta + ',' + @e_SPR_nWewnatrzwspolnotowyVatDowolnyDTKorekta + ',' + @e_SPR_nWewnatrzwspolnotowyVat0DTKorekta +
+				',' + @e_SPR_nDostawaOpodatkowanaWWsp            
+	  
+		, @sDostawyTroj varchar(50) = @e_SPR_nWewnatrzwspolnotowyVat0DT + ',' + @e_SPR_nWewnatrzwspolnotowyVatDowolnyDT + ',' + @e_SPR_nWewnatrzwspolnotowyVatDowolnyDTKorekta + ',' + @e_SPR_nWewnatrzwspolnotowyVat0DTKorekta	                
+	  
+		, @sNabycia varchar(50) = @e_SPR_nWewnatrzwspolnotowyVat0N + ',' + @e_SPR_nWewnatrzwspolnotowyVatDowolnyN + ',' + @e_SPR_nWewnatrzwspolnotowyVat0NT + ',' + @e_SPR_nWewnatrzwspolnotowyVatDowolnyNT	            
+
+		, @sNabyciaTroj varchar(50) = @e_SPR_nWewnatrzwspolnotowyVat0NT + ',' + @e_SPR_nWewnatrzwspolnotowyVatDowolnyNT
+
+	
+	
+	declare @bNieZaokraglajKwot tinyint = 0
+
+	if @Wersja &gt;= 6	
+	begin
+		--select @bNieZaokraglajKwot = KON_Wartosc from cdn.Konfig where Kon_Numer = 20135
+		select @bNieZaokraglajKwot = 1
+	end
+		
+	
+	declare @RodzajZakupuDostawyFiltr varchar(50) = ' AND Trv_RodzajZakupu IN (1, 5) '
+	declare @RodzajZakupuNabyciaFiltr varchar(50) = ' '
+	declare @RodzajZakupuUslugiFiltr varchar(50) = ' AND Trv_RodzajZakupu = 8 '
+
+	
+	declare @sKwartalMiesiac varchar(20) = ' = ' + convert(varchar(2), @Miesiac) + ' '
+	IF @Kwartalna = 1 set @sKwartalMiesiac = ' BETWEEN ' + CONVERT(varchar(2), ( (@Miesiac * 3) - 2 )) + ' AND ' + CONVERT(varchar(2), ( @Miesiac * 3))
+
+
+	declare @zapytanie varchar(max) = ''
+	
+	
+	set @zapytanie = 'if object_id(''tempdb..#tmpWynik'') is not null 
+					Drop table #tmpWynik '
+		                
+	set @zapytanie = @zapytanie + ' ' + 'if object_id(''tempdb..#tmpSadNagDate'') is not null 
+					Drop table #tmpSadNagDate'
+		                
+	set @zapytanie = @zapytanie + ' ' + 'if object_id(''tempdb..#tmpLastTraNag'') is not null 
+					Drop table #tmpLastTraNag'
+
+
+	set @zapytanie = @zapytanie + ' ' + 'create table #tmpWynik
+	(		
+			KntNumer int
+		, KnANumer int
+		, Data int
+		, KnAPierwotny int
+		, KnaAkronim varchar(50)
+	)	'
+
+	set @zapytanie = @zapytanie + ' ' + 'create table #tmpLastTraNag
+	(	
+		GIDNumer int
+		, KntNumer int
+		, KnANumer int
+		, Data int		
+		, KnAPierwotny int
+		, KnaAkronim varchar(50)
+	)'
+
+	set @zapytanie = @zapytanie + ' ' + 'create table #tmpSadNagDate
+	(
+		GIDTyp smallint
+		, GIDNumer int
+		, DataWystawienia int
+		, KntNumer int			
+		, KnANumer int
+		, KnAPierwotny int
+		, KnaAkronim varchar(50)
+	)'
+
+
+	set @zapytanie = @zapytanie + ' ' + '	insert into #tmpLastTraNag
+		select GIDNumer, KntNumer, c.KnaNumer, t3.TrN_Data2, c.KnaPierwotny, KNA_Akronim
+		from cdn.TraNag t3
+		join 
+		(
+			select MAX(t2.TRN_GIDNumer) GIDNumer, KntNumer, KnaPierwotny, max(KnaNumer) KnaNumer
+			from cdn.TraNag t2
+			JOIN CDN.TraVat ON TRV_GIDTyp = t2.TrN_GIDTyp AND TRV_GIDNumer = t2.TrN_GIDNumer				
+			JOIN cdn.KntAdresy ka2 on TrV_KnANumer = ka2.KnA_GIDNumer
+			JOIN
+			(
+				select MAX(t1.TRN_Data2) data, KNA_KntNumer KntNumer, KnA_KnaPierwotny KnaPierwotny, MAX(KnA_GIDNumer) KnaNumer 
+				from cdn.TraNag t1
+				JOIN CDN.TraVat ON TRV_GIDTyp=t1.TrN_GIDTyp AND TRV_GIDNumer=t1.TrN_GIDNumer
+				JOIN CDN.KntAdresy ON TrV_KnANumer = KNA_GIDNumer
+				WHERE t1.TRN_Stan&gt;=3 '+
+					' AND ( (TRV_ExpoNorm IN ('+@sDostawy+') AND t1.TRN_TrnTyp NOT IN(2,4,10,21) AND Trv_RodzajZakupu IN (1,5,8)) OR TRV_ExpoNorm IN ('+@sNabycia+') )  ' +
+					
+					case when @FirmaFiltrId = @FirmaIdPA then ' AND TRN_Zaksiegowano=1 ' else '' end +
+					'AND TRV_DeklRok='+@Rok+' AND TRV_DeklMiesiac ' + @sKwartalMiesiac + ' AND TRV_RozliczacP=1
+					'+CASE @DokZaksiegowane WHEN 0 THEN '' ELSE ' AND TRN_Zaksiegowano='+CONVERT(VARCHAR,ABS(@DokZaksiegowane-2)) END + ' 
+					AND Trv_GIDTyp NOT IN (1489,1497,2001,2009,2034,2042,2005,2013,1616,1624, 1617,1625,1600,1490,1498,2039,2047,2003	
+							,14339,2010,2000,2008,1089,1601,3344,2004)		'+		--@RodzajZakupuFiltr+
+				' GROUP BY KNA_KntNumer, KnA_KnaPierwotny
+			) b on t2.TrN_Data2 = b.data and ka2.KnA_KntNumer = b.KntNumer
+			WHERE t2.TRN_Stan&gt;=3 ' +
+				' AND ( (TRV_ExpoNorm IN ('+@sDostawy+') AND t2.TRN_TrnTyp NOT IN(2,4,10,21) AND Trv_RodzajZakupu IN (1,5,8)) OR TRV_ExpoNorm IN ('+@sNabycia+') )  ' +
+				case when @FirmaFiltrId = @FirmaIdPA then ' AND TRN_Zaksiegowano=1 ' else '' end + '
+				AND TRV_DeklRok='+@Rok+' AND TRV_DeklMiesiac  ' + @sKwartalMiesiac + ' 
+				AND TRV_ExpoNorm IN('+@sDostawy+','+@sNabycia+') AND TRV_RozliczacP=1
+				'+CASE @DokZaksiegowane WHEN 0 THEN '' ELSE ' AND TRN_Zaksiegowano='+CONVERT(VARCHAR,ABS(@DokZaksiegowane-2)) END + ' 
+				AND Trv_GIDTyp NOT IN (1489,1497,2001,2009,2034,2042,2005,2013,1616,1624, 1617,1625,1600,1490,1498,2039,2047,2003	
+					,14339,2010,2000,2008,1089,1601,3344,2004) '+		--@RodzajZakupuFiltr+
+			' GROUP BY KntNumer, KnaPierwotny
+		) c on t3.TrN_GIDNumer = c.GIDNumer
+		JOIN CDN.KntAdresy on c.KNANumer = KNA_GIDNumer '
+			
+
+
+
+	set @zapytanie = @zapytanie + ' ' + '	insert into #tmpSadNagDate
+		select s1.SaN_GIDTyp, s1.SaN_GIDNumer
+			, max(DateDiff(d, convert(datetime,''28-12-1800'',105),convert(datetime, case when SaN_VatDzien &lt; 10 then ''0'' else '''' end + convert(varchar(2), SaN_VatDzien) + ''-'' + case when SaN_VatMiesiac &lt; 10 then ''0'' else '''' end + convert(varchar(2), SaN_VatMiesiac) + ''-''  + convert(varchar(4), SaN_VatRok),105)))	
+			, s1.SaN_KntNumer , s1.SaN_KnANumer '+
+			', KNA_KnaPierwotny, KNA_Akronim
+		from cdn.SadNag s1 
+		JOIN CDN.TraVat ON TRV_GIDTyp=s1.SaN_GIDTyp AND TRV_GIDNumer=s1.SaN_GIDNumer
+		JOIN CDN.KntAdresy ON s1.SAN_KNANumer = KNA_GIDNumer
+		WHERE s1.SAN_Stan&gt;=3  ' + case when @FirmaFiltrId = @FirmaIdPA then ' AND SAN_Zaksiegowano=1 ' else '' end + '
+			AND TRV_DeklRok='+@Rok+' AND TRV_DeklMiesiac  ' + @sKwartalMiesiac + ' 
+			AND TRV_ExpoNorm IN('+@sDostawy+','+@sNabycia+') AND TRV_RozliczacP=1
+			'+CASE @DokZaksiegowane WHEN 0 THEN '' ELSE ' AND SAN_Zaksiegowano='+CONVERT(VARCHAR,ABS(@DokZaksiegowane-2)) END + ' 
+			AND Trv_GIDTyp NOT IN (3376	
+				,14339,2010,2000,2008,1089,1601,3344,2004) '+		--@RodzajZakupuFiltr+
+		' group by s1.SaN_GIDTyp, s1.SaN_GIDNumer, s1.SaN_KntNumer, KNA_KNAPierwotny, s1.SaN_KnANumer, KNA_Akronim '
+
+
+	set @zapytanie = @zapytanie + ' ' + '	insert into #tmpWynik	
+		select s3.KntNumer, s3.KnANumer, s3.DataWystawienia, s3.KnaPierwotny, s3.KnaAkronim
+		from #tmpSadNagDate s3
+		join 
+		(
+			select MAX(s2.GIDNumer) GIDNumer, b.KntNumer, b.KnaPierwotny		
+			from
+			(
+				select MAX(s1.DataWystawienia) data, s1.KntNumer KntNumer, s1.KnaPierwotny
+				from #tmpSadNagDate s1			
+				GROUP BY s1.KntNumer, s1.KnaPierwotny
+			) b
+			JOIN #tmpSadNagDate s2 on s2.DataWystawienia = b.data and s2.KntNumer = b.KntNumer and s2.KnaPierwotny = b.KnaPierwotny
+			JOIN CDN.TraVat ON TRV_GIDTyp = s2.GIDTyp AND TRV_GIDNumer = s2.GIDNumer
+				
+			WHERE TRV_DeklRok='+@Rok+' AND TRV_DeklMiesiac  ' + @sKwartalMiesiac + ' 
+				AND TRV_ExpoNorm IN('+@sNabycia+') AND TRV_RozliczacP=1
+				AND Trv_GIDTyp NOT IN (3376		
+						,14339,2010,2000,2008,1089,1601,3344,2004) '+		--@RodzajZakupuFiltr+
+			' GROUP BY b.KntNumer, b.KnaPierwotny
+				
+		) c on s3.GIDNumer = c.GIDNumer and c.KntNumer = s3.KntNumer and c.KnaPierwotny = s3.KnaPierwotny
+		where not exists 
+		(
+			select 1
+			from #tmpLastTraNag tn1
+			where s3.DataWystawienia &lt;= tn1.Data and s3.KnaPierwotny = tn1.KnaPierwotny
+		)'
+
+
+		set @zapytanie = @zapytanie + ' ' + 'insert into #tmpWynik	
+		select tn1.KntNumer, tn1.KnANumer, tn1.Data, tn1.KnaPierwotny, tn1.KnaAkronim
+		from #tmpLastTraNag tn1
+		where not exists
+		(
+			select 1
+			from #tmpWynik w1
+			where w1.Data &gt; tn1.Data and w1.KnaPierwotny = tn1.KnaPierwotny
+		) '
+			
+			
+
+	  
+	IF @Rodzaj in (@e_Rodzaj_Nabycia, @e_Rodzaj_Wszystkie)		-- dla zakładki Nabycia sięgamy do TraNag i SadNag
+	BEGIN
+	
+		-- konwersja kwoty do typu int, bo i tak zawsze działamy na wartościach całkowitych
+		set @zapytanie = @zapytanie + ' ' + 'SELECT KNA_NIPPrefiks, KNA_NIP, ' + 
+			case when @bNieZaokraglajKwot &gt; 0 then 'SUM(TRV_NettoP+TRV_NettoR) ' else 'CONVERT(int, ' + case when @ObcinajGrosze &gt; 0 then 'SUM(TRV_NettoP+TRV_NettoR) ' else 'ROUND(SUM(TRV_NettoP+TRV_NettoR),0) ' end + ') ' end + 'Wartosc ' +
+			' , CASE WHEN TRV_ExpoNorm IN('+@sNabyciaTroj+') THEN 1 ELSE 0 END Trojstr, w.KntNumer, ' + convert(varchar(1), @e_Rodzaj_Nabycia) + ' Rodzaj, w.KnaPierwotny, w.KnaNumer KnaNumer, w.KnaAkronim KnaAkronim
+		FROM 
+		(
+			SELECT TRN_GIDTyp GIDTyp, TRN_GIDNumer GIDNumer, TRN_KNTTyp KNTTyp, TRN_KNTNumer KNTNumer, TRN_KNANumer KNANumer, KnA_KnaPierwotny KnA_KnaPierwotny
+			FROM CDN.TraNag 
+			INNER JOIN CDN.KntAdresy ON TrN_KnTNumer = KnA_KntNumer AND TrN_KntTyp = 32 and TrN_KnANumer = KnA_GIDNumer
+			WHERE TRN_Stan&gt;=3 ' + case when @FirmaFiltrId = @FirmaIdPA then ' AND TRN_Zaksiegowano=1 ' else '' end + '
+			'+CASE @DokZaksiegowane WHEN 0 THEN '' ELSE ' AND TRN_Zaksiegowano='+CONVERT(VARCHAR,ABS(@DokZaksiegowane-2)) END + ' 
+			
+			UNION ALL 
+			
+			SELECT SAN_GIDTyp, SAN_GIDNumer, SAN_KNTTyp, SAN_KNTNumer, SAN_KNANumer, KnA_KnaPierwotny KnA_KnaPierwotny FROM CDN.SadNag 
+			INNER JOIN CDN.KntAdresy ON SaN_KnTNumer = KnA_KntNumer AND SaN_KntTyp = 32 and SaN_KnANumer = KnA_GIDNumer
+			WHERE SAN_Stan&gt;=3  ' + case when @FirmaFiltrId = @FirmaIdPA then ' AND SAN_Zaksiegowano=1 ' else '' end + '
+			'+CASE @DokZaksiegowane WHEN 0 THEN '' ELSE ' AND SAN_Zaksiegowano='+CONVERT(VARCHAR,ABS(@DokZaksiegowane-2)) END + ' 
+		) a
+		JOIN CDN.TraVat  ON TRV_GIDTyp=a.GIDTyp AND TRV_GIDNumer=a.GIDNumer 
+		JOIN #tmpWynik w ON w.KNTNumer = a.KNTNumer and w.KnAPierwotny = a.KnA_KnaPierwotny 
+		JOIN CDN.KntAdresy ka ON w.KnANumer = ka.KnA_GIDNumer
+
+		WHERE TRV_DeklRok='+@Rok+' AND TRV_DeklMiesiac  ' + @sKwartalMiesiac + ' 
+			AND TRV_ExpoNorm IN('+@sNabycia+') AND TRV_RozliczacP=1 
+			AND Trv_GIDTyp NOT IN (1489,1497,2001,2009,2034,2042,2005,2013,14339,2010,2000,2008,1616,1624
+				,1617,1625,1600,1089,1601,3344,1490,1498,2039,2047,3376,2004,2003) '+@RodzajZakupuNabyciaFiltr+'	
+		GROUP BY w.KntNumer, w.KnaPierwotny, w.KNANumer, KNA_NIPPrefiks, KNA_NIP, CASE WHEN TRV_ExpoNorm IN('+@sNabyciaTroj+') THEN 1 ELSE 0 END , w.KnaAkronim '
+	  
+	END
+
+	IF @Rodzaj in (@e_Rodzaj_Dostawy, @e_Rodzaj_Wszystkie)		-- dla zakładki Dostawy pobieramy dane tylko z TraNag, nie ma potrzeby sięgania do SadNag
+	BEGIN
+	
+		if @Rodzaj = @e_Rodzaj_Wszystkie
+			set @zapytanie = @zapytanie + ' ' + ' UNION ALL '
+			
+		set @zapytanie = @zapytanie + ' ' + 'SELECT ka.KNA_NIPPrefiks, ka.KNA_NIP, ' + 
+					case when @bNieZaokraglajKwot &gt; 0 then 'SUM(TRV_NettoP+TRV_NettoR) ' else 'CONVERT(int, ' + case when @ObcinajGrosze &gt; 0 then 'SUM(TRV_NettoP+TRV_NettoR) ' else 'ROUND(SUM(TRV_NettoP+TRV_NettoR),0) ' end + ') ' end + 'Wartosc ' +
+					' , CASE WHEN TRV_ExpoNorm IN('+@sDostawyTroj+') THEN 1 ELSE 0 END Trojstr, ka.KnA_KntNumer, ' + convert(varchar(1), @e_Rodzaj_Dostawy) + ' Rodzaj , ka.KnA_KNAPierwotny, ka.KnaNumer, ka.KnaAkronim KnaAkronim
+				FROM CDN.TraNag tn1 
+			JOIN CDN.TraVat tv1 ON tv1.TRV_GIDTyp=tn1.TRN_GIDTyp AND tv1.TRV_GIDNumer=tn1.TRN_GIDNumer 
+			join CDN.KntAdresy k1 on tv1.TrV_KnANumer = k1.KnA_GIDNumer 
+			JOIN
+			( 
+				SELECT KnA_KntNumer, KnA_NIP, KnA_NipPrefiks, KnA_KNAPierwotny, KNA_GIDnumer KnaNumer, w.KnaAkronim
+				FROM CDN.KntAdresy 
+				join #tmpWynik w on w.KnANumer = KnA_GIDNumer
+			) ka on k1.KNA_KnTNumer = ka.KnA_KntNumer AND k1.KnA_KntTyp = 32 and k1.KnA_KnaPierwotny = ka.KnA_KnaPierwotny
+
+			WHERE 
+				tn1.TRN_Stan&gt;=3 AND tn1.TRN_TrnTyp NOT IN(2,4,10,21)  ' + case when @FirmaFiltrId = @FirmaIdPA then ' AND tn1.TRN_Zaksiegowano=1 ' else '' end + '
+				'+CASE @DokZaksiegowane WHEN 0 THEN '' ELSE ' AND TRN_Zaksiegowano='+CONVERT(VARCHAR,ABS(@DokZaksiegowane-2)) END + ' 
+				AND TRV_DeklRok='+@Rok+' AND TRV_DeklMiesiac  ' + @sKwartalMiesiac + ' 
+				AND TRV_ExpoNorm IN('+@sDostawy+') AND TRV_RozliczacP=1 
+				AND Trv_GIDTyp NOT IN (1489,1497,2001,2009,2034,2042,2005,2013,14339,2010,2000,2008,1616,1624
+					,1617,1625,1600,1089,1601,3344,1490,1498,2039,2047,3376,2004,2003) '+@RodzajZakupuDostawyFiltr+'	
+			GROUP BY ka.KnA_KntNumer, ka.KnA_KNAPierwotny, ka.KnaNumer, ka.KNA_NIPPrefiks, ka.KNA_NIP, CASE WHEN TRV_ExpoNorm IN('+@sDostawyTroj+') THEN 1 ELSE 0 END, ka.KnaAkronim '
+	END
+	
+	IF @Rodzaj in (@e_Rodzaj_UslugiRO, @e_Rodzaj_Wszystkie)		-- dla zakładki Usługi pobieramy dane tylko z TraNag, nie ma potrzeby sięgania do SadNag
+	BEGIN
+	
+		if @Rodzaj = @e_Rodzaj_Wszystkie 
+			set @zapytanie = @zapytanie + ' ' + ' UNION ALL '
+	
+		set @zapytanie = @zapytanie + ' ' + 'SELECT ka.KNA_NIPPrefiks, ka.KNA_NIP, ' + 
+					case when @bNieZaokraglajKwot &gt; 0 then 'SUM(TRV_NettoP+TRV_NettoR) ' else ' CONVERT(int, ' + case when @ObcinajGrosze &gt; 0 then 'SUM(TRV_NettoP+TRV_NettoR) ' else 'ROUND(SUM(TRV_NettoP+TRV_NettoR),0) ' end + ') ' end + 'Wartosc ' +
+					' , CASE WHEN TRV_ExpoNorm IN('+@sDostawyTroj+') THEN 1 ELSE 0 END Trojstr, ka.KnA_KntNumer , ' + convert(varchar(1), @e_Rodzaj_UslugiRO) + ' Rodzaj , ka.Kna_KNAPierwotny, ka.KnaNumer, ka.KnaAkronim KnaAkronim 
+				FROM CDN.TraNag tn1 
+			JOIN CDN.TraVat tv1 ON tv1.TRV_GIDTyp=tn1.TRN_GIDTyp AND tv1.TRV_GIDNumer=tn1.TRN_GIDNumer 
+			join CDN.KntAdresy k1 on tv1.TrV_KnANumer = k1.KnA_GIDNumer 
+			JOIN
+			( 
+				SELECT KnA_KntNumer, KnA_NIP, KnA_NipPrefiks, KnA_KNAPierwotny, KNA_GIDnumer KnaNumer, w.KnaAkronim
+				FROM CDN.KntAdresy 
+				join #tmpWynik w on w.KnANumer = KnA_GIDNumer
+			) ka on k1.KNA_KnTNumer = ka.KnA_KntNumer AND k1.KnA_KntTyp = 32 and k1.KnA_KnaPierwotny = ka.KnA_KnaPierwotny
+
+			WHERE 
+				tn1.TRN_Stan&gt;=3 AND tn1.TRN_TrnTyp NOT IN(2,4,10,21) '  + case when @FirmaFiltrId = @FirmaIdPA then ' AND tn1.TRN_Zaksiegowano=1 ' else '' end + '
+				'+CASE @DokZaksiegowane WHEN 0 THEN '' ELSE ' AND TRN_Zaksiegowano='+CONVERT(VARCHAR,ABS(@DokZaksiegowane-2)) END + ' 
+				AND TRV_DeklRok='+@Rok+' AND TRV_DeklMiesiac  ' + @sKwartalMiesiac + ' 
+				AND TRV_ExpoNorm IN('+@sDostawy+') AND TRV_RozliczacP=1 
+				AND Trv_GIDTyp NOT IN (1489,1497,2001,2009,2034,2042,2005,2013,14339,2010,2000,2008,1616,1624
+					,1617,1625,1600,1089,1601,3344,1490,1498,2039,2047,3376,2004,2003) '+@RodzajZakupuUslugiFiltr+'	
+			GROUP BY ka.KnA_KntNumer, ka.KnA_KnAPierwotny, ka.KnaNumer, ka.KNA_NIPPrefiks, ka.KNA_NIP, CASE WHEN TRV_ExpoNorm IN('+@sDostawyTroj+') THEN 1 ELSE 0 END, ka.KnaAkronim '
+	END
+		
+	set @zapytanie = @zapytanie + ' ' + 'if object_id(''tempdb..#tmpWynik'') is not null 
+						Drop table #tmpWynik'
+		                
+	set @zapytanie = @zapytanie + ' ' + 'if object_id(''tempdb..#tmpSadNagDate'') is not null 
+						Drop table #tmpSadNagDate'
+		                
+	set @zapytanie = @zapytanie + ' ' + 'if object_id(''tempdb..#tmpLastTraNag'') is not null 
+						Drop table #tmpLastTraNag'
+	  
+	--select @zapytanie
+	exec (@zapytanie)
+
+	set QUOTED_IDENTIFIER ON
+
+	set nocount off
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

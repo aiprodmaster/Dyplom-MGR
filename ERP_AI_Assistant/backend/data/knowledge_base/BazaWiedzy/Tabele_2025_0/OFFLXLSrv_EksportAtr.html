@@ -1,0 +1,170 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="OFFLXLSrv_EksportAtr"></A><PRE>
+          <FONT SIZE="2"><I>/* OFFLXLSrv_EksportAtr */</I><BR>
+CREATE PROCEDURE CDN.OFFLXLSrv_EksportAtr 
+  @ID	  INT      -- Id oddziału
+ ,@LogID  INT = -1 -- ID lLog-a synchronizacji 
+AS
+	RAISERROR('Procedura OFFLXLSrv_EksportAtr nie jest obługiwana na MSSQL 2000',16,1)
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="OFFLXLSrv_EksportAtr"></A><PRE>
+          <FONT SIZE="2"><I>/* OFFLXLSrv_EksportAtr */</I><BR>
+CREATE PROCEDURE CDN.OFFLXLSrv_EksportAtr
+  @ID	  INT      -- Id oddziału
+ ,@LogID  INT = -1 -- ID lLog-a synchronizacji 
+AS
+SET ARITHABORT ON
+
+DECLARE @Opis			VARCHAR(512),
+		@DataStart		VARCHAR(19),
+		@IloscWierszy   INT,
+		@Pck_Typ			INT
+		,@PcK_TSSynchrAtrybutyPtw	INT		
+
+SELECT @Pck_Typ = PcK_Typ FROM CDN.PicoKonfig WHERE PcK_PicoID = @ID
+
+SET @PcK_TSSynchrAtrybutyPtw = 0;
+select @PcK_TSSynchrAtrybutyPtw=isnull(PcS_TSSynchrPtw,0) from cdn.PicoTimestamp where PcS_PcKID = @ID and PcS_OBITyp = 14416
+
+/****** AtrybutyKomplety ******/
+SELECT @DataStart = CONVERT(VARCHAR(19), GETDATE(),121)
+	  ,@Opis = 'Komplety atrybutów'
+EXEC CDN.Log_OtworzPoziom @LogID, @Opis
+
+SELECT 
+	AKp_Id               AS [@Id],
+	CDN.XLValidateXMLChars(AKp_Nazwa)            AS [@Nazwa],
+	AKp_OptimaId         AS [@OptimaId],
+	(SELECT 
+		AKl_AtKId            AS [@AtKId],
+		AKl_Lp               AS [@Lp]
+     FROM CDN.AtrKompletyLinki
+     WHERE AKl_AKpID = AKp_Id
+     FOR XML PATH('AKL'),ROOT('AKLI'),TYPE)				
+FROM CDN.AtrybutyKomplety
+WHERE 1=(CASE WHEN @Pck_Typ = 5 AND @PcK_TSSynchrAtrybutyPtw &gt;= akp_CzasModyfikacji THEN 0 ELSE 1 END)
+FOR XML PATH('AKP'), ROOT('AKPI')	
+
+SET @IloscWierszy = @@ROWCOUNT
+
+SELECT @Opis = 'Ilość wyeksportowanych rekordów: '+ CAST(@IloscWierszy AS VARCHAR(10))
+EXEC CDN.Log_Dopisz @LogID, @Opis,0
+EXEC CDN.Log_ZamknijPoziom @LogID
+
+
+/****** AtrybutyKlasy ******/
+SELECT @DataStart = CONVERT(VARCHAR(19), GETDATE(),121)
+	  ,@Opis = 'Klasy atrybutów'
+EXEC CDN.Log_OtworzPoziom @LogID, @Opis
+
+SELECT 
+	AtK_ID				AS [@ID] ,
+	AtK_Typ				AS [@Typ] ,
+	CDN.XLValidateXMLChars(AtK_Nazwa)			AS [@Nazwa] ,
+	CDN.XLValidateXMLChars(AtK_Opis)			AS [@Opis] ,
+	AtK_Format			AS [@Format] ,
+	AtK_ZListy			AS [@ZListy] ,
+	AtK_Zamknieta		AS [@Zamknieta] ,
+	AtK_Wymagany		AS [@Wymagany] ,
+	AtK_Controlling		AS [@Controlling] ,
+	AtK_Automat			AS [@Automat] ,
+	AtK_Nieaktywny		AS [@Nieaktywny] ,
+	AtK_SQL				AS [@SQL] ,
+	AtK_Historia		AS [@Historia] ,
+	AtK_Domyslna		AS [@Domyslna] ,
+	AtK_DomyslnaAPI		AS [@DomyslnaAPI] ,
+	AtK_DomTyp			AS [@DomTyp] ,
+	AtK_DomFirma		AS [@DomFirma] ,
+	AtK_DomNumer		AS [@DomNumer] ,
+	AtK_DomLp			AS [@DomLp] ,
+	AtK_DomAPITyp		AS [@DomAPITyp] ,
+	AtK_DomApiFirma		AS [@DomApiFirma] ,
+	AtK_DomAPINumer		AS [@DomAPINumer] ,
+	AtK_DomAPILp		AS [@DomAPILp] ,
+	AtK_DomyslnaSQL		AS [@DomyslnaSQL] ,
+	AtK_DomyslnaAPISQL	AS [@DomyslnaAPISQL] ,
+	AtK_TypDom			AS [@TypDom] ,
+	AtK_TypDomApi		AS [@TypDomApi] ,
+	AtK_CharSet			AS [@CharSet] ,
+	AtK_OptimaId		AS [@OptimaId] ,
+	AtK_Okresowe		AS [@Okresowe] ,
+	AtK_Wielowart		AS [@Wielowart] ,
+	AtK_ReadOnly		AS [@ReadOnly] ,
+	AtK_iZam			AS [@iZam] ,
+	AtK_eSklep			AS [@eSklep],
+	(SELECT REPLACE(AtW_Wartosc,CHAR(31),'') AS [@Wartosc]
+	 FROM CDN.AtrybutyWartosci
+	 WHERE AtW_AtKId = AtK_Id
+     FOR XML PATH('ATW'),ROOT('ATWI'),TYPE)		 
+FROM CDN.AtrybutyKlasy
+WHERE ((@Pck_Typ = 5 AND AtK_Typ IN (1,2,3,4,6,11,12,19,8) AND AtK_iMall = 0) OR @PcK_Typ &lt;&gt; 5)
+AND 1=(CASE WHEN @Pck_Typ = 5 AND @PcK_TSSynchrAtrybutyPtw &gt;= atk_CzasModyfikacji THEN 0 ELSE 1 END)
+FOR XML PATH('ATK'), ROOT('ATKI')
+
+DECLARE @Cinfo VARBINARY(128) --TFSID:221203
+DECLARE @tmpcInfo VARBINARY(128)
+SET @tmpcInfo = 0x1111
+SELECT @Cinfo = ISNULL(Context_Info(),@tmpcInfo)
+SET Context_Info @tmpcInfo
+UPDATE CDN.AtrybutyKlasy SET AtK_Synchronizowany = 1 --TFSID:160148
+FROM   CDN.AtrybutyKlasy
+WHERE ((@Pck_Typ = 5 AND AtK_Typ IN (1,2,3,4,6,11,12,19,8) AND AtK_iMall = 0) OR @PcK_Typ &lt;&gt; 5)
+AND 1=(CASE WHEN @Pck_Typ = 5 AND @PcK_TSSynchrAtrybutyPtw &gt;= atk_CzasModyfikacji THEN 0 ELSE 1 END)
+AND ISNULL(AtK_Synchronizowany,0) = 0 --TFSID:221598
+SET Context_Info @Cinfo
+
+SET @IloscWierszy = @@ROWCOUNT
+
+SELECT @Opis = 'Ilość wyeksportowanych rekordów: '+ CAST(@IloscWierszy AS VARCHAR(10))
+EXEC CDN.Log_Dopisz @LogID, @Opis,0
+EXEC CDN.Log_ZamknijPoziom @LogID
+
+/****** AtrybutyObiekty ******/
+SELECT @DataStart = CONVERT(VARCHAR(19), GETDATE(),121)
+	  ,@Opis = 'Obiekty atrybutów'
+EXEC CDN.Log_OtworzPoziom @LogID, @Opis
+
+SELECT
+	AtO_GIDTyp           AS [@GIDTyp],
+	AtO_Element          AS [@Element],
+	AtO_AtKId            AS [@AtKId],
+	AtO_Lp               AS [@Lp],
+	AtO_Wymagany         AS [@Wymagany],
+	AtO_Automat          AS [@Automat],
+	AtO_ReadOnly         AS [@ReadOnly],
+	AtO_ATZID            AS [@ATZID],
+	AtO_Akcja            AS [@Akcja],
+	AtO_Online           AS [@Online]
+FROM CDN.AtrybutyObiekty
+INNER JOIN CDN.AtrybutyKlasy ON AtK_ID = AtO_AtKId
+WHERE ((@PcK_Typ = 5 AND AtK_Typ IN (1,2,3,4,6,11,12,19,8) AND AtK_iMall = 0) OR @PcK_Typ &lt;&gt; 5)
+AND 1=(CASE WHEN @Pck_Typ = 5 AND @PcK_TSSynchrAtrybutyPtw &gt;= ato_CzasModyfikacji THEN 0 ELSE 1 END)
+FOR XML PATH('ATO'), ROOT('ATOI')
+
+SET @IloscWierszy = @@ROWCOUNT
+
+SELECT @Opis = 'Ilość wyeksportowanych rekordów: '+ CAST(@IloscWierszy AS VARCHAR(10))
+EXEC CDN.Log_Dopisz @LogID, @Opis,0
+EXEC CDN.Log_ZamknijPoziom @LogID
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

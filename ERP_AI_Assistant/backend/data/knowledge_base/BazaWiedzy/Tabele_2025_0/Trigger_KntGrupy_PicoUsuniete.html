@@ -1,0 +1,85 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[KntGrupy_PicoUsuniete]"></A><PRE>
+          <FONT SIZE="2"><I>/* [KntGrupy_PicoUsuniete] */</I><BR>
+CREATE TRIGGER [CDN].[KntGrupy_PicoUsuniete]
+ON [CDN].[KntGrupy]
+AFTER DELETE
+AS
+BEGIN
+	SET NOCOUNT ON;
+
+	IF NOT EXISTS(SELECT * FROM CDN.PicoKonfig WHERE PcK_Typ = 5) RETURN
+	SELECT
+	KnG_GIDTyp
+	,KnG_SyncID
+	,KnG_GrOTyp
+	,KnG_GrONumer
+	,KnG_Akronim
+	,ROW_NUMBER() OVER( ORDER BY KnG_SyncID) Indeks
+        ,KnG_GIDNumer
+	INTO #Deleted
+	FROM DELETED
+
+	DECLARE @Count INT
+	,@Indeks INT
+	,@PcKId INT
+	,@ObiTyp SMALLINT
+	,@ObiNumer INT
+
+	SELECT @Count = MAX(Indeks)
+	,@Indeks = 1
+	FROM #Deleted
+
+	WHILE @Indeks &lt;= @Count
+	BEGIN
+		-- Wybranie drzewa grup kontrahentw
+		;WITH CTE AS
+		(
+		SELECT KnG_GIDTyp, KnG_SyncID, KnG_GrOTyp, KnG_GrONumer, 1 AS ToDelete,KnG_GIDNumer
+		FROM #Deleted D
+		WHERE D.Indeks = @Indeks
+		UNION ALL
+		SELECT KnG.KnG_GIDTyp, KnG.KnG_SyncID, KnG.KnG_GrOTyp, KnG.KnG_GrONumer, 0,KnG.KnG_GIDNumer
+		FROM CDN.kntGrupy KnG
+		INNER JOIN CTE ON KnG.KnG_GIDNumer = CTE.KnG_GrONumer AND KnG.KnG_GIDTyp = CTE.KnG_GrOTyp
+		)
+		SELECT TOP 1
+		@PcKId = PcK_PicoID
+		,@ObiTyp = CTE.KnG_GIDTyp
+		,@ObiNumer = CTE.KnG_SyncID
+		FROM CTE
+		CROSS JOIN CDN.PicoKonfig
+		WHERE CTE.ToDelete = 1 AND PcK_Typ = 5 AND
+		EXISTS(
+		SELECT * FROM CTE
+		WHERE CTE.KnG_GIDNumer = PcK_KnGINumer AND CTE.KnG_GIDTyp = PcK_KnGITyp
+		)
+		-- Dopisanie do usunitych obiektw
+		IF ISNULL(@PcKId,0) &lt;&gt; 0 AND ISNULL(@ObiTyp,0) &lt;&gt; 0 AND ISNULL(@ObiNumer,0) &lt;&gt; 0
+		BEGIN
+		EXEC CDN.OFFLXLSrv_LogUsunObiekt @PcKId, @ObiTyp, @ObiNumer, 0, 0
+		END
+		-- Zwikszenie indeksu
+		SET @Indeks = @Indeks + 1
+	END
+	
+	DROP TABLE #Deleted
+	
+	SET NOCOUNT OFF;
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

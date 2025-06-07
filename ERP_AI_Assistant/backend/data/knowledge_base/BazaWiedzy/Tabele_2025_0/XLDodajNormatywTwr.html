@@ -1,0 +1,145 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="XLDodajNormatywTwr"></A><PRE>
+          <FONT SIZE="2"><I>/* XLDodajNormatywTwr */</I><BR>
+CREATE PROCEDURE CDN.XLDodajNormatywTwr
+@Twr_Kod					VARCHAR(40)=NULL,
+@MAG_Kod					VARCHAR(20)=NULL,
+
+
+@Tpm_IloscMin				DECIMAL(11,4)=NULL,	--	Ilość minimalna towaru
+@Tpm_IloscMax				DECIMAL(11,4)=NULL,	--	Ilość maksymalna towaru 
+@Tpm_IloscZam				DECIMAL(11,4)=NULL,	--	Ilość zamawiana
+@Tpm_Polozenie				VARCHAR(64)=NULL,	--	Położenie w magazynie 
+@Tpm_MgAId					INT	=NULL,			--	identyfikator adresu w magazynie 
+@IgnorujBledy				TINYINT = NULL		--	Jeżeli różne od NULL wtedy wyswietlana informacja o bledzie
+
+AS
+BEGIN
+	SET NOCOUNT ON;
+DECLARE @Twr_GIDTyp			SMALLINT
+DECLARE @Twr_GIDFirma		INT
+DECLARE @Twr_GidNumer		INT
+DECLARE @Twr_GIDLp			SMALLINT
+
+DECLARE @MAG_GIDTyp			SMALLINT 
+DECLARE @MAG_GIDFirma		INT 
+DECLARE @MAG_GIDNumer		INT 
+DECLARE @MAG_GIDLp			SMALLINT 
+
+
+DECLARE @GIDFirma           INT
+DECLARE @pom int
+SET @GIDFirma	=	CDN.GIDFirma()
+
+if @Twr_Kod is null or @Twr_Kod=''
+	begin			
+		if @IgnorujBledy is null	
+			raiserror('Nie podano kodu towaru - (-1)',16,1)
+		return -1
+	end
+
+SELECT @Twr_GIDTyp=Twr_GidTyp, @Twr_GIDFirma=Twr_GidFirma, @Twr_GIDNumer=Twr_GidNumer, @Twr_GIDLp=Twr_GidLp  FROM cdn.TwrKarty where Twr_Kod=@Twr_Kod
+
+if  @Twr_GIDNumer is null 
+	begin			
+		if @IgnorujBledy is null	
+			raiserror('Nie znaleziono towaru - (-2)',16,1)
+		return -2
+	end
+
+if @MAG_Kod is null or @MAG_Kod=''
+	begin			
+		if @IgnorujBledy is null	
+			raiserror('Nie podano kodu magazynu - (-3)',16,1)
+		return -3
+	end
+
+SELECT @MAG_GIDTyp=MAG_GIDTyp, @MAG_GIDFirma=MAG_GIDFirma, @MAG_GidNumer=MAG_GidNumer, @MAG_GIDLp=MAG_GIDLp FROM CDN.Magazyny where MAG_kod=@MAG_Kod
+
+if  @MAG_GidNumer is null 
+	begin			
+		if @IgnorujBledy is null	
+			raiserror('Nie znaleziono magazynu - (-4)',16,1)
+		return -4
+	end
+
+if @Tpm_IloscZam is not null
+	if @Tpm_IloscZam&lt;0
+		begin			
+			if @IgnorujBledy is null	
+				raiserror('Ilość zamawiana musi być większa od zera - (-5)',16,1)
+			return -5
+		end
+
+if @Tpm_IloscMax is not null
+	if @Tpm_IloscMax&lt;0
+		begin			
+			if @IgnorujBledy is null	
+				raiserror('Ilość maksymalna musi być większa od zera - (-6)',16,1)
+			return -6
+		end
+
+
+if @Tpm_IloscMin is not null
+	if @Tpm_IloscMin&lt;0
+		begin			
+			if @IgnorujBledy is null	
+				raiserror('Ilość minimalna musi być większa od zera - (-7)',16,1)
+			return -7
+		end
+	else 
+		if @Tpm_IloscMax is null or @Tpm_IloscMin&gt;@Tpm_IloscMax  
+			begin			
+				if @IgnorujBledy is null	
+					raiserror('Ilość maksymalna musi być większa od ilości minimalnej - (-8)',16,1)
+				return -8
+			end
+		
+if exists(SELECT Tpm_Id FROM CDN.twrparmag where Tpm_TwrNumer=@Twr_GidNumer and Tpm_MagNumer=@MAG_GidNumer)
+		UPDATE CDN.TwrParMag SET	Tpm_IloscZam=	(case when @Tpm_IloscZam is null then 0 else @Tpm_IloscZam end), 
+									Tpm_IloscMin=	(case when @Tpm_IloscMin is null then 0 else @Tpm_IloscMin end),
+									Tpm_IloscMax=	(case when @Tpm_IloscMax is null then 0 else @Tpm_IloscMax end),
+									Tpm_Polozenie=	(case when @Tpm_Polozenie is null then '' else @Tpm_Polozenie end), 
+									Tpm_MgAId=		(case when @Tpm_MgAId is null then 0 else @Tpm_MgAId end)
+							 where Tpm_TwrNumer=@Twr_GidNumer and Tpm_MagNumer=@MAG_GidNumer
+		/*UPDATE CDN.TwrParMag SET	Tpm_IloscZam=	(case when @Tpm_IloscZam is null then Tpm_IloscZam else @Tpm_IloscZam end), 
+									Tpm_IloscMin=	(case when @Tpm_IloscMin is null then Tpm_IloscMin else @Tpm_IloscMin end),
+									Tpm_IloscMax=	(case when @Tpm_IloscMax is null then Tpm_IloscMax else @Tpm_IloscMax end),
+									Tpm_Polozenie=	(case when @Tpm_Polozenie is null then Tpm_Polozenie else @Tpm_Polozenie end), 
+									Tpm_MgAId=		(case when @Tpm_MgAId is null then Tpm_MgAId else @Tpm_MgAId end)
+							 where Tpm_TwrNumer=@Twr_GidNumer and Tpm_MagNumer=@MAG_GidNumer*/ 
+else
+		INSERT	INTO CDN.TwrParMag(Tpm_TwrTyp,Tpm_TwrFirma,Tpm_TwrNumer,Tpm_TwrLp,Tpm_MagTyp,Tpm_MagFirma,Tpm_MagNumer,Tpm_MagLp,Tpm_IloscZam,Tpm_IloscMin,Tpm_IloscMax, Tpm_Polozenie, Tpm_MgAId) 
+				VALUES( @Twr_GIDTyp,@Twr_GIDFirma,@Twr_GIDNumer,@Twr_GIDLp,@Mag_GIDTyp,@Mag_GIDFirma,@Mag_GIDNumer,@Mag_GIDLp,
+						(case when @Tpm_IloscZam is null then 0 else @Tpm_IloscZam end),
+						(case when @Tpm_IloscMin is null then 0 else @Tpm_IloscMin end),
+						(case when @Tpm_IloscMax is null then 0 else @Tpm_IloscMax end), 
+						(case when @Tpm_Polozenie is null then '' else @Tpm_Polozenie end), 
+						(case when @Tpm_MgAId is null then 0 else @Tpm_MgAId end)
+					  ) 
+
+if @@Error &lt;&gt; 0
+	begin		
+		if @IgnorujBledy is null	
+			raiserror('Wystąpił błąd podczas zapisu danych - (-100)',16,1)
+		return -100
+	end
+return 0
+END
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,112 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="ProdZlecStatus"></A><PRE>
+          <FONT SIZE="2"><I>/* ProdZlecStatus */</I><BR>
+CREATE FUNCTION CDN.ProdZlecStatus (@Zlecenie int)
+RETURNS varchar(100)
+as
+begin
+  if (select PZL_Zaksiegowano from CDN.ProdZlecenia where PZL_Id=@Zlecenie)&gt;0
+    return 'zaksięgowane'
+  if (select PZL_DataZamkniecia from CDN.ProdZlecenia where PZL_Id=@Zlecenie)&gt;0
+    return 'zamknięte'
+  if not exists(select * from CDN.ProdZlecElem where PZE_Zlecenie=@Zlecenie)
+      and not exists(select * from CDN.ProdProcesy where PPC_Zlecenie=@Zlecenie)
+    return ''
+  declare @proc decimal(9,6), @Zgrubnie int, @proc_s varchar(10), @jestRealizacja smallint
+  
+  select @jestRealizacja = case when exists(select * from CDN.ProdCzynnosci where PCZ_PZLId=@Zlecenie and PCZ_Realizuje&gt;0 AND PCZ_Uruchomiona = 0) then 1 else 0 end
+	
+  if @jestRealizacja = 0 
+	begin
+	select @proc = 100*isnull(sum(case when Wsp&gt;1 then 1 else Wsp end),0)/case count(*) when 0 then 1 else count(*) end, @Zgrubnie = max(Zgrubnie)
+	from (
+    select 1.0*isnull(sum(CDN.ProdIloscAtr(PCZ_Ilosc,PTZ_Ilosc,PTZ_IloscAtr,PTZ_IloscFormat,PTZ_TypZasobu,PTC_Ilosc,PTC_IloscAtr,14340,PTC_Technologia,PCZ_TerminRozpoczecia,PCZ_Proces)),0)
+		/ case when PZE_Ilosc&gt;0 then PZE_Ilosc else 1 end as Wsp, isnull(max(PCZ_PlanZgrubnie),0) Zgrubnie
+    from (
+      select PZE_TwrTyp, PZE_TwrNumer, PZE_Technologia, sum(PZE_Ilosc) as PZE_Ilosc 
+      from CDN.ProdZlecElem where PZE_Zlecenie=@Zlecenie
+      group by PZE_TwrTyp, PZE_TwrNumer, PZE_Technologia
+    ) Elem 
+    inner join CDN.ProdTechnologiaCzynnosci on PTC_Technologia=PZE_Technologia 
+    inner join CDN.ProdTechnologiaZasoby on PTZ_TechnologiaCzynnosc=PTC_Id 
+      and PTZ_TwrTyp=PZE_TwrTyp and PTZ_TwrNumer=PZE_TwrNumer and PTZ_TypZasobu=0 
+    --left outer join CDN.ProdProcesy on PPC_Zlecenie=@Zlecenie
+    left outer join CDN.ProdCzynnosci on /*PCZ_Proces=PPC_id*/PCZ_PZLId = @Zlecenie and PCZ_TechnologiaCzynnosc=PTC_Id and PCZ_Realizuje&lt;1 
+    group by PZE_TwrTyp, PZE_TwrNumer, PZE_Technologia, PZE_Ilosc 
+    union all
+    select 1.0*isnull(sum(PCZ_Ilosc),0)/case when isnull(sum(PTC_Ilosc),0)&gt;0 then sum(PTC_Ilosc) else 1 end as Wsp, max(PCZ_PlanZgrubnie) Zgrubnie
+    from (
+      select PPC_Id, CDN.ProdIloscAtr(PPC_Ilosc,
+             case PTC_Planowana when 1 then PTC_IloscMin else PTC_Ilosc end,4,0,
+             case PTC_Planowana when 1 then PTC_IloscMinAtr else PTC_IloscAtr end,
+             PTE_Ilosc,0,14340,PTE_Id,-PZL_DataWystawienia,PPC_Id) PTC_Ilosc,
+			 isnull(sum(PCZ_Ilosc),0) PCZ_Ilosc, isnull(max(PCZ_PlanZgrubnie),0) PCZ_PlanZgrubnie
+      from CDN.ProdProcesy
+      inner join CDN.ProdZlecenia on PZL_Id=PPC_Zlecenie
+      inner join CDN.ProdTechnologia on PTE_Id=PPC_Technologia
+      inner join CDN.ProdTechnologiaCzynnosci on PTC_Technologia=PTE_Id and PTC_Planowana&gt;0
+      left outer join CDN.ProdCzynnosci on PCZ_Proces=PPC_Id and PCZ_TechnologiaCzynnosc=PTC_Id and PCZ_Realizuje&lt;1
+      where PZL_Id=@Zlecenie
+      group by PPC_Id, PPC_Ilosc, PTE_Id, PTE_Ilosc, PTC_Id, PTC_Ilosc, PTC_Planowana, PTC_IloscAtr, PTC_IloscMin, PTC_IloscMinAtr, PZL_DataWystawienia
+    ) Procesy
+    group by PPC_Id
+  ) Wynik
+  set @proc_s = CONVERT(varchar,@proc)
+  set @proc_s = SUBSTRING(@proc_s,1,len(@proc_s) - 5)
+  if @proc&lt;100 return case when @Zgrubnie&gt;0 then 'zgrubnie' else 'zaplanowane' end+' w '+@proc_s+'%'
+  return case when @Zgrubnie&gt;0 then 'zgrubnie' else 'zaplanowane' end+' w 100%'
+ end 
+ 
+  select @proc = 100*isnull(sum(case when Wsp&gt;1 then 1 else Wsp end),0)/case count(*) when 0 then 1 else count(*) end
+  from (
+    select 1.0*isnull(sum(R.PCZ_Ilosc),0)/case when C.PCZ_Ilosc&gt;0 then C.PCZ_Ilosc else 1 end Wsp
+    from CDN.ProdCzynnosci C
+    left outer join CDN.ProdCzynnosci R
+      on R.PCZ_Proces=C.PCZ_Proces and R.PCZ_Realizuje=C.PCZ_Id
+    where C.PCZ_Realizuje=0 and C.PCZ_ilosc&lt;&gt;0 AND C.PCZ_PZLId = @Zlecenie--PPC_Zlecenie=@Zlecenie
+    group by C.PCZ_Id, C.PCZ_Ilosc
+  ) Czynnosci
+  set @proc_s = CONVERT(varchar,@proc)
+  set @proc_s = SUBSTRING(@proc_s,1,len(@proc_s) - 5)
+  if @proc&lt;100 return 'zrealizowane w ' + @proc_s + '%'
+  select @proc = 100*sum(case when Zreal&gt;Ilosc then Ilosc else Zreal end/Ilosc) / case count(*) when 0 then 1 else count(*) end
+  from (
+    select Id, Zreal + isnull(sum(PZA_Ilosc),0) Zreal, Ilosc
+    from (
+      select Id, Zreal + isnull(sum(TrS_Ilosc),0) Zreal, Ilosc
+      from (
+	select PZA_Id Id,
+	  case when PZA_Zasob&lt;&gt;0 or PZA_TypZasobu=2 or (PZA_TwrTyp=0 and PZA_TypZasobu&lt;&gt;0 and isnull(PTZ_TechnologiaZasob,-1)=0) then PZA_Ilosc when PZA_Ilosc = 0 then 1 else 0 end Zreal,
+	  case when PZA_Ilosc&gt;0 then PZA_Ilosc else 1 end Ilosc
+	from CDN.ProdCzynnosci 
+	inner join CDN.ProdZasoby on PZA_Czynnosc=PCZ_Id
+	left outer join CDN.ProdTechnologiaZasoby on PTZ_Id=PZA_TechnologiaZasob
+	where PCZ_PZLId = @Zlecenie
+      ) Zasoby
+      left outer join CDN.TraSElem on TrS_ZlcTyp=14346 and TrS_ZlcNumer=Id
+      group by Id, Zreal, Ilosc
+    ) Elem
+    left outer join CDN.ProdZasoby on PZA_Zasob=Id
+    group by Id, Zreal, Ilosc
+  ) Wsp
+  set @proc_s = CONVERT(varchar,@proc)
+  set @proc_s = SUBSTRING(@proc_s,1,len(@proc_s) - 5)
+  if @proc&lt;100 return 'rozliczono w ' + @proc_s + '%'
+  return 'do zamknięcia'
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

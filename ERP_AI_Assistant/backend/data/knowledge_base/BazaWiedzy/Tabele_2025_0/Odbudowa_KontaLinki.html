@@ -1,0 +1,144 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie procedury Odbudowa_KontaLinki"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie procedury Odbudowa_KontaLinki */</I><BR>
+IF EXISTS (SELECT name  FROM sysobjects WHERE name = 'Odbudowa_KontaLinki' AND type = 'P')
+  DROP PROCEDURE CDN.Odbudowa_KontaLinki;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury Odbudowa_KontaLinki"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury Odbudowa_KontaLinki */</I><BR>
+
+CREATE PROCEDURE CDN.Odbudowa_KontaLinki
+@OkresID int
+AS
+set nocount on
+
+declare @OkresIDNast int
+declare @Poziom smallint
+declare @WszystkieOkresy smallint
+
+begin tran
+
+truncate table cdn.KontaLinki
+
+if @@Error &lt;&gt; 0 
+begin
+	Rollback tran
+	raiserror('Błąd usuwania rekordu z tabeli cdn.KontaLinki',16,1)
+	return
+end
+
+
+if @OkresID = 0
+	set @WszystkieOkresy = 0
+else
+begin
+	set @WszystkieOkresy = 1
+
+	select @OkresID = Okr_ID
+	from cdn.Okresy
+	where Okr_Koniec = (select min(Okr_Koniec) from cdn.Okresy)
+end
+
+declare @Linki Table(SynNumer int, KKL_SynNumer int, KKL_KKSNumer int, KKL_Me smallint, KKL_Analityka smallint, Poziom smallint)
+
+while isnull(@OkresID,0) &gt; 0
+begin
+	delete from @Linki
+
+	set @Poziom = 10
+
+
+	while @Poziom &gt;= 0
+	begin
+		set @Poziom = @Poziom - 1
+
+
+		--wprowadzenie nadrzednych
+		insert into @Linki
+		select KKS_SynNumer,
+			KKS_GIDNumer,
+			case when KKL_SynNumer is null then KKS_GIDNumer else KKL_KKSNumer end, 
+			0, 
+			KKL_Analityka,
+			Poziom
+		from cdn.Konta
+			join @Linki
+				on KKS_GIDNumer = SynNumer
+		where KKS_OkresID = @OkresID and KKS_Poziom = @Poziom
+
+		
+
+		insert into @Linki
+		select KKS_SynNumer,
+			KKS_GIDNumer,
+			KKS_GIDNumer,
+			1,
+			KKS_Analityka,
+			@Poziom
+		from cdn.Konta
+		where KKS_OkresID = @OkresID and KKS_Poziom = @Poziom		
+		
+	end
+
+
+	insert into cdn.KontaLinki
+	select KKL_SynNumer, KKL_Analityka, KKL_KKSNumer--, KKL_Me
+	from @Linki
+
+
+	if @@Error &lt;&gt; 0 
+	begin
+		Rollback tran
+		raiserror('Błąd dodawania rekordu w tabeli cdn.KontaLinki',16,1)
+		return
+	end
+	
+
+	if @WszystkieOkresy &lt;&gt; 0
+	begin
+		set @OkresID = (select b.Okr_ID
+		from cdn.Okresy a
+			join cdn.Okresy b
+				on a.Okr_Koniec + 1 = b.Okr_Poczatek
+		where a.Okr_ID = @OkresID)
+	end
+	else
+	begin
+		set @OkresID = 0
+	end
+
+end
+
+
+commit tran
+set nocount off
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury Odbudowa_KontaLinki"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury Odbudowa_KontaLinki */</I><BR>
+GRANT EXECUTE ON CDN.Odbudowa_KontaLinki TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

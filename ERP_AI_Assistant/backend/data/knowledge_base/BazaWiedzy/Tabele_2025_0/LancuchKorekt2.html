@@ -1,0 +1,413 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="LancuchKorekt2"></A><PRE>
+          <FONT SIZE="2"><I>/* LancuchKorekt2 */</I><BR>
+CREATE FUNCTION CDN.LancuchKorekt2 (@GidNumer int,@GidLp int)
+RETURNS @WartosciZsumowane TABLE (
+	TeP_Ilosc						DECIMAL(25,4),
+	TeP_KsiegowaNetto				DECIMAL(25,4),
+	TeP_KsiegowaBrutto				DECIMAL(25,4),
+	TeP_Vat							DECIMAL(25,4),
+	TeP_PoczIlosc					DECIMAL(25,4),
+	TeP_PoczKsiegowaNetto			DECIMAL(25,4),
+	TeP_PoczKsiegowaBrutto			DECIMAL(25,4),
+	TeP_PoczCena					DECIMAL(25,4),
+	TeP_RozCena						DECIMAL(25,4),
+	TeP_PrzyczynaKorekty			NVARCHAR(200),
+	TeP_Rozdzielony					TINYINT,
+	TeP_PoczVat						DECIMAL(25,4),
+	TeP_PoczSww						VARCHAR(21),
+	TeP_PoczPcn						VARCHAR(11),
+	TeP_PoczPrzeliczM				DECIMAL(25,4),
+	TeP_PoczPrzeliczL				DECIMAL(25,4),
+	TeP_PoczFlagaVat				int,
+	Tep_PoczExpoNorm 				int,
+	Tep_PoczRodzajZakupu			int
+)
+AS  
+BEGIN
+	DECLARE @TeP_Ilosc				DECIMAL(25,4),
+			@TeP_WartoscNetto		DECIMAL(25,4),
+			@TeP_WartoscBrutto		DECIMAL(25,4),
+			@TeP_PoczIlosc			DECIMAL(25,4),
+			@TeP_PoczWartoscNetto	DECIMAL(25,4),
+			@TeP_PoczWartoscBrutto	DECIMAL(25,4),
+			@PoczCena				DECIMAL(25,4),
+			@PoczVat				DECIMAL(25,4),
+			@PoczSww				VARCHAR(21),
+			@PoczPcn				VARCHAR(11),
+			@PoczPrzeliczL			DECIMAL(25,4),
+			@PoczPrzeliczM			DECIMAL(25,4),
+			@PrzyczynaKorekty		NVARCHAR(200),
+			@pozycja				int,
+			@trnZwrNumer			int,
+			@OrgNumer				int,
+			@OrgN					int,
+			@OrgLp					int,
+			@OrgSubLp				int,
+			@ZwrLp					int,
+			@ZwrNr					int,
+			@typ					int,
+			@rozdzielony			int,		
+			@temp					int,
+			@temp2					int,
+			@PoczFlagaVat			int,
+			@OrgLp2					int,
+			@flagaNB				varchar(1),
+			@poczExpoNorm 			int,
+            @poczRodzajZakupu		int
+	select top 1
+		@typ = trs_gidtyp,
+		@OrgNumer = trs_zwrnumer,
+		@OrgN = trs_Orgnumer,
+		@OrgLp = trs_zwrlp,
+		@OrgLp2	= trs_orglp,
+		@ZwrLp = trs_zwrlp,
+		@ZwrNr = TrS_ZwrNumer,
+		@OrgSubLp = trs_subzwrlp
+		from CDN.TraSElem
+		where TrS_GIDNumer=@GidNumer and TrS_GIDLp = @GidLp and trs_zwrtyp &lt;&gt; 0;
+		
+    if @typ NOT in (1498,1529,1497,3352,2009,2041,2042,2043,1624,2008,2010,2044,1625,1528,2045,2013,    1489,2001,2005)
+		RETURN
+
+    if @typ in (1489,2001,2005) and exists(select * from cdn.tranag tz where tz.trn_zwrnumer = @gidnumer and tz.trn_gidnumer &lt;&gt; @gidnumer)
+		RETURN
+
+    select 
+        @pozycja=tre_pozycja,
+		@PrzyczynaKorekty = TrE_PrzyczynaKorekty 
+		from CDN.TraElem 
+		where TrE_GIDNumer = @GidNumer and TrE_GIDLp = @GidLp;
+
+    select 
+		@trnZwrNumer=tn.TrN_ZwrNumer,
+		@flagaNB=trn_flaganb
+		from CDN.TraNag tn
+		where tn.TrN_GIDNumer = @GidNumer
+
+
+    if @OrgNumer &lt;&gt; @OrgN  and @GidLp &gt; 0
+    begin
+        select distinct top 1
+			@temp2 = tre_twrnumer,
+			@PoczFlagaVat  =tre_flagavat,
+			@PoczPrzeliczL = TrE_PrzeliczL, 
+			@PoczPrzeliczM = TrE_PrzeliczM, 
+			@temp = tre_gidnumer, 
+			@PoczCena = tre_cena,
+			@PoczVat = TrE_StawkaPod,
+			@poczExpoNorm = TrN_ExpoNorm,
+			@poczRodzajZakupu = TrN_RodzajZakupu,
+			@PoczPcn=tre_pcn
+			from CDN.TraSElem
+			join TraNag on trs_gidnumer = TrN_GIDNumer
+			join CDN.TraElem on TrE_GIDNumer = TrS_GIDNumer and TrE_GIDLp = TrS_GIDLp                
+			where tre_gidlp &gt;0 and trs_gidnumer&lt;@GidNumer and trs_orgnumer = @OrgN  and (trs_zwrlp = @ZwrLp or trs_gidlp = @ZwrLp) and trs_gidtyp &lt;&gt; 2003
+			order by tre_gidnumer desc;
+
+        if @PoczCena is null
+			select distinct top 1 
+				@temp2 = tre_twrnumer,
+				@PoczFlagaVat  =tre_flagavat, 
+				@PoczPrzeliczL = TrE_PrzeliczL, 
+				@PoczPrzeliczM = TrE_PrzeliczM,
+				@temp = tre_gidnumer, 
+				@PoczCena = tre_cena,
+				@PoczVat = TrE_StawkaPod,  
+				@poczExpoNorm = TrN_ExpoNorm,
+				@poczRodzajZakupu = TrN_RodzajZakupu,
+				@PoczPcn=tre_pcn  
+				from CDN.TraSElem
+				join TraNag on trs_gidnumer = TrN_GIDNumer
+				join CDN.TraElem on TrE_GIDNumer = TrS_GIDNumer and TrE_GIDLp = TrS_GIDLp						
+				where tre_gidlp &lt; 0 and trs_gidnumer&lt;= @ZwrNr and trs_orgnumer = @OrgN and (trs_zwrlp = @ZwrLp or trs_gidlp = @ZwrLp)  and trs_gidtyp &lt;&gt; 2003
+				order by tre_gidnumer desc;
+    end;
+    else
+	begin
+		select distinct top 1 
+			@temp2 = tre_twrnumer,
+			@PoczFlagaVat  =tre_flagavat, 
+			@PoczPrzeliczL = TrE_PrzeliczL, 
+			@PoczPrzeliczM = TrE_PrzeliczM, 
+			@temp = tre_gidnumer, 
+			@PoczCena = tre_cena,
+			@PoczVat = TrE_StawkaPod,
+			@poczExpoNorm = TrN_ExpoNorm,
+			@poczRodzajZakupu = TrN_RodzajZakupu,
+			@PoczPcn=tre_pcn 
+			from CDN.TraSElem
+			join TraNag on trs_gidnumer = TrN_GIDNumer
+			join CDN.TraElem on TrE_GIDNumer = TrS_GIDNumer and TrE_GIDLp = TrS_GIDLp
+			where trs_gidnumer&lt; @GidNumer  and trs_zwrnumer = @OrgNumer and trs_zwrlp = @ZwrLp and trs_subgidlp&gt;0  and trs_gidtyp &lt;&gt; 2003
+			order by tre_gidnumer desc;
+				 
+		if @PoczCena is null
+			select distinct top 1 
+				@temp2 = tre_twrnumer,
+				@PoczFlagaVat  = tre_flagavat,
+				@PoczPrzeliczL = TrE_PrzeliczL, 
+				@PoczPrzeliczM = TrE_PrzeliczM, 
+				@temp = tre_gidnumer, 
+				@PoczCena = tre_cena,
+				@PoczVat = TrE_StawkaPod,
+				@poczExpoNorm = TrN_ExpoNorm,
+				@poczRodzajZakupu = TrN_RodzajZakupu,
+				@PoczPcn=tre_pcn 
+				from CDN.TraElem
+				join TraNag on TrE_GIDNumer = TrN_GIDNumer
+				where tre_gidnumer = @OrgN and tre_gidlp = @OrgLp2 and tre_gidtyp &lt;&gt; 2003
+				order by tre_gidnumer desc; 			
+	end
+    select 
+		@PoczSww = Twr_Sww 
+		from cdn.twrkarty 
+		where twr_gidnumer = @temp2
+
+	select 
+		@rozdzielony = TrE_GIDLp 
+		from CDN.TraElem 
+		where TrE_GIDNumer = @GidNumer and Tre_GIDLp = -@GidLp
+
+	if @rozdzielony is null and  @GidLp is null	
+		select @rozdzielony = 1
+    else if @rozdzielony is null
+		select @rozdzielony = 0
+    else
+		select @rozdzielony =1
+		
+    --GIDLP&lt;0
+    if @GidLp &lt;0
+    begin
+		if(@typ in (2005,2013,2037,2045))
+		begin
+            select
+				@TeP_WartoscNetto =
+					case when @flagaNB ='N' then TrE_WartoscPoRabacie else (TrE_WartoscPoRabacie*100)/(100+TrE_StawkaPod) end,
+				@TeP_WartoscBrutto =
+					case when @flagaNB ='N' then round(TrE_WartoscPoRabacie*(1+TrE_StawkaPod/100),2) else TrE_WartoscPoRabacie end,
+				@TeP_Ilosc = Tre_ilosc,
+				@TeP_PoczIlosc = Tre_Ilosc
+				from CDN.TraElem
+				where TrE_GIDNumer = @GidNumer and TrE_GIDLp = @GidLp;
+		end;
+		else
+		begin
+			select
+				@TeP_WartoscNetto = TrE_KSiegowaNetto,
+				@TeP_WartoscBrutto = TrE_KSiegowaBrutto,
+				@TeP_Ilosc = Tre_ilosc
+				from CDN.TraElem where TrE_GIDNumer = @GidNumer and TrE_GIDLp = @GidLp;
+		end
+		declare @num int;
+        declare @lp int;
+
+		select @num = TrS_GIDNumer, @lp = TrS_Gidlp from CDn.TraSElem where TrS_GidLp = @OrgLp and TrS_subgidlp=@OrgSubLp and TrS_GidNumer &lt;&gt; @GidNumer
+		if @num &gt; @GidNumer
+        begin
+			select 
+				@TeP_PoczIlosc = TeP_Ilosc, 
+				@TeP_PoczWartoscNetto = TeP_KsiegowaNetto,
+				@TeP_PoczWartoscBrutto =TeP_KsiegowaBrutto 
+				from CDN.LancuchKorekt2(@OrgN,@OrgLp)
+        end;
+        else
+        begin
+			select 
+				@TeP_PoczIlosc = TeP_Ilosc,
+				@TeP_PoczWartoscNetto = TeP_KsiegowaNetto,
+				@TeP_PoczWartoscBrutto =TeP_KsiegowaBrutto 
+				from CDN.LancuchKorekt2(@num,@lp)
+        end;
+    end;
+
+    else
+    --GIDLP&gt;0
+    begin
+    --trs_zwrlp &lt;0
+        if @ZwrLp &lt;0
+        begin
+			if(@typ in (2005,2013,2037,2045))
+			begin
+                select
+                    @TeP_PoczIlosc = sum(tre_ilosc),
+                    @TeP_PoczWartoscNetto = sum(TrE_WartoscPoRabacie),
+                    @TeP_PoczWartoscBrutto = sum(round(TrE_WartoscPoRabacie*(1+TrE_StawkaPod/100),2))
+					from cdn.traselem  join CDN.TraElem on TrE_GIDNumer = TrS_GIDNumer and TrE_GIDLp = TrS_GIDLp
+					where
+                    trs_zwrnumer=@OrgNumer
+                    and trs_zwrlp=@ZwrLp
+                    and trs_gidlp&gt;0
+                    and trs_gidnumer &lt; @GidNumer
+               
+				if @TeP_PoczIlosc is null
+				begin
+					select
+						@Tep_Ilosc=0,
+						@TeP_WartoscNetto=0,
+						@TeP_WartoscBrutto=0,
+						@TeP_PoczIlosc=0,
+						@TeP_PoczWartoscNetto=0,
+						@TeP_PoczWartoscBrutto=0
+				end;
+                        
+				select  
+					@TeP_PoczIlosc = @TeP_PoczIlosc+trs_ilosc
+					from cdn.traselem 
+					where trs_gidnumer=@OrgNumer and trs_gidlp=@ZwrLp
+
+				select
+                    @TeP_PoczWartoscNetto=TrE_WartoscPoRabacie,
+                    @TeP_PoczWartoscBrutto=round(TrE_WartoscPoRabacie*(1+TrE_StawkaPod/100),2)
+					from CDN.TraElem
+					where tre_gidnumer=@OrgNumer and tre_gidlp=@ZwrLp  
+
+				select  
+					@Tep_Ilosc = @TeP_PoczIlosc + tre_ilosc,
+                    @TeP_WartoscNetto = @TeP_PoczWartoscNetto + TrE_WartoscPoRabacie,
+                    @TeP_WartoscBrutto = @TeP_PoczWartoscBrutto + round(TrE_WartoscPoRabacie*(1+TrE_StawkaPod/100),2)
+					from cdn.traselem join CDN.TraElem on TrE_GIDNumer = TrS_GIDNumer and TrE_GIDLp = TrS_GIDLp
+					where trs_gidnumer=@GidNumer and trs_subzwrlp=@OrgSubLp
+			end
+			else
+			begin
+				select @TeP_PoczWartoscNetto = sum(TeP_PoczWartoscNetto),
+					   @TeP_PoczWartoscBrutto = sum(TeP_PoczWartoscBrutto),
+					   @Tep_PoczIlosc = sum(Tep_PoczIlosc),
+					   @TeP_WartoscNetto = sum( TeP_WartoscNetto),
+					   @TeP_WartoscBrutto = sum(TeP_WartoscBrutto),
+					   @Tep_Ilosc = sum(Tep_Ilosc)
+				from
+					(	select distinct trs_gidnumer , trs_gidlp,
+								case when tre_gidnumer = @GidNumer then 0 else TrE_KsiegowaNetto end as TeP_PoczWartoscNetto,
+								case when tre_gidnumer = @GidNumer then 0 else TrE_KsiegowaBrutto end as TeP_PoczWartoscBrutto,
+								case when tre_gidnumer = @GidNumer then 0 else tre_ilosc end as Tep_PoczIlosc,
+								TrE_KsiegowaNetto as TeP_WartoscNetto,
+								TrE_KsiegowaBrutto as TeP_WartoscBrutto,
+								tre_ilosc as Tep_Ilosc
+								from CDN.TraElem
+								left join CDN.TrasElem on TrE_GIDNumer = TrS_GIDNumer and TrE_GIDLp = TrS_GIDLp
+								where (trs_zwrnumer=@OrgNumer and trs_zwrlp=@ZwrLp) or (trs_gidnumer=@OrgNumer and trs_gidlp =@ZwrLp)
+					) as a 
+			end
+        end;
+        --trs_zwrlp &gt; 0
+        else
+        begin
+			select	
+				@TeP_PoczIlosc = sum((case when trs_gidnumer &lt; @GidNumer then trs_ilosc else 0 end)), 
+				@TeP_Ilosc = sum(trs_ilosc)
+				from cdn.traselem
+				where trs_zwrnumer=@OrgNumer and trs_zwrlp=@OrgLp and trs_gidlp&gt;0 and trs_gidnumer &lt;= @GidNumer
+
+			select 
+				@temp= sum(ts1.trs_ilosc) 
+				from cdn.traselem ts1 
+				where ts1.trs_gidnumer=ts1.trs_zwrnumer 
+				and not (trs_gidtyp in(2033,2036,2001,2034,1521,1489,1520,3344,2037,2005,2000,2002,1617,1520)) 
+				and ts1.trs_gidnumer in (select	trs_gidnumer from cdn.traselem ts where ts.trs_zwrnumer=@OrgNumer and ts.trs_zwrlp=@OrgLp and ts.trs_gidlp&gt;0 and ts.trs_gidnumer &lt; @GidNumer)
+
+			if(@temp is not null)
+				select @TeP_PoczIlosc=@TeP_PoczIlosc+@temp
+
+			if(@typ in (2005,2013,2037,2045))
+			begin
+				select
+					@TeP_PoczWartoscNetto = sum((case when trs_gidnumer &lt; @GidNumer then TrE_WartoscPoRabacie else 0 end)),
+					@TeP_PoczWartoscBrutto = sum((case when trs_gidnumer &lt; @GidNumer then TrE_WartoscPoRabacie else 0 end)),
+					@TeP_WartoscNetto  = sum(TrE_WartoscPoRabacie), 
+					@TeP_WartoscBrutto = sum(round(TrE_WartoscPoRabacie,2))
+					from 
+					(select distinct TrE_WartoscPoRabacie,trs_gidnumer,trs_gidlp from cdn.traelem  
+					left join CDN.TrasElem on TrE_GIDNumer = TrS_GIDNumer and TrE_GIDLp = TrS_GIDLp
+					where trs_zwrnumer=@OrgNumer and trs_zwrlp=@OrgLp and trs_gidlp&gt;0 and trs_gidnumer &lt;= @GidNumer) a
+			end
+			else
+			begin				
+				select
+					@TeP_PoczWartoscNetto = sum((case when trs_gidnumer &lt; @GidNumer then TrE_KsiegowaNetto else 0 end)),
+					@TeP_PoczWartoscBrutto = sum((case when trs_gidnumer &lt; @GidNumer then TrE_KsiegowaBrutto else 0 end)),
+					@TeP_WartoscNetto  = sum(TrE_KsiegowaNetto), 
+					@TeP_WartoscBrutto = sum(TrE_KsiegowaBrutto)
+					from 
+					(select distinct tre_ksiegowanetto, tre_ksiegowabrutto,trs_gidnumer,trs_gidlp from cdn.traelem  
+					left join CDN.TrasElem on TrE_GIDNumer = TrS_GIDNumer and TrE_GIDLp = TrS_GIDLp
+					where trs_zwrnumer=@OrgNumer and trs_zwrlp=@OrgLp and trs_gidlp&gt;0 and trs_gidnumer &lt;= @GidNumer) a
+			end		
+        end
+    end;
+
+
+	if(@TeP_WartoscNetto is null)
+	begin
+		select 	top 1
+		 @TeP_WartoscNetto = TeP_KsiegowaNetto+isnull(@TeP_WartoscNetto,0),
+		 @TeP_WartoscBrutto = TeP_KsiegowaBrutto+isnull(@TeP_WartoscBrutto,0)
+		from cdn.traelem te 
+		join cdn.traselem ts on te.TrE_GIDNumer=ts.TrS_GIDNumer AND te.TrE_GIDLp=ts.TrS_GIDLp 
+		outer apply cdn.lancuchkorekt2(tre_gidnumer,tre_gidlp)
+		where ts.trs_zwrnumer = @trnZwrNumer and te.tre_pozycja=@pozycja
+	end
+
+
+	if((@TeP_WartoscNetto is null or @Tep_PoczIlosc is null or @PoczCena is  null) and not @typ in(2033, 2036 ,2001 ,2034,2037,2005,2008))
+	begin
+		if(@typ in (2005,2013,2037,2045))
+		begin
+			select top 1 
+				@Tep_PoczIlosc = tre_ilosc ,
+				@PoczPrzeliczL= te.tre_przeliczL,
+				@PoczPrzeliczM=te.tre_przeliczM,
+				@PoczCena=tre_cena,
+				@TeP_PoczWartoscNetto = TrE_WartoscPoRabacie,
+				@TeP_PoczWartoscBrutto = round(TrE_WartoscPoRabacie*(1+TrE_StawkaPod/100),2),
+				@PoczFlagaVat = tre_flagavat,
+				@PoczVat = tre_stawkapod,
+				@poczExpoNorm = TrN_ExpoNorm,
+				@poczRodzajZakupu = TrN_RodzajZakupu
+			from cdn.traelem te 
+			join TraNag on TrE_GIDNumer = TrN_GIDNumer
+			join cdn.traselem ts on te.TrE_GIDNumer=ts.TrS_GIDNumer AND te.TrE_GIDLp=ts.TrS_GIDLp 
+			where ts.trs_zwrnumer = @trnZwrNumer and te.tre_pozycja=@pozycja and trs_gidtyp &lt;&gt; 2003
+		end
+		else
+			select top 1
+				@Tep_PoczIlosc = tre_ilosc,
+				@PoczPrzeliczL= te.tre_przeliczL,
+				@PoczPrzeliczM=te.tre_przeliczM,
+				@PoczCena=tre_cena,
+				@TeP_PoczWartoscNetto = tre_ksiegowaNetto,
+				@TeP_PoczWartoscBrutto =tre_ksiegowaBrutto,
+				@PoczFlagaVat = tre_flagavat,
+				@PoczVat = tre_stawkapod,
+				@poczExpoNorm = TrN_ExpoNorm,
+				@poczRodzajZakupu = TrN_RodzajZakupu
+				from cdn.traelem te 
+			join TraNag on TrE_GIDNumer = TrN_GIDNumer
+			join cdn.traselem ts on te.TrE_GIDNumer=ts.TrS_GIDNumer AND te.TrE_GIDLp=ts.TrS_GIDLp
+			where ts.trs_zwrnumer = @trnZwrNumer and te.tre_pozycja=@pozycja and trs_gidtyp &lt;&gt; 2003
+	end
+
+	if(@TeP_PoczWartoscBrutto is null) set @PoczCena = null
+		
+	insert into @WartosciZsumowane(TeP_Ilosc,TeP_KsiegowaNetto,TeP_KsiegowaBrutto,TeP_Vat,TeP_PoczIlosc,TeP_PoczKsiegowaNetto,TeP_PoczKsiegowaBrutto,TeP_PoczCena,TeP_PrzyczynaKorekty,TeP_Rozdzielony,TeP_PoczVat,TeP_PoczSww,TeP_PoczPcn,TeP_PoczPrzeliczL,TeP_PoczPrzeliczM,TeP_PoczFlagaVat,Tep_PoczExpoNorm, Tep_PoczRodzajZakupu)
+    values(@TeP_Ilosc,@TeP_WartoscNetto,@TeP_WartoscBrutto,@TeP_WartoscBrutto-@TeP_WartoscNetto,@TeP_PoczIlosc,@TeP_PoczWartoscNetto,@TeP_PoczWartoscBrutto,@PoczCena,@PrzyczynaKorekty,@rozdzielony,@PoczVat,@PoczSww,@PoczPcn,@PoczPrzeliczL, @PoczPrzeliczM,@PoczFlagaVat,@poczExpoNorm, @poczRodzajZakupu);
+        
+	RETURN
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

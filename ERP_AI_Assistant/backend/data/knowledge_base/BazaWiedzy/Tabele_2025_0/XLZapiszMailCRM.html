@@ -1,0 +1,154 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[XLZapiszMailCRM]"></A><PRE>
+          <FONT SIZE="2"><I>/* [XLZapiszMailCRM] */</I><BR>
+CREATE PROCEDURE [CDN].[XLZapiszMailCRM]
+
+        @Email                          varchar(2000),
+        @Temat                          varchar(80),
+        @Tresc                          varchar(5000),
+        @OpeNumer                       int,
+
+        @Data                           int = NULL, --data kiedy dany mail został wysłany
+        @OpeIdent                       varchar(8) = NULL,
+        @IgnorujBledy           tinyint = NULL, --by nie robiło raiserror przy błędzie
+        @SsNNumer               int = NULL output, --numer wątku jeśli brak to zwraca z tytułu maila [XL:&lt;numer_wątku&gt;]		
+        @SsELp				smallint = NULL output --zwraca numer pozycji konwersacji w wątku
+AS
+
+declare @KntNumer               int --numer kontrahenta
+declare @KntLp                  smallint --numer osoby
+declare @SsNKnt                 int --numer kontrahenta z wątku ustalonego na podstawie tytułu maila
+declare @EmailId                int --id rodzaju kontaktu o wartosci E-mail ze słownika
+declare @BeginIndex             int --indeks wyrażenia '[XL:' w temacie
+declare @EndIndex               int --indeks wyrażenia ']' w temacie
+declare @TempTemat              varchar(80) --temat maila po usunięciu stałych wyrażeń
+
+if @Data is null or @Data=0 select @Data=DATEDIFF(s,'19900101',GETDATE())
+
+select top 1 @EmailId=isnull(Slw_ID,0) from CDN.SlownikiStruktura join CDN.Slowniki on SLW_SLSId=SLS_Id where SLS_Predefiniowany=79 and SLW_WartoscS='E-Mail'
+
+set @TempTemat =@Temat
+
+set @BeginIndex=charindex('[XL:',@Temat)+4
+set @EndIndex=charindex(']',@Temat,@BeginIndex)
+
+if @SsNNumer is null
+	set @SsNNumer = 0
+
+if @SsNNumer = 0 and @BeginIndex is not null and @EndIndex is not null and @BeginIndex&lt;@EndIndex
+        begin
+                select @SsNNumer=case when patindex('%[^0-9]%',substring(@Temat,@BeginIndex,@EndIndex-@BeginIndex))=1 then 0 else substring(@Temat,@BeginIndex,@EndIndex-@BeginIndex) end
+                select @KntNumer=SsN_KntNumer,@KntLp=0 from cdn.SrsNag where SsN_GidNumer=@SsNNumer
+                select @TempTemat = replace(@TempTemat,substring(@TempTemat,@BeginIndex-4,@EndIndex-@BeginIndex+5),'')
+        end
+
+if @SsNNumer&gt;0 and not exists(select * from CDN.SrsNag where SsN_GIDNumer=@SsNNumer and SsN_TStampDataStop=0)
+        begin
+                if @IgnorujBledy is null
+                        raiserror('Nie istnieje wątek o danym numerze lub jest już zakończony - (-6)',16,1)
+                return -6
+        end
+
+select @TempTemat = replace(@TempTemat,'RE:','')
+select @TempTemat = replace(@TempTemat,'ODP:','')
+select @TempTemat = replace(@TempTemat,'FW:','')
+select @TempTemat = ltrim(@TempTemat)
+
+if @KntNumer is null or @KntNumer &lt; 0
+        begin
+                select top 1 @KntNumer = KnA_KntNumer, @KntLp=KnA_KntLp from CDN.KntAdresy where KnA_EMail=@Email
+                if @KntNumer is null
+                        begin
+                                select top 1 @KntNumer=KnS_KntNumer,@KntLp=KnS_KntLp from CDN.KntOsoby where KnS_EMail=@Email and KnS_KntTyp = 32
+                                if @KntNumer is null
+                                        begin
+                                                select top 1 @KntNumer=Knt_GIDNumer, @KntLp=Knt_GIDLp from CDN.KntKarty where Knt_EMail=@Email
+                                        end
+                        end
+                if @KntNumer is null
+                        begin
+                                if @IgnorujBledy is null
+                                        raiserror('Nie znaleziono kontrahenta dla którego można zapisać maila - (-1)',16,1)
+                                return -1
+                        end
+        end
+
+if @Temat = '' or @Temat is null
+        begin
+                if @IgnorujBledy is null
+                        raiserror('Nie podano tematu maila - (-2)',16,1)
+                return -2
+        end
+
+if not exists(select * from CDN.OpeKarty where Ope_GIDNumer=@OpeNumer and Ope_Zablokowane&lt;&gt;1)
+        begin
+                select @OpeNumer=(select Ope_GIDNumer from CDN.OpeKarty where Ope_Ident=@OpeIdent and Ope_Zablokowane&lt;&gt;1)
+                if      @OpeNumer =0
+                        begin
+                                if @IgnorujBledy is null
+                                        raiserror('Nie znaleziono operatora - (-3)',16,1)
+                                return -3
+                        end
+        end
+
+if @Email = '' or @Email is null
+        begin
+                if @IgnorujBledy is null
+                        raiserror('Nie podano adresu maila - (-4)',16,1)
+                return -4
+        end
+
+if exists(select * from cdn.SrsElem join cdn.CRMSrsKontrahenci on SsE_GIDNumer=CSK_SseNumer and SsE_GIDLp=CSK_SseLp where SsE_ElementTyp=1 and SsE_TStampDataStart=@Data and SsE_Tytul=@Temat and CSK_KnSNumer=@KntNumer)
+        begin
+                if @IgnorujBledy is null
+                        raiserror('Ten mail jest już zapisany w CDN XL - (-5)',16,1)
+                return -5
+        end
+
+BEGIN TRAN
+if @SsNNumer&gt;0 --mamy wątek z tytułu maila
+        begin
+                execute @SsELp=CDN.XLDodajElementDoWatkuCRM @Tytul=@Temat, @ElementTyp=1, @OpeStartNumer=@OpeNumer, @Opis=@Tresc, @SsNNumer=@SsNNumer, @KntOsobaLp=@KntLp, @KntNumer=0, @KntLp=0, @CkeNumer=0, @CkeLp=0, @CdzId=0, @TStampDataStart=@Data, @TypId=@EMailId, @IgnorujSelecty=1,@IgnorujTransakcje=1
+        end
+else --nie mamy wątku z tytułu maila, szukamy najświeższego wątku dla danego knt o podobnym tytule jak mail
+        begin
+                set @SsNNumer=isnull((select top 1 SsN_GIDNumer from CDN.SrsNag where SsN_KntNumer=@KntNumer and SsN_Streszczenie like '%'+@TempTemat+'%' and SsN_TStampDataStop=0 order by SsN_TStampDataStart desc),0)
+                if @SsNNumer=0 --nie znaleziono najświeższego wąteku dla tego knt
+                        begin
+                                execute @SsnNumer=CDN.XLNowyWatekCRM @Streszczenie=@Temat,      @KntNumer=@KntNumer, @CekId=0, @OpeStartNumer=@OpeNumer, @OsobaLp=@KntLp, @TStampDataStart=@Data,@Opis=@Tresc, @IgnorujSelecty=1,@IgnorujTransakcje=1
+                                if @SsnNumer &gt; 0
+                                        begin
+                                                execute @SsELp=CDN.XLDodajElementDoWatkuCRM @Tytul=@Temat, @ElementTyp=1, @OpeStartNumer=@OpeNumer, @Opis=@Tresc, @SsNNumer=@SsnNumer, @KntOsobaLp=@KntLp, @KntNumer=0, @KntLp=0, @CkeNumer=0, @CkeLp=0, @CdzId=0, @TStampDataStart=@Data, @TypId=@EMailId, @IgnorujSelecty=1,@IgnorujTransakcje=1
+                                        end
+                        end
+                else --znaleziono najświeższy wątek dla tego knt
+                        begin
+                                execute @SsELp=cdn.XLDodajElementDoWatkuCRM @Tytul=@Temat, @ElementTyp=1, @OpeStartNumer=@OpeNumer, @Opis=@Tresc, @SsNNumer=@SsNNumer, @KntOsobaLp=@KntLp, @KntNumer=0, @KntLp=0, @CkeNumer=0, @CkeLp=0, @CdzId=0, @TStampDataStart=@Data, @TypId=@EMailId, @IgnorujSelecty=1,@IgnorujTransakcje=1
+                                end
+        end
+        
+if @SsnNumer &gt; 0
+	COMMIT TRAN 	
+else
+	Rollback TRAN
+	
+select SsELp = @SsELp, SsENumer =@SsNNumer, SsETyp= 339,SsEFirma= (select frs_GIDFirma from cdn.frmstruktura where frs_id = 1)
+	
+SET NOCOUNT OFF
+RETURN @SsELp
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

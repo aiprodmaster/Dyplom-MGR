@@ -1,0 +1,171 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="WygenerowaneDokZUM"></A><PRE>
+          <FONT SIZE="2"><I>/* WygenerowaneDokZUM */</I><BR>
+CREATE FUNCTION cdn.WygenerowaneDokZUM
+(@UmwId INT, @CzyUmowaWBuforze SMALLINT,@CzyTylkoDokPotwierdzone SMALLINT
+)
+RETURNS @wynik TABLE
+(TwrNumer               INTEGER,
+ IloscPowiazana         DECIMAL(11, 4),
+ DokTyp                 SMALLINT,
+ DokNumer               INTEGER,
+ IloscNaPozycjiUmowy          DECIMAL(11, 4),
+ IloscNaPozycjiUmowyZNadwyzka DECIMAL(11, 4)
+ ,UmwId                  INTEGER
+ ,UmwLp					INTEGER
+ ,DokLp					INTEGER
+)
+AS
+     BEGIN
+        WITH Umowy(UmwId) -- wszystkie umowy i aneksy
+              AS (
+              SELECT b.UmN_Id
+              FROM cdn.UmwNag a
+                   JOIN cdn.UmwNag b ON a.UmN_UmowaId = b.UmN_Id
+              WHERE a.UmN_Id = @UmwId
+                    AND a.UmN_UmowaId &lt;&gt; 0
+                    AND (@CzyUmowaWBuforze = 1
+                         OR b.Umn_Stan = 1
+                         OR b.Umn_Stan = 3)
+              UNION
+              SELECT UmN_Id
+              FROM cdn.UmwNag
+              WHERE(@CzyUmowaWBuforze = 1
+                    OR Umn_Stan = 1
+                    OR Umn_Stan = 3)
+                   AND UmN_Id = @UmwId
+              UNION
+              SELECT Umn_Id
+              FROM cdn.UmwNag
+              WHERE UmN_UmowaId =
+              (
+                  SELECT UmN_UmowaId
+                  FROM cdn.UmwNag
+                  WHERE UmN_Id = @UmwId
+              )
+                    AND UmN_UmowaId &lt;&gt; 0
+                    AND (@CzyUmowaWBuforze = 1
+                         OR Umn_Stan = 1
+                         OR Umn_Stan = 3)
+              UNION
+              SELECT Umn_Id
+              FROM cdn.UmwNag
+              WHERE UmN_UmowaId = @UmwId
+                    AND (@CzyUmowaWBuforze = 1
+                         OR Umn_Stan = 1
+                         OR Umn_Stan = 3)),
+              OstatniAneks(UmwId)
+              AS (SELECT MAX(UmwId)
+                  FROM Umowy)
+              INSERT INTO @wynik
+                     SELECT TwrNumer,
+                            IloscPowiazana,
+                            DokTyp,
+                            DokNumer,
+                            UmP_Ilosc IloscNaPozycjiUmowy,
+                            UmP_Ilosc * (1 + UmP_NadwyzkaTwr / 100) IloscNaPozycjiUmowyZNadwyzka,
+                            UmwId,
+                            UmwLp,
+                            DokLp
+                     FROM
+                     (
+                         SELECT COALESCE(ZaE_TwrNumer, ImE_TwrNumer, TrE_TwrNumer) TwrNumer,
+                                COALESCE(ZaE_Ilosc, ImE_Ilosc, TrE_Ilosc) IloscPowiazana,
+                                CDP_DokTyp DokTyp,
+                                CDP_DokNumer DokNumer,
+                                CDP_CRMNumer UmwId,
+                                CDP_CRMLp UmwLp,
+                                CDP_DokLp DokLp,
+                         (
+                             SELECT pozWew.UmP_Ilosc
+                             FROM cdn.UmwPozycje pozWew
+                             WHERE pozWew.UmP_UmNId =
+                             (
+                                 SELECT UmwId
+                                 FROM OstatniAneks
+                             )
+                                   AND pozWew.UmP_Pozycja = ump.UmP_Pozycja
+                         ) UmP_Ilosc,
+                         (
+                             SELECT pozWew.UmP_NadwyzkaTwr
+                             FROM cdn.UmwPozycje pozWew
+                             WHERE pozWew.UmP_UmNId =
+                             (
+                                 SELECT UmwId
+                                 FROM OstatniAneks
+                             )
+                                   AND pozWew.UmP_Pozycja = ump.UmP_Pozycja
+                         ) UmP_NadwyzkaTwr
+                         FROM cdn.UmwNag
+                              JOIN cdn.UmwPozycje ump ON ump.UmP_UmNId = UmN_Id
+                              JOIN cdn.CRMDokumentyPozycje ON CDP_CRMLp = ump.UmP_Id
+                                                              AND CDP_CRMNumer = UmN_Id
+                                                              AND CDP_CRMTyp = 4800
+                              JOIN cdn.CRMDokumentyLinki ON CDL_CRMTyp=CDP_CRMTyp AND CDL_CRMNumer=CDP_CRMNumer 
+											  AND CDL_DokTyp=CDP_DokTyp AND CDL_DokNumer=CDP_DokNumer 
+											  AND CDL_Kierunek=1
+                              LEFT JOIN cdn.ZamElem ON CDP_DokNumer = ZaE_GIDNumer
+                                                       AND CDP_DokTyp = ZaE_GIDTyp
+                                                       AND CDP_DokLp = ZaE_GIDLp
+                              LEFT JOIN cdn.ZamNag ON ZaN_GIDNumer = ZaE_GIDNumer
+                              LEFT JOIN cdn.ImpElem ON CDP_DokNumer = ImE_GIDNumer
+                                                       AND CDP_DokTyp = ImE_GIDTyp
+                                                       AND CDP_DokLp = ImE_GIDLp
+                              LEFT JOIN cdn.ImpNag ON ImN_GIDNumer = ImE_GIDNumer
+                              LEFT JOIN cdn.TraElem ON CDP_DokNumer = TrE_GIDNumer
+                                                       AND CDP_DokTyp = TrE_GIDTyp
+                                                       AND CDP_DokLp = TrE_GIDLp
+                              LEFT JOIN cdn.TraNag ON TrN_GIDTyp = TrE_GIDTyp
+                                                      AND TrN_GIDNumer = TrE_GIDNumer
+                         WHERE UmN_Id IN
+                         (
+                             SELECT UmwId
+                             FROM Umowy
+                         )
+                               AND CDP_CRMTyp = 4800
+                               AND (TrN_Stan IS NULL
+                                    OR TrN_Stan &lt;&gt; 6)
+                               AND (ImN_Stan IS NULL
+                                    OR ImN_Stan &lt;&gt; 6)
+                               AND (ZaN_Stan IS NULL
+                                    OR ZaN_Stan &lt;&gt; 32)
+                               AND (ZaN_Stan IS NULL
+                                    OR ZaN_Stan &lt;&gt; 19)
+                               AND (ZaN_Stan IS NULL
+                                    OR ZaN_Stan &lt;&gt; 35)
+                               AND (@CzyTylkoDokPotwierdzone = 0
+                                    OR ((TrN_Stan IS NULL
+                                         OR TrN_Stan &gt; 2)
+                                        AND (ImN_Stan IS NULL
+                                             OR ImN_Stan &gt; 2)
+                                        AND (ZaN_Stan IS NULL
+                                             OR ZaN_Stan &gt; 2)))
+                     ) Podwidok
+                     GROUP BY TwrNumer,
+                              IloscPowiazana,
+                              DokTyp,
+                              DokNumer,
+                              UmwId,
+                              UmwLp,
+                              DokLp,
+                              UmP_Ilosc,
+                              UmP_NadwyzkaTwr;
+         RETURN;
+     END;
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,682 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[ProponujWolnyNumer]"></A><PRE>
+          <FONT SIZE="2"><I>/* [ProponujWolnyNumer] */</I><BR>
+CREATE FUNCTION [CDN].[ProponujWolnyNumer]
+(
+    
+/* ==========================================================================================
+        @p_tabela               - nazwa tabeli do której trafia dokument
+        @p_dokTyp               - typ dokumentu
+        @p_seria                - seria dokumentu
+        @p_data                 - data wystawienia dokumentu(proponowania numeru)
+        @p_magazyn              - magazyn dokumentu
+        @p_czyAnulowane         - czy uwzględniać numery z anulowanymi dokumentami(parametr z definicji dok.)
+        @p_numeracjaDokumentow  - parametr NumeracjaDokumentow(ustawienie w konfiguracji)
+   ========================================================================================== */  
+
+				@p_tabela varchar(20), @p_dokTyp int, @p_seria varchar(6), @p_data int, @p_magazyn int, @p_czyAnulowane smallint, @p_numeracjaDokumentow varchar(10)
+)
+RETURNS int
+    
+/* ==========================================================================================
+        Błędy:
+        -1 : Nierozpoznana tabela
+   ========================================================================================== */
+
+AS
+BEGIN
+	DECLARE @wynik int;
+	DECLARE @rok int;
+	DECLARE @miesiac int;
+	DECLARE @seria varchar(6);
+	SET @seria = LTRIM(RTRIM(@p_seria));
+	SET @wynik = -1;
+	SET @rok = YEAR(DATEADD(d, @p_data, CONVERT(datetime, '1800-12-28', 120)));
+	IF EXISTS
+	(
+		SELECT *
+		FROM cdn.Split( @p_numeracjaDokumentow, '/', 0 )
+		WHERE StrValue IN( 6, 7 )
+	) AND 
+	   @p_tabela &lt;&gt; 'SRTHISTNAG' AND 
+	   @p_tabela &lt;&gt; 'UMLNAG' AND 
+	   @p_tabela &lt;&gt; 'IMTNAG'
+	BEGIN
+		SET @miesiac = MONTH(DATEADD(d, @p_data, CONVERT(datetime, '1800-12-28', 120)));
+	END;
+	ELSE
+	BEGIN
+		SET @miesiac = 0;
+	END;
+
+
+	IF @p_tabela = 'SRTHISTNAG'
+	BEGIN
+		IF NOT EXISTS
+		(
+			SELECT *
+			FROM cdn.SrtHistNag WITH (nolock)
+			WHERE SHN_Nr = 1 AND 
+				  SHN_GIDTyp = @p_dokTyp AND 
+				  SHN_RokO = @rok AND 
+				  SHN_Seria = @seria
+		) AND 
+		   ( NOT EXISTS
+		   (
+			   SELECT *
+			   FROM cdn.SrtHistNag WITH (nolock)
+			   WHERE SHN_Nr &lt;&gt; -1 AND 
+					 SHN_GIDTyp = @p_dokTyp AND 
+					 SHN_RokO = @rok AND 
+					 SHN_Seria = @seria
+		   ) OR 
+		   (
+			   SELECT COALESCE(SHN_Data, 99999999)
+			   FROM cdn.SrtHistNag WITH (nolock)
+			   WHERE SHN_GIDTyp = @p_dokTyp AND 
+					 SHN_RokO = @rok AND 
+					 SHN_Seria = @seria AND 
+					 SHN_Nr =
+			   (
+				   SELECT MIN(SHN_Nr)
+				   FROM cdn.SrtHistNag WITH (nolock)
+				   WHERE SHN_GIDTyp = @p_dokTyp AND 
+						 SHN_RokO = @rok AND 
+						 SHN_Seria = @seria AND 
+						 SHN_Nr &lt;&gt; -1
+			   )
+		   ) &gt;= @p_data
+		   )
+		BEGIN
+
+			SELECT @wynik = 1;
+		END;
+		ELSE
+		BEGIN
+
+			SELECT @wynik = COALESCE(MAX(Id), -1)
+			FROM
+			(
+				SELECT MIN(t1.SHN_Nr) + 1 AS Id
+				FROM cdn.SrtHistNag AS t1 WITH (nolock)
+				WHERE NOT EXISTS
+				(
+					SELECT *
+					FROM cdn.SrtHistNag AS t2 WITH (nolock)
+					WHERE t2.SHN_Nr = t1.SHN_Nr + 1 AND 
+						  SHN_GIDTyp = @p_dokTyp AND 
+						  SHN_RokO = @rok AND 
+						  SHN_Seria = @seria
+				) AND 
+					  SHN_GIDTyp = @p_dokTyp AND 
+					  SHN_RokO = @rok AND 
+					  SHN_Seria = @seria AND 
+					  COALESCE(
+							  (
+								  SELECT TOP 1 case when t4.SHN_Data&lt;=t1.SHN_Data then t1.SHN_Data else t4.SHN_Data end
+								  FROM cdn.SrtHistNag AS t4 WITH (nolock)
+								  WHERE t4.SHN_Nr &gt; t1.SHN_Nr AND 
+										SHN_GIDTyp = @p_dokTyp AND 
+										SHN_RokO = @rok AND 
+										SHN_Seria = @seria
+								  ORDER BY t4.SHN_Nr ASC
+							  ), @p_data) &gt;= @p_data AND 
+					  SHN_Data &lt;= @p_data AND 
+					  SHN_Nr &lt;&gt; -1
+			) AS ot;
+			IF @wynik = -1
+			BEGIN --przypadek istnienia dokumentów z późniejszą datą niż aktualny
+
+				SELECT @wynik = COALESCE(Id, 1)
+				FROM
+				(
+					SELECT MAX(t1.SHN_Nr) + 1 AS Id
+					FROM cdn.SrtHistNag AS t1 WITH (nolock)
+					WHERE SHN_GIDTyp = @p_dokTyp AND 
+						  SHN_RokO = @rok AND 
+						  SHN_Seria = @seria
+				) AS ot
+				WHERE Id &lt;&gt; 0
+			END;
+		END;
+	END;
+	ELSE
+	BEGIN
+		IF @p_tabela = 'IMPNAG'
+		BEGIN
+			IF NOT EXISTS
+			(
+				SELECT *
+				FROM cdn.ImpNag WITH (nolock)
+				WHERE ImN_IMNNUMER = 1 AND 
+					  ImN_IMNTyp = @p_dokTyp AND 
+					  ImN_IMNRok = @rok AND 
+					  ImN_IMNMiesiac = @miesiac AND 
+					  ImN_IMNSeria = @seria AND 
+					  ( ImN_IMNLp = 127 OR 
+						@p_czyAnulowane = 0
+					  )
+			) AND 
+			   ( NOT EXISTS
+			   (
+				   SELECT *
+				   FROM cdn.ImpNag WITH (nolock)
+				   WHERE ImN_IMNNUMER &lt;&gt; -1 AND 
+						 ImN_IMNTyp = @p_dokTyp AND 
+						 ImN_IMNRok = @rok AND 
+						 ImN_IMNMiesiac = @miesiac AND 
+						 ImN_IMNSeria = @seria AND 
+						 ( ImN_IMNLp = 127 OR 
+						   @p_czyAnulowane = 0
+						 )
+			   ) OR 
+			   (
+				   SELECT COALESCE(ImN_DataWplywu, 99999999)
+				   FROM cdn.ImpNag WITH (nolock)
+				   WHERE ImN_IMNTyp = @p_dokTyp AND 
+						 ImN_IMNRok = @rok AND 
+						 ImN_IMNMiesiac = @miesiac AND 
+						 ImN_IMNSeria = @seria AND 
+						 ( ImN_IMNLp = 127 OR 
+						   @p_czyAnulowane = 0
+						 ) AND 
+						 ImN_IMNNumer =
+				   (
+					   SELECT MIN(ImN_IMNNumer)
+					   FROM cdn.ImpNag WITH (nolock)
+					   WHERE ImN_IMNTyp = @p_dokTyp AND 
+							 ImN_IMNRok = @rok AND 
+							 ImN_IMNMiesiac = @miesiac AND 
+							 ImN_IMNSeria = @seria AND 
+							 ( ImN_IMNLp = 127 OR 
+							   @p_czyAnulowane = 0
+							 ) AND 
+							 ImN_IMNNumer &lt;&gt; -1
+				   )
+			   ) &gt;= @p_data
+			   )
+			BEGIN
+
+				SELECT @wynik = 1;
+			END
+			ELSE
+			BEGIN
+
+				SELECT @wynik = COALESCE(MAX(Id), -1)
+				FROM
+				(
+					SELECT MIN(t1.ImN_ImNNUMER) + 1 AS Id
+					FROM cdn.ImpNag t1 WITH (nolock)
+					WHERE NOT EXISTS
+					(
+						SELECT *
+						FROM cdn.ImpNag t2 WITH (nolock)
+						WHERE t2.ImN_ImNNUMER = t1.ImN_ImNNUMER + 1 AND 
+							  ImN_ImNTyp = @p_dokTyp AND 
+							  ImN_ImNRok = @rok AND 
+							  ImN_ImNMiesiac = @miesiac AND 
+							  ImN_ImNSeria = @seria AND 
+							  ( ImN_ImNLp = 127 OR 
+								@p_czyAnulowane = 0
+							  )
+					) AND 
+						  ImN_ImNTyp = @p_dokTyp AND 
+						  ImN_ImNRok = @rok AND 
+						  ImN_ImNMiesiac = @miesiac AND 
+						  ImN_ImNSeria = @seria AND 
+						  ( ImN_ImNLp = 127 OR 
+							@p_czyAnulowane = 0
+						  ) AND 
+						  COALESCE(
+								  (
+									  SELECT TOP 1  case when t4.ImN_DataWplywu&lt;=t1.ImN_DataWplywu then t1.ImN_DataWplywu else t4.ImN_DataWplywu end
+									  FROM cdn.ImpNag t4 WITH (nolock)
+									  WHERE t4.ImN_ImNNumer &gt; t1.ImN_ImNNumer AND 
+											ImN_ImNTyp = @p_dokTyp AND 
+											ImN_ImNRok = @rok AND 
+											ImN_ImNMiesiac = @miesiac AND 
+											ImN_ImNSeria = @seria AND 
+											( ImN_ImNLp = 127 OR 
+											  @p_czyAnulowane = 0
+											)
+									  ORDER BY t4.ImN_ImNNUMER ASC
+								  ), @p_data) &gt;= @p_data AND 
+						  ImN_DataWplywu &lt;= @p_data AND 
+						  ImN_ImNNumer &lt;&gt; -1
+				) ot;
+				IF @wynik = -1 --przypadek istnienia dokumentów z późniejszą datą niż aktualny
+
+					SELECT @wynik = COALESCE(Id, 1)
+					FROM
+					(
+						SELECT MAX(t1.ImN_ImNNUMER) + 1 AS Id
+						FROM cdn.ImpNag t1 WITH (nolock)
+						WHERE ImN_ImNTyp = @p_dokTyp AND 
+							  ImN_ImNRok = @rok AND 
+							  ImN_ImNMiesiac = @miesiac AND 
+							  ImN_ImNSeria = @seria AND 
+							  ( ImN_ImNLp = 127 OR 
+								@p_czyAnulowane = 0
+							  )
+					) ot
+					WHERE Id &lt;&gt; 0;
+			END;
+		END;
+		ELSE
+		BEGIN
+			IF @p_tabela = 'MAGNAG'
+			BEGIN
+				IF NOT EXISTS
+				(
+					SELECT *
+					FROM cdn.MagNag WITH (nolock)
+					WHERE MaN_TRNNUMER = 1 AND 
+						  MaN_TRNTyp = @p_dokTyp AND 
+						  MaN_TRNRok = @rok AND 
+						  MaN_TRNMiesiac = @miesiac AND 
+						  MaN_TrMNumer = @p_magazyn AND 
+						  MaN_TRNSeria = @seria AND 
+						  ( MaN_TRNLp = 127 OR 
+							@p_czyAnulowane = 0
+						  )
+				) AND 
+				   ( NOT EXISTS
+				   (
+					   SELECT *
+					   FROM cdn.MagNag WITH (nolock)
+					   WHERE MaN_TRNNUMER &lt;&gt; -1 AND 
+							 MaN_TRNTyp = @p_dokTyp AND 
+							 MaN_TRNRok = @rok AND 
+							 MaN_TRNMiesiac = @miesiac AND 
+							 MaN_TrMNumer = @p_magazyn AND 
+							 MaN_TRNSeria = @seria AND 
+							 ( MaN_TRNLp = 127 OR 
+							   @p_czyAnulowane = 0
+							 )
+				   ) OR 
+				   (
+					   SELECT MaN_DATA3
+					   FROM cdn.MagNag WITH (nolock)
+					   WHERE MaN_TRNTyp = @p_dokTyp AND 
+							 MaN_TRNRok = @rok AND 
+							 MaN_TRNMiesiac = @miesiac AND 
+							 MaN_TRNSeria = @seria AND 
+							 MaN_TrMNumer = @p_magazyn AND 
+							 ( MaN_TRNLp = 127 OR 
+							   @p_czyAnulowane = 0
+							 ) AND 
+							 MaN_TRNNumer =
+					   (
+						   SELECT MIN(MaN_TRNNumer)
+						   FROM cdn.MagNag WITH (nolock)
+						   WHERE MaN_TRNTyp = @p_dokTyp AND 
+								 MaN_TRNRok = @rok AND 
+								 MaN_TRNMiesiac = @miesiac AND 
+								 MaN_TRNSeria = @seria AND 
+								 MaN_TrMNumer = @p_magazyn AND 
+								 ( MaN_TRNLp = 127 OR 
+								   @p_czyAnulowane = 0
+								 ) AND 
+								 MaN_TRNNumer &lt;&gt; -1
+					   )
+				   ) &gt;= @p_data
+				   )
+				BEGIN
+
+					SELECT @wynik = 1;
+				END
+				ELSE
+				BEGIN
+
+					SELECT @wynik = COALESCE(MAX(Id), -1)
+					FROM
+					(
+						SELECT MIN(t1.MaN_TRNNUMER) + 1 AS Id
+						FROM cdn.MagNag t1 WITH (nolock)
+						WHERE NOT EXISTS
+						(
+							SELECT *
+							FROM cdn.MagNag t2 WITH (nolock)
+							WHERE t2.MaN_TRNNUMER = t1.MaN_TRNNUMER + 1 AND 
+								  MaN_TrnTyp = @p_dokTyp AND 
+								  MaN_TrNRok = @rok AND 
+								  MaN_TrNMiesiac = @miesiac AND 
+								  MaN_TrNSeria = @seria AND 
+								  MaN_TrMNumer = @p_magazyn AND 
+								  ( MaN_TrNLp = 127 OR 
+									@p_czyAnulowane = 0
+								  )
+						) AND 
+							  MaN_TrnTyp = @p_dokTyp AND 
+							  MaN_TrNRok = @rok AND 
+							  MaN_TrNMiesiac = @miesiac AND 
+							  MaN_TrNSeria = @seria AND 
+							  MaN_TrMNumer = @p_magazyn AND 
+							  ( MaN_TrNLp = 127 OR 
+								@p_czyAnulowane = 0
+							  ) AND 
+							  COALESCE(
+									  (
+										  SELECT TOP 1  case when t4.MaN_DATA3&lt;=t1.MaN_DATA3 then t1.MaN_DATA3 else t4.MaN_DATA3 end
+										  FROM cdn.MagNag t4 WITH (nolock)
+										  WHERE t4.MaN_TrNNumer &gt; t1.MaN_TrNNumer AND 
+												MaN_TrnTyp = @p_dokTyp AND 
+												MaN_TrNRok = @rok AND 
+												MaN_TrNMiesiac = @miesiac AND 
+												MaN_TrNSeria = @seria AND 
+												MaN_TrMNumer = @p_magazyn AND 
+												( MaN_TrNLp = 127 OR 
+												  @p_czyAnulowane = 0
+												)
+										  ORDER BY t4.MaN_TRNNUMER ASC
+									  ), @p_data) &gt;= @p_data AND 
+							  MaN_DATA3 &lt;= @p_data AND 
+							  MaN_TrNNumer &lt;&gt; -1
+					) ot;
+					IF @wynik = -1 --przypadek istnienia dokumentów z późniejszą datą niż aktualny
+
+						SELECT @wynik = COALESCE(Id, 1)
+						FROM
+						(
+							SELECT MAX(t1.MaN_TRNNUMER) + 1 AS Id
+							FROM cdn.MagNag t1 WITH (nolock)
+							WHERE MaN_TrnTyp = @p_dokTyp AND 
+								  MaN_TrNRok = @rok AND 
+								  MaN_TrNMiesiac = @miesiac AND 
+								  MaN_TrNSeria = @seria AND 
+								  MaN_TrMNumer = @p_magazyn AND 
+								  ( MaN_TrNLp = 127 OR 
+									@p_czyAnulowane = 0
+								  )
+						) ot
+						WHERE Id &lt;&gt; 0;
+				END;
+			END;
+			ELSE
+			BEGIN
+				IF @p_tabela = 'SADNAG'
+				BEGIN
+					IF NOT EXISTS
+					(
+						SELECT *
+						FROM cdn.SadNag WITH (nolock)
+						WHERE SaN_SaNNUMER = 1 AND 
+							  SaN_SaNTyp = @p_dokTyp AND 
+							  SaN_SaNRok = @rok AND 
+							  SaN_SaNMiesiac = @miesiac AND 
+							  SaN_SaNSeria = @seria AND 
+							  ( SaN_SaNLp = 127 OR 
+								@p_czyAnulowane = 0
+							  )
+					) AND 
+					   ( NOT EXISTS
+					   (
+						   SELECT *
+						   FROM cdn.SadNag WITH (nolock)
+						   WHERE SaN_SaNNUMER &lt;&gt; -1 AND 
+								 SaN_SaNTyp = @p_dokTyp AND 
+								 SaN_SaNRok = @rok AND 
+								 SaN_SaNMiesiac = @miesiac AND 
+								 SaN_SaNSeria = @seria AND 
+								 ( SaN_SaNLp = 127 OR 
+								   @p_czyAnulowane = 0
+								 )
+					   ) OR 
+					   (
+						   SELECT SaN_DataWplywu
+						   FROM cdn.SadNag WITH (nolock)
+						   WHERE SaN_SaNTyp = @p_dokTyp AND 
+								 SaN_SaNRok = @rok AND 
+								 SaN_SaNMiesiac = @miesiac AND 
+								 SaN_SaNSeria = @seria AND 
+								 ( SaN_SaNLp = 127 OR 
+								   @p_czyAnulowane = 0
+								 ) AND 
+								 SaN_SaNNumer =
+						   (
+							   SELECT MIN(SaN_SaNNumer)
+							   FROM cdn.SadNag WITH (nolock)
+							   WHERE SaN_SaNTyp = @p_dokTyp AND 
+									 SaN_SaNRok = @rok AND 
+									 SaN_SaNMiesiac = @miesiac AND 
+									 SaN_SaNSeria = @seria AND 
+									 ( SaN_SaNLp = 127 OR 
+									   @p_czyAnulowane = 0
+									 ) AND 
+									 SaN_SaNNumer &lt;&gt; -1
+						   )
+					   ) &gt;= @p_data
+					   )
+					BEGIN
+
+						SELECT @wynik = 1;
+					END
+					ELSE
+					BEGIN
+
+						SELECT @wynik = COALESCE(MAX(Id), -1)
+						FROM
+						(
+							SELECT MIN(t1.SaN_SaNNUMER) + 1 AS Id
+							FROM cdn.SadNag t1 WITH (nolock)
+							WHERE NOT EXISTS
+							(
+								SELECT *
+								FROM cdn.SadNag t2 WITH (nolock)
+								WHERE t2.SaN_SaNNUMER = t1.SaN_SaNNUMER + 1 AND 
+									  SaN_SaNTyp = @p_dokTyp AND 
+									  SaN_SaNRok = @rok AND 
+									  SaN_SaNMiesiac = @miesiac AND 
+									  SaN_SaNSeria = @seria AND 
+									  ( SaN_SaNLp = 127 OR 
+										@p_czyAnulowane = 0
+									  )
+							) AND 
+								  SaN_SaNTyp = @p_dokTyp AND 
+								  SaN_SaNRok = @rok AND 
+								  SaN_SaNMiesiac = @miesiac AND 
+								  SaN_SaNSeria = @seria AND 
+								  ( SaN_SaNLp = 127 OR 
+									@p_czyAnulowane = 0
+								  ) AND 
+								  COALESCE(
+										  (
+											  SELECT TOP 1  case when t4.SaN_DataWplywu&lt;=t1.SaN_DataWplywu then t1.SaN_DataWplywu else t4.SaN_DataWplywu end
+											  FROM cdn.SadNag t4 WITH (nolock)
+											  WHERE t4.SaN_SaNNUMER &gt; t1.SaN_SaNNUMER AND 
+													SaN_SaNTyp = @p_dokTyp AND 
+													SaN_SaNRok = @rok AND 
+													SaN_SaNMiesiac = @miesiac AND 
+													SaN_SaNSeria = @seria AND 
+													( SaN_SaNLp = 127 OR 
+													  @p_czyAnulowane = 0
+													)
+											  ORDER BY t4.SaN_SaNNUMER ASC
+										  ), @p_data) &gt;= @p_data AND 
+								  SaN_DataWplywu &lt;= @p_data AND 
+								  SaN_SaNNUMER &lt;&gt; -1
+						) ot;
+						IF @wynik = -1 --przypadek istnienia dokumentów z późniejszą datą niż aktualny
+
+							SELECT @wynik = COALESCE(Id, 1)
+							FROM
+							(
+								SELECT MAX(t1.SaN_SaNNUMER) + 1 AS Id
+								FROM cdn.SadNag t1 WITH (nolock)
+								WHERE SaN_SaNTyp = @p_dokTyp AND 
+									  SaN_SaNRok = @rok AND 
+									  SaN_SaNMiesiac = @miesiac AND 
+									  SaN_SaNSeria = @seria AND 
+									  ( SaN_SaNLp = 127 OR 
+										@p_czyAnulowane = 0
+									  )
+							) ot
+							WHERE Id &lt;&gt; 0;
+					END;
+				END;
+				ELSE
+				BEGIN
+					IF @p_tabela = 'UMLNAG'
+					BEGIN
+							IF NOT EXISTS
+								(
+									SELECT *
+									FROM cdn.UmlNag WITH (nolock)
+									WHERE ULN_ULNNumer = 1 AND 
+										  ULN_ULNRok = @rok AND 
+										  ULN_ULNSeria = @seria
+								)
+							BEGIN
+								SELECT @wynik = 1;
+							END;
+							ELSE
+							BEGIN
+								SELECT @wynik = COALESCE(MAX(Id), 1)
+								FROM
+								(
+									SELECT MIN(t1.ULN_ULNNumer) + 1 AS Id
+									FROM cdn.UmlNag AS t1 WITH (nolock)
+									WHERE NOT EXISTS
+									(
+										SELECT *
+										FROM cdn.UmlNag AS t2 WITH (nolock)
+										WHERE t2.ULN_ULNNumer = t1.ULN_ULNNumer + 1 AND 
+											  ULN_ULNRok = @rok AND 
+											  ULN_ULNSeria = @seria
+									) AND 
+										  ULN_ULNRok = @rok AND 
+										  ULN_ULNSeria = @seria AND 
+										  ULN_ULNNumer &lt;&gt; -1
+		                --brak sprawdzania daty, numeracja tylko po roku
+								) AS ot
+								WHERE Id &lt;&gt; 0;
+							END
+					END;
+					ELSE
+					BEGIN
+						IF @p_tabela = 'IMTNAG'
+						BEGIN
+
+							SELECT @wynik = COALESCE(MAX(Id), 1)
+							FROM
+							(
+								SELECT MIN(t1.ITN_Numer) + 1 AS Id
+								FROM cdn.ImtNag AS t1 WITH (nolock)
+								WHERE NOT EXISTS
+								(
+									SELECT *
+									FROM cdn.ImtNag AS t2 WITH (nolock)
+									WHERE t2.ITN_Numer = t1.ITN_Numer + 1 AND 
+										  ITN_Rok = @rok AND 
+										  ITN_Seria = @seria
+								) AND 
+									  ITN_Rok = @rok AND 
+									  ITN_Seria = @seria
+                --brak sprawdzania daty, numeracja tylko po roku
+							) AS ot
+							WHERE Id &lt;&gt; 0;
+						END;
+						ELSE
+						BEGIN
+							IF @p_tabela = 'TRANAG'
+							BEGIN                                                           
+							IF EXISTS(SELECT * FROM cdn.TraNag WITH (nolock) WHERE TRN_GIDNumer= (SELECT TOP 1 TRN_GIDNumer
+											FROM cdn.TraNag  WITH (nolock)
+											WHERE TrN_TrnTyp = @p_dokTyp AND
+														TrN_TrNRok = @rok AND
+														TrN_TrNMiesiac = @miesiac AND
+														TrN_TrNSeria = @seria AND
+														( TrN_TrNLp = 127 OR
+															@p_czyAnulowane = 0
+														)
+											ORDER BY TrN_TrNNumer ASC)
+											AND TrN_TrNNumer &gt; 1 AND  @p_data &lt;= TrN_DataWplywu)
+								BEGIN
+									SELECT @wynik = 1;
+								END
+								ELSE
+								BEGIN
+
+									SELECT @wynik = COALESCE(MAX(Id), -1)
+									FROM
+									(
+										SELECT MIN(t1.TRN_TRNNUMER) + 1 AS Id
+										FROM cdn.TraNag t1 WITH (nolock)
+										WHERE NOT EXISTS
+										(
+											SELECT *
+											FROM cdn.TraNag t2 WITH (nolock)
+											WHERE t2.TRN_TRNNUMER = t1.TRN_TRNNUMER + 1 AND 
+												  TrN_TrnTyp = @p_dokTyp AND 
+												  TrN_TrNRok = @rok AND 
+												  TrN_TrNMiesiac = @miesiac AND 
+												  TrN_TrNSeria = @seria AND 
+												  ( TrN_TrNLp = 127 OR 
+													@p_czyAnulowane = 0
+												  )
+										) AND 
+											  TrN_TrnTyp = @p_dokTyp AND 
+											  TrN_TrNRok = @rok AND 
+											  TrN_TrNMiesiac = @miesiac AND 
+											  TrN_TrNSeria = @seria AND 
+											  ( TrN_TrNLp = 127 OR 
+												@p_czyAnulowane = 0
+											  ) AND 
+											  COALESCE(
+													  (			
+														  SELECT TOP 1 case when t4.TrN_DataWplywu&lt;=t1.TrN_DataWplywu then t1.TrN_DataWplywu else t4.TrN_DataWplywu end
+														  FROM cdn.Tranag t4 WITH (nolock)
+														  WHERE t4.TrN_TrNNumer &gt; t1.TrN_TrNNumer AND 
+																TrN_TrnTyp = @p_dokTyp AND 
+																TrN_TrNRok = @rok AND 
+																TrN_TrNMiesiac = @miesiac AND 
+																TrN_TrNSeria = @seria AND 
+																( TrN_TrNLp = 127 OR 
+																  @p_czyAnulowane = 0
+																)
+														  ORDER BY t4.TrN_TrNNumer ASC
+													  ), @p_data) &gt;= @p_data AND 
+
+											  TrN_DataWplywu &lt;= @p_data
+									) ot;
+									IF @wynik = -1 --przypadek istnienia dokumentów z późniejszą datą niż aktualny
+
+										SELECT @wynik = COALESCE(Id, 1)
+										FROM
+										(
+											SELECT MAX(t1.TRN_TRNNUMER) + 1 AS Id
+											FROM cdn.TraNag t1 WITH (nolock)
+											WHERE TrN_TrnTyp = @p_dokTyp AND 
+												  TrN_TrNRok = @rok AND 
+												  TrN_TrNMiesiac = @miesiac AND 
+												  TrN_TrNSeria = @seria AND 
+												  ( TrN_TrNLp = 127 OR 
+													@p_czyAnulowane = 0
+												  )
+										) ot;
+								END;
+							END;
+						END;
+					END;
+				END;
+			END;
+		END;
+	END;
+	RETURN @wynik;
+END;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

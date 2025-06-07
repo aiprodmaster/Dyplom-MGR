@@ -1,0 +1,479 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="SrtBiezaceKwotyElemZest"></A><PRE>
+          <FONT SIZE="2"><I>/* SrtBiezaceKwotyElemZest */</I><BR>
+CREATE PROCEDURE cdn.SrtBiezaceKwotyElemZest (@NaDzien int = null, @DataDok int = null, @SHENumer int=0, @SHEParGIDLp tinyint=0, @bPominAktDok tinyint=0) as
+begin
+set nocount on
+
+	-- procedura zwraca kwoty dla elementów wybranych na pozycji zestawu na podanym dokumencie inw (SHENumer, SHEParGIDLp)
+	-- @NaDzien - data obowiązywania (SHE_Data)
+	-- @DataDok - data zapisu (SHE_DataZap)
+	-- @SHENumer, @SHEParGIDLp - identyfikator pozycji na zestaw (SHE_GIDNumer, SHE_GIDLp)
+	-- @bPominAktDok - pomiń wartości z aktualnego dokumentu (@SHENumer, @SHEParGIDLp)
+	
+	declare @ZO  int = 2144 
+	declare @ZM  int = 2160  
+	declare @OT  int = 2048
+	declare @OTK int = 2176
+	declare @PK  int = 2080
+	declare @LT  int = 2096
+	declare @LTK int = 2224
+	declare @AM  int = 2064
+	declare @AMK int = 2192
+	declare @AMP int = 6208
+	declare @AK  int = 2304
+	declare @ZW  int = 2288
+	declare @RN  int = 2128
+	declare @WN  int = 2112
+
+	declare @MW  int  = 2432
+	declare @MWK int  = 2496
+	declare @ZKZ int  = 2552
+	declare @ZS  int  = 2556
+	declare @ZPA smallint = 2050
+	declare @ZPK smallint = 2051  
+
+	declare @PoczT1 decimal(15,2)	
+	declare @PoczT2 decimal(15,2)
+	declare @BruttoT1 decimal(15,2)
+	declare @BruttoT2 decimal(15,2)
+	declare @odpisyT1 decimal(15,2)
+	declare @OdpisyT2 decimal(15,2)
+	declare @OdpisyT2_Likw decimal(15,2)
+	declare @KwotaZlom decimal(15,2)
+	declare @KwotaZlomAm decimal(15,2)
+	declare @DataPierwszeOT int
+	declare @DataZapPierwszeOT int
+	declare @SrtLpPierwszeOT int
+	
+	declare @PoczT1Sys decimal(15,2)
+	declare @PoczT2Sys decimal(15,2)
+	declare @BruttoT1Sys decimal(15,2)
+	declare @BruttoT2Sys decimal(15,2)
+	declare @odpisyT1Sys decimal(15,2)
+	declare @OdpisyT2Sys decimal(15,2)
+	declare @OdpisyT2_LikwSys decimal(15,2)
+	declare @KwotaZlomSys decimal(15,2)
+	declare @KwotaZlomAmSys decimal(15,2)
+	
+	declare @ZestTrybSrodek  tinyint = 0	
+	declare @ZestTrybZestaw  tinyint = 1
+	declare @ZestTrybElement tinyint = 2
+
+	declare @ZestOdlaczenie		tinyint = 1
+	declare @ZestPrzylaczenie	tinyint = 2
+		
+	declare @ZestTryb tinyint = @ZestTrybElement
+		
+	create table #tabWyniki (
+		SHEGIDNumer int,
+		SHEGIDLp smallint,
+		SHESZEId int,
+		SHESZELp smallint,
+		SHELp smallint,
+		
+		PoczT1 decimal(15,2), 
+		PoczT2 decimal(15,2), 
+		BruttoT1 decimal(15,2), 
+		BruttoT2 decimal(15,2), 
+		NettoT1 decimal(15,2), 
+		NettoT2 decimal(15,2), 
+		KwotaZlomT1 decimal(15,2), 
+		KwotaZlomT2 decimal(15,2),
+			
+		PoczT1Sys decimal(15,2), 
+		PoczT2Sys decimal(15,2), 
+		BruttoT1Sys decimal(15,2), 
+		BruttoT2Sys decimal(15,2), 
+		NettoT1Sys decimal(15,2), 
+		NettoT2Sys decimal(15,2), 
+		KwotaZlomT1Sys decimal(15,2), 
+		KwotaZlomT2Sys decimal(15,2) )
+	
+	
+	declare @SHEGIDNumer int = 0
+	declare @SHEGIDLp smallint = 0	
+	declare @SHESZEId int = 0
+	declare @SHESZELp smallint = 0
+	declare @SHELp smallint = 0
+	
+	
+	declare @lElementow tinyint = 0
+	
+	-------------------------------------------------------------+
+	DECLARE elemCur CURSOR FOR
+		select SHE_GIDNumer, SHE_GIDLp, SHE_SZEId, SHE_SZELp, SHE_Lp from cdn.SrtHistElem where SHE_GIDNumer = @SHENumer and SHE_ParGIDLp = @SHEParGIDLp
+	OPEN elemCur
+	FETCH NEXT FROM elemCur INTO @SHEGIDNumer, @SHEGIDLp, @SHESZEId, @SHESZELp, @SHELp
+	WHILE @@FETCH_STATUS = 0
+	BEGIN
+		set @lElementow += 1		
+	
+	--na potrzeby wydrukow (-1 = null)
+		if isnull(@NaDzien,0) = -1
+			set @NaDzien = null
+
+		if isnull(@DataDok,0) = -1
+			set @DataDok = null
+
+
+
+	--wczytaj pierwsze OT i likwidacje (ostatnia bez korekty)
+		select * into #tmpOT_LT from cdn.SrtHistElem where 1=2
+		insert into #tmpOT_LT exec cdn.SrtPrzyjecieLikwidacja @SHESZEId, null, @ZestTryb
+		
+
+		select @DataPierwszeOT = SHE_Data,
+			@DataZapPierwszeOT = SHE_DataZap,
+			@SrtLpPierwszeOT = SHE_SrtLp	
+		from #tmpOT_LT
+		where SHE_GIDTyp = @OT
+
+		drop table #tmpOT_LT
+
+		--czyli nie widzi OT
+		if not @DataDok is null
+			if @DataZapPierwszeOT &gt; @DataDok
+				set @DataPierwszeOT = 0
+
+
+	--poczatkowa wartosc
+		select 
+			@PoczT1 = sum(case  
+				when she_gidtyp = @LT or (SHE_GIDTyp = @ZPA and SHE_PrzesStrona = @ZestOdlaczenie and @ZestTryb &lt;&gt; @ZestTrybSrodek) then -1*SHE_KwotaInw 
+				when she_gidtyp = @LTK or (SHE_GIDTyp = @ZPK and SHE_PrzesStrona = @ZestOdlaczenie and @ZestTryb &lt;&gt; @ZestTrybSrodek) then -1*SHE_KwotaInw
+				else SHE_KwotaInw
+			end)  ,
+			@PoczT2 = sum(case  
+				when she_gidtyp = @LT or (SHE_GIDTyp = @ZPA and SHE_PrzesStrona = @ZestOdlaczenie and @ZestTryb &lt;&gt; @ZestTrybSrodek) then -1*SHE_PodstawaAm
+				when she_gidtyp = @LTK or (SHE_GIDTyp = @ZPK and SHE_PrzesStrona = @ZestOdlaczenie and @ZestTryb &lt;&gt; @ZestTrybSrodek) then -1*SHE_PodstawaAm 
+				else SHE_PodstawaAm
+			end),
+			@PoczT1Sys = sum(case  
+				when she_gidtyp = @LT or (SHE_GIDTyp = @ZPA and SHE_PrzesStrona = @ZestOdlaczenie and @ZestTryb &lt;&gt; @ZestTrybSrodek) then -1*SHE_KwotaInwSys
+				when she_gidtyp = @LTK or (SHE_GIDTyp = @ZPK and SHE_PrzesStrona = @ZestOdlaczenie and @ZestTryb &lt;&gt; @ZestTrybSrodek) then -1*SHE_KwotaInwSys
+				else SHE_KwotaInwSys
+			end)  ,
+			@PoczT2Sys = sum(case  
+				when she_gidtyp = @LT or (SHE_GIDTyp = @ZPA and SHE_PrzesStrona = @ZestOdlaczenie and @ZestTryb &lt;&gt; @ZestTrybSrodek) then -1*SHE_PodstawaAmSys
+				when she_gidtyp = @LTK or (SHE_GIDTyp = @ZPK and SHE_PrzesStrona = @ZestOdlaczenie and @ZestTryb &lt;&gt; @ZestTrybSrodek) then -1*SHE_PodstawaAmSys
+				else SHE_PodstawaAmSys
+			end)
+		from cdn.SrtHistElem
+		where (( (She_SrtNumer = @SHESZEId and @ZestTryb &lt;&gt; @ZestTrybElement) or (SHE_SZEId = @SHESZEId and @ZestTryb = @ZestTrybElement) ) and 
+			SHE_Data = @DataPierwszeOT and
+			(@DataDok is null or not @DataDok is null and SHE_DataZap &lt;= @DataDok) and
+			(
+				( SHE_GIDTyp in (@OT, @OTK, @MW, @MWK) or (SHE_GIDTyp in (@ZPA, @ZPK) and @ZestTryb &lt;&gt; @ZestTrybSrodek) )
+				or SHE_GIDTyp = @LT and isnull(She_Likwidacja,0) = 0
+				or SHE_GIDTyp = @LTK and isnull(She_Likwidacja,0) = 0
+			) and
+			not exists 
+			(
+				Select E1.SHE_GIDtyp
+				from cdn.SrtHistElem as E1
+				where ( (E1.She_SrtNumer = @SHESZEId and @ZestTryb in (@ZestTrybSrodek, @ZestTrybSrodek) and SHE_SrtLp &gt; E1.SHE_SrtLp ) or
+						(E1.SHE_SZEId = @SHESZEId and @ZestTryb = @ZestTrybElement and SHE_SZELp &gt; E1.SHE_SZELp) ) and 
+					E1.SHE_Data = @DataPierwszeOT and				
+					(@DataDok is null or not @DataDok is null and E1.SHE_DataZap &lt;= @DataDok) and
+					(
+						E1.SHE_GIDTyp in (@AM, @AMK, @AMP, @AK, @PK)
+						or E1.SHE_GIDTyp = @LT and isnull(E1.She_Likwidacja,0) &lt;&gt; 0
+						or E1.SHE_GIDTyp = @LTK and isnull(E1.She_Likwidacja,0) &lt;&gt; 0
+					)
+			)) AND (@bPominAktDok = 1 AND SHE_GIDNumer &lt;&gt; @SHEGIDNumer or @bPominAktDok = 0)
+
+	/*select 'aaa1', @SHEGIDNumer, @SHEGIDLp, @SHESZEId, @SHESZELp, @SHELp,
+				@PoczT1, 
+				@PoczT2, 
+				@BruttoT1, 
+				@BruttoT2, 
+				(@BruttoT1 - isnull(@OdpisyT1,0)), 
+				(case when @BruttoT2 &gt; 0 then
+					@BruttoT2 - isnull(@OdpisyT2,0) -- - isnull(@OdpisyT2_Likw,0) 
+				else
+					0 -- w przypadku likwidacji po stronie amortyzacji nie ma kwoty amortyzacji
+				end), 
+				@KwotaZlom, 
+				@KwotaZlomAm,
+				
+				@PoczT1Sys, 
+				@PoczT2Sys, 
+				@BruttoT1Sys, 
+				@BruttoT2Sys, 
+				(@BruttoT1Sys - isnull(@OdpisyT1Sys,0)), 
+				(case when @BruttoT2Sys &gt; 0 then
+					@BruttoT2Sys - isnull(@OdpisyT2Sys,0) -- - isnull(@OdpisyT2_LikwSys,0) 
+				else
+					0 -- w przypadku likwidacji po stronie amortyzacji nie ma kwoty amortyzacji
+				end), 
+				@KwotaZlomSys, 
+				@KwotaZlomAmSys		--*/
+
+	--Biezaca BRUTTO
+		select 
+			@BruttoT1 = sum(case  
+				when she_gidtyp = @LT or (SHE_GIDTyp = @ZPA and SHE_PrzesStrona = @ZestOdlaczenie and @ZestTryb &lt;&gt; @ZestTrybSrodek) then -1*SHE_KwotaInw 
+				when she_gidtyp = @LTK or (SHE_GIDTyp = @ZPK and SHE_PrzesStrona = @ZestOdlaczenie and @ZestTryb &lt;&gt; @ZestTrybSrodek) then -1*SHE_KwotaInw
+				else SHE_KwotaInw
+			end)  ,
+			@BruttoT2 = sum(case  
+				when she_gidtyp = @LT or (SHE_GIDTyp = @ZPA and SHE_PrzesStrona = @ZestOdlaczenie and @ZestTryb &lt;&gt; @ZestTrybSrodek) then -1*SHE_PodstawaAm
+				when she_gidtyp = @LTK or (SHE_GIDTyp = @ZPK and SHE_PrzesStrona = @ZestOdlaczenie and @ZestTryb &lt;&gt; @ZestTrybSrodek) then -1*SHE_PodstawaAm 
+				else SHE_PodstawaAm
+			end),
+			@BruttoT1Sys = sum(case  
+				when she_gidtyp = @LT or (SHE_GIDTyp = @ZPA and SHE_PrzesStrona = @ZestOdlaczenie and @ZestTryb &lt;&gt; @ZestTrybSrodek) then -1*SHE_KwotaInwSys
+				when she_gidtyp = @LTK or (SHE_GIDTyp = @ZPK and SHE_PrzesStrona = @ZestOdlaczenie and @ZestTryb &lt;&gt; @ZestTrybSrodek) then -1*SHE_KwotaInwSys
+				else SHE_KwotaInwSys
+			end)  ,
+			@BruttoT2Sys = sum(case  
+				when she_gidtyp = @LT or (SHE_GIDTyp = @ZPA and SHE_PrzesStrona = @ZestOdlaczenie and @ZestTryb &lt;&gt; @ZestTrybSrodek) then -1*SHE_PodstawaAmSys
+				when she_gidtyp = @LTK or (SHE_GIDTyp = @ZPK and SHE_PrzesStrona = @ZestOdlaczenie and @ZestTryb &lt;&gt; @ZestTrybSrodek) then -1*SHE_PodstawaAmSys
+				else SHE_PodstawaAmSys
+			end)
+		from cdn.SrtHistElem
+		where ((She_SrtNumer = @SHESZEId and @ZestTryb in (@ZestTrybSrodek,@ZestTrybZestaw) or SHE_SZEId = @SHESZEId and @ZestTryb = @ZestTrybElement) and 
+			(@NaDzien is null or not @NaDzien is null and SHE_Data &lt;= @NaDzien) and
+			(@DataDok is null or not @DataDok is null and SHE_DataZap &lt;= @DataDok) and
+			(SHE_GIDTyp in (@OT, @OTK, @MW, @MWK, @LT, @LTK, @PK ) or SHE_GIDTyp in (@ZPA, @ZPK) and @ZestTryb &lt;&gt; @ZestTrybSrodek)
+			) AND (@bPominAktDok = 1 AND SHE_GIDNumer &lt;&gt; @SHEGIDNumer or @bPominAktDok = 0)
+
+	--select @SHESZEId, @ZestTryb, @SHESZEId,@NaDzien,@DataDok
+
+	/*select 'aaa2', @SHEGIDNumer, @SHEGIDLp, @SHESZEId, @SHESZELp, @SHELp,
+				@PoczT1, 
+				@PoczT2, 
+				@BruttoT1, 
+				@BruttoT2, 
+				(@BruttoT1 - isnull(@OdpisyT1,0)), 
+				(case when @BruttoT2 &gt; 0 then
+					@BruttoT2 - isnull(@OdpisyT2,0) -- - isnull(@OdpisyT2_Likw,0) 
+				else
+					0 -- w przypadku likwidacji po stronie amortyzacji nie ma kwoty amortyzacji
+				end), 
+				@KwotaZlom, 
+				@KwotaZlomAm,
+				
+				@PoczT1Sys, 
+				@PoczT2Sys, 
+				@BruttoT1Sys, 
+				@BruttoT2Sys, 
+				(@BruttoT1Sys - isnull(@OdpisyT1Sys,0)), 
+				(case when @BruttoT2Sys &gt; 0 then
+					@BruttoT2Sys - isnull(@OdpisyT2Sys,0) -- - isnull(@OdpisyT2_LikwSys,0) 
+				else
+					0 -- w przypadku likwidacji po stronie amortyzacji nie ma kwoty amortyzacji
+				end), 
+				@KwotaZlomSys, 
+				@KwotaZlomAmSys		--*/
+
+	--biezace odpisy
+		select 
+			@OdpisyT1 = sum(case  
+				when she_gidtyp = @LT or (SHE_GIDTyp = @ZPA and SHE_PrzesStrona = @ZestOdlaczenie and @ZestTryb &lt;&gt; @ZestTrybSrodek) then -1*SHE_KwotaUm
+				when she_gidtyp = @LTK or (SHE_GIDTyp = @ZPK and SHE_PrzesStrona = @ZestOdlaczenie and @ZestTryb &lt;&gt; @ZestTrybSrodek) then -1*SHE_KwotaUm
+				else SHE_KwotaUm
+			end)  ,
+			@OdpisyT2 = sum(case  
+				when she_gidtyp = @LT or (SHE_GIDTyp = @ZPA and SHE_PrzesStrona = @ZestOdlaczenie and @ZestTryb &lt;&gt; @ZestTrybSrodek) then -1*SHE_KwotaAm
+				when she_gidtyp = @LTK or (SHE_GIDTyp = @ZPK and SHE_PrzesStrona = @ZestOdlaczenie and @ZestTryb &lt;&gt; @ZestTrybSrodek) then -1*SHE_KwotaAm
+				else SHE_KwotaAm
+			end),
+			@OdpisyT1Sys = sum(case  
+				when she_gidtyp = @LT or (SHE_GIDTyp = @ZPA and SHE_PrzesStrona = @ZestOdlaczenie and @ZestTryb &lt;&gt; @ZestTrybSrodek) then -1*SHE_KwotaUmSys
+				when she_gidtyp = @LTK or (SHE_GIDTyp = @ZPK and SHE_PrzesStrona = @ZestOdlaczenie and @ZestTryb &lt;&gt; @ZestTrybSrodek) then -1*SHE_KwotaUmSys
+				else SHE_KwotaUmSys
+			end)  ,
+			@OdpisyT2Sys = sum(case  
+				when she_gidtyp = @LT or (SHE_GIDTyp = @ZPA and SHE_PrzesStrona = @ZestOdlaczenie and @ZestTryb &lt;&gt; @ZestTrybSrodek) then -1*SHE_KwotaAmSys
+				when she_gidtyp = @LTK or (SHE_GIDTyp = @ZPK and SHE_PrzesStrona = @ZestOdlaczenie and @ZestTryb &lt;&gt; @ZestTrybSrodek) then -1*SHE_KwotaAmSys
+				else SHE_KwotaAmSys
+			end),
+			@OdpisyT2_Likw = sum(SHE_KwotaAm_Likw)
+			,		@OdpisyT2_LikwSys = 0 --sum(SHE_KwotaAm_LikwSys)
+		from cdn.SrtHistElem
+		where ((She_SrtNumer = @SHESZEId and @ZestTryb in (@ZestTrybSrodek,@ZestTrybZestaw) or SHE_SZEId = @SHESZEId and @ZestTryb = @ZestTrybElement) and 
+			(@NaDzien is null or not @NaDzien is null and SHE_Data &lt;= @NaDzien) and
+			(@DataDok is null or not @DataDok is null and SHE_DataZap &lt;= @DataDok) and
+			(SHE_GIDTyp in (@AM, @AMK, @AMP, @AK, @LT, @LTK, @PK, @MW, @MWK )  or SHE_GIDTyp in (@ZPA, @ZPK) and @ZestTryb &gt; 0)
+			) AND (@bPominAktDok = 1 AND SHE_GIDNumer &lt;&gt; @SHEGIDNumer or @bPominAktDok = 0)
+
+/*select 'aaa3', @SHEGIDNumer, @SHEGIDLp, @SHESZEId, @SHESZELp, @SHELp,
+				@PoczT1, 
+				@PoczT2, 
+				@BruttoT1, 
+				@BruttoT2, 
+				(@BruttoT1 - isnull(@OdpisyT1,0)), 
+				(case when @BruttoT2 &gt; 0 then
+					@BruttoT2 - isnull(@OdpisyT2,0) -- - isnull(@OdpisyT2_Likw,0) 
+				else
+					0 -- w przypadku likwidacji po stronie amortyzacji nie ma kwoty amortyzacji
+				end), 
+				@KwotaZlom, 
+				@KwotaZlomAm,
+				
+				@PoczT1Sys, 
+				@PoczT2Sys, 
+				@BruttoT1Sys, 
+				@BruttoT2Sys, 
+				(@BruttoT1Sys - isnull(@OdpisyT1Sys,0)), 
+				(case when @BruttoT2Sys &gt; 0 then
+					@BruttoT2Sys - isnull(@OdpisyT2Sys,0) -- - isnull(@OdpisyT2_LikwSys,0) 
+				else
+					0 -- w przypadku likwidacji po stronie amortyzacji nie ma kwoty amortyzacji
+				end), 
+				@KwotaZlomSys, 
+				@KwotaZlomAmSys			--*/
+
+	--kwota zlomowa
+		select 
+			@kwotaZlom = She_KwotaZlom,
+			@kwotaZlomAm = She_KwotaZlomAm,
+			@kwotaZlomSys = She_KwotaZlomSys,
+			@kwotaZlomAmSys = She_KwotaZlomAmSys
+			
+		from cdn.SrtHistElem 
+		where 
+			(@NaDzien is null or not @NaDzien is null and SHE_Data &lt;= @NaDzien) and
+			(@DataDok is null or not @DataDok is null and SHE_DataZap &lt;= @DataDok) and
+			SHE_GIDTyp = @ZKZ
+					and SHE_Data = 
+						(
+							select max(SHE_Data) from cdn.SrtHistElem 
+							where (( (SHE_SrtNumer = @SHESZEId and @ZestTryb &lt;&gt; @ZestTrybElement) or (@ZestTryb = @ZestTrybElement and SHE_SZEId = @SHESZEId) ) and
+								(@NaDzien is null or not @NaDzien is null and SHE_Data &lt;= @NaDzien) and
+								(@DataDok is null or not @DataDok is null and SHE_DataZap &lt;= @DataDok) and
+								SHE_GIDTyp = @ZKZ) AND (@bPominAktDok = 1 AND SHE_GIDNumer &lt;&gt; @SHEGIDNumer or @bPominAktDok = 0)
+						)
+			and
+			(
+				(
+					SHE_SZEId = @SHESZEId and @ZestTryb = @ZestTrybElement
+					and SHE_SZELp = 
+						(
+							select max(SHE_SZELp) from cdn.SrtHistElem 
+							where (SHE_SZEId = @SHESZEId and
+								(@NaDzien is null or not @NaDzien is null and SHE_Data &lt;= @NaDzien) and
+								(@DataDok is null or not @DataDok is null and SHE_DataZap &lt;= @DataDok) and
+								SHE_GIDTyp = @ZKZ 
+								and SHE_Data = 
+									(
+										select max(SHE_Data) from cdn.SrtHistElem 
+										where (SHE_SZEId = @SHESZEId and
+											(@NaDzien is null or not @NaDzien is null and SHE_Data &lt;= @NaDzien) and
+											(@DataDok is null or not @DataDok is null and SHE_DataZap &lt;= @DataDok) and
+											SHE_GIDTyp = @ZKZ) AND (@bPominAktDok = 1 AND SHE_GIDNumer &lt;&gt; @SHEGIDNumer or @bPominAktDok = 0)
+									)) AND (@bPominAktDok = 1 AND SHE_GIDNumer &lt;&gt; @SHEGIDNumer or @bPominAktDok = 0)
+						)
+				)
+				OR
+				(
+					SHE_SZEId = @SHESZEId and @ZestTryb &lt;&gt; @ZestTrybElement
+					and SHE_SrtLp = 
+						(
+							select max(SHE_SrtLp) from cdn.SrtHistElem 
+							where (SHE_SrtNumer = @SHESZEId and
+								(@NaDzien is null or not @NaDzien is null and SHE_Data &lt;= @NaDzien) and
+								(@DataDok is null or not @DataDok is null and SHE_DataZap &lt;= @DataDok) and
+								SHE_GIDTyp = @ZKZ 
+								and SHE_Data = 
+									(
+										select max(SHE_Data) from cdn.SrtHistElem 
+										where (SHE_SrtNumer = @SHESZEId and
+											(@NaDzien is null or not @NaDzien is null and SHE_Data &lt;= @NaDzien) and
+											(@DataDok is null or not @DataDok is null and SHE_DataZap &lt;= @DataDok) and
+											SHE_GIDTyp = @ZKZ) AND (@bPominAktDok = 1 AND SHE_GIDNumer &lt;&gt; @SHEGIDNumer or @bPominAktDok = 0)
+									)) AND (@bPominAktDok = 1 AND SHE_GIDNumer &lt;&gt; @SHEGIDNumer or @bPominAktDok = 0)
+						)
+				)
+			)
+
+/*select 'aaa4', @SHEGIDNumer, @SHEGIDLp, @SHESZEId, @SHESZELp, @SHELp,
+				@PoczT1, 
+				@PoczT2, 
+				@BruttoT1, 
+				@BruttoT2, 
+				(@BruttoT1 - isnull(@OdpisyT1,0)), 
+				(case when @BruttoT2 &gt; 0 then
+					@BruttoT2 - isnull(@OdpisyT2,0) -- - isnull(@OdpisyT2_Likw,0) 
+				else
+					0 -- w przypadku likwidacji po stronie amortyzacji nie ma kwoty amortyzacji
+				end), 
+				@KwotaZlom, 
+				@KwotaZlomAm,
+				
+				@PoczT1Sys, 
+				@PoczT2Sys, 
+				@BruttoT1Sys, 
+				@BruttoT2Sys, 
+				(@BruttoT1Sys - isnull(@OdpisyT1Sys,0)), 
+				(case when @BruttoT2Sys &gt; 0 then
+					@BruttoT2Sys - isnull(@OdpisyT2Sys,0) -- - isnull(@OdpisyT2_LikwSys,0) 
+				else
+					0 -- w przypadku likwidacji po stronie amortyzacji nie ma kwoty amortyzacji
+				end), 
+				@KwotaZlomSys, 
+				@KwotaZlomAmSys			--*/
+				
+		if @KwotaZlom is null
+			select @KwotaZlom = Srt_KwotaZlom, @KwotaZlomAm = Srt_KwotaZlomAm from cdn.SrtKarty where Srt_GIDNumer = @SHESZEId
+
+
+		insert into #tabWyniki 
+		values (@SHEGIDNumer, @SHEGIDLp, @SHESZEId, @SHESZELp, @SHELp,
+				@PoczT1, 
+				@PoczT2, 
+				@BruttoT1, 
+				@BruttoT2, 
+				(@BruttoT1 - isnull(@OdpisyT1,0)), 
+				(case when @BruttoT2 &gt; 0 then
+					@BruttoT2 - isnull(@OdpisyT2,0) -- - isnull(@OdpisyT2_Likw,0) 
+				else
+					0 -- w przypadku likwidacji po stronie amortyzacji nie ma kwoty amortyzacji
+				end), 
+				@KwotaZlom, 
+				@KwotaZlomAm,
+				
+				@PoczT1Sys, 
+				@PoczT2Sys, 
+				@BruttoT1Sys, 
+				@BruttoT2Sys, 
+				(@BruttoT1Sys - isnull(@OdpisyT1Sys,0)), 
+				(case when @BruttoT2Sys &gt; 0 then
+					@BruttoT2Sys - isnull(@OdpisyT2Sys,0) -- - isnull(@OdpisyT2_LikwSys,0) 
+				else
+					0 -- w przypadku likwidacji po stronie amortyzacji nie ma kwoty amortyzacji
+				end), 
+				@KwotaZlomSys, 
+				@KwotaZlomAmSys)	
+			
+		FETCH NEXT FROM elemCur	INTO @SHEGIDNumer, @SHEGIDLp, @SHESZEId, @SHESZELp, @SHELp
+	END
+	close elemCur
+	deallocate elemCur
+	-------------------------------------------------------------+
+			
+	select * from #tabWyniki
+	
+	drop table #tabWyniki
+	
+
+set nocount off
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

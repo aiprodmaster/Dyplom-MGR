@@ -1,0 +1,110 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="XLModyfikujPytanie"></A><PRE>
+          <FONT SIZE="2"><I>/* XLModyfikujPytanie */</I><BR>
+CREATE PROCEDURE CDN.XLModyfikujPytanie
+(
+/* ==========================================================================================
+	SQL API: Procedura serwerowa do dodawania pytania
+	
+
+	Parametry wejściowe: 
+   ========================================================================================== */
+	@Id INT,							-- Identyfikator pytania
+	@Tresc VARCHAR(512),				-- Treść pytania
+	@GrupaId INT = NULL,				-- Identyfikator grupy pytań
+	@Otwarte TINYINT = NULL,			-- Czy pytanie otwarte
+	@Aktywne TINYINT = NULL,			-- Czy pytanie aktywne
+	@WielokrotnyWybor TINYINT = NULL,	-- Czy pytenie wielokrotnego wyboru
+	@RodzajOdpId INT = NULL				-- Identyfikator kategorii rodzaju odpowiedzi 		
+
+/* ==========================================================================================
+	Return:
+	 0 : Operacja zakończona sukcesem
+	-1 : Nie powiodła się modyfikacja w tabeli CDN.Pytania.
+	-2 : Wystąpił błąd podczas modyfikacji pytania. Nie istnieje wpis w tabeli CDN.Pytania o podanym identyfikatorze.
+	-3 : Wystąpił błąd podczas modyfikacji pytania. Brak treści pytania.
+	-4 : Wystąpił błąd podczas modyfikacji pytania. Nie powiodło sie ustalenie grupy pytań.
+	-5 : Wystąpił błąd podczas modyfikacji pytania. Pytanie nie może być jednocześnie otwarte i wielokrotnego wyboru.
+	-6 : Wystąpił błąd podczas modyfikacji pytania. Nie powiodło się ustalenie rodzaju odpowiedzi dla pytania zamkniętego.
+	-7 : Wystąpił błąd podczas modyfikacji pytania. Operacja niedozwolona. Istnieją zapisy powiązane z modyfikowanym rekordem (powiązanie z tabelą CDN.OdpowiedziZadania).
+   ========================================================================================== */
+)
+AS
+BEGIN
+	declare @GrpId INT = 0,
+			@RodzOdpId INT = 0,
+			@BladId INT = -2,
+			@BladOpis VARCHAR(2048) = 'Wystąpił błąd podczas modyfikacji pytania. '
+
+	select @GrpId = max(case when p.SLS_Predefiniowany = 81 and SLW_Id = isnull(@GrupaId,0) and SLW_Aktywny = 1 then SLW_Id else 0 end), 
+			@RodzOdpId = max(case when n.SLS_Predefiniowany = 59 and p.SLS_Id = isnull(@RodzajOdpId,0) then p.SLS_Id else 0 end) 
+	from cdn.SlownikiStruktura p
+	join cdn.Slowniki on p.SLS_Id = SLW_SLSId
+	left join cdn.SlownikiStruktura n on p.SLS_OId = n.SLS_Id
+	where p.SLS_Predefiniowany = 81 or n.SLS_Predefiniowany = 59 
+
+	select @BladId = case when isnull(@Tresc, PYT_Tresc) = '' then -3
+						when @GrupaId is null and PYT_GrupaId = 0 then -4
+						when isnull(@GrupaId,PYT_GrupaId) &lt;&gt; PYT_GrupaId and @GrpId = 0 then -4
+						when isnull(@Otwarte, 0) = 1 and isnull(@WielokrotnyWybor,0) = 1 then -5
+						when isnull(@Otwarte, case when isnull(@WielokrotnyWybor,PYT_WielokrotnyWybor) = 1 then 0 else PYT_Otwarte end) = 0 then 
+							case when @RodzajOdpId is null and PYT_ROdpId = 0 then -6 
+								when @RodzOdpId = 0 then -6
+							end	
+						when exists(select * from cdn.OdpowiedziZadania where ODZ_PytId = PYT_Id) then -7
+						else 0
+					end
+	from cdn.Pytania 
+	where PYT_Id = isnull(@Id,0)
+
+	if @BladId &lt; 0
+	begin
+		select @BladOpis = case @BladId 
+							when -2 then @BladOpis + 'Nie istnieje wpis w tabeli CDN.Pytania o podanym identyfikatorze.'
+							when -3 then @BladOpis + 'Brak treści pytania.'
+							when -4 then @BladOpis + 'Nie powiodło sie ustalenie grupy pytań.'
+							when -5 then @BladOpis + 'Pytanie nie może być jednocześnie otwarte i wielokrotnego wyboru.'
+							when -6 then @BladOpis + 'Nie powiodło się ustalenie rodzaju odpowiedzi dla pytania zamkniętego.'
+							when -7 then @BladOpis + 'Operacja niedozwolona. Istnieją zapisy powiązane z modyfikowanym rekordem (powiązanie z tabelą CDN.OdpowiedziZadania).'
+							end
+		raiserror(@BladOpis, 16, 1)
+		return @BladId
+	end
+
+	update cdn.Pytania
+	set PYT_Tresc = isnull(@Tresc,PYT_Tresc),
+		PYT_GrupaId = case when @GrpId = 0 then PYT_GrupaId else @GrpId end,
+		PYT_Otwarte = isnull(@Otwarte, case when isnull(@WielokrotnyWybor,PYT_WielokrotnyWybor) = 1 then 0 else PYT_Otwarte end),
+		PYT_Aktywne = isnull(@Aktywne, PYT_Aktywne),
+		PYT_WielokrotnyWybor = isnull(@WielokrotnyWybor, case when isnull(@Otwarte,PYT_Otwarte) = 1 then 0 else PYT_WielokrotnyWybor end),
+		PYT_RodpId = case when isnull(@Otwarte, case when isnull(@WielokrotnyWybor,PYT_WielokrotnyWybor) = 1 then 0 else PYT_Otwarte end) = 1 then 0
+						when @RodzajOdpId is null then PYT_RodpId
+						else @RodzOdpId 
+					end 
+	where PYT_Id = @Id
+
+	if @@ERROR &lt;&gt; 0
+	begin
+		raiserror('Nie powiodła się modyfikacja w tabeli CDN.Pytania.', 16, 1)
+		return -1
+	end
+
+	return 0
+	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

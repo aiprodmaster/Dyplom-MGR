@@ -1,0 +1,1734 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="KalkulacjaKosztowPrzeliczKosztyNaPodstElementu"></A><PRE>
+          <FONT SIZE="2"><I>/* KalkulacjaKosztowPrzeliczKosztyNaPodstElementu */</I><BR>
+CREATE PROCEDURE CDN.KalkulacjaKosztowPrzeliczKosztyNaPodstElementu(@PKKId INT, @PKSId INT = NULL, @Zmienione INT = 0)
+AS
+BEGIN
+    SET NOCOUNT ON
+    IF @Zmienione = 0 AND @PKSId IS NULL
+    BEGIN
+        RAISERROR ('KalkulacjaKosztowPrzeliczKosztyNaPodstElementu: Nie podano wymaganych danych do przeliczenia kosztów.', 16, 1)
+        RETURN
+    END
+
+    DECLARE @Poziom INT = 1
+
+    DECLARE @TypPTE INT = 14340
+
+    DECLARE @TypTechnologia SMALLINT = 10
+    DECLARE @TypCzynnosc SMALLINT = 40
+    DECLARE @TypProduktUboczny SMALLINT = 47
+    DECLARE @TypProdukt SMALLINT = 50
+    DECLARE @TypSurowiec SMALLINT = 60
+    DECLARE @TypZasob SMALLINT = 70
+    DECLARE @TypFunkcja SMALLINT = 80
+    DECLARE @TypPolProdukt SMALLINT = 90
+    DECLARE @TypKosztDodatkowy SMALLINT = 100
+    DECLARE @TypKosztuEwidencyjny TINYINT = 1
+    DECLARE @AktualizujKosztyDodatkowe TINYINT = 0
+
+    CREATE TABLE #ProduktyDoAktualizacji (PKS_Id INT, PKS_Bylo INT)
+	CREATE TABLE #ZaktualizowaneProduktyKoncowe (PKS_Id INT UNIQUE)
+
+    CREATE TABLE #IloscCzynnosciWTech(IdTech INT, IlCzyn INT)
+    INSERT INTO #IloscCzynnosciWTech
+	SELECT PTC_Technologia, COUNT(PTC_Id) FROM CDN.ProdKalkulacjaKosztuElem tech
+        JOIN CDN.ProdTechnologiaCzynnosci ON PTC_Technologia = PKS_ObjectID AND PKS_Typ = @TypTechnologia
+		CROSS APPLY (SELECT COUNT(PKS_Id) IlProd FROM CDN.ProdKalkulacjaKosztuElem prod WHERE prod.PKS_Ilosc &gt; 0 AND prod.PKS_PTC_Ojciec = PTC_Id AND prod.PKS_Typ IN (@TypProdukt, @TypProduktUboczny) AND prod.PKS_PKK = @PKKId) prod
+    WHERE tech.PKS_PKK = @PKKId AND IlProd &gt; 0
+	GROUP BY PTC_Technologia, tech.PKS_Typ
+    
+    CREATE TABLE #IloscProduktowWCzyn(IdCzyn INT, IlProd INT)
+    INSERT INTO #IloscProduktowWCzyn
+    SELECT DISTINCT prod.PKS_PTC_Ojciec, COUNT(prod.PKS_ID) FROM CDN.ProdKalkulacjaKosztuElem pks
+        JOIN CDN.ProdKalkulacjaKosztuElem prod ON pks.PKS_ObjectID = prod.PKS_PTC_Ojciec AND prod.PKS_Typ IN (@TypProdukt, @TypProduktUboczny)
+    WHERE pks.PKS_PKK = @PKKId AND prod.PKS_PKK = @PKKId AND pks.PKS_Typ = @TypCzynnosc AND prod.PKS_Ilosc &gt; 0
+    GROUP BY prod.PKS_PTC_Ojciec
+
+    IF @Zmienione = 0
+    BEGIN
+        DECLARE @TypZmienionegoElemetnu TINYINT
+        SELECT TOP 1 @TypZmienionegoElemetnu =  PKS_Typ FROM CDN.ProdKalkulacjaKosztuElem WHERE PKS_Id = @PKSId
+        IF @TypZmienionegoElemetnu = @TypKosztDodatkowy OR @PKSId = 0
+			INSERT INTO #ProduktyDoAktualizacji
+            SELECT DISTINCT pks.PKS_Id, pks.PKS_Bylo
+            FROM CDN.ProdKalkulacjaKosztuElem pks
+				JOIN CDN.ProdKalkulacjaKosztuElem glownyProd ON glownyProd.PKS_Bylo = 1 AND glownyProd.PKS_Typ = @TypProdukt
+            WHERE pks.PKS_PTC_Ojciec = glownyProd.PKS_PTC_Ojciec AND pks.PKS_PKK = @PKKId AND glownyProd.PKS_PKK = @PKKId AND pks.PKS_Typ IN (@TypProdukt, @TypProduktUboczny)
+				AND pks.PKS_Ilosc &lt;&gt; 0
+
+        ELSE IF @TypZmienionegoElemetnu = @TypTechnologia
+        BEGIN
+            INSERT INTO #ProduktyDoAktualizacji
+            SELECT DISTINCT produkty.PKS_Id, produkty.PKS_Bylo
+            FROM CDN.ProdKalkulacjaKosztuElem zmieniony
+				JOIN CDN.ProdKalkulacjaKosztuElem glownyProd ON glownyProd.PKS_Bylo = 1 AND glownyProd.PKS_Typ = @TypProdukt AND glownyProd.PKS_PKK = @PKKId
+                JOIN CDN.ProdKalkulacjaKosztuElem produkty ON produkty.PKS_Technologia = zmieniony.PKS_ObjectID 
+					AND produkty.PKS_Typ IN (@TypProdukt, @TypProduktUboczny) 
+					--AND produkty.PKS_PTC_Ojciec = glownyProd.PKS_PTC_Ojciec
+			WHERE produkty.PKS_PKK = @PKKId AND zmieniony.PKS_PKK = @PKKId AND zmieniony.PKS_Id = @PKSId AND produkty.PKS_Ilosc &lt;&gt; 0
+
+            DELETE FROM #ProduktyDoAktualizacji
+            WHERE PKS_Id IN
+            (SELECT akt.PKS_Id
+                FROM #ProduktyDoAktualizacji akt
+                    JOIN CDN.ProdKalkulacjaKosztuElem aktElem ON akt.PKS_Id = aktElem.PKS_Id
+                    JOIN CDN.ProdKalkulacjaKosztuElem polprod ON aktelem.PKS_PtzTechnologiaZasob = polprod.PKS_ObjectID AND polprod.PKS_Technologia = aktElem.PKS_Technologia
+                WHERE aktElem.PKS_PKK = @PKKId AND polprod.PKS_PKK = @PKKId AND polprod.PKS_Typ = @TypPolProdukt)
+            
+        END
+        ELSE IF @TypZmienionegoElemetnu = @TypCzynnosc
+            INSERT INTO #ProduktyDoAktualizacji
+            SELECT DISTINCT produkt.PKS_Id, produkt.PKS_Bylo
+            FROM CDN.ProdKalkulacjaKosztuElem zmieniony
+                JOIN CDN.ProdKalkulacjaKosztuElem produkt ON produkt.PKS_PTC_Ojciec = zmieniony.PKS_ObjectID 
+					AND produkt.PKS_Typ IN (@TypProdukt, @TypProduktUboczny) 
+					AND produkt.PKS_PKK = @PKKId
+            WHERE zmieniony.PKS_Id = @PKSId AND zmieniony.PKS_PKK = @PKKId AND produkt.PKS_Ilosc &lt;&gt; 0
+
+        ELSE
+            INSERT INTO #ProduktyDoAktualizacji
+            SELECT DISTINCT produkt.PKS_Id, produkt.PKS_Bylo
+            FROM CDN.ProdKalkulacjaKosztuElem zmieniony
+                JOIN CDN.ProdKalkulacjaKosztuElem ojciec ON zmieniony.PKS_PTC_Ojciec = ojciec.PKS_ObjectID AND ojciec.PKS_PKK = @PKKId
+                JOIN CDN.ProdKalkulacjaKosztuElem produkt ON produkt.PKS_PTC_Ojciec = ojciec.PKS_ObjectID AND produkt.PKS_Typ IN (@TypProdukt, @TypProduktUboczny) AND produkt.PKS_PKK = @PKKId
+            WHERE zmieniony.PKS_Id = @PKSId AND zmieniony.PKS_PKK = @PKKId AND produkt.PKS_Ilosc &lt;&gt; 0
+
+    END
+    ELSE
+    BEGIN
+        INSERT INTO #ProduktyDoAktualizacji
+        SELECT DISTINCT produkt.PKS_Id, produkt.PKS_Bylo
+        FROM CDN.ProdKalkulacjaKosztuElem zmieniony
+            JOIN CDN.ProdKalkulacjaKosztuElem ojciec ON zmieniony.PKS_PTC_Ojciec = ojciec.PKS_ObjectID AND ojciec.PKS_PKK = @PKKId
+            JOIN CDN.ProdKalkulacjaKosztuElem produkt ON produkt.PKS_PTC_Ojciec = ojciec.PKS_ObjectID AND produkt.PKS_Typ IN (@TypProdukt, @TypProduktUboczny) AND produkt.PKS_PKK = @PKKId
+        WHERE zmieniony.PKS_Zmieniono = 1 AND zmieniony.PKS_PKK = @PKKId
+
+        IF (SELECT COUNT(1) FROM #ProduktyDoAktualizacji) = 0 AND EXISTS(SELECT 1 FROM CDN.ProdKalkulacjaKosztuElem WHERE PKS_Zmieniono = 1 AND PKS_PKK = @PKKId)
+        BEGIN
+            INSERT INTO #ProduktyDoAktualizacji
+            SELECT DISTINCT pks.PKS_Id, pks.PKS_Bylo
+            FROM CDN.ProdKalkulacjaKosztuElem pks
+				JOIN CDN.ProdKalkulacjaKosztuElem glownyProd ON glownyProd.PKS_Bylo = 1 AND glownyProd.PKS_Typ = @TypProdukt
+            WHERE pks.PKS_PTC_Ojciec = glownyProd.PKS_PTC_Ojciec AND pks.PKS_PKK = @PKKId AND glownyProd.PKS_PKK = @PKKId AND pks.PKS_Typ IN (@TypProdukt, @TypProduktUboczny)
+
+            SET @AktualizujKosztyDodatkowe = 1
+        END
+    END
+
+	IF EXISTS(SELECT TOP 1 PKS_Bylo FROM #ProduktyDoAktualizacji WHERE PKS_Bylo = 1)
+    BEGIN
+		SET @AktualizujKosztyDodatkowe = 1
+
+		INSERT INTO #ZaktualizowaneProduktyKoncowe
+		SELECT prodWTejSamejTech.PKS_Id FROM #ProduktyDoAktualizacji pda
+			JOIN CDN.ProdKalkulacjaKosztuElem glownyProd ON glownyProd.PKS_Bylo = 1 AND pda.PKS_Bylo = 1 AND glownyProd.PKS_ID = pda.PKS_Id
+			JOIN CDN.ProdKalkulacjaKosztuElem prodWTejSamejTech ON prodWTejSamejTech.PKS_Typ IN (@TypProdukt, @TypProduktUboczny) AND glownyProd.PKS_PTC_Ojciec = prodWTejSamejTech.PKS_PTC_Ojciec
+		WHERE glownyProd.PKS_PKK = @PKKId AND prodWTejSamejTech.PKS_PKK = @PKKId
+    END
+
+    WHILE @Poziom &lt; 100
+    BEGIN
+        UPDATE dt
+        SET PKS_Koszt1 = CASE
+                WHEN PTZ_WagaKosztu &lt;&gt; 0 OR wagaKoszt1 &lt;&gt; 0 THEN
+                    (CASE PTZ_WagaIlosc WHEN 1 THEN CASE WHEN PTZ_WagaKosztu = 0 THEN 1 ELSE PTZ_WagaKosztu END * dt.PKS_IloscWgTech ELSE PTZ_WagaKosztu END / wagaKoszt1) * (
+					((CASE techdt.PKS_ZaznaczonyPoprzedniStan WHEN 1 THEN techdt.PKS_Koszt1 ELSE 0 END / ilCzyn.IlCzyn + 
+					CASE opedt.PKS_ZaznaczonyPoprzedniStan WHEN 1 THEN opedt.PKS_Koszt1 ELSE 0 END + kosztSur1)))
+                ELSE (CASE techdt.PKS_ZaznaczonyPoprzedniStan WHEN 1 THEN techdt.PKS_Koszt1 ELSE 0 END / ilCzyn.IlCzyn + 
+					CASE opedt.PKS_ZaznaczonyPoprzedniStan WHEN 1 THEN opedt.PKS_Koszt1 ELSE 0 END + kosztSur1) / ilprod.IlProd
+            END,
+            PKS_Koszt2 = CASE
+                WHEN ptz.PTZ_Koszt = @TypKosztuEwidencyjny THEN CDN.Prod_WartoscAtr(ptz.PTZ_Cena, ptz.PTZ_CenaAtr, @TypPTE, dt.PKS_Technologia, opedt.PKS_TerminLong, -1)
+                --WHEN ((techdt.PKS_koszt2 / ilCzyn.IlCzyn + opedt.PKS_Koszt2 + kosztSur2) / LiczbaProd - koszty2.kosztyEwidencyjne) &lt; 0 THEN 0
+                WHEN PTZ_WagaKosztu &lt;&gt; 0 OR wagaKoszt2 &lt;&gt; 0
+                    THEN (CASE PTZ_WagaIlosc WHEN 1 THEN CASE WHEN PTZ_WagaKosztu = 0 THEN 1 ELSE PTZ_WagaKosztu END * dt.PKS_IloscWgTech ELSE PTZ_WagaKosztu END / wagaKoszt2) * (
+                        ((CASE techdt.PKS_ZaznaczonyPoprzedniStan WHEN 1 THEN techdt.PKS_koszt2 ELSE 0 END / ilCzyn.IlCzyn + 
+						CASE opedt.PKS_ZaznaczonyPoprzedniStan WHEN 1 THEN opedt.PKS_Koszt2 ELSE 0 END + kosztSur2) - koszty2.kosztyEwidencyjne))
+                ELSE (CASE techdt.PKS_ZaznaczonyPoprzedniStan WHEN 1 THEN techdt.PKS_koszt2 ELSE 0 END / ilCzyn.IlCzyn + 
+					CASE opedt.PKS_ZaznaczonyPoprzedniStan WHEN 1 THEN opedt.PKS_Koszt2 ELSE 0 END + kosztSur2) / LiczbaProdNieEw- koszty2.kosztyEwidencyjne
+            END
+        FROM CDN.ProdKalkulacjaKosztuElem dt
+            JOIN #ProduktyDoAktualizacji doAkt ON dt.PKS_ID = doAkt.PKS_ID
+            JOIN CDN.ProdTechnologiaZasoby ptz ON dt.PKS_ObjectID = ptz.PTZ_Id
+            JOIN CDN.ProdKalkulacjaKosztuElem opedt ON dt.PKS_PTC_Ojciec = opedt.PKS_ObjectID AND opedt.PKS_Typ = @TypCzynnosc AND opedt.PKS_PKK = @PKKId
+            JOIN CDN.ProdKalkulacjaKosztuElem techdt ON dt.PKS_Technologia = techdt.PKS_ObjectID AND techdt.PKS_Typ = @TypTechnologia AND techdt.PKS_PKK = @PKKId
+            JOIN #IloscCzynnosciWTech ilczyn ON ilczyn.IdTech = techdt.PKS_ObjectID
+            JOIN #IloscProduktowWCzyn ilprod ON ilprod.IdCzyn = dt.PKS_PTC_Ojciec
+            CROSS APPLY (SELECT ISNULL(SUM(PKS_Koszt1), 0) kosztSur1, ISNULL(SUM(PKS_Koszt2), 0) kosztSur2 FROM CDN.ProdKalkulacjaKosztuElem wewdt
+                WHERE PKS_Typ IN (@TypSurowiec, @TypPolProdukt, @TypFunkcja, @TypZasob) AND wewdt.PKS_PTC_Ojciec = dt.PKS_PTC_Ojciec AND wewdt.PKS_Technologia = dt.PKS_Technologia
+                    AND wewdt.PKS_ZaznaczonyPoprzedniStan = 1 AND wewdt.PKS_PKK = @PKKId
+            ) sumSur
+            CROSS APPLY (SELECT ISNULL(SUM(CASE PTZ_WagaIlosc WHEN 1 THEN CASE WHEN PTZ_WagaKosztu = 0 THEN 1 ELSE PTZ_WagaKosztu END * wewdt.PKS_IloscWgTech ELSE PTZ_WagaKosztu END), 0) wagaKoszt1, 
+					ISNULL(SUM(CASE WHEN PTZ_Koszt = @TypKosztuEwidencyjny THEN 0 ELSE CASE PTZ_WagaIlosc WHEN 1 THEN CASE WHEN PTZ_WagaKosztu = 0 THEN 1 ELSE PTZ_WagaKosztu END * wewdt.PKS_IloscWgTech ELSE PTZ_WagaKosztu END END), 0) wagaKoszt2, 
+					COUNT(PTZ_Id) LiczbaProd, ISNULL(SUM(CASE WHEN PTZ_Koszt &lt;&gt; @TypKosztuEwidencyjny AND PTZ_Ilosc &lt;&gt; 0 THEN 1 ELSE 0 END), 1) LiczbaProdNieEw
+                FROM CDN.ProdTechnologiaZasoby
+					JOIN CDN.ProdKalkulacjaKosztuElem wewdt ON wewdt.PKS_ObjectID = PTZ_Id AND wewdt.PKS_Typ IN (@TypProdukt, @TypProduktUboczny) AND wewdt.PKS_PKK = @PKKId
+                WHERE PTZ_TechnologiaCzynnosc = dt.PKS_PTC_Ojciec AND PTZ_TypZasobu IN (0, 4)
+            ) wagi
+            CROSS APPLY (SELECT ISNULL(SUM(CASE 
+                    WHEN wewptz.PTZ_Koszt = @TypKosztuEwidencyjny 
+                        THEN CDN.Prod_WartoscAtr(wewptz.PTZ_Cena, wewptz.PTZ_CenaAtr, @TypPTE, wewdt.PKS_Technologia, wewdt.PKS_TerminLong, -1) 
+                    ELSE 0 END), 0) kosztyEwidencyjne
+                FROM CDN.ProdKalkulacjaKosztuElem wewdt
+                    JOIN CDN.ProdTechnologiaZasoby wewptz ON wewdt.PKS_ObjectID = PTZ_Id AND wewdt.PKS_Typ IN (@TypProdukt, @TypProduktUboczny)
+                WHERE wewdt.PKS_PTC_Ojciec = dt.PKS_PTC_Ojciec AND wewdt.PKS_Typ IN (@TypProdukt, @TypProduktUboczny) AND wewdt.PKS_ObjectID != dt.PKS_ObjectID AND wewdt.PKS_PKK = @PKKId
+                    AND wewdt.PKS_Technologia = dt.PKS_Technologia
+            ) koszty2
+        WHERE dt.PKS_PKK = @PKKId AND dt.PKS_Ilosc &lt;&gt; 0
+
+        UPDATE CDN.ProdKalkulacjaKosztuElem
+        SET PKS_Zmieniono = 0
+        WHERE PKS_Zmieniono = 1 AND PKS_PKK = @PKKId
+
+		--Uwzglednij koszty dodatkowe
+		IF @AktualizujKosztyDodatkowe = 1
+		BEGIN
+	
+			UPDATE pks
+			SET PKS_Koszt1 = pks.PKS_Koszt1 + COALESCE(kosztDodUwz.kosztDod1 / ilProd.IlProd, 0),
+				PKS_Koszt2 = pks.PKS_Koszt2 + COALESCE(kosztDodUwz.kosztDod2 / ilProd.IlProd, 0)
+			FROM CDN.ProdKalkulacjaKosztuElem pks
+				JOIN #IloscProduktowWCzyn ilProd ON pks.PKS_PTC_Ojciec = ilProd.IdCzyn
+				CROSS APPLY(SELECT SUM(PKS_Koszt1) kosztDod1, SUM(PKS_Koszt2) kosztDod2 FROM CDN.ProdKalkulacjaKosztuElem wew WHERE wew.PKS_PKK = @PKKId AND wew.PKS_Typ =  @TypKosztDodatkowy 
+						AND wew.PKS_ZaznaczonyPoprzedniStan = 1) kosztDodUwz
+			WHERE pks.PKS_PKK = @PKKId /*AND pks.PKS_Typ = @TypProdukt*/ AND pks.PKS_Id IN (SELECT PKS_Id FROM #ZaktualizowaneProduktyKoncowe)
+				--AND pks.PKS_Typ = @TypProdukt
+				--AND polprod.PKS_ID IS NULL
+				--AND pks.PKS_PTC_Ojciec = glownyProd.PKS_PTC_Ojciec
+
+			SET @AktualizujKosztyDodatkowe = 0
+		END
+
+        UPDATE polprod
+        SET PKS_Koszt1 = dt.PKS_Koszt1 / dt.PKS_Ilosc * polprod.PKS_Ilosc,
+            PKS_Koszt2 = dt.PKS_Koszt2 / dt.PKS_Ilosc * polprod.PKS_Ilosc,
+            PKS_Zmieniono = 1
+        FROM CDN.ProdKalkulacjaKosztuElem polprod 
+            JOIN CDN.ProdKalkulacjaKosztuElem dt ON polprod.PKS_PtzTechnologiaZasob = dt.PKS_ObjectID AND dt.PKS_Typ = @TypProdukt
+            JOIN #ProduktyDoAktualizacji doAkt ON dt.PKS_ID = doAkt.PKS_ID
+        WHERE dt.PKS_PKK = @PKKId AND polprod.PKS_PKK = @PKKId AND dt.PKS_Ilosc &lt;&gt; 0
+
+        IF EXISTS(SELECT TOP 1 1 FROM CDN.ProdKalkulacjaKosztuElem WHERE PKS_PKK = @PKKId AND PKS_Zmieniono = 1)
+        BEGIN
+            TRUNCATE TABLE #ProduktyDoAktualizacji
+
+            INSERT INTO #ProduktyDoAktualizacji
+            SELECT DISTINCT produkt.PKS_Id, produkt.PKS_Bylo
+            FROM CDN.ProdKalkulacjaKosztuElem zmieniony
+                JOIN CDN.ProdKalkulacjaKosztuElem ojciec ON zmieniony.PKS_PTC_Ojciec = ojciec.PKS_ObjectID AND ojciec.PKS_PKK = @PKKId
+                JOIN CDN.ProdKalkulacjaKosztuElem produkt ON produkt.PKS_PTC_Ojciec = ojciec.PKS_ObjectID AND produkt.PKS_Typ = @TypProdukt AND produkt.PKS_PKK = @PKKId
+            WHERE zmieniony.PKS_Zmieniono = 1 AND zmieniony.PKS_PKK = @PKKId
+
+            IF EXISTS(SELECT TOP 1 PKS_Bylo FROM #ProduktyDoAktualizacji WHERE PKS_Bylo = 1)
+            BEGIN
+				BEGIN TRY
+					INSERT INTO #ZaktualizowaneProduktyKoncowe
+					SELECT pda.PKS_Id FROM #ProduktyDoAktualizacji pda
+						JOIN CDN.ProdKalkulacjaKosztuElem glownyProd ON glownyProd.PKS_Bylo = 1 AND pda.PKS_Bylo = 1 AND glownyProd.PKS_ID = pda.PKS_Id
+						JOIN CDN.ProdKalkulacjaKosztuElem prodWTejSamejTech ON glownyProd.PKS_Typ IN (@TypProdukt, @TypProduktUboczny) AND glownyProd.PKS_PTC_Ojciec = prodWTejSamejTech.PKS_PTC_Ojciec
+					
+					SET @AktualizujKosztyDodatkowe = 1
+				END TRY
+				BEGIN CATCH
+				END CATCH
+            END
+        END
+		ELSE
+			BREAK
+
+        SET @Poziom = @Poziom + 1
+
+    END
+
+    UPDATE CDN.ProdKalkulacjaKosztuElem
+    SET PKS_Koszt1 = CASE WHEN PKS_Koszt1 &lt; 0 THEN 0 ELSE PKS_Koszt1 END,
+        PKS_Koszt2 = CASE WHEN PKS_Koszt2 &lt; 0 THEN 0 ELSE PKS_Koszt2 END
+    WHERE PKS_PKK = @PKKId
+
+    --AktualizujCeny
+    UPDATE CDN.ProdKalkulacjaKosztuElem
+    SET PKS_Cena1 = PKS_Koszt1 / PKS_Ilosc,
+        PKS_Cena2 = PKS_Koszt2 / PKS_Ilosc
+    WHERE PKS_PKK = @PKKId AND PKS_KosztDodatkowyRodzaj &lt;&gt; 1 AND PKS_Ilosc &lt;&gt; 0
+
+    DROP TABLE #ProduktyDoAktualizacji
+    SET NOCOUNT OFF
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="KalkulacjaKosztowPrzeliczKosztyNaPodstZaznaczonych"></A><PRE>
+          <FONT SIZE="2"><I>/* KalkulacjaKosztowPrzeliczKosztyNaPodstZaznaczonych */</I><BR>
+CREATE PROCEDURE CDN.KalkulacjaKosztowPrzeliczKosztyNaPodstZaznaczonych(@PKKId INT, @PKSIds VARCHAR(MAX), @TylkoZaznaczone TINYINT = 0)
+AS
+BEGIN
+    DECLARE @Zmienione TINYINT = 1
+    DECLARE @ZapytanieSQL VARCHAR(max)
+    IF @TylkoZaznaczone = 0
+        SELECT @ZapytanieSQL = '
+                UPDATE CDN.ProdKalkulacjaKosztuElem
+                SET PKS_KosztPoliczony = 1 - PKS_KosztPoliczony,
+                    PKS_Zmieniono = 1,
+                    PKS_ZaznaczonyPoprzedniStan = 1 - PKS_ZaznaczonyPoprzedniStan
+                WHERE PKS_Id IN (' + @PKSIds + ')'
+    ELSE
+    BEGIN
+        IF @PKSIds = '' OR @PKSIds IS NULL
+            SELECT @ZapytanieSQL = CONCAT('
+                    UPDATE CDN.ProdKalkulacjaKosztuElem
+                    SET PKS_KosztPoliczony = 0,
+                        PKS_Zmieniono = 1,
+                        PKS_ZaznaczonyPoprzedniStan = 0
+                    WHERE PKS_PKK = ', @PKKId)
+        ELSE
+            SELECT @ZapytanieSQL = CONCAT('
+                        UPDATE CDN.ProdKalkulacjaKosztuElem
+                        SET PKS_KosztPoliczony = CASE WHEN PKS_Id IN (' + @PKSIds + ') THEN 1 ELSE 0 END,
+                            PKS_Zmieniono = CASE 
+                                    WHEN (PKS_Id IN (' + @PKSIds + ') AND PKS_ZaznaczonyPoprzedniStan = 1) OR (PKS_Id NOT IN (' + @PKSIds + ') AND PKS_ZaznaczonyPoprzedniStan = 0) 
+                                        THEN 0 
+                                    ELSE 1 END,
+                            PKS_ZaznaczonyPoprzedniStan = CASE WHEN PKS_Id IN (' + @PKSIds + ') THEN 1 ELSE 0 END
+                        WHERE PKS_PKK = ', @PKKId)
+    END
+    EXEC(@ZapytanieSQL)
+
+    EXEC CDN.KalkulacjaKosztowPrzeliczKosztyNaPodstElementu @PKKId, NULL, @Zmienione
+
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="KalkulacjaKosztowPrzeliczWszystkieKoszty"></A><PRE>
+          <FONT SIZE="2"><I>/* KalkulacjaKosztowPrzeliczWszystkieKoszty */</I><BR>
+CREATE PROCEDURE CDN.KalkulacjaKosztowPrzeliczWszystkieKoszty(
+    @PKKId INT, 
+    @SposobSymulacjiKosztuSurowca TINYINT,
+    @SposobSymulacjiKosztuFunkcji TINYINT, 
+    @SposobSymulacjiKosztuZasobu TINYINT, 
+    @PrzywrocDomyslneKoszty TINYINT,
+    @NrKursu TINYINT,
+    @KursLicznik INT = 0,
+    @KursMianownik INT = 0
+)
+AS
+BEGIN
+    DECLARE @TypPTE INT = 14340
+    DECLARE @TypTowar INT = 16
+
+    DECLARE @TypTechnologia SMALLINT = 10
+    DECLARE @TypCzynnosc SMALLINT = 40
+    DECLARE @TypProduktUboczny SMALLINT = 47
+    DECLARE @TypProdukt SMALLINT = 50
+    DECLARE @TypSurowiec SMALLINT = 60
+    DECLARE @TypZasob SMALLINT = 70
+    DECLARE @TypFunkcja SMALLINT = 80
+    DECLARE @TypPolProdukt SMALLINT = 90
+    DECLARE @TypKosztDodatkowy SMALLINT = 100
+
+    DECLARE @NajniszaCena TINYINT = 1
+    DECLARE @SredniaCena  TINYINT = 2
+    DECLARE @OstatniaCena TINYINT = 3
+    DECLARE @NajkrotszyCzasDostawy TINYINT = 4
+    DECLARE @WgUstawienKartyMaterialu TINYINT = 5
+    DECLARE @TypKosztuEwidencyjny TINYINT = 1
+    DECLARE @TypKosztuCenaZakupu TINYINT = 3
+
+    DECLARE @NajniszyKosztZasobu TINYINT = 1
+    DECLARE @SredniKosztZasobu TINYINT = 2
+    DECLARE @NajwyzszyKosztZasobu TINYINT = 3
+
+    DECLARE @WgStawek TINYINT = 1
+    DECLARE @Recznie TINYINT = 2
+    
+    --Koszt technologii
+    UPDATE dt
+    SET PKS_Koszt1 = CDN.Prod_WartoscAtr(PTE_StawkaStala, PTE_StawkaStalaAtr, @TypPTE, PTE_Id, dt.PKS_TerminLong,-1) + 
+        dt.PKS_Ilosc * CDN.Prod_WartoscAtr(PTE_StawkaIlosc, PTE_StawkaIloscAtr, @TypPTE, PTE_Id, dt.PKS_TerminLong,-1) / CASE COALESCE(PTE_StawkaIloscM, 1) WHEN 0 THEN 1 ELSE PTE_StawkaIloscM END + 
+        dt.PKS_CzasTrwaniaLong * CDN.Prod_WartoscAtr(PTE_StawkaCzas, PTE_StawkaCzasAtr, @TypPTE, PTE_Id, dt.PKS_TerminLong,-1) / CASE COALESCE(PTE_StawkaCzasM, 1) WHEN 0 THEN 1 ELSE PTE_StawkaCzasM END
+    FROM CDN.ProdKalkulacjaKosztuElem dt
+        JOIN CDN.ProdTechnologia ON PTE_Id = PKS_ObjectID AND PKS_Typ = @TypTechnologia
+    WHERE PKS_Typ = @TypTechnologia AND PKS_PKK = @PKKId
+    --Koszt operacji
+    UPDATE dt
+    SET PKS_Koszt1 = CDN.Prod_WartoscAtr(PTC_StawkaStala, PTC_StawkaStalaAtr, @TypPTE, PTC_Technologia, dt.PKS_TerminLong, -1) + 
+        CDN.ProdIloscAtr(dt.PKS_Ilosc, PTC_StawkaIlosc, PTC_StawkaIloscAtr, 4, 0, PTC_StawkaIloscM, 0, @TypPTE, PTC_Technologia, dt.PKS_TerminLong, -1) + 
+        CDN.ProdIloscAtr(dt.PKS_CzasTrwaniaLong, PTC_StawkaCzas, PTC_StawkaCzasAtr, 4, 0, PTC_StawkaCzasM, 0, @TypPTE, PTC_Technologia, dt.PKS_TerminLong,-1) 
+    FROM CDN.ProdKalkulacjaKosztuElem dt
+        JOIN CDN.ProdTechnologiaCzynnosci ON PTC_Id = PKS_ObjectID AND PKS_Typ = @TypCzynnosc
+    WHERE PKS_Typ = @TypCzynnosc AND dt.PKS_PKK = @PKKId
+    --Koszt zasobu
+    IF @SposobSymulacjiKosztuZasobu = @WgStawek
+        UPDATE dt
+        SET PKS_Koszt1 = CASE
+                WHEN (SELECT pof.POF_CzyStawki FROM cdn.ProdObiektyFunkcje pof WHERE POF_Funkcja IN
+                    (SELECT PTG_Gniazdo FROM CDN.ProdTechnologieZasobyGniazd WHERE PTG_TechnologiaOperacje = dt.PKS_PTC_Ojciec AND PTG_ZasobGniazda = dt.PKS_ObjectID) AND POF_Obiekt = dt.PKS_ObjectID) = 1 
+                    THEN CDN.Prod_WartoscAtr(POF_StawkaStala, POF_StawkaStalaAtr, 14337, POF_Obiekt, dtc.PKS_TerminLong, -1) +
+                        CDN.ProdIloscAtr(dtc.PKS_Ilosc, POF_StawkaIlosc, POF_StawkaIloscAtr, 4, 0, POF_StawkaIloscM, 0, 14337, POF_Obiekt, dtc.PKS_TerminLong, -1) +
+                        CDN.ProdIloscAtr(dtc.PKS_CzasTrwaniaLong, POF_StawkaCzas, POF_StawkaCzasAtr, 4, 0, POF_StawkaCzasM, 0, 14337, POF_Obiekt, dtc.PKS_TerminLong, -1)
+                ELSE CDN.Prod_WartoscAtr(POB_StawkaStala, POB_StawkaStalaAtr, POB_ObiTyp, POB_ObiNumer, dtc.PKS_TerminLong, -1) +
+                    CDN.ProdIloscAtr(dtc.PKS_Ilosc, POB_StawkaIlosc, POB_StawkaIloscAtr, 4, 0, POB_StawkaIloscM, 0, POB_ObiTyp, POB_Id, dtc.PKS_TerminLong, -1) +
+                    CDN.ProdIloscAtr(dtc.PKS_CzasTrwaniaLong, POB_StawkaCzas, POB_StawkaCzasAtr, 4, 0, POB_StawkaCzasM, 0, POB_ObiTyp, POB_Id, dtc.PKS_TerminLong, -1)
+            END
+        FROM CDN.ProdKalkulacjaKosztuElem dt
+            JOIN CDN.ProdKalkulacjaKosztuElem dtc ON dt.PKS_PTC_Ojciec = dtc.PKS_ObjectID AND dtc.PKS_Typ = @TypCzynnosc
+            LEFT JOIN CDN.ProdObiektyFunkcje ON dt.PKS_ObjectID = POF_Obiekt AND dt.PKS_Typ = @TypZasob 
+                AND POF_Funkcja IN (SELECT PTG_Gniazdo FROM CDN.ProdTechnologieZasobyGniazd 
+                    WHERE PTG_TechnologiaOperacje = dt.PKS_PTC_Ojciec AND dt.PKS_Typ = @TypZasob AND PTG_ZasobGniazda = dt.PKS_ObjectID)
+            LEFT JOIN (SELECT POB_Id, POB_StawkaStala, POB_StawkaStalaAtr, POB_ObiTyp, POB_ObiNumer, POB_StawkaIlosc, POB_StawkaIloscAtr, POB_StawkaIloscM, POB_StawkaCzas, POB_StawkaCzasAtr,
+                            POB_StawkaCzasM, PTG_TechnologiaOperacje 
+                        FROM CDN.ProdObiekty
+                            JOIN CDN.ProdTechnologieZasobyGniazd ON POB_Id = PTG_ZasobGniazda) asd ON dt.PKS_ObjectID = POB_Id AND dt.PKS_Typ = @TypZasob AND PTG_TechnologiaOperacje = dt.PKS_PTC_Ojciec
+        WHERE dt.PKS_Typ = @TypZasob AND dt.PKS_PKK = @PKKId AND dtc.PKS_PKK = @PKKId
+    --Koszt Funkcji
+    CREATE TABLE #KosztyFunkcji (KosztyFunkcji decimal(20,4), IdFunkcji INT, IdCzynnosci INT)
+
+    INSERT INTO #KosztyFunkcji
+    SELECT SUM(CDN.Prod_WartoscAtr(POB_StawkaStala, POB_StawkaStalaAtr, 14337, POB_ID, dtc.PKS_TerminLong, -1) +
+        CDN.ProdIloscAtr(dtc.PKS_Ilosc, POB_StawkaIlosc, POB_StawkaIloscAtr, 4, 0, POB_StawkaIloscM, 0, 14337, POB_Id, dtc.PKS_TerminLong,-1) +
+        CDN.ProdIloscAtr(dtc.PKS_CzasTrwaniaLong, POB_StawkaCzas, POB_StawkaCzasAtr, 4, 0, POB_StawkaCzasM, 0, 14337, POB_Id, dtc.PKS_TerminLong,-1)), POF_Funkcja, dtc.PKS_ObjectID
+    FROM CDN.ProdObiekty 
+        JOIN CDN.ProdObiektyFunkcje on POB_ID = POF_Obiekt AND POF_ObiTyp = 14337 AND POF_CzyStawki = 0 AND POF_Widocznosc IN (2,3) 
+        JOIN CDN.ProdKalkulacjaKosztuElem dt ON POF_Funkcja = dt.PKS_ObjectID AND dt.PKS_Typ = @TypFunkcja
+        JOIN CDN.ProdKalkulacjaKosztuElem dtc ON dt.PKS_PTC_Ojciec = dtc.PKS_ObjectID AND dtc.PKS_Typ = @TypCzynnosc
+    WHERE dt.PKS_PKK = @PKKId AND dtc.PKS_PKK = @PKKId
+    GROUP BY POF_Funkcja, POF_Grupa, dtc.PKS_ObjectID
+
+    INSERT INTO #KosztyFunkcji
+    SELECT SUM(CDN.Prod_WartoscAtr(POF_StawkaStala, POF_StawkaStalaAtr, 14337, POB_ID, dtc.PKS_TerminLong, -1) +
+        CDN.ProdIloscAtr(dtc.PKS_Ilosc, POF_StawkaIlosc, POF_StawkaIloscAtr, 4, 0, POF_StawkaIloscM, 0, 14337, POB_Id, dtc.PKS_TerminLong, -1) +
+        CDN.ProdIloscAtr(dtc.PKS_CzasTrwaniaLong, POF_StawkaCzas, POF_StawkaCzasAtr, 4, 0, POF_StawkaCzasM, 0, 14337, POB_Id, dtc.PKS_TerminLong, -1)), POF_Funkcja, dtc.PKS_ObjectID
+    FROM CDN.ProdObiekty 
+        JOIN CDN.ProdObiektyFunkcje on POB_ID = POF_Obiekt AND POF_ObiTyp = 14337 AND POF_CzyStawki = 1 AND POF_Widocznosc IN (2,3) 
+        JOIN CDN.ProdKalkulacjaKosztuElem dt ON POF_Funkcja = dt.PKS_ObjectID AND dt.PKS_Typ = @TypFunkcja
+        JOIN CDN.ProdKalkulacjaKosztuElem dtc ON dt.PKS_PTC_Ojciec = dtc.PKS_ObjectID AND dtc.PKS_Typ = @TypCzynnosc
+    WHERE dt.PKS_PKK = @PKKId AND dtc.PKS_PKK = @PKKId
+    GROUP BY POF_Funkcja, POF_Grupa, dtc.PKS_ObjectID
+
+    IF @SposobSymulacjiKosztuFunkcji = @NajniszyKosztZasobu
+    BEGIN
+        UPDATE dt
+        SET PKS_Koszt1 = dt.PKS_Ilosc * koszt
+        FROM CDN.ProdKalkulacjaKosztuElem dt
+            CROSS APPLY (SELECT MIN(KosztyFunkcji) koszt, IdFunkcji FROM #KosztyFunkcji WHERE IdFunkcji = dt.PKS_ObjectID AND dt.PKS_PTC_Ojciec = IdCzynnosci GROUP BY IdFunkcji) koszty 
+        WHERE dt.PKS_Typ = @TypFunkcja AND PKS_PKK = @PKKId
+
+    END
+    ELSE IF @SposobSymulacjiKosztuFunkcji = @SredniKosztZasobu
+    BEGIN
+        UPDATE dt
+        SET PKS_Koszt1 = dt.PKS_Ilosc * koszt
+        FROM CDN.ProdKalkulacjaKosztuElem dt
+            CROSS APPLY (SELECT AVG(KosztyFunkcji) koszt, IdFunkcji FROM #KosztyFunkcji WHERE dt.PKS_ObjectID = IdFunkcji AND dt.PKS_PTC_Ojciec = IdCzynnosci GROUP BY IdFunkcji) koszty
+        WHERE dt.PKS_Typ = @TypFunkcja AND PKS_PKK = @PKKId
+
+    END
+    ELSE IF @SposobSymulacjiKosztuFunkcji = @NajwyzszyKosztZasobu
+    BEGIN
+        UPDATE dt
+        SET PKS_Koszt1 = dt.PKS_Ilosc * koszt
+        FROM CDN.ProdKalkulacjaKosztuElem dt
+            CROSS APPLY (SELECT MAX(KosztyFunkcji) koszt, IdFunkcji FROM #KosztyFunkcji WHERE dt.PKS_ObjectID = IdFunkcji AND dt.PKS_PTC_Ojciec = IdCzynnosci GROUP BY IdFunkcji) koszty
+        WHERE dt.PKS_Typ = @TypFunkcja AND PKS_PKK = @PKKId
+
+    END
+    --Koszt materiałów
+    DECLARE @WalutaSystemowa VARCHAR(3)
+    SET @WalutaSystemowa =  (SELECT TOP 1 Kon_Wartosc FROM cdn.Konfig WHERE Kon_Komentarz = 'Waluta systemowa')
+
+    IF @SposobSymulacjiKosztuSurowca = @WgUstawienKartyMaterialu
+    BEGIN
+        UPDATE dt
+        SET PKS_Koszt1 = dt.PKS_Ilosc * CASE dt.PKS_PTZKoszt WHEN @TypKosztuCenaZakupu 
+                    THEN TwC_Wartosc
+                WHEN @TypKosztuEwidencyjny
+                    THEN CDN.Prod_WartoscAtr(PTZ_Cena, PTZ_CenaAtr, @TypPTE, dt.PKS_Technologia, opedt.PKS_TerminLong, -1)
+                ELSE koszty.srKoszt
+            END,
+            PKS_Ewidencyjny = CASE WHEN dt.PKS_PTZKoszt = @TypKosztuEwidencyjny THEN 1 ELSE 0 END
+        FROM CDN.ProdKalkulacjaKosztuElem dt
+            JOIN CDN.ProdTechnologiaZasoby ON PTZ_Id = dt.PKS_ObjectID AND dt.PKS_Typ = @TypSurowiec
+            JOIN CDN.ProdKalkulacjaKosztuElem opedt ON opedt.PKS_Typ = @TypCzynnosc AND opedt.PKS_ObjectID = dt.PKS_PTC_Ojciec 
+            LEFT JOIN CDN.TwrCeny ON Twc_TwrNumer = dt.PKS_TwrNumer AND Twc_TwrTyp = @TypTowar AND Twc_TwrLp = 0
+            LEFT JOIN (SELECT TOP 1 CASE
+                        WHEN SUM(Twz_Ilspr) = 0 OR sum(TWZ_IlSPR) IS NULL THEN 0
+                        ELSE SUM(Twz_KsiegowaNetto) / CASE WHEN sUM(Twz_Ilspr) = 0 THEN 1 ELSE Sum(Twz_Ilspr) END
+                       END srKoszt, dt.PKS_ObjectID, dt.PKS_Typ
+                FROM CDN.TwrKarty
+                    JOIN CDN.ProdKalkulacjaKosztuElem dt ON Twr_GIDNumer = dt.PKS_TwrNumer AND Twr_GIDTyp = @TypTowar
+                    LEFT OUTER JOIN CDN.TwrZasoby ON Twz_TwrNumer = Twr_GIDNumer AND Twz_TwrTyp = Twr_GIDTyp AND Twz_TwrLp = 0
+                GROUP BY dt.PKS_ObjectID, dt.PKS_Typ
+               ) koszty ON koszty.PKS_ObjectID = dt.PKS_ObjectID AND koszty.PKS_Typ = dt.PKS_Typ
+        WHERE dt.PKS_Typ = @TypSurowiec AND dt.PKS_PKK = @PKKId AND opedt.PKS_PKK = @PKKId 
+
+    END
+    ELSE IF @SposobSymulacjiKosztuSurowca = @NajniszaCena
+    BEGIN
+        UPDATE dt
+        SET PKS_Koszt1 = dt.PKS_Ilosc * COALESCE(minKoszt, 0)
+        FROM CDN.ProdKalkulacjaKosztuElem dt
+            LEFT JOIN (
+                SELECT MIN(CASE 
+                        WHEN @WalutaSystemowa = TCH_Waluta
+                            THEN TCH_Wartosc
+                        ELSE CASE WHEN @NrKursu = 0
+                                    THEN TCH_Wartosc * (CAST(@KursLicznik AS DECIMAL(19,4)) / CASE WHEN @KursMianownik = 0 THEN 1 ELSE @KursMianownik END) 
+                                ELSE CDN.WartoscWWalucieSys(TCH_Wartosc, TCH_Waluta, @NrKursu, opedt.PKS_TerminLong) 
+                            END
+                    END) minKoszt, dt.PKS_ObjectID, dt.PKS_Typ
+                FROM CDN.TwrCenyHist
+                    JOIN CDN.ProdKalkulacjaKosztuElem dt ON TCH_TwrNumer = dt.PKS_TwrNumer AND TCH_TwrTyp = @TypTowar
+                    JOIN CDN.ProdKalkulacjaKosztuElem opedt ON dt.PKS_PTC_Ojciec = opedt.PKS_ObjectID AND opedt.PKS_Typ = @TypCzynnosc 
+                 WHERE TCH_TwrLp = 0 AND dt.PKS_PKK = @PKKId AND opedt.PKS_PKK = @PKKId AND dt.PKS_Typ = @TypSurowiec
+                 GROUP BY dt.PKS_ObjectID, dt.PKS_Typ
+            ) koszty ON koszty.PKS_ObjectID = dt.PKS_ObjectID AND koszty.PKS_Typ = dt.PKS_Typ
+        WHERE dt.PKS_Typ = @TypSurowiec AND dt.PKS_PKK = @PKKId
+
+    END
+    ELSE IF @SposobSymulacjiKosztuSurowca = @SredniaCena
+    BEGIN
+        UPDATE dt
+        SET PKS_Koszt1 = dt.PKS_Ilosc * COALESCE(srKoszt, 0)
+        FROM CDN.ProdKalkulacjaKosztuElem dt
+            LEFT JOIN (SELECT CASE
+                        WHEN SUM(Twz_Ilspr) = 0 OR SUM(TWZ_IlSPR) IS NULL THEN 0
+                        ELSE SUM(Twz_KsiegowaNetto) / CASE WHEN SUM(Twz_Ilspr) = 0 THEN 1 ELSE SUM(Twz_Ilspr) END
+                       END srKoszt, dt.PKS_ObjectID, dt.PKS_Typ
+                FROM CDN.TwrKarty
+                    JOIN CDN.ProdKalkulacjaKosztuElem dt ON Twr_GIDNumer = dt.PKS_TwrNumer AND Twr_GIDTyp = @TypTowar
+                    JOIN CDN.TwrZasoby ON Twz_TwrNumer = Twr_GIDNumer AND Twz_TwrTyp = Twr_GIDTyp AND Twz_TwrLp = 0
+                WHERE dt.PKS_PKK = @PKKId
+                GROUP BY dt.PKS_ObjectID, dt.PKS_Typ
+               ) koszty ON koszty.PKS_ObjectID = dt.PKS_ObjectID AND koszty.PKS_Typ = dt.PKS_Typ
+        WHERE dt.PKS_Typ = @TypSurowiec AND dt.PKS_PKK = @PKKId
+
+    END
+    ELSE IF @SposobSymulacjiKosztuSurowca = @OstatniaCena
+    BEGIN
+        UPDATE dt
+        SET PKS_Koszt1 = dt.PKS_Ilosc * CASE 
+                        WHEN @WalutaSystemowa = TwC_Waluta
+                            THEN TwC_Wartosc
+                        ELSE CASE WHEN @NrKursu = 0
+                                    THEN TwC_Wartosc * (CAST(@KursLicznik AS DECIMAL(19,4)) / CASE WHEN @KursMianownik = 0 THEN 1 ELSE @KursMianownik END)
+                                ELSE CDN.WartoscWWalucieSys(TwC_Wartosc, TwC_Waluta, @NrKursu, opedt.PKS_TerminLong) 
+                            END
+                    END
+        FROM CDN.ProdKalkulacjaKosztuElem dt
+            LEFT JOIN CDN.TwrCeny ON Twc_TwrNumer = dt.PKS_TwrNumer AND Twc_TwrTyp = @TypTowar AND Twc_TwrLp = 0
+            JOIN CDN.ProdKalkulacjaKosztuElem opedt ON dt.PKS_PTC_Ojciec = opedt.PKS_ObjectID AND opedt.PKS_Typ = @TypCzynnosc 
+        WHERE dt.PKS_Typ = @TypSurowiec AND dt.PKS_PKK = @PKKId AND opedt.PKS_PKK = @PKKId
+
+    END
+    ELSE IF @SposobSymulacjiKosztuSurowca = @NajkrotszyCzasDostawy
+    BEGIN
+        UPDATE dt
+        SET PKS_Koszt1 = dt.PKS_Ilosc * CASE 
+                        WHEN @WalutaSystemowa = TDC_Waluta
+                            THEN TDC_Cena
+                        ELSE CASE WHEN @NrKursu = 0
+                                    THEN TDC_Cena * (CAST(@KursLicznik AS DECIMAL(19,4)) / CASE WHEN @KursMianownik = 0 THEN 1 ELSE @KursMianownik END) 
+                                ELSE CDN.WartoscWWalucieSys(TDC_Cena, TDC_Waluta, @NrKursu, opedt.PKS_TerminLong) 
+                            END
+                    END
+        FROM CDN.ProdKalkulacjaKosztuElem dt
+            JOIN CDN.TwrKarty ON dt.PKS_TwrNumer = Twr_GIDNumer AND Twr_GIDTyp = @TypTowar
+			CROSS APPLY (SELECT TOP 1 TDC_Cena, TDC_Waluta FROM (SELECT TDC_Cena, TDC_Waluta, CASE WHEN TWR_DstDomyslny = TwD_TwrLp THEN 1 ELSE 0 END Domyslny, TWD_Czas FROM CDN.TwrKarty
+										JOIN CDN.TwrDost ON TWD_TwrNumer = Twr_GIDNumer
+										JOIN CDN.TwrDostCeny ON TDC_TwdId = TWD_Id
+									WHERE dt.PKS_TwrNumer = Twr_GIDNumer AND Twr_GIDTyp = @TypTowar AND TWD_KlasaKnt = 8) twrdost
+									ORDER BY TWD_Czas, Domyslny DESC, TDC_Cena) twd
+            JOIN CDN.ProdKalkulacjaKosztuElem opedt ON dt.PKS_PTC_Ojciec = opedt.PKS_ObjectID AND opedt.PKS_Typ = @TypCzynnosc 
+        WHERE dt.PKS_Typ = @TypSurowiec AND dt.PKS_PKK = @PKKId AND opedt.PKS_PKK = @PKKId
+        
+    END
+    --Zaktualizuj koszty wg technologii
+    IF @SposobSymulacjiKosztuSurowca = @WgUstawienKartyMaterialu
+    BEGIN
+        UPDATE dt
+        SET PKS_Koszt2 = PKS_Koszt1
+        FROM CDN.ProdKalkulacjaKosztuElem dt
+        WHERE dt.PKS_Typ NOT IN (@TypProdukt, @TypProduktUboczny, @TypKosztDodatkowy) AND dt.PKS_PKK = @PKKId
+
+        UPDATE dt
+        SET PKS_Koszt2 = dt.PKS_Ilosc * CDN.Prod_WartoscAtr(PTZ_Cena, PTZ_CenaAtr, @TypPTE, dt.PKS_Technologia, opedt.PKS_TerminLong, -1)
+        FROM CDN.ProdKalkulacjaKosztuElem dt
+            JOIN CDN.ProdTechnologiaZasoby ON dt.PKS_ObjectID = PTZ_Id AND dt.PKS_Typ IN (@TypProdukt, @TypProduktUboczny)
+            JOIN CDN.ProdKalkulacjaKosztuElem opedt ON opedt.PKS_Typ = @TypCzynnosc AND opedt.PKS_ObjectID = dt.PKS_PTC_Ojciec 
+        WHERE dt.PKS_PKK = @PKKId AND opedt.PKS_PKK = @PKKId
+
+    END
+    ELSE
+    BEGIN
+        UPDATE dt
+        SET PKS_Koszt2 = PKS_Koszt1
+        FROM CDN.ProdKalkulacjaKosztuElem dt
+        WHERE dt.PKS_Typ NOT IN (@TypSurowiec, @TypProdukt, @TypProduktUboczny, @TypKosztDodatkowy) AND dt.PKS_PKK = @PKKId
+
+        UPDATE dt
+        SET PKS_Koszt2 = dt.PKS_Ilosc * CASE 
+                WHEN dt.PKS_PTZKoszt = @TypKosztuEwidencyjny --OR dt.PKS_Typ IN (@TypProdukt, @TypProduktUboczny)--koszt ewidencyjny dla produktu jest potrzebny do obliczen w przypadku kilku produktów w tej samej operacjii
+                    THEN CDN.Prod_WartoscAtr(PTZ_Cena, PTZ_CenaAtr, @TypPTE, dt.PKS_Technologia, opedt.PKS_TerminLong, -1)
+                WHEN dt.PKS_PTZKoszt = @TypKosztuCenaZakupu AND dt.PKS_Typ IN (@TypSurowiec, @TypProdukt, @TypProduktUboczny)
+                    THEN TwC_Wartosc
+                ELSE koszty.srKoszt
+            END
+        FROM CDN.ProdKalkulacjaKosztuElem dt
+            JOIN CDN.ProdTechnologiaZasoby ON dt.PKS_ObjectID = PTZ_Id AND dt.PKS_Typ IN (@TypSurowiec, @TypProdukt, @TypProduktUboczny)
+            JOIN CDN.ProdKalkulacjaKosztuElem opedt ON opedt.PKS_Typ = @TypCzynnosc AND opedt.PKS_ObjectID = dt.PKS_PTC_Ojciec 
+            LEFT JOIN CDN.TwrCeny ON Twc_TwrNumer = dt.PKS_TwrNumer AND Twc_TwrTyp = @TypTowar AND Twc_TwrLp = 0
+            CROSS APPLY (SELECT CASE
+                        WHEN SUM(Twz_Ilspr) = 0 OR SUM(TWZ_IlSPR) IS NULL THEN 0
+                        ELSE SUM(Twz_KsiegowaNetto) / CASE WHEN SUM(Twz_Ilspr) = 0 THEN 1 ELSE SUM(Twz_Ilspr) END
+                       END srKoszt
+                FROM CDN.TwrKarty
+                    JOIN CDN.ProdKalkulacjaKosztuElem wewdt ON Twr_GIDNumer = wewdt.PKS_TwrNumer AND Twr_GIDTyp = @TypTowar
+                    LEFT JOIN CDN.TwrZasoby ON Twz_TwrNumer = Twr_GIDNumer AND Twz_TwrTyp = Twr_GIDTyp AND Twz_TwrLp = 0
+                WHERE wewdt.PKS_ObjectID = dt.PKS_ObjectID AND wewdt.PKS_Typ = dt.PKS_Typ AND wewdt.PKS_PKK = @PKKId
+            ) koszty
+        WHERE dt.PKS_PKK = @PKKId AND opedt.PKS_PKK = @PKKId
+
+    END
+
+    IF @SposobSymulacjiKosztuZasobu = @Recznie
+        UPDATE dt
+        SET PKS_Koszt2 = CASE
+                WHEN (SELECT pof.POF_CzyStawki FROM cdn.ProdObiektyFunkcje pof WHERE POF_Funkcja IN
+                    (SELECT PTG_Gniazdo FROM CDN.ProdTechnologieZasobyGniazd WHERE PTG_TechnologiaOperacje = dt.PKS_PTC_Ojciec AND PTG_ZasobGniazda = dt.PKS_ObjectID) AND POF_Obiekt = dt.PKS_ObjectID) = 1 
+                    THEN CDN.Prod_WartoscAtr(POF_StawkaStala, POF_StawkaStalaAtr, 14337, POF_Obiekt, dtc.PKS_TerminLong, -1) +
+                        CDN.ProdIloscAtr(dtc.PKS_Ilosc, POF_StawkaIlosc, POF_StawkaIloscAtr, 4, 0, POF_StawkaIloscM, 0, 14337, POF_Obiekt, dtc.PKS_TerminLong, -1) +
+                        CDN.ProdIloscAtr(dtc.PKS_CzasTrwaniaLong, POF_StawkaCzas, POF_StawkaCzasAtr, 4, 0, POF_StawkaCzasM, 0, 14337, POF_Obiekt, dtc.PKS_TerminLong, -1)
+                ELSE CDN.Prod_WartoscAtr(POB_StawkaStala, POB_StawkaStalaAtr, POB_ObiTyp, POB_ObiNumer, dtc.PKS_TerminLong, -1) +
+                    CDN.ProdIloscAtr(dtc.PKS_Ilosc, POB_StawkaIlosc, POB_StawkaIloscAtr, 4, 0, POB_StawkaIloscM, 0, POB_ObiTyp, POB_Id, dtc.PKS_TerminLong, -1) +
+                    CDN.ProdIloscAtr(dtc.PKS_CzasTrwaniaLong, POB_StawkaCzas, POB_StawkaCzasAtr, 4, 0, POB_StawkaCzasM, 0, POB_ObiTyp, POB_Id, dtc.PKS_TerminLong, -1)
+            END
+        FROM CDN.ProdKalkulacjaKosztuElem dt
+            JOIN CDN.ProdKalkulacjaKosztuElem dtc ON dt.PKS_PTC_Ojciec = dtc.PKS_ObjectID AND dtc.PKS_Typ = @TypCzynnosc
+            LEFT JOIN CDN.ProdObiektyFunkcje ON dt.PKS_ObjectID = POF_Obiekt AND dt.PKS_Typ = @TypZasob 
+                AND POF_Funkcja IN (SELECT PTG_Gniazdo FROM CDN.ProdTechnologieZasobyGniazd 
+                    WHERE PTG_TechnologiaOperacje = dt.PKS_PTC_Ojciec AND dt.PKS_Typ = @TypZasob AND PTG_ZasobGniazda = dt.PKS_ObjectID)
+            LEFT JOIN (SELECT POB_Id, POB_StawkaStala, POB_StawkaStalaAtr, POB_ObiTyp, POB_ObiNumer, POB_StawkaIlosc, POB_StawkaIloscAtr, POB_StawkaIloscM, POB_StawkaCzas, POB_StawkaCzasAtr,
+                            POB_StawkaCzasM, PTG_TechnologiaOperacje 
+                        FROM CDN.ProdObiekty
+                            JOIN CDN.ProdTechnologieZasobyGniazd ON POB_Id = PTG_ZasobGniazda) asd ON dt.PKS_ObjectID = POB_Id AND dt.PKS_Typ = @TypZasob AND PTG_TechnologiaOperacje = dt.PKS_PTC_Ojciec
+        WHERE dt.PKS_Typ = @TypZasob AND dt.PKS_PKK = @PKKId AND dtc.PKS_PKK = @PKKId
+
+	--Przywrócenie domyślnych kosztów dodatkowych
+	 IF @PrzywrocDomyslneKoszty = 1
+        UPDATE CDN.ProdKalkulacjaKosztuElem
+        SET PKS_Koszt1 = PKS_Koszt2
+        WHERE PKS_PKK = @PKKId AND PKS_Typ = @TypKosztDodatkowy AND PKS_KosztDodatkowyRodzaj IN (3, 4)
+
+    --Koszt Produktu wraz z półproduktami
+    CREATE TABLE #IloscCzynnosciWTech(IdTech INT, IlCzyn INT)
+    INSERT INTO #IloscCzynnosciWTech
+  --  SELECT PTC_Technologia, COUNT (PTC_Id) FROM CDN.ProdKalkulacjaKosztuElem tech
+  --      JOIN CDN.ProdTechnologiaCzynnosci ON PTC_Technologia = PKS_ObjectID AND PKS_Typ = @TypTechnologia
+		--CROSS APPLY (SELECT COUNT(PKS_Id) IlProd FROM CDN.ProdKalkulacjaKosztuElem prod WHERE prod.PKS_PTC_Ojciec = PTC_Id AND prod.PKS_Typ IN (@TypProdukt, @TypProduktUboczny) AND prod.PKS_PKK = @PKKId) prod
+  --  WHERE tech.PKS_PKK = @PKKId
+  --  GROUP BY PTC_Technologia, tech.PKS_Typ
+	SELECT PTC_Technologia, COUNT(PTC_Id) FROM CDN.ProdKalkulacjaKosztuElem tech
+        JOIN CDN.ProdTechnologiaCzynnosci ON PTC_Technologia = PKS_ObjectID AND PKS_Typ = @TypTechnologia
+		CROSS APPLY (SELECT COUNT(PKS_Id) IlProd FROM CDN.ProdKalkulacjaKosztuElem prod WHERE prod.PKS_Ilosc &gt; 0 AND prod.PKS_PTC_Ojciec = PTC_Id AND prod.PKS_Typ IN (@TypProdukt, @TypProduktUboczny) AND prod.PKS_PKK = @PKKId) prod
+    WHERE tech.PKS_PKK = @PKKId AND IlProd &gt; 0
+	GROUP BY PTC_Technologia, tech.PKS_Typ
+    
+    CREATE TABLE #IloscProduktowWCzyn(IdCzyn INT, IlProd INT)
+    INSERT INTO #IloscProduktowWCzyn
+    SELECT DISTINCT prod.PKS_PTC_Ojciec, COUNT(prod.PKS_ID) FROM CDN.ProdKalkulacjaKosztuElem pks
+        JOIN CDN.ProdKalkulacjaKosztuElem prod ON pks.PKS_ObjectID = prod.PKS_PTC_Ojciec AND prod.PKS_Typ IN (@TypProdukt, @TypProduktUboczny)
+    WHERE pks.PKS_PKK = @PKKId AND prod.PKS_PKK = @PKKId AND pks.PKS_Typ = @TypCzynnosc AND prod.PKS_Ilosc &gt; 0
+    GROUP BY prod.PKS_PTC_Ojciec
+
+	UPDATE CDN.ProdKalkulacjaKosztuElem
+	SET PKS_Koszt1 = 0,
+		PKS_Koszt2 = CASE WHEN PKS_PTZKoszt = @TypKosztuEwidencyjny THEN PKS_Koszt2 ELSE 0 END
+	WHERE PKS_PKK = @PKKId AND PKS_Typ IN (@TypProdukt, @TypProduktUboczny)
+
+	UPDATE pks
+	SET PKS_Koszt1 = /*pks.PKS_Koszt1 +*/ COALESCE(kosztDodUwz.kosztDod1 / ilProd.IlProd, 0),
+		PKS_Koszt2 = CASE WHEN pks.PKS_PTZKoszt = @TypKosztuEwidencyjny THEN pks.PKS_Koszt2 ELSE 0 END + COALESCE(kosztDodUwz.kosztDod2 / ilProd.IlProd, 0)
+	FROM CDN.ProdKalkulacjaKosztuElem pks
+		JOIN #IloscProduktowWCzyn ilProd ON pks.PKS_PTC_Ojciec = ilProd.IdCzyn
+		JOIN CDN.ProdKalkulacjaKosztuElem glownyProd ON glownyProd.PKS_Bylo = 1 AND glownyProd.PKS_Typ = @TypProdukt
+		CROSS APPLY(SELECT SUM(PKS_Koszt1) kosztDod1, SUM(PKS_Koszt2) kosztDod2 FROM CDN.ProdKalkulacjaKosztuElem wew WHERE wew.PKS_PKK = @PKKId AND wew.PKS_Typ =  @TypKosztDodatkowy 
+				AND wew.PKS_ZaznaczonyPoprzedniStan = 1) kosztDodUwz
+	WHERE pks.PKS_PKK = @PKKId AND glownyProd.PKS_PKK = @PKKId --AND pks.PKS_Bylo = 1 
+		AND pks.PKS_Typ IN (@TypProdukt, @TypProduktUboczny)
+		AND pks.PKS_PTC_Ojciec = glownyProd.PKS_PTC_Ojciec
+		AND pks.PKS_Ilosc &gt; 0
+
+    DECLARE @ObjectID INT
+    DECLARE @Typ INT
+	DECLARE @AktualizujKosztyDodatkowe TINYINT = 1
+
+    DECLARE Polprodukty CURSOR
+    FOR SELECT PKS_ObjectID, PKS_Typ 
+        FROM CDN.ProdKalkulacjaKosztuElem
+        WHERE PKS_Typ IN (@TypProdukt, @TypProduktUboczny) AND PKS_PKK = @PKKId
+        ORDER BY PKS_NrKolejnyListy
+    FOR UPDATE
+
+    OPEN Polprodukty
+    FETCH NEXT FROM Polprodukty INTO @ObjectId, @Typ
+
+    WHILE @@FETCH_STATUS = 0
+    BEGIN
+        UPDATE dt
+        SET PKS_Koszt1 = dt.PKS_Koszt1 + CASE  
+                WHEN PTZ_WagaKosztu &lt;&gt; 0 OR wagaKoszt1 &lt;&gt; 0 THEN
+                    (CASE PTZ_WagaIlosc WHEN 1 THEN CASE WHEN PTZ_WagaKosztu = 0 THEN 1 ELSE PTZ_WagaKosztu END * dt.PKS_IloscWgTech ELSE PTZ_WagaKosztu END / wagaKoszt1) * (
+					(CASE techdt.PKS_ZaznaczonyPoprzedniStan WHEN 1 THEN techdt.PKS_Koszt1 ELSE 0 END / ilCzyn.IlCzyn + 
+					CASE opedt.PKS_ZaznaczonyPoprzedniStan WHEN 1 THEN opedt.PKS_Koszt1 ELSE 0 END + kosztSur1))
+                ELSE (CASE techdt.PKS_ZaznaczonyPoprzedniStan WHEN 1 THEN techdt.PKS_Koszt1 ELSE 0 END / ilCzyn.IlCzyn + 
+					CASE opedt.PKS_ZaznaczonyPoprzedniStan WHEN 1 THEN opedt.PKS_Koszt1 ELSE 0 END + kosztSur1) / ilProd.IlProd 
+            END,
+            PKS_Koszt2 = dt.PKS_Koszt2 + CASE
+                WHEN ptz.PTZ_Koszt = @TypKosztuEwidencyjny THEN 0
+                --WHEN ((techdt.PKS_koszt2 / ilCzyn.IlCzyn + opedt.PKS_Koszt2 + kosztSur2) / LiczbaProd - koszty2.kosztyEwidencyjne) &lt; 0 THEN 0
+                WHEN PTZ_WagaKosztu &lt;&gt; 0 OR wagaKoszt2 &lt;&gt; 0
+                    THEN (CASE PTZ_WagaIlosc WHEN 1 THEN CASE WHEN PTZ_WagaKosztu = 0 THEN 1 ELSE PTZ_WagaKosztu END * dt.PKS_IloscWgTech ELSE PTZ_WagaKosztu END / wagaKoszt2) * 
+                        ((CASE techdt.PKS_ZaznaczonyPoprzedniStan WHEN 1 THEN techdt.PKS_koszt2 ELSE 0 END / ilCzyn.IlCzyn + 
+						CASE opedt.PKS_ZaznaczonyPoprzedniStan WHEN 1 THEN opedt.PKS_Koszt2 ELSE 0 END + kosztSur2) - koszty2.kosztyEwidencyjne)
+                ELSE (CASE techdt.PKS_ZaznaczonyPoprzedniStan WHEN 1 THEN techdt.PKS_koszt2 ELSE 0 END / ilCzyn.IlCzyn + 
+					CASE opedt.PKS_ZaznaczonyPoprzedniStan WHEN 1 THEN opedt.PKS_Koszt2 ELSE 0 END + kosztSur2) / LiczbaProdNieEw- koszty2.kosztyEwidencyjne
+            END
+        FROM CDN.ProdKalkulacjaKosztuElem dt
+            JOIN CDN.ProdTechnologiaZasoby ptz ON dt.PKS_ObjectID = ptz.PTZ_Id
+            JOIN CDN.ProdKalkulacjaKosztuElem opedt ON dt.PKS_PTC_Ojciec = opedt.PKS_ObjectID AND opedt.PKS_Typ = @TypCzynnosc AND opedt.PKS_PKK = @PKKId
+            JOIN CDN.ProdKalkulacjaKosztuElem techdt ON dt.PKS_Technologia = techdt.PKS_ObjectID AND techdt.PKS_Typ = @TypTechnologia AND techdt.PKS_PKK = @PKKId
+            JOIN #IloscCzynnosciWTech ilczyn ON ilczyn.IdTech = techdt.PKS_ObjectID
+			JOIN #IloscProduktowWCzyn ilProd ON ilProd.IdCzyn = dt.PKS_PTC_Ojciec
+            CROSS APPLY (SELECT ISNULL(SUM(PKS_Koszt1), 0) kosztSur1, ISNULL(SUM(PKS_Koszt2), 0) kosztSur2 FROM CDN.ProdKalkulacjaKosztuElem wewdt
+                WHERE PKS_Typ IN (@TypSurowiec, @TypPolProdukt, @TypFunkcja, @TypZasob) AND wewdt.PKS_PTC_Ojciec = dt.PKS_PTC_Ojciec AND wewdt.PKS_Technologia = dt.PKS_Technologia AND wewdt.PKS_PKK = @PKKId
+                    AND wewdt.PKS_ZaznaczonyPoprzedniStan = 1 --AND wewdt.PKS_KosztPoliczony = 1
+            ) sumSur
+            CROSS APPLY (SELECT ISNULL(SUM(CASE PTZ_WagaIlosc WHEN 1 THEN CASE WHEN PTZ_WagaKosztu = 0 THEN 1 ELSE PTZ_WagaKosztu END * wewdt.PKS_IloscWgTech ELSE PTZ_WagaKosztu END), 0) wagaKoszt1, 
+					ISNULL(SUM(CASE WHEN PTZ_Koszt = @TypKosztuEwidencyjny THEN 0 ELSE CASE PTZ_WagaIlosc WHEN 1 THEN CASE WHEN PTZ_WagaKosztu = 0 THEN 1 ELSE PTZ_WagaKosztu END * wewdt.PKS_IloscWgTech ELSE PTZ_WagaKosztu END END), 0) wagaKoszt2, 
+					COUNT(PTZ_Id) LiczbaProd, ISNULL(SUM(CASE WHEN PTZ_Koszt &lt;&gt; @TypKosztuEwidencyjny AND PTZ_Ilosc &lt;&gt; 0 THEN 1 ELSE 0 END), 1) LiczbaProdNieEw
+                FROM CDN.ProdTechnologiaZasoby
+					JOIN CDN.ProdKalkulacjaKosztuElem wewdt ON wewdt.PKS_ObjectID = PTZ_Id AND wewdt.PKS_Typ IN (@TypProdukt, @TypProduktUboczny)
+                WHERE wewdt.PKS_PKK = @PKKId AND PTZ_TechnologiaCzynnosc = dt.PKS_PTC_Ojciec AND PTZ_TypZasobu IN (0, 4)
+            ) wagi
+            CROSS APPLY (SELECT ISNULL(SUM(CASE WHEN PTZ_Koszt = @TypKosztuEwidencyjny THEN PKS_Koszt2 ELSE 0 END), 0) kosztyEwidencyjne
+                FROM CDN.ProdKalkulacjaKosztuElem wewdt
+                    JOIN CDN.ProdTechnologiaZasoby ON wewdt.PKS_ObjectID = PTZ_Id AND wewdt.PKS_Typ IN (@TypProdukt, @TypProduktUboczny)
+                WHERE wewdt.PKS_PTC_Ojciec = dt.PKS_PTC_Ojciec AND wewdt.PKS_Typ IN (@TypProdukt, @TypProduktUboczny) AND wewdt.PKS_ObjectID != dt.PKS_ObjectID AND wewdt.PKS_PKK = @PKKId
+                    AND wewdt.PKS_Technologia = dt.PKS_Technologia
+            ) koszty2
+        WHERE dt.PKS_ObjectID = @ObjectID AND dt.PKS_Typ = @Typ AND dt.PKS_PKK = @PKKId AND opedt.PKS_PKK = @PKKId AND techdt.PKS_PKK = @PKKId AND dt.PKS_Ilosc &lt;&gt; 0
+
+        UPDATE polprod
+        SET PKS_Koszt1 = dt.PKS_Koszt1 / dt.PKS_Ilosc * polprod.PKS_Ilosc,
+            PKS_Koszt2 = dt.PKS_Koszt2 / dt.PKS_Ilosc * polprod.PKS_Ilosc
+        FROM CDN.ProdKalkulacjaKosztuElem polprod 
+            JOIN CDN.ProdKalkulacjaKosztuElem dt ON polprod.PKS_PtzTechnologiaZasob = dt.PKS_ObjectID AND dt.PKS_Typ = @TypProdukt
+        WHERE dt.PKS_ObjectID = @ObjectID AND dt.PKS_Typ = @Typ AND dt.PKS_PKK = @PKKId AND polprod.PKS_PKK = @PKKId AND polprod.PKS_Ilosc &lt;&gt; 0
+
+        FETCH NEXT FROM Polprodukty INTO @ObjectId, @Typ
+
+    END
+
+    CLOSE Polprodukty
+    DEALLOCATE Polprodukty
+
+    UPDATE CDN.ProdKalkulacjaKosztuElem
+    SET PKS_Koszt1 = CASE WHEN PKS_Koszt1 &lt; 0 THEN 0 ELSE PKS_Koszt1 END,
+        PKS_Koszt2 = CASE WHEN PKS_Koszt2 &lt; 0 THEN 0 ELSE PKS_Koszt2 END
+    WHERE PKS_PKK = @PKKId
+
+    --Ceny
+    UPDATE CDN.ProdKalkulacjaKosztuElem
+    SET PKS_Cena1 = PKS_Koszt1 / PKS_Ilosc,
+        PKS_Cena2 = PKS_Koszt2 / PKS_Ilosc
+    WHERE PKS_PKK = @PKKId AND PKS_KosztDodatkowyRodzaj &lt;&gt; 1 AND PKS_Ilosc &lt;&gt; 0
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="KalkulacjaKosztowPrzeliczIloscITerminy"></A><PRE>
+          <FONT SIZE="2"><I>/* KalkulacjaKosztowPrzeliczIloscITerminy */</I><BR>
+CREATE PROCEDURE CDN.KalkulacjaKosztowPrzeliczIloscITerminy(
+    @PKKId INT,
+    @PTZId INT,
+    @PTEId INT, 
+    @SposobSymulacjiKosztuSurowca TINYINT, 
+    @SposobSymulacjiKosztuFunkcji TINYINT,
+    @SposobSymulacjiKosztuZasobu TINYINT,
+    @NrKursu TINYINT,
+    @KursLicznik INT = 0,
+    @KursMianownik INT = 0,
+    @IloscProduktu DECIMAL(17,4)
+)
+AS
+BEGIN
+	DECLARE @TypTechnologia SMALLINT = 10
+    DECLARE @TypCzynnosc SMALLINT = 40
+    DECLARE @TypProduktUboczny SMALLINT = 47
+    DECLARE @TypProdukt SMALLINT = 50
+    DECLARE @TypSurowiec SMALLINT = 60
+    DECLARE @TypZasob SMALLINT = 70
+    DECLARE @TypFunkcja SMALLINT = 80
+    DECLARE @TypPolProdukt SMALLINT = 90
+    DECLARE @TypKosztDodatkowy SMALLINT = 100
+
+	DECLARE @TypPTE INT = 14340
+	DECLARE @TypPOB INT = 14337
+
+	DECLARE @Poziom SMALLINT = 0
+	DECLARE @MaxPoziom INT
+	DECLARE @PolProdukt INT
+	
+	DECLARE @IloscAktProduktu DECIMAL(17,4)
+	DECLARE @NrKolejnyListyProduktu INT
+
+	UPDATE dt
+	SET PKS_Bylo = 0
+	FROM CDN.ProdKalkulacjaKosztuElem dt
+	WHERE PKS_PKK = @PKKId AND PKS_Typ = @TypProdukt AND PKS_Bylo = 1
+
+	UPDATE dt
+	SET PKS_Bylo = 1
+	FROM CDN.ProdKalkulacjaKosztuElem dt
+	WHERE PKS_PKK = @PKKId AND PKS_Typ = @TypProdukt AND PKS_ObjectID = @PTZId
+
+	SELECT @IloscAktProduktu = PKS_Ilosc, @NrKolejnyListyProduktu = PKS_NrKolejnyListy FROM CDN.ProdKalkulacjaKosztuElem WHERE PKS_PKK = @PKKId AND PKS_Typ = @TypProdukt AND PKS_ObjectID = @PTZId
+
+	--IF @IloscProduktu &lt;&gt; @IloscAktProduktu
+	--BEGIN
+		UPDATE dt
+		SET PKS_Ilosc = PKS_IloscWgTech,
+			PKS_IloscPom = CDN.Prod_WartoscAtr(PTZ_IloscPom, PTZ_IloscPomAtr, @TypPTE, PKS_Technologia, 0, 0)
+		FROM CDN.ProdKalkulacjaKosztuElem dt
+			LEFT JOIN CDN.ProdTechnologiaZasoby ON PTZ_Id = PKS_ObjectID AND PKS_Typ IN (@TypPolProdukt, @TypProdukt, @TypProduktUboczny, @TypSurowiec)
+		WHERE PKS_PKK = @PKKId AND PKS_Typ NOT IN (@TypFunkcja, @TypZasob)
+			
+		UPDATE dt
+		SET PKS_Ilosc = CASE WHEN dt.PKS_ID = prod.PKS_ID THEN @IloscProduktu ELSE dt.PKS_Ilosc * @IloscProduktu  / prod.PKS_Ilosc END,
+			PKS_IloscPom = dt.PKS_Ilosc * @IloscProduktu * dt.PKS_IloscPom / prod.PKS_Ilosc
+		FROM CDN.ProdKalkulacjaKosztuElem dt
+			JOIN CDN.ProdKalkulacjaKosztuElem prod ON prod.PKS_PKK = @PKKId AND prod.PKS_Technologia = dt.PKS_Technologia AND prod.PKS_Typ = @TypProdukt AND prod.PKS_ObjectID = @PTZId
+		WHERE dt.PKS_PKK = @PKKId AND dt.PKS_Technologia = @PTEId AND dt.PKS_Typ NOT IN (@TypFunkcja, @TypZasob)
+			AND ((dt.PKS_PTC_Ojciec = prod.PKS_PTC_Ojciec AND dt.PKS_Typ IN (@TypPolProdukt, @TypProdukt, @TypProduktUboczny, @TypSurowiec))
+				OR (dt.PKS_ObjectID = prod.PKS_PTC_Ojciec AND dt.PKS_Typ IN (@TypCzynnosc))
+				OR (dt.PKS_ObjectID = prod.PKS_Technologia AND dt.PKS_Typ = @TypTechnologia)
+			)
+
+		IF EXISTS(SELECT TOP 1 1 FROM CDN.ProdKalkulacjaKosztuElem pt
+				JOIN (
+					SELECT PKS_PtzTechnologiaZasob, PKS_Typ, SUM(PKS_Ilosc) Ilosc 
+					FROM CDN.ProdKalkulacjaKosztuElem 
+					WHERE PKS_PKK = @PKKId AND PKS_PtzTechnologiaZasob &lt;&gt; 0 AND PKS_Typ IN (@TypPolProdukt, @TypSurowiec)
+					GROUP BY PKS_PtzTechnologiaZasob, PKS_Typ
+				) dt ON dt.PKS_PtzTechnologiaZasob = pt.PKS_ObjectID --AND dt.Technologia = pt.Technologia
+			WHERE pt.PKS_PKK = @PKKId AND pt.PKS_Typ = @TypProdukt AND dt.Ilosc &lt;&gt; pt.PKS_Ilosc AND pt.PKS_NrKolejnyListy &lt; @NrKolejnyListyProduktu)
+		BEGIN
+
+			DECLARE @ProduktId INT
+			DECLARE @NrKolejny INT
+
+			SELECT @ProduktId = pt.PKS_ObjectID, @NrKolejny = pt.PKS_NrKolejnyListy
+			FROM CDN.ProdKalkulacjaKosztuElem pt 
+			WHERE PKS_PKK = @PKKId AND PKS_NrKolejnyListy = (SELECT MAX(wewpt.PKS_NrKolejnyListy) 
+				FROM CDN.ProdKalkulacjaKosztuElem wewpt
+					JOIN (
+						SELECT PKS_PtzTechnologiaZasob, PKS_Typ, SUM(PKS_Ilosc) Ilosc 
+						FROM CDN.ProdKalkulacjaKosztuElem 
+						WHERE PKS_PKK = @PKKId AND PKS_PtzTechnologiaZasob &lt;&gt; 0 
+						GROUP BY PKS_PtzTechnologiaZasob, PKS_Typ
+					) dt ON dt.PKS_PtzTechnologiaZasob = wewpt.PKS_ObjectID --AND dt.Technologia = pt.Technologia
+				WHERE wewpt.PKS_PKK = @PKKId AND wewpt.PKS_Typ = @TypProdukt AND dt.PKS_Typ IN (@TypPolProdukt, @TypSurowiec) AND dt.Ilosc &lt;&gt; wewpt.PKS_Ilosc AND wewpt.PKS_NrKolejnyListy &lt; @NrKolejnyListyProduktu)
+
+			SELECT @MaxPoziom = MAX(PKS_NrKolejnyListy) FROM CDN.ProdKalkulacjaKosztuElem
+
+			WHILE @Poziom &lt;= @MaxPoziom
+			BEGIN
+				UPDATE pt
+				SET PKS_Ilosc = sumIl.Ilosc * (pt.PKS_Ilosc / pt.PKS_IloscWgTech),
+					PKS_IloscPom = sumIl.IloscPom * (pt.PKS_Ilosc / pt.PKS_IloscWgTech)
+				FROM CDN.ProdKalkulacjaKosztuElem pt
+					CROSS APPLY (SELECT SUM(dt.PKS_Ilosc) Ilosc, SUM(dt.PKS_IloscPom) IloscPom FROM CDN.ProdKalkulacjaKosztuElem dt 
+						WHERE dt.PKS_PKK = @PKKId AND dt.PKS_PtzTechnologiaZasob = pt.PKS_ObjectID AND dt.PKS_Typ IN (@TypPolProdukt, @TypSurowiec)) sumIl --AND dt.Technologia = pt.Technologia
+				WHERE pt.PKS_PKK = @PKKId AND pt.PKS_ObjectID = @ProduktId AND pt.PKS_Typ = @TypProdukt
+
+				IF @@ROWCOUNT &lt;&gt; 0
+				BEGIN
+					UPDATE dt
+					SET PKS_Ilosc = dt.PKS_Ilosc * (pt.PKS_Ilosc / pt.PKS_IloscWgTech),
+						PKS_IloscPom = dt.PKS_IloscPom * (pt.PKS_Ilosc / pt.PKS_IloscWgTech)
+					FROM CDN.ProdKalkulacjaKosztuElem dt
+						JOIN CDN.ProdKalkulacjaKosztuElem pt ON pt.PKS_ObjectID = @ProduktId AND pt.PKS_Typ = @TypProdukt AND pt.PKS_PTC_Ojciec = dt.PKS_PTC_Ojciec 
+					WHERE dt.PKS_PKK = @PKKId AND pt.PKS_PKK = @PKKId AND dt.PKS_Typ NOT IN (@TypZasob, @TypFunkcja, @TypCzynnosc, @TypTechnologia) AND /*((*/dt.PKS_ObjectID &lt;&gt; pt.PKS_ObjectID 
+						/*AND dt.Typ = @TypProdukt) OR (dt.ObjectID = pt.ObjectID AND dt.Typ &lt;&gt; @TypProdukt))*/
+
+					UPDATE dt
+					SET PKS_Ilosc = dt.PKS_Ilosc * (pt.PKS_Ilosc / pt.PKS_IloscWgTech)
+					FROM CDN.ProdKalkulacjaKosztuElem dt
+						JOIN CDN.ProdKalkulacjaKosztuElem pt ON pt.PKS_ObjectID = @ProduktId AND pt.PKS_Typ = @TypProdukt AND pt.PKS_PTC_Ojciec = dt.PKS_ObjectID AND dt.PKS_Typ = @TypCzynnosc
+					WHERE dt.PKS_PKK = @PKKId AND pt.PKS_PKK = @PKKId
+
+					UPDATE dt
+					SET PKS_Ilosc = dt.PKS_Ilosc * (pt.PKS_Ilosc / pt.PKS_IloscWgTech)
+					FROM CDN.ProdKalkulacjaKosztuElem dt
+						JOIN CDN.ProdKalkulacjaKosztuElem pt ON pt.PKS_ObjectID = @ProduktId AND pt.PKS_Typ = @TypProdukt AND dt.PKS_Typ = @TypTechnologia
+					WHERE dt.PKS_PKK = @PKKId AND pt.PKS_PKK = @PKKId AND dt.PKS_Technologia &lt;&gt; @PTEId AND dt.PKS_Technologia = pt.PKS_Technologia AND NOT EXISTS --pt.ObjectID NOT IN 
+						(SELECT TOP 1 wewpt.PKS_PtzTechnologiaZasob FROM CDN.ProdKalkulacjaKosztuElem wewpt 
+							WHERE wewpt.PKS_PKK = @PKKId AND wewpt.PKS_PtzTechnologiaZasob = pt.PKS_ObjectID AND wewpt.PKS_Typ IN (@TypPolProdukt, @TypSurowiec) AND wewpt.PKS_Technologia = pt.PKS_Technologia)
+				END
+
+				SET @Poziom += 1
+
+				SELECT @NrKolejny = COALESCE(MAX(wewpt.PKS_NrKolejnyListy), 0) 
+				FROM CDN.ProdKalkulacjaKosztuElem wewpt
+					JOIN CDN.ProdKalkulacjaKosztuElem dt ON dt.PKS_PtzTechnologiaZasob = wewpt.PKS_ObjectID --AND dt.Technologia = pt.Technologia
+				WHERE wewpt.PKS_PKK = @PKKId AND dt.PKS_PKK = @PKKId AND wewpt.PKS_Typ = @TypProdukt AND dt.PKS_Typ IN (@TypPolProdukt, @TypSurowiec) 
+					AND dt.PKS_Ilosc &lt;&gt; wewpt.PKS_Ilosc AND wewpt.PKS_NrKolejnyListy &lt; @NrKolejny AND wewpt.PKS_NrKolejnyListy &lt; @NrKolejnyListyProduktu
+
+				SELECT @ProduktId = COALESCE(pt.PKS_ObjectID, 0)
+				FROM CDN.ProdKalkulacjaKosztuElem pt 
+				WHERE pt.PKS_PKK = @PKKId AND pt.PKS_NrKolejnyListy = @NrKolejny
+
+				IF @ProduktId = 0 OR @NrKolejny = 0
+					BREAK
+			END
+		END
+
+		--Ustalanie terminu
+		--Czas trwania czynnosci
+		SELECT dt.PKS_PTC_Ojciec PTCId, POF_Obiekt, SUM(POF_Czas + CASE WHEN POF_WydajnoscIlosc = 0 THEN 0 ELSE (POF_WydajnoscCzas / POF_WydajnoscIlosc) * dtOpe.PKS_Ilosc END) CzasZFunkcjiObiektow
+		INTO #CzasyOpeZObiektowFunkcji
+		FROM CDN.ProdKalkulacjaKosztuElem dt
+			JOIN CDN.ProdObiektyFunkcje pof ON POF_ObiTyp = @TypPOB AND POF_Funkcja = dt.PKS_ObjectID AND dt.PKS_Typ = @TypFunkcja
+			JOIN CDN.ProdKalkulacjaKosztuElem dtOpe ON dtOpe.PKS_ObjectID = dt.PKS_PTC_Ojciec AND dtOpe.PKS_Typ = @TypCzynnosc
+		WHERE dt.PKS_PKK = @PKKId AND dtOpe.PKS_PKK = @PKKId
+		GROUP BY dt.PKS_PTC_Ojciec, POF_Obiekt
+
+		UPDATE dt
+		SET PKS_CzasTrwaniaLong = CASE 
+				WHEN dt.PKS_Ilosc / CASE WHEN CDN.Prod_WartoscAtr(ptc.PTC_Ilosc, ptc.PTC_IloscAtr, @TypPTE, ptc.PTC_Technologia, 0 ,0) = 0 THEN 1 ELSE 
+					CDN.Prod_WartoscAtr(ptc.PTC_Ilosc, ptc.PTC_IloscAtr, @TypPTE, ptc.PTC_Technologia, 0 ,0) END * MaxCzas &gt; 
+					ptc.PTC_CzasPrzygotowawczy + dt.PKS_Ilosc / CASE WHEN CDN.Prod_WartoscAtr(ptc.PTC_Ilosc, ptc.PTC_IloscAtr, @TypPTE, ptc.PTC_Technologia, 0 ,0) = 0 THEN 1 ELSE 
+						CDN.Prod_WartoscAtr(ptc.PTC_Ilosc, ptc.PTC_IloscAtr, @TypPTE, ptc.PTC_Technologia, 0 ,0) END * 
+						(CDN.Prod_WartoscAtr(ptc.PTC_CzasPlanowany, ptc.PTC_CzasPlanowanyAtr, @TypPTE, ptc.PTC_Technologia, 0, 0)) 
+					THEN dt.PKS_Ilosc / CASE WHEN CDN.Prod_WartoscAtr(ptc.PTC_Ilosc, ptc.PTC_IloscAtr, @TypPTE, ptc.PTC_Technologia, 0 ,0) = 0 THEN 1 ELSE 
+						CDN.Prod_WartoscAtr(ptc.PTC_Ilosc, ptc.PTC_IloscAtr, @TypPTE, ptc.PTC_Technologia, 0 ,0) END * MaxCzas
+				ELSE ptc.PTC_CzasPrzygotowawczy + dt.PKS_Ilosc / CASE WHEN CDN.Prod_WartoscAtr(ptc.PTC_Ilosc, ptc.PTC_IloscAtr, @TypPTE, ptc.PTC_Technologia, 0 ,0) = 0 THEN 1 ELSE 
+						CDN.Prod_WartoscAtr(ptc.PTC_Ilosc, ptc.PTC_IloscAtr, @TypPTE, ptc.PTC_Technologia, 0 ,0) END * (CDN.Prod_WartoscAtr(ptc.PTC_CzasPlanowany, ptc.PTC_CzasPlanowanyAtr, @TypPTE, ptc.PTC_Technologia, 0, 0)) 
+			END
+		FROM CDN.ProdKalkulacjaKosztuElem dt
+			LEFT JOIN (SELECT PTCId, MAX(CzasZFunkcjiObiektow) MaxCzas FROM #CzasyOpeZObiektowFunkcji GROUP BY PTCId) cozof ON dt.PKS_ObjectID = cozof.PTCId AND dt.PKS_Typ = @TypCzynnosc
+			JOIN CDN.ProdTechnologiaCzynnosci ptc ON ptc.PTC_Id = dt.PKS_ObjectID AND dt.PKS_Typ = @TypCzynnosc
+		WHERE dt.PKS_PKK = @PKKId AND dt.PKS_Typ = @TypCzynnosc
+
+		--Czas trwania technologii
+		;WITH CTE AS
+		(
+			SELECT czynProd.PKS_Technologia, prod.PKS_ObjectID IdProd, 0 IdProdOjciec, czynProd.PKS_ObjectID IdCzyn, 0 IdCzynOjciec ,czynProd.PKS_CzasTrwaniaLong, 1 Poziom
+			FROM CDN.ProdKalkulacjaKosztuElem prod
+				RIGHT JOIN CDN.ProdKalkulacjaKosztuElem czynProd ON prod.PKS_PTC_Ojciec = czynProd.PKS_ObjectID AND czynProd.PKS_Typ = @TypCzynnosc AND prod.PKS_Typ = @TypProdukt
+			WHERE prod.PKS_PKK = @PKKId AND czynProd.PKS_PKK = @PKKId AND ((prod.PKS_Bylo = 1 AND prod.PKS_Technologia = @PTEId) OR (prod.PKS_Technologia &lt;&gt; @PTEId AND 
+				NOT EXISTS(SELECT TOP 1 wewpt.PKS_PtzTechnologiaZasob FROM CDN.ProdKalkulacjaKosztuElem wewpt 
+					WHERE wewpt.PKS_PKK = @PKKId AND wewpt.PKS_PtzTechnologiaZasob = prod.PKS_ObjectID AND wewpt.PKS_Typ IN (@TypPolProdukt, @TypSurowiec) AND wewpt.PKS_Technologia = prod.PKS_Technologia))) 
+						OR (prod.PKS_Typ IS NULL AND czynProd.PKS_Typ = @TypCzynnosc)
+			UNION ALL
+			SELECT polprod.PKS_Technologia, polprod.PKS_ObjectID IdProd, prod.IdProd IdProdOjciec, czynProd.PKS_ObjectID, prod.IdCzyn, czynProd.PKS_CzasTrwaniaLong, prod.Poziom + 1
+			FROM CTE prod
+				JOIN CDN.ProdKalkulacjaKosztuElem surCzyn ON surCzyn.PKS_PTC_Ojciec = prod.IdCzyn AND surCzyn.PKS_Typ = @TypPolProdukt
+				JOIN CDN.ProdKalkulacjaKosztuElem polprod ON polprod.PKS_ObjectID = surCzyn.PKS_PtzTechnologiaZasob AND polprod.PKS_Typ = @TypProdukt --AND polprod.Technologia = surCzyn.Technologia
+				JOIN CDN.ProdKalkulacjaKosztuElem czynProd ON polprod.PKS_PTC_Ojciec = czynProd.PKS_ObjectID AND czynProd.PKS_Typ = @TypCzynnosc
+			WHERE surCzyn.PKS_PKK = @PKKId AND polprod.PKS_PKK = @PKKId AND czynProd.PKS_PKK = @PKKId AND polprod.PKS_Technologia = prod.PKS_Technologia
+		)
+		SELECT * INTO #CzasyNiezaleznychProduktow FROM CTE
+
+		SELECT @Poziom = MAX(Poziom) FROM #CzasyNiezaleznychProduktow
+	
+		WHILE @Poziom &gt; 1
+		BEGIN
+			UPDATE ojciec
+			SET PKS_CzasTrwaniaLong = ojciec.PKS_CzasTrwaniaLong + czas.PKS_CzasTrwaniaLong
+			FROM #CzasyNiezaleznychProduktow ojciec
+				JOIN #CzasyNiezaleznychProduktow czas ON ojciec.IdProd = czas.IdProdOjciec
+			WHERE czas.Poziom = @Poziom AND czas.PKS_CzasTrwaniaLong = (SELECT MAX(PKS_CzasTrwaniaLong) FROM #CzasyNiezaleznychProduktow wewczas WHERE czas.IdProdOjciec = wewczas.IdProdOjciec GROUP BY wewczas.PKS_Technologia)
+
+			SET @Poziom -= 1
+		END
+
+		--Czas trwania technologii
+		UPDATE dt
+		SET PKS_CzasTrwaniaLong = su.CzasTrwaniaLong
+		FROM CDN.ProdKalkulacjaKosztuElem dt
+			CROSS APPLY (SELECT MAX(PKS_CzasTrwaniaLong) CzasTrwaniaLong FROM #CzasyNiezaleznychProduktow su WHERE dt.PKS_ObjectID = su.PKS_Technologia GROUP BY su.PKS_Technologia) su
+		WHERE dt.PKS_PKK = @PKKId AND dt.PKS_Typ = @TypTechnologia
+		--END
+
+		--Termin technologii
+		SELECT TOP 1 @MaxPoziom = MAX(PKS_Kolejnosc) FROM CDN.ProdKalkulacjaKosztuElem WHERE PKS_PKK = @PKKId
+		SET @Poziom = 1
+    
+		WHILE @Poziom &lt;= @MaxPoziom
+		BEGIN
+			UPDATE dt
+			SET PKS_TerminLong = techprod.PKS_TerminLong - dt.PKS_CzasTrwaniaLong
+			FROM CDN.ProdKalkulacjaKosztuElem dt
+				JOIN CDN.ProdKalkulacjaKosztuElem elemtech ON elemtech.PKS_Technologia = dt.PKS_Technologia AND elemtech.PKS_Typ = @TypProdukt
+				JOIN CDN.ProdKalkulacjaKosztuElem prod ON elemtech.PKS_ObjectID = prod.PKS_PtzTechnologiaZasob AND prod.PKS_Typ = @TypPolProdukt
+				JOIN CDN.ProdKalkulacjaKosztuElem techprod ON techprod.PKS_Technologia = prod.PKS_Technologia AND techprod.PKS_Typ = @TypTechnologia
+			WHERE dt.PKS_PKK = @PKKId AND elemtech.PKS_PKK = @PKKId AND prod.PKS_PKK = @PKKId AND techprod.PKS_PKK = @PKKId 
+				AND dt.PKS_Typ = @TypTechnologia AND dt.PKS_Kolejnosc = @Poziom AND techprod.PKS_Technologia &lt;&gt; dt.PKS_Technologia
+
+			SET @Poziom = @Poziom + 1
+		END
+	
+		--Termin operacji
+		UPDATE dt
+		SET PKS_TerminLong = techdt.PKS_TerminLong + sumaCzasuTrwaniaPopOpe
+		FROM CDN.ProdKalkulacjaKosztuElem dt
+			JOIN CDN.ProdKalkulacjaKosztuElem techdt ON dt.PKS_Technologia = techdt.PKS_Technologia AND techdt.PKS_Typ = @TypTechnologia
+			CROSS APPLY (SELECT COALESCE(MAX(czas.PKS_CzasTrwaniaLong), 0) sumaCzasuTrwaniaPopOpe FROM #CzasyNiezaleznychProduktow czas WHERE dt.PKS_ObjectID = czas.IdCzynOjciec) suma
+		WHERE dt.PKS_PKK = @PKKId AND techdt.PKS_PKK = @PKKId AND dt.PKS_Typ = @TypCzynnosc
+
+		--Aktualizuj kolejnosc kosztow dodatkowych
+		IF EXISTS(SELECT TOP 1 1 FROM CDN.ProdKalkulacjaKosztuElem WHERE PKS_PKK = @PKKId AND PKS_Typ = @TypKosztDodatkowy)
+		BEGIN
+			DECLARE @Max INT
+			SELECT @Max = MAX(PKS_NrKolejnyListy) FROM ProdKalkulacjaKosztuElem dt WHERE dt.PKS_PKK = @PKKId AND dt.PKS_KosztDodatkowyRodzaj = 0
+
+			;WITH CTE AS
+			(
+				SELECT PKS_NrKolejnyListy,
+				ROW_NUMBER() OVER (ORDER BY PKS_NrKolejnyListy, PKS_Poziom) AS RN
+				FROM CDN.ProdKalkulacjaKosztuElem
+				WHERE PKS_Typ = @TypKosztDodatkowy AND PKS_PKK = @PKKId
+			)
+			UPDATE cte SET PKS_NrKolejnyListy = @Max + RN
+			FROM CTE cte
+		END
+	--END
+
+	EXEC CDN.KalkulacjaKosztowPrzeliczWszystkieKoszty @PKKId, @SposobSymulacjiKosztuSurowca, @SposobSymulacjiKosztuFunkcji, @SposobSymulacjiKosztuZasobu, 0, @NrKursu, @KursLicznik, @KursMianownik
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="KalkulacjaKosztowWyliczElementy"></A><PRE>
+          <FONT SIZE="2"><I>/* KalkulacjaKosztowWyliczElementy */</I><BR>
+CREATE PROCEDURE CDN.KalkulacjaKosztowWyliczElementy(
+    @PKKId INT,
+    @PTZId INT,
+    @PTEId INT, 
+    @ZrodloPrzeliczenia TINYINT, 
+    @WczytajTechnologieSurowcow TINYINT, 
+    @SposobSymulacjiKosztuSurowca TINYINT, 
+    @SposobSymulacjiKosztuFunkcji TINYINT,
+    @SposobSymulacjiKosztuZasobu TINYINT,
+    @NrKursu TINYINT,
+    @KursLicznik INT = 0,
+    @KursMianownik INT = 0,
+    @IloscProduktu DECIMAL(17,4) = 1,
+    @Termin INT = NULL)
+AS
+BEGIN
+    SET NOCOUNT ON
+    DECLARE @Poziom SMALLINT = 0
+    DECLARE @TypPTE INT = 14340
+    DECLARE @TypPOB INT = 14337
+
+    DECLARE @TypTechnologia SMALLINT = 10
+    DECLARE @TypCzynnosc SMALLINT = 40
+    DECLARE @TypProduktUboczny SMALLINT = 47
+    DECLARE @TypProdukt SMALLINT = 50
+    DECLARE @TypSurowiec SMALLINT = 60
+    DECLARE @TypZasob SMALLINT = 70
+    DECLARE @TypFunkcja SMALLINT = 80
+    DECLARE @TypPolProdukt SMALLINT = 90
+    DECLARE @TypKosztDodatkowy SMALLINT = 100
+
+    DECLARE @KolejnoscFunkcja SMALLINT = 1
+    DECLARE @KolejnoscZasob SMALLINT = 2
+    DECLARE @KolejnoscSurowiec SMALLINT = 3
+    DECLARE @KolejnoscProduktUboczny SMALLINT = 4
+    DECLARE @KolejnoscProdukt SMALLINT = 5
+
+    DECLARE @Technologia TINYINT = 1
+    DECLARE @ZlecenieZakladkaOgolne TINYINT = 2
+    DECLARE @ZlecenieZakladkaProcesy TINYINT = 3
+    DECLARE @Zamowienie TINYINT = 4
+    DECLARE @KonfiguratorProduktu TINYINT = 5
+
+    DECLARE @ZrodloPolprodukty TINYINT = 1
+    DECLARE @ZrodloBOM TINYINT = 2
+
+    DECLARE @MaxPoziom INT
+	DECLARE @RowCount INT
+
+    CREATE TABLE #ZasobyDoProdukcjiZasobu (IdZasobu INT, IdCzynnosci INT, Zrodlo TINYINT, Poziom INT, PoziomDodawania INT, SurZBOM INT, PTC_Ojciec INT)
+    DECLARE @TerminProduktu INT
+    IF @Termin IS NULL OR @Termin = 0
+        SET @TerminProduktu = CDN.DateToTS(NULL)
+    ELSE
+        SET @TerminProduktu = @Termin
+    
+    IF @WczytajTechnologieSurowcow = 0
+    BEGIN
+        IF @ZrodloPrzeliczenia NOT IN (@ZlecenieZakladkaOgolne, @Zamowienie)
+        BEGIN
+			IF @PTZId = 0
+				SELECT @PTZId = PTZ_Id, @IloscProduktu = PTZ_Ilosc FROM CDN.ProdTechnologiaZasoby
+					JOIN CDN.ProdTechnologiaCzynnosci ON PTZ_TechnologiaCzynnosc = PTC_Id
+				WHERE PTC_Technologia = @PTEId
+
+			INSERT INTO #ZasobyDoProdukcjiZasobu
+            SELECT ZI.PTZ_Id, PTC_Id, @ZrodloPolprodukty, 0 Poziom, 0, 0, PTC_Ojciec
+            FROM CDN.ProdTechnologiaCzynnosci C
+                LEFT JOIN CDN.ProdTechnologiaZasoby ZI ON ZI.PTZ_TechnologiaCzynnosc = C.PTC_Id
+            WHERE C.PTC_Technologia = @PTEId AND ZI.PTZ_Zamiennik = 0
+
+            WHILE @Poziom &lt; 100
+            BEGIN
+                INSERT INTO #ZasobyDoProdukcjiZasobu
+                SELECT PTZ2.PTZ_Id, PTC2.PTC_Id, @ZrodloPolprodukty, Poziom + 1, 0, 0, PTC.PTC_Ojciec
+                FROM #ZasobyDoProdukcjiZasobu cte
+                    JOIN CDN.ProdTechnologiaZasoby cteptz ON cteptz.PTZ_Id = cte.IdZasobu
+                    JOIN CDN.ProdTechnologiaCzynnosci ptccte ON ptccte.PTC_Id = cte.IdCzynnosci
+					JOIN CDN.ProdTechnologiaZasoby polprod ON polprod.PTZ_Id = cteptz.PTZ_TechnologiaZasob
+                    JOIN CDN.ProdTechnologiaCzynnosci PTC ON PTC.PTC_Id = polprod.PTZ_TechnologiaCzynnosc
+                    JOIN CDN.ProdTechnologiaCzynnosci PTC2 ON PTC.PTC_Technologia = PTC2.PTC_Technologia
+					LEFT JOIN CDN.ProdTechnologiaZasoby PTZ2 ON PTZ2.PTZ_TechnologiaCzynnosc = PTC2.PTC_Id
+                WHERE PTC.PTC_Technologia &lt;&gt; ptccte.PTC_Technologia AND cteptz.PTZ_TypZasobu = 1 AND Poziom = @Poziom AND PTZ2.PTZ_Zamiennik = 0
+
+                IF @@ROWCOUNT = 0
+                    BREAK
+
+                SET @Poziom = @Poziom + 1
+			END
+        END
+        ELSE
+        BEGIN
+            ;WITH RecursiveCTE AS
+            (
+                SELECT ZI.PTZ_Id, ZI.PTZ_TechnologiaZasob, ZI.PTZ_TechnologiaCzynnosc, ZC.PTC_Technologia, 0 Poziom, ZC.PTC_Ojciec
+                FROM CDN.ProdTechnologiaZasoby ZO
+                    JOIN CDN.ProdTechnologiaZasoby ZI ON ZI.PTZ_TechnologiaCzynnosc = ZO.PTZ_TechnologiaCzynnosc AND ZO.PTZ_TypZasobu in (0,4)
+                    JOIN CDN.ProdTechnologiaCzynnosci ZC ON ZC.PTC_Id = ZI.PTZ_TechnologiaCzynnosc
+                WHERE ZO.PTZ_Id = @PTZId AND ZI.PTZ_Zamiennik = 0
+                UNION ALL
+                SELECT PTZ2.PTZ_Id , 
+                    PTZ2.PTZ_TechnologiaZasob , 
+                    PTC.PTC_Id, PTC.PTC_Technologia, CASE WHEN cte.PTC_Technologia = PTC.PTC_Technologia THEN Poziom ELSE Poziom + 1 END, PTC.PTC_Ojciec
+                FROM RecursiveCTE cte
+                    JOIN CDN.ProdTechnologiaZasoby PTZ ON PTZ.PTZ_Id = cte.PTZ_TechnologiaZasob
+                    JOIN CDN.ProdTechnologiaCzynnosci PTC ON PTC.PTC_Id = PTZ.PTZ_TechnologiaCzynnosc OR PTC.PTC_Id = cte.PTC_Ojciec
+                    JOIN CDN.ProdTechnologiaZasoby PTZ2 ON PTZ2.PTZ_TechnologiaCzynnosc = PTC.PTC_Id 
+				WHERE PTZ2.PTZ_Zamiennik = 0
+            )
+            INSERT INTO #ZasobyDoProdukcjiZasobu
+            SELECT DISTINCT PTZ_Id, PTZ_TechnologiaCzynnosc, @ZrodloPolprodukty, Poziom, 0, 0, PTC_Ojciec FROM RecursiveCTE
+
+        END
+    END
+    ELSE--@WczytajTechnologieSurowcow = 1
+    BEGIN
+        IF @ZrodloPrzeliczenia NOT IN (@ZlecenieZakladkaOgolne, @Zamowienie)
+        BEGIN
+            INSERT INTO #ZasobyDoProdukcjiZasobu
+            SELECT ZI.PTZ_Id, PTC_Id, @ZrodloPolprodukty, 0 Poziom, 0, 0, PTC_Ojciec
+            FROM CDN.ProdTechnologiaCzynnosci C
+                LEFT JOIN CDN.ProdTechnologiaZasoby ZI ON ZI.PTZ_TechnologiaCzynnosc = C.PTC_Id
+            WHERE C.PTC_Technologia = @PTEId AND ZI.PTZ_Zamiennik = 0
+
+            WHILE @Poziom &lt; 100
+            BEGIN
+                INSERT INTO #ZasobyDoProdukcjiZasobu
+                SELECT PTZ2.PTZ_Id, PTC.PTC_Id, CASE WHEN cteptz.PTZ_TechnologiaZasob &lt;&gt; 0 AND cte.Zrodlo = @ZrodloPolprodukty THEN @ZrodloPolprodukty ELSE @ZrodloBOM END, Poziom + 1, 0, produktBOM.surZBOM, PTC.PTC_Ojciec
+                FROM #ZasobyDoProdukcjiZasobu cte
+                    JOIN CDN.ProdTechnologiaZasoby cteptz ON cteptz.PTZ_Id = cte.IdZasobu
+                    JOIN CDN.ProdTechnologiaCzynnosci ptccte ON ptccte.PTC_Id = cte.IdCzynnosci
+                    CROSS APPLY (SELECT TOP 1 PTC_Technologia, CASE WHEN cteptz.PTZ_TechnologiaZasob = 0 THEN cteptz.PTZ_Id ELSE 0 END surZBOM 
+                        FROM CDN.ProdTechnologiaZasoby wewptz
+                            JOIN CDN.ProdTechnologiaCzynnosci wewptc ON wewptz.PTZ_TechnologiaCzynnosc = wewptc.PTC_Id
+                            JOIN CDN.ProdTechnologia wewpte ON wewpte.PTE_Id = wewptc.PTC_Technologia
+                        WHERE ((wewptz.PTZ_TypZasobu = 0 AND wewptz.PTZ_TwrNumer = cteptz.PTZ_TwrNumer AND wewptz.PTZ_TwrTyp = cteptz.PTZ_TwrTyp AND wewptz.PTZ_PodstawowaTechnologiaDlaProduktu = 1)
+							OR wewptz.PTZ_Id = cteptz.PTZ_TechnologiaZasob)
+                        ORDER BY CASE WHEN wewptz.PTZ_Id = cteptz.PTZ_TechnologiaZasob THEN 1 ELSE 0 END DESC, wewpte.PTE_DataZatw DESC
+						) produktBOM
+                    JOIN CDN.ProdTechnologiaCzynnosci PTC ON produktBOM.PTC_Technologia = PTC.PTC_Technologia
+                    LEFT JOIN CDN.ProdTechnologiaZasoby PTZ2 ON PTC.PTC_Id = PTZ2.PTZ_TechnologiaCzynnosc
+                WHERE PTC.PTC_Technologia &lt;&gt; ptccte.PTC_Technologia AND cteptz.PTZ_TypZasobu = 1 AND Poziom = @Poziom AND PTZ2.PTZ_Zamiennik = 0
+
+                IF @@ROWCOUNT = 0
+                    BREAK
+
+                SET @Poziom = @Poziom + 1
+            END
+
+        END
+        ELSE
+        BEGIN
+            INSERT INTO #ZasobyDoProdukcjiZasobu
+            SELECT ZI.PTZ_Id, ZI.PTZ_TechnologiaCzynnosc, @ZrodloPolprodukty, 0 Poziom, 0, 0, PTC_Ojciec
+            FROM CDN.ProdTechnologiaZasoby ZO
+                JOIN CDN.ProdTechnologiaZasoby ZI ON ZI.PTZ_TechnologiaCzynnosc = ZO.PTZ_TechnologiaCzynnosc AND ZO.PTZ_TypZasobu in (0,4)
+                JOIN CDN.ProdTechnologiaCzynnosci CI ON CI.PTC_Id = ZI.PTZ_TechnologiaCzynnosc
+            WHERE ZO.PTZ_Id = @PTZId AND ZI.PTZ_Zamiennik = 0
+
+            WHILE @Poziom &lt; 100
+            BEGIN
+                INSERT INTO #ZasobyDoProdukcjiZasobu
+                SELECT elementyBOM.PTZ_Id, elementyBOM.PTZ_TechnologiaCzynnosc, CASE WHEN cteptz.PTZ_TechnologiaZasob &lt;&gt; 0 AND cte.Zrodlo = @ZrodloPolprodukty THEN @ZrodloPolprodukty ELSE @ZrodloBOM END,
+                    CASE WHEN ptccte.PTC_Technologia = PTC.PTC_Technologia THEN Poziom ELSE Poziom + 1 END, @Poziom + 1, produktBOM.surZBOM, PTC.PTC_Ojciec
+                FROM #ZasobyDoProdukcjiZasobu cte
+                    JOIN CDN.ProdTechnologiaZasoby cteptz ON cteptz.PTZ_Id = cte.IdZasobu
+                    JOIN CDN.ProdTechnologiaCzynnosci ptccte ON ptccte.PTC_Id = cte.IdCzynnosci
+                    CROSS APPLY (SELECT TOP 1 PTC_Id, CASE WHEN cteptz.PTZ_TechnologiaZasob = 0 THEN cteptz.PTZ_Id ELSE 0 END surZBOM 
+                        FROM CDN.ProdTechnologiaZasoby wewptz
+                            JOIN CDN.ProdTechnologiaCzynnosci wewptc ON wewptz.PTZ_TechnologiaCzynnosc = wewptc.PTC_Id
+                            JOIN CDN.ProdTechnologia wewpte ON wewpte.PTE_Id = wewptc.PTC_Technologia
+                        WHERE ((wewptz.PTZ_TypZasobu = 0 AND wewptz.PTZ_TwrNumer = cteptz.PTZ_TwrNumer AND wewptz.PTZ_TwrTyp = cteptz.PTZ_TwrTyp AND wewptz.PTZ_PodstawowaTechnologiaDlaProduktu = 1)
+							OR wewptz.PTZ_Id = cteptz.PTZ_TechnologiaZasob)
+                        ORDER BY CASE WHEN wewptz.PTZ_Id = cteptz.PTZ_TechnologiaZasob THEN 1 ELSE 0 END DESC, wewpte.PTE_DataZatw DESC) produktBOM
+                    JOIN CDN.ProdTechnologiaCzynnosci PTC ON PTC.PTC_Id = produktBOM.PTC_Id
+                    JOIN CDN.ProdTechnologiaZasoby elementyBOM ON produktBOM.PTC_Id = elementyBOM.PTZ_TechnologiaCzynnosc
+                WHERE cteptz.PTZ_TypZasobu = 1 AND PoziomDodawania = @Poziom AND elementyBOM.PTZ_Zamiennik = 0
+            
+                IF @@ROWCOUNT = 0
+                    BREAK
+
+                SET @Poziom = @Poziom + 1
+
+            END
+        END
+    END
+
+    --Usun duplikaty
+	CREATE TABLE #PowiazaniaDuplikatow(IdZasobu INT, SurZBom INT)
+	INSERT INTO #PowiazaniaDuplikatow
+	SELECT a.IdZasobu, a.SurZBOM
+	FROM #ZasobyDoProdukcjiZasobu a
+		JOIN CDN.ProdTechnologiaZasoby ON PTZ_Id = a.IdZasobu
+		JOIN #ZasobyDoProdukcjiZasobu b ON a.IdZasobu = b.IdZasobu
+	WHERE a.Zrodlo = @ZrodloBOM AND b.Zrodlo = @ZrodloBOM AND a.IdCzynnosci = b.IdCzynnosci AND PTZ_TypZasobu = 0 --AND a.SurZBOM &lt;&gt; b.SurZBOM 
+
+    ;WITH CTE AS (
+        SELECT IdZasobu, IdCzynnosci, Zrodlo,
+            ROW_NUMBER() OVER (PARTITION BY IdZasobu, IdCzynnosci ORDER BY Poziom DESC, Zrodlo, SurZBom) row_num
+        FROM #ZasobyDoProdukcjiZasobu
+    )
+    DELETE FROM cte
+    WHERE row_num &gt; 1;
+
+    IF EXISTS(SELECT TOP 1 1 FROM #ZasobyDoProdukcjiZasobu WHERE PTC_Ojciec &lt;&gt; 0)
+    BEGIN
+        SET @Poziom = 1
+        WHILE @Poziom &lt; 100
+        BEGIN 
+            INSERT INTO #ZasobyDoProdukcjiZasobu
+            SELECT DISTINCT 0, PTC.PTC_Id, Zrodlo, Poziom, PoziomDodawania, SurZBOM, PTC.PTC_Ojciec
+            FROM #ZasobyDoProdukcjiZasobu zdpz
+                JOIN CDN.ProdTechnologiaCzynnosci PTC ON zdpz.PTC_Ojciec = PTC.PTC_Id
+            WHERE PTC.PTC_Id NOT IN (SELECT wew.IdCzynnosci FROM #ZasobyDoProdukcjiZasobu wew)
+
+            IF @@ROWCOUNT = 0
+                BREAK
+
+            SET @Poziom = @Poziom + 1
+        END
+    END
+	
+    CREATE CLUSTERED INDEX SC ON #ZasobyDoProdukcjiZasobu (IdZasobu)
+
+    CREATE TABLE #DaneTechnologiczne(ObjectID INT, PTC_Ojciec INT, Kod VARCHAR(60), Nazwa VARCHAR(255), Ilosc DECIMAL(12,4), Jm VARCHAR(9), IloscPom DECIMAL(12,4), JmPom VARCHAR(9), Koszt1 DECIMAL(12,4), Cena1 DECIMAL(16,4), Koszt2 DECIMAL(12,4), 
+        Cena2 DECIMAL (16,4), Kosztorys DECIMAL(16,4), /*Termin VARCHAR(21),*/ Kolejnosc INT, /*KolejnoscMin INT,*/  Poziom INT, Lp INT, Typ SMALLINT, Zmieniono TINYINT, KosztPoliczony TINYINT, 
+        Ewidencyjny TINYINT, IloscWgTech DECIMAL(11,4), PtzTechnologiaZasob INT, TerminLong INT, CzasTrwaniaLong INT, IdCzynKolejnosciMin INT,/* LpSprawdzKolejnosci INT, UstawionyNrCzyn TINYINT,*/ 
+        Bylo TINYINT, Polprodukt INT, KosztDodatkowyRodzaj TINYINT, KosztDodatkowyWartoscOrg DECIMAL(15,4), ZaznaczonyPoprzedniStan INT, TwrNumer INT, /*IdUnikatowy INT, Identyfikator VARCHAR(512),*/ 
+        NrKolejnyListy INT, PTZKoszt TINYINT, /*TwrProdTechnologia INT,*/ ProduktZTechnologiiDomyslnej INT, /*TechnologiaPolproduktu INT, NalezyDoTechDomyslnej INT,*/ NalezyDoTechPolproduktu INT, 
+        Technologia INT, /*TimeStampp INT,*/ PoziomDodawaniaSurowca INT, tmpKolejnoscWTech INT, tmpKolejnoscWOpe INT, tmpSurZBom INT, tmpPoziomDodawaniaOpe INT, tmpOjciecOpeTyp INT)
+
+    SET @Poziom = 1
+
+    INSERT INTO #DaneTechnologiczne
+    SELECT DISTINCT PTE_Id, 0 PTC_Ojciec, PTE_Kod, PTE_Nazwa, PTE_Ilosc, PTE_Jednostka, 0 IloscPom, '' JmPom, 0 Koszt1, 0 Cena1, 0 Koszt2, 0 Cena2, 
+		PTE_CenaKosztorysu Kosztorys, Poziom Kolejnosc, @Poziom Poziom, 0 Lp, @TypTechnologia, 0 Zmieniono, 1 KosztPoliczy, 0 Ewidencyjny, PTE_Ilosc, 0 PtzTechnologiaZasob, @TerminProduktu TerminLong, 
+		0 CzasTrwaniaLong, 0 IdCzynKolejnosciMin, CASE PTE_Id WHEN @PTEId THEN 1 ELSE 0 END Bylo, 0 Polprodukt, 0 KosztDodatkowyRodzaj, 0 KosztDodatkowyWartoscOrg, 1 ZaznaczonyPoprzedniStan, 0 TwrNumer, 
+		0 NrKolejnyListy, 0 PTZKoszt, Zrodlo ProduktZTechnologiiDomyslnej, 0 NalezyDoTechPolproduktu, PTE_Id Technologia, -1 PoziomDodawaniaSurowca, 0 tmpKolejnoscWTech, 0 tmpKolejnoscWOpe, 0 tmpSurZBom, 
+		0 tmpPoziomDodawaniaOpe, 0 tmpOjciecOpeTyp
+    FROM CDN.ProdTechnologia
+        JOIN CDN.ProdTechnologiaCzynnosci ON PTC_Technologia = PTE_Id
+        JOIN #ZasobyDoProdukcjiZasobu ON PTC_Id = IdCzynnosci
+
+    SET @Poziom = @Poziom + 1
+
+    INSERT INTO #DaneTechnologiczne 
+    SELECT DISTINCT PTC_ID, a1.PTC_Technologia, PTC_Kod, PTC_Nazwa, 
+		CDN.Prod_WartoscAtr(PTC_Ilosc, PTC_IloscAtr, @TypPTE, PTC_Technologia, DEFAULT, 0), PTC_Jednostka, 0 IloscPom, '' JmPom, 0 Koszt1, 0 Cena1, 0 Koszt2, 0 Cena2, 
+        PTC_Narzuty, zdpz.Poziom Kolejnosc, @Poziom, PTC_Lp, @TypCzynnosc, 0 Zmieniono, 1 KosztPoliczony, 0 Ewidencyjny, CDN.Prod_WartoscAtr(PTC_Ilosc, PTC_IloscAtr, @TypPTE, PTC_Technologia, DEFAULT, 0), 
+        0 PtzTechnologiaZasob, 0 TerminLong, 0 CzasTrwaniaLong, 0 IdCzynKolejnosciMin, 0 Bylo, 0 Polprodukt, 0 KosztDodatkowyRodzaj, 0 KosztDodatkowyWartoscOrg, 1 ZaznaczonyPoprzedniStan, 0 TwrNumer, 
+        0 NrKolejnyListy, 0 PTZKoszt, Zrodlo ProduktZTechnologiiDomyslnej, 0 NalezyDoTechPolproduktu, PTC_Technologia, -1 PoziomDodawaniaSurowca, PTC_Lp tmpKolejnoscWTech, 0 tmpKolejnoscWOpe, 0 tmpSurZBom, 
+		@Poziom tmpPoziomDodawaniaOpe, @TypTechnologia
+    FROM CDN.ProdTechnologiaCzynnosci a1
+        JOIN #ZasobyDoProdukcjiZasobu zdpz ON PTC_Id = IdCzynnosci
+    WHERE a1.PTC_Ojciec = 0
+
+    SET @Poziom = @Poziom + 1
+
+	CREATE TABLE #TempIlOpe (PTC_Id INT, PTC_Lp INT, IlDzieci INT, Poziom INT, OjciecId INT, OjciecTyp INT, Przesuniecie INT)
+
+    WHILE @Poziom &lt; 100
+    BEGIN 
+        INSERT INTO #DaneTechnologiczne 
+        SELECT DISTINCT PTC_ID, a1.PTC_Ojciec, PTC_Kod, PTC_Nazwa, 
+			CDN.Prod_WartoscAtr(PTC_Ilosc, PTC_IloscAtr, @TypPTE, PTC_Technologia, DEFAULT, 0), PTC_Jednostka, 0 IloscPom, '' JmPom, 0 Koszt1, 0 Cena1, 0 Koszt2, 0 Cena2, 
+            PTC_Narzuty, ZDPZ.Poziom Kolejnosc, @Poziom, PTC_Lp, @TypCzynnosc, 0 Zmieniono, 1 KosztPoliczony, 0 Ewidencyjny, CDN.Prod_WartoscAtr(PTC_Ilosc, PTC_IloscAtr, @TypPTE, PTC_Technologia, DEFAULT, 0),
+            0 PtzTechnologiaZasob, 0 TerminLong, 0 CzasTrwaniaLong, 0 IdCzynKolejnosciMin, 0 Bylo, 0 Polprodukt, 0 KosztDodatkowyRodzaj, 0 KosztDodatkowyWartoscOrg, 1 ZaznaczonyPoprzedniStan, 0 TwrNumer,
+            0 NrKolejnyListy, 0 PTZKoszt, Zrodlo ProduktZTechnologiiDomyslnej, 0 NalezyDoTechPolproduktu, PTC_Technologia, -1 PoziomDodawaniaSurowca, PTC_Lp tmpKolejnoscWTech, 0 tmpKolejnoscWOpe, 0 tmpSurZBom, 
+			@Poziom tmpPoziomDodawaniaOpe, a2.Typ tmpOjciecOpeTyp
+        FROM CDN.ProdTechnologiaCzynnosci a1
+            JOIN #DaneTechnologiczne AS a2 ON a1.PTC_Ojciec = a2.ObjectID AND a2.Typ = @TypCzynnosc AND a2.Poziom = (@Poziom - 1)
+            JOIN #ZasobyDoProdukcjiZasobu ZDPZ ON PTC_Id = IdCzynnosci
+        WHERE PTC_Technologia = @PTEId
+
+		SET @RowCount = @@ROWCOUNT
+
+		;WITH CTE AS
+		(
+			SELECT ObjectID, Typ,
+			ROW_NUMBER() OVER (PARTITION BY PTC_Ojciec ORDER BY Lp) AS RN
+			FROM #DaneTechnologiczne
+		)
+		INSERT INTO #TempIlOpe
+		SELECT zew.ObjectID, RN, (SELECT ISNULL(SUM(1),0) FROM #DaneTechnologiczne WHERE PTC_Ojciec = zew.ObjectID AND tmpOjciecOpeTyp = @TypCzynnosc), 
+			Poziom, PTC_Ojciec, tmpOjciecOpeTyp, 0 Przesuniecie
+		FROM #DaneTechnologiczne zew
+			JOIN CTE ON zew.ObjectID = CTE.ObjectID AND zew.Typ = CTE.Typ
+		WHERE Poziom = @Poziom - 1 AND zew.Typ = @TypCzynnosc
+
+		IF @RowCount = 0
+			BREAK
+
+        SET @Poziom = @Poziom + 1
+    END
+
+	SET @Poziom = @Poziom - 1
+
+	IF EXISTS(SELECT TOP 1 1 FROM #TempIlOpe)
+	BEGIN
+		WHILE @Poziom &gt;= 2
+		BEGIN
+			UPDATE zew
+			SET Przesuniecie = (SELECT ISNULL(SUM(IlDzieci), 0) FROM #TempIlOpe wew WHERE wew.PTC_Lp &lt; zew.PTC_Lp AND wew.OjciecId = zew.OjciecId AND wew.OjciecTyp = zew.OjciecTyp)
+			FROM #TempIlOpe zew 
+			WHERE Poziom = @Poziom
+
+			UPDATE zew
+			SET IlDzieci = ISNULL(IlDzieci, 0) + (SELECT ISNULL(SUM(IlDzieci), 0) FROM #TempIlOpe wew WHERE wew.OjciecId = zew.PTC_Id AND wew.OjciecTyp = @TypCzynnosc)
+			FROM #TempIlOpe zew
+			WHERE Poziom = @Poziom - 1
+
+			SET @Poziom = @Poziom - 1
+		END
+		
+		SET @Poziom = 2
+	
+
+		UPDATE dt
+		SET tmpKolejnoscWTech = ISNULL(til.PTC_Lp,0) + til.Przesuniecie
+		FROM #DaneTechnologiczne dt
+			JOIN #TempIlOpe til ON til.PTC_Id = dt.ObjectID AND dt.Typ = @TypCzynnosc
+		WHERE dt.Typ = @TypCzynnosc AND dt.Poziom = @Poziom
+
+		SET @Poziom = @Poziom + 1
+
+		WHILE @Poziom &lt; 100
+		BEGIN
+			UPDATE dt
+			SET tmpKolejnoscWTech = ISNULL(til.PTC_Lp, 1) + ojciec.tmpKolejnoscWTech + ISNULL(til.Przesuniecie, 0)
+			FROM #DaneTechnologiczne dt
+				JOIN #DaneTechnologiczne ojciec ON ojciec.ObjectID = dt.PTC_Ojciec AND ojciec.Typ = dt.tmpOjciecOpeTyp
+				LEFT JOIN #TempIlOpe til ON til.PTC_Id = dt.ObjectID AND dt.Typ = @TypCzynnosc
+			WHERE dt.Typ = @TypCzynnosc AND dt.Poziom = @Poziom
+
+			IF @@ROWCOUNT = 0
+				BREAK
+
+			SET @Poziom = @Poziom + 1
+		END
+	END
+
+    INSERT INTO #DaneTechnologiczne
+    SELECT PTZ.PTZ_Id, DDZ.ObjectID, PTZ.PTZ_Kod, PTZ.PTZ_Nazwa, 
+        /*CASE WHEN DDZ.Technologia = @PTEId THEN @IloscProduktu ELSE 1.0000 END **/ CDN.Prod_WartoscAtr(PTZ.PTZ_Ilosc, PTZ.PTZ_IloscAtr, @TypPTE, DDZ.Technologia, 0, 0),
+		PTZ_Jednostka, CDN.Prod_WartoscAtr(PTZ.PTZ_IloscPom, PTZ.PTZ_IloscPomAtr, @TypPTE, DDZ.Technologia, 0, 0), PTZ_JednostkaPom,
+        0 Koszt1, 0 Cena1, 0 Koszt2, 0 Cena2, PTZ.PTZ_CenaKosztorysu, ZDPZ.Poziom Kolejnosc, DDZ.Poziom + 1, PTZ.PTZ_Lp,
+        CASE 
+            WHEN PTZ.PTZ_TypZasobu = 0 THEN @TypProdukt
+            WHEN PTZ.PTZ_TypZasobu = 4 THEN @TypProduktUboczny
+            WHEN PTZ.PTZ_TechnologiaZasob &lt;&gt; 0 THEN @TypPolProdukt
+            ELSE @TypSurowiec
+        END, 0 Zmieniono, 1 KosztPoliczony, CASE WHEN PTZ.PTZ_Koszt = 1 THEN 1 ELSE 0 END Ewidencyjny, CDN.Prod_WartoscAtr(PTZ.PTZ_Ilosc, PTZ.PTZ_IloscAtr, @TypPTE, DDZ.Technologia, 0, 0) IloscWgTech, 
+        PTZ.PTZ_TechnologiaZasob, 0 TerminLong, 0 CzasTrwaniaLong, 0 IdCzynKolejnosciMin, CASE WHEN PTZ.PTZ_Id = @PTZId THEN 1 ELSE 0 END Bylo, 0 Polprodukt, 
+        0 KosztDodatkowyRodzaj, 0 KosztDodatkowyWartoscOrg, 1 ZaznaczonyPoprzedniStan, PTZ.PTZ_TwrNumer TwrNumer, 0 NrKolejnyListy, PTZ.PTZ_Koszt, Zrodlo ProduktZTechnologiiDomyslnej, 
+        0 NalezyDoTechPolproduktu, DDZ.Technologia, ZDPZ.Poziom PoziomDodawaniaSurowca, DDZ.tmpKolejnoscWTech tmpKolejnoscWTech, 
+        CASE 
+            WHEN PTZ.PTZ_TypZasobu = 0 THEN @KolejnoscProdukt
+            WHEN PTZ.PTZ_TypZasobu = 4 THEN @KolejnoscProduktUboczny
+            ELSE @KolejnoscSurowiec
+        END tmpKolejnoscWOpe, ZDPZ.SurZBOM tmpSurZBom, DDZ.tmpPoziomDodawaniaOpe, 0 tmpOjciecOpe
+    FROM CDN.ProdTechnologiaZasoby PTZ
+        JOIN #ZasobyDoProdukcjiZasobu ZDPZ ON ZDPZ.IdZasobu = PTZ.PTZ_Id
+        JOIN #DaneTechnologiczne DDZ ON DDZ.ObjectID = PTZ.PTZ_TechnologiaCzynnosc AND DDZ.Typ = @TypCzynnosc
+    WHERE PTZ.PTZ_Zamiennik = 0
+
+    IF @ZrodloPrzeliczenia NOT IN (@ZlecenieZakladkaOgolne, @Zamowienie) AND NOT EXISTS(SELECT TOP 1 1 FROM #DaneTechnologiczne WHERE Typ = @TypProdukt AND Bylo = 1)
+    BEGIN
+        UPDATE zew
+        SET Bylo = 1
+        FROM #DaneTechnologiczne zew
+        WHERE zew.Typ = @TypProdukt AND zew.Technologia = @PTEId AND zew.ObjectID NOT IN (SELECT wew.PtzTechnologiaZasob FROM #DaneTechnologiczne wew WHERE wew.Technologia = @PTEId 
+            AND wew.Typ IN (@TypSurowiec, @TypPolProdukt) AND zew.ObjectID = wew.PtzTechnologiaZasob)
+    END
+
+	IF EXISTS(SELECT TOP 1 1 FROM #DaneTechnologiczne WHERE Typ = @TypPolProdukt)
+	BEGIN
+		UPDATE zew
+		SET NalezyDoTechPolproduktu = 1
+		FROM #DaneTechnologiczne zew
+		WHERE zew.Typ = @TypPolProdukt AND zew.Technologia = @PTEId AND zew.Technologia &lt;&gt; (SELECT TOP 1 wew.Technologia FROM #DaneTechnologiczne wew 
+			WHERE zew.PtzTechnologiaZasob = wew.ObjectID AND wew.Typ = @TypProdukt)
+	END
+
+	UPDATE pks
+	SET ProduktZtechnologiiDomyslnej = 0
+	FROM #DaneTechnologiczne pks
+	WHERE Technologia = @PTEId
+
+      --Indeksy
+    CREATE CLUSTERED INDEX SC ON #DaneTechnologiczne (ObjectId, Typ)
+    CREATE NONCLUSTERED INDEX NSC ON #DaneTechnologiczne (PtzTechnologiaZasob)
+
+    INSERT INTO #DaneTechnologiczne
+    SELECT PFU_Id, DDZ.ObjectID, PFU_Kod, PFU_Nazwa, PTF_LiczbaObiektow,'' Jm, 0 IloscPom, '' JmPom, 0 Koszt1, 0 Cena1, 0 Koszt2, 0 Cena2, PTF_LiczbaObiektow * PTF_CenaKosztorysu, DDZ.Kolejnosc, DDZ.Poziom + 1, 
+        0 Lp, @TypFunkcja, 0 Zmieniono, 1 KosztPoliczony, 0 Ewidencyjny, PTF_LiczbaObiektow IloscWgTech, 0 PtzTechnologiaZasob, 0 TerminLong, 0 CzasTrwaniaLong, 0 IdCzynKolejnosciMin, 0 Bylo,
+        0 Polprodukt, 0 KosztDodatkowyRodzaj, 0 KosztDodatkowyWartoscOrg, 1 ZaznaczonyPoprzedniStan, 0 TwrNumer, 0 NrKolejnyListy, 0 PTZKoszt, DDZ.ProduktZTechnologiiDomyslnej,
+        0 NalezyDoTechPolproduktu, DDZ.Technologia, -1 PoziomDodawaniaSurowca, DDZ.tmpKolejnoscWTech tmpKolejnoscWTech, @KolejnoscFunkcja tmpKolejnoscWOpe, 0 tmpSurZBom, DDZ.tmpPoziomDodawaniaOpe, 
+		0 tmpOjciecOpe
+    FROM CDN.ProdFunkcje
+        JOIN CDN.ProdTechnologiaFunkcje ON PFU_Id = PTF_Funkcja
+        JOIN #DaneTechnologiczne DDZ ON PTF_TechnologiaCzynnosc = DDZ.ObjectID AND DDZ.Typ = @TypCzynnosc
+
+    INSERT INTO #DaneTechnologiczne
+    SELECT POB_Id, DDZ.ObjectID, POB_Kod, POB_Nazwa, 1,'' Jm, 0 IloscPom, '' JmPom, 0 Koszt1, 0 Cena1, 0 Koszt2, 0 Cena2, PTF_CenaKosztorysu, DDZ.Kolejnosc, DDZ.Poziom + 1, 0 Lp, @TypZasob, 0 Zmieniono, 
+        1 KosztPoliczony, 0 Ewidencyjny, PTF_LiczbaObiektow IloscWgTech, 0 PtzTechnologiaZasob, 0 TerminLong, 0 CzasTrwaniaLong, POB_ObiTyp IdCzynKolejnosciMin, 0 Bylo, 0 Polprodukt, 
+        0 KosztDodatkowyRodzaj, 0 KosztDodatkowyWartoscOrg, 1 ZaznaczonyPoprzedniStan, 0 TwrNumer, 0 NrKolejnyListy, 0 PTZKoszt, DDZ.ProduktZTechnologiiDomyslnej,
+        0 NalezyDoTechPolproduktu, DDZ.Technologia, -1 PoziomDodawaniaSurowca, DDZ.tmpKolejnoscWTech tmpKolejnoscWTech, @KolejnoscZasob tmpKolejnoscWOpe, 0 tmpSurZBom, DDZ.tmpPoziomDodawaniaOpe,
+		0 tmpOjciecOpe
+    FROM CDN.ProdObiekty pob
+        JOIN CDN.ProdTechnologieZasobyGniazd zg ON pob.POB_Id = zg.PTG_ZasobGniazda
+        JOIN #DaneTechnologiczne DDZ ON PTG_TechnologiaOperacje = DDZ.ObjectID AND DDZ.Typ = @TypCzynnosc
+        LEFT JOIN CDN.ProdTechnologiaFunkcje ON PTG_Gniazdo = PTF_Funkcja AND PTG_TechnologiaOperacje = PTF_TechnologiaCzynnosc
+
+    --Łączenie tych samych rekordów
+    --UPDATE dt
+    --SET dt.Ilosc = dt.Ilosc + sumaIlMat
+    --FROM #DaneTechnologiczne dt
+     --   CROSS APPLY (
+      --      SELECT SUM(dt2.Ilosc) sumaIlMat
+       --     FROM #DaneTechnologiczne dt2
+       --     WHERE dt.PoziomDodawaniaSurowca &gt; dt2.PoziomDodawaniaSurowca AND dt.Typ IN (@TypSurowiec, @TypPolProdukt, @TypProdukt, @TypProduktUboczny) 
+     --           AND dt2.Typ IN (@TypSurowiec, @TypPolProdukt, @TypProdukt, @TypProduktUboczny) AND dt2.Technologia = dt.Technologia
+      --          AND dt2.ObjectID = dt.ObjectID AND dt2.PTC_Ojciec = dt.PTC_Ojciec
+     --   ) suma
+   -- WHERE sumaIlMat IS NOT NULL AND dt.PoziomDodawaniaSurowca = (SELECT TOP 1 MAX(PoziomDodawaniaSurowca) FROM #DaneTechnologiczne wewdt WHERE dt.Technologia = wewdt.Technologia GROUP BY wewdt.Technologia)
+
+    --DELETE dt FROM #DaneTechnologiczne dt
+   -- WHERE dt.Typ IN (@TypSurowiec, @TypPolProdukt, @TypProdukt, @TypProduktUboczny) 
+   --     AND (dt.PoziomDodawaniaSurowca &lt; (SELECT TOP 1 MAX(PoziomDodawaniaSurowca) FROM #DaneTechnologiczne wewdt 
+   --         WHERE dt.ObjectID = wewdt.ObjectID AND dt.Typ = wewdt.Typ AND dt.PTC_Ojciec = wewdt.PTC_Ojciec AND dt.Technologia = wewdt.Technologia GROUP BY wewdt.Technologia) 
+    --    OR dt.Ilosc = 0)
+
+	--Ustalanie kolejnosci
+    ;WITH CTE AS
+    (
+        SELECT NrKolejnyListy, Typ,
+        ROW_NUMBER() OVER (ORDER BY ProduktZTechnologiiDomyslnej DESC, Kolejnosc DESC, Technologia, tmpKolejnoscWTech, tmpPoziomDodawaniaOpe, tmpKolejnoscWOpe, PTC_Ojciec, Lp, Poziom) AS RN
+        FROM #DaneTechnologiczne
+    )
+    UPDATE CTE SET NrKolejnyListy = RN
+
+    --Aktualizacja czy surowiec ma BOM
+    IF @WczytajTechnologieSurowcow = 1
+    BEGIN
+		UPDATE dt
+        SET ProduktZTechnologiiDomyslnej = @ZrodloBOM,
+            PtzTechnologiaZasob = IdZasobu,
+			NalezyDoTechPolproduktu = 2
+        FROM #DaneTechnologiczne dt
+			JOIN #PowiazaniaDuplikatow ON dt.ObjectID = SurZBOM
+			JOIN CDN.ProdTechnologiaZasoby ptzPowDup ON IdZasobu = ptzPowDup.PTZ_Id
+			JOIN CDN.ProdTechnologiaZasoby ptzdt ON dt.ObjectID = ptzdt.PTZ_Id AND dt.Typ = @TypSurowiec
+        WHERE dt.PtzTechnologiaZasob = 0 AND dt.Typ = @TypSurowiec AND ptzPowDup.PTZ_TwrNumer = ptzdt.PTZ_TwrNumer AND ptzPowDup.PTZ_TwrTyp = ptzdt.PTZ_TwrTyp
+    END
+
+    -- Aktualizacja ilosci
+	UPDATE dt
+	SET Ilosc = CASE WHEN dt.ObjectID = prod.ObjectID AND dt.Typ = prod.Typ THEN @IloscProduktu ELSE dt.Ilosc * @IloscProduktu  / prod.Ilosc END,
+		--Ilosc = prod.IloscWgTech * @IloscProduktu / prod.Ilosc,
+		IloscPom = dt.Ilosc * @IloscProduktu * dt.IloscPom / prod.Ilosc
+	FROM #DaneTechnologiczne dt
+		JOIN #DaneTechnologiczne prod ON dt.Technologia = prod.Technologia AND prod.Typ = @TypProdukt AND prod.Bylo = 1
+	WHERE dt.Typ NOT IN (@TypFunkcja, @TypZasob) AND dt.Technologia = @PTEId 
+		AND ((dt.PTC_Ojciec = prod.PTC_Ojciec AND dt.Typ IN (@TypPolProdukt, @TypProdukt, @TypProduktUboczny, @TypSurowiec))
+			OR (dt.ObjectID = prod.PTC_Ojciec AND dt.Typ IN (@TypCzynnosc))
+			OR (dt.ObjectID = prod.Technologia AND dt.Typ = @TypTechnologia)
+		)
+	
+	SELECT PTE_IloscMin, dt.IloscWgTech, dt.Technologia
+	INTO #IlosciMinTech
+	FROM #DaneTechnologiczne dt 
+		JOIN CDN.ProdTechnologia ON dt.Typ = @TypTechnologia AND dt.ObjectID = PTE_Id
+	
+	UPDATE dt
+	SET Ilosc = CASE WHEN dt.Ilosc &lt; uc.PTE_IloscMin * dt.IloscWgTech / uc.IloscWgTech THEN uc.PTE_IloscMin * dt.IloscWgTech / uc.IloscWgTech ELSE dt.Ilosc END
+	FROM #DaneTechnologiczne dt
+		JOIN #IlosciMinTech uc ON dt.Technologia = uc.Technologia
+		JOIN #DaneTechnologiczne prod ON dt.Technologia = prod.Technologia AND prod.Typ = @TypProdukt AND prod.Bylo = 1
+	WHERE prod.Technologia = dt.Technologia
+
+	IF EXISTS(SELECT TOP 1 1 FROM #DaneTechnologiczne pt
+			JOIN (SELECT PtzTechnologiaZasob, Typ, SUM(Ilosc) Ilosc FROM #DaneTechnologiczne WHERE PtzTechnologiaZasob &lt;&gt; 0 GROUP BY PtzTechnologiaZasob, Typ) dt 
+					ON dt.PtzTechnologiaZasob = pt.ObjectID --AND dt.Technologia = pt.Technologia
+		WHERE pt.Typ = @TypProdukt AND dt.Typ IN (@TypPolProdukt, @TypSurowiec) AND dt.Ilosc &lt;&gt; pt.Ilosc) 
+		OR EXISTS(SELECT TOP 1 1
+        FROM #DaneTechnologiczne dt 
+            JOIN CDN.ProdTechnologia ON dt.Typ = @TypTechnologia AND dt.ObjectID = PTE_Id
+		WHERE PTE_IloscMin &lt;&gt; 0)
+	BEGIN
+
+		DECLARE @ProduktId INT
+		DECLARE @NrKolejny INT
+		DECLARE @LiczbaZaktualizownychRekordow INT
+
+		SELECT @ProduktId = pt.ObjectID, @NrKolejny = pt.NrKolejnyListy
+		FROM #DaneTechnologiczne pt 
+		WHERE NrKolejnyListy = (SELECT MAX(wewpt.NrKolejnyListy)
+			FROM #DaneTechnologiczne wewpt
+				JOIN (SELECT PtzTechnologiaZasob, Typ FROM #DaneTechnologiczne WHERE PtzTechnologiaZasob &lt;&gt; 0 GROUP BY PtzTechnologiaZasob, Typ) dt 
+					ON dt.PtzTechnologiaZasob = wewpt.ObjectID
+				JOIN #DaneTechnologiczne prod ON prod.Typ = @TypProdukt AND prod.Bylo = 1
+			WHERE wewpt.Typ = @TypProdukt AND dt.Typ IN (@TypPolProdukt, @TypSurowiec) AND pt.NrKolejnyListy &lt; prod.NrKolejnyListy
+		)
+
+		SET @Poziom = 0
+		SELECT @MaxPoziom = MAX(NrKolejnyListy) FROM #DaneTechnologiczne
+
+		WHILE @Poziom &lt;= @MaxPoziom
+		BEGIN
+
+			UPDATE pt
+			SET Ilosc = sumIl.Ilosc,
+				IloscPom = pt.IloscPom * sumIl.Ilosc / pt.Ilosc
+			FROM #DaneTechnologiczne pt
+				CROSS APPLY (SELECT SUM(dt.Ilosc) Ilosc, SUM(dt.IloscPom) IloscPom FROM #DaneTechnologiczne dt 
+					WHERE dt.PtzTechnologiaZasob = pt.ObjectID AND dt.Typ IN (@TypPolProdukt, @TypSurowiec)) sumIl
+				JOIN #DaneTechnologiczne prod ON prod.Typ = @TypProdukt AND prod.Bylo = 1
+			WHERE pt.ObjectID = @ProduktId AND pt.Typ = @TypProdukt
+
+			SET @LiczbaZaktualizownychRekordow = @@ROWCOUNT
+
+			IF EXISTS(SELECT TOP 1 1
+					FROM #DaneTechnologiczne dt 
+						JOIN CDN.ProdTechnologia ON dt.Typ = @TypTechnologia AND dt.ObjectID = PTE_Id
+						JOIN #DaneTechnologiczne prod ON prod.ObjectID = @ProduktId AND prod.Typ = @TypProdukt
+					WHERE PTE_IloscMin &lt;&gt; 0 AND prod.Technologia = dt.Technologia)
+			BEGIN
+				UPDATE dt
+				SET Ilosc = CASE WHEN dt.Ilosc &lt; uc.PTE_IloscMin * dt.IloscWgTech / uc.IloscWgTech THEN uc.PTE_IloscMin * dt.IloscWgTech / uc.IloscWgTech ELSE dt.Ilosc END
+				FROM #DaneTechnologiczne dt
+					JOIN #IlosciMinTech uc ON dt.Technologia = uc.Technologia
+				WHERE dt.Technologia &lt;&gt; @PTEId
+			END
+
+			IF @@ROWCOUNT &lt;&gt; 0 OR @LiczbaZaktualizownychRekordow &lt;&gt; 0
+			BEGIN
+				UPDATE dt
+				SET Ilosc = dt.Ilosc * (pt.Ilosc / pt.IloscWgTech) / CASE WHEN uc.PTE_IloscMin = 0 THEN 1 ELSE uc.PTE_IloscMin END,
+					IloscPom = dt.IloscPom * (pt.Ilosc / pt.IloscWgTech) / CASE WHEN uc.PTE_IloscMin = 0 THEN 1 ELSE uc.PTE_IloscMin END
+				FROM #DaneTechnologiczne dt
+					JOIN #DaneTechnologiczne pt ON pt.ObjectID = @ProduktId AND pt.Typ = @TypProdukt AND pt.PTC_Ojciec = dt.PTC_Ojciec
+					JOIN #IlosciMinTech uc ON uc.Technologia = dt.Technologia
+				WHERE dt.Typ NOT IN (@TypZasob, @TypFunkcja, @TypCzynnosc, @TypTechnologia) AND dt.ObjectID &lt;&gt; pt.ObjectID 
+
+				UPDATE dt
+				SET Ilosc = dt.Ilosc * (pt.Ilosc / pt.IloscWgTech) / CASE WHEN uc.PTE_IloscMin = 0 THEN 1 ELSE uc.PTE_IloscMin END
+				FROM #DaneTechnologiczne dt
+					JOIN #DaneTechnologiczne pt ON pt.ObjectID = @ProduktId AND pt.Typ = @TypProdukt AND pt.PTC_Ojciec = dt.ObjectID AND dt.Typ = @TypCzynnosc
+					JOIN #IlosciMinTech uc ON uc.Technologia = dt.Technologia
+
+				UPDATE dt
+				SET Ilosc = dt.Ilosc * (pt.Ilosc / pt.IloscWgTech) / CASE WHEN uc.PTE_IloscMin = 0 THEN 1 ELSE uc.PTE_IloscMin END
+				FROM #DaneTechnologiczne dt
+					JOIN #DaneTechnologiczne pt ON pt.ObjectID = @ProduktId AND pt.Typ = @TypProdukt AND dt.Typ = @TypTechnologia
+					JOIN #IlosciMinTech uc ON uc.Technologia = dt.Technologia
+				WHERE dt.Technologia &lt;&gt; @PTEId AND dt.Technologia = pt.Technologia AND NOT EXISTS
+					(SELECT TOP 1 wewpt.PtzTechnologiaZasob FROM #DaneTechnologiczne wewpt 
+						WHERE wewpt.PtzTechnologiaZasob = pt.ObjectID AND wewpt.Typ IN (@TypPolProdukt, @TypSurowiec) AND wewpt.Technologia = pt.Technologia)
+			END
+			SET @Poziom += 1
+
+			SELECT @NrKolejny = COALESCE(MAX(wewpt.NrKolejnyListy), 0) 
+			FROM #DaneTechnologiczne wewpt
+				JOIN #DaneTechnologiczne dt ON dt.PtzTechnologiaZasob = wewpt.ObjectID
+			WHERE wewpt.Typ = @TypProdukt AND dt.Typ IN (@TypPolProdukt, @TypSurowiec) AND wewpt.NrKolejnyListy &lt; @NrKolejny
+
+			SELECT @ProduktId = COALESCE(pt.ObjectID, 0)
+			FROM #DaneTechnologiczne pt 
+			WHERE pt.NrKolejnyListy = @NrKolejny
+
+			IF @ProduktId = 0 OR @NrKolejny = 0
+				BREAK
+		END
+	END
+
+    --Ustalanie terminu
+    --Czas trwania czynnosci
+    SELECT dt.PTC_Ojciec PTCId, POF_Obiekt, SUM(POF_Czas + CASE WHEN POF_WydajnoscIlosc = 0 THEN 0 ELSE (POF_WydajnoscCzas / POF_WydajnoscIlosc) * dtOpe.Ilosc END) CzasZFunkcjiObiektow
+    INTO #CzasyOpeZObiektowFunkcji
+    FROM #DaneTechnologiczne dt
+        JOIN CDN.ProdObiektyFunkcje pof ON POF_ObiTyp = @TypPOB AND POF_Funkcja = dt.ObjectID AND dt.Typ = @TypFunkcja
+        JOIN #DaneTechnologiczne dtOpe ON dtOpe.ObjectID = dt.PTC_Ojciec AND dtOpe.Typ = @TypCzynnosc
+    GROUP BY dt.PTC_Ojciec, POF_Obiekt
+
+    UPDATE dt
+    SET CzasTrwaniaLong = CASE 
+            WHEN dt.Ilosc / CASE WHEN CDN.Prod_WartoscAtr(ptc.PTC_Ilosc, ptc.PTC_IloscAtr, @TypPTE, ptc.PTC_Technologia, 0 ,0) = 0 THEN 1 ELSE 
+				CDN.Prod_WartoscAtr(ptc.PTC_Ilosc, ptc.PTC_IloscAtr, @TypPTE, ptc.PTC_Technologia, 0 ,0) END * MaxCzas &gt; 
+				ptc.PTC_CzasPrzygotowawczy + dt.Ilosc / CASE WHEN CDN.Prod_WartoscAtr(ptc.PTC_Ilosc, ptc.PTC_IloscAtr, @TypPTE, ptc.PTC_Technologia, 0 ,0) = 0 THEN 1 ELSE 
+					CDN.Prod_WartoscAtr(ptc.PTC_Ilosc, ptc.PTC_IloscAtr, @TypPTE, ptc.PTC_Technologia, 0 ,0) END * 
+					(CDN.Prod_WartoscAtr(ptc.PTC_CzasPlanowany, ptc.PTC_CzasPlanowanyAtr, @TypPTE, ptc.PTC_Technologia, 0, 0)) 
+				THEN dt.Ilosc / CASE WHEN CDN.Prod_WartoscAtr(ptc.PTC_Ilosc, ptc.PTC_IloscAtr, @TypPTE, ptc.PTC_Technologia, 0 ,0) = 0 THEN 1 ELSE 
+					CDN.Prod_WartoscAtr(ptc.PTC_Ilosc, ptc.PTC_IloscAtr, @TypPTE, ptc.PTC_Technologia, 0 ,0) END * MaxCzas
+            ELSE ptc.PTC_CzasPrzygotowawczy + dt.Ilosc / CASE WHEN CDN.Prod_WartoscAtr(ptc.PTC_Ilosc, ptc.PTC_IloscAtr, @TypPTE, ptc.PTC_Technologia, 0 ,0) = 0 THEN 1 ELSE 
+					CDN.Prod_WartoscAtr(ptc.PTC_Ilosc, ptc.PTC_IloscAtr, @TypPTE, ptc.PTC_Technologia, 0 ,0) END * (CDN.Prod_WartoscAtr(ptc.PTC_CzasPlanowany, ptc.PTC_CzasPlanowanyAtr, @TypPTE, ptc.PTC_Technologia, 0, 0)) 
+        END
+    FROM #DaneTechnologiczne dt
+        LEFT JOIN (SELECT PTCId, MAX(CzasZFunkcjiObiektow) MaxCzas FROM #CzasyOpeZObiektowFunkcji GROUP BY PTCId) cozof ON dt.ObjectID = cozof.PTCId AND dt.Typ = @TypCzynnosc
+        JOIN CDN.ProdTechnologiaCzynnosci ptc ON ptc.PTC_Id = dt.ObjectID AND dt.Typ = @TypCzynnosc
+    WHERE dt.Typ = @TypCzynnosc
+    --Czas trwania technologii
+	;WITH CTE AS
+	(
+		SELECT czynProd.Technologia, prod.ObjectID IdProd, 0 IdProdOjciec, czynProd.ObjectID IdCzyn, 0 IdCzynOjciec ,czynProd.CzasTrwaniaLong, 1 Poziom
+		FROM #DaneTechnologiczne prod
+			RIGHT JOIN #DaneTechnologiczne czynProd ON prod.PTC_Ojciec = czynProd.ObjectID AND czynProd.Typ = @TypCzynnosc AND prod.Typ = @TypProdukt
+		WHERE ((prod.Bylo = 1 AND prod.Technologia = @PTEId) OR (prod.Technologia &lt;&gt; @PTEId AND 
+			NOT EXISTS(SELECT TOP 1 wewpt.PtzTechnologiaZasob FROM #DaneTechnologiczne wewpt 
+				WHERE wewpt.PtzTechnologiaZasob = prod.ObjectID AND wewpt.Typ IN (@TypPolProdukt, @TypSurowiec) AND wewpt.Technologia = prod.Technologia))) 
+					OR (prod.Typ IS NULL AND czynProd.Typ = @TypCzynnosc)
+		UNION ALL
+		SELECT polprod.Technologia, polprod.ObjectID IdProd, prod.IdProd IdProdOjciec, czynProd.ObjectID, prod.IdCzyn, czynProd.CzasTrwaniaLong, prod.Poziom + 1
+		FROM CTE prod
+			JOIN #DaneTechnologiczne surCzyn ON surCzyn.PTC_Ojciec = prod.IdCzyn AND surCzyn.Typ = @TypPolProdukt
+			JOIN #DaneTechnologiczne polprod ON polprod.ObjectID = surCzyn.PtzTechnologiaZasob AND polprod.Typ = @TypProdukt --AND polprod.Technologia = surCzyn.Technologia
+			JOIN #DaneTechnologiczne czynProd ON polprod.PTC_Ojciec = czynProd.ObjectID AND czynProd.Typ = @TypCzynnosc
+		WHERE polprod.Technologia = prod.Technologia
+	)
+	SELECT * INTO #CzasyNiezaleznychProduktow FROM CTE
+
+	SELECT @Poziom = MAX(Poziom) FROM #CzasyNiezaleznychProduktow
+	
+	WHILE @Poziom &gt; 1
+	BEGIN
+		UPDATE ojciec
+		SET CzasTrwaniaLong = ojciec.CzasTrwaniaLong + czas.CzasTrwaniaLong
+		FROM #CzasyNiezaleznychProduktow ojciec
+			JOIN #CzasyNiezaleznychProduktow czas ON ojciec.IdProd = czas.IdProdOjciec
+		WHERE czas.Poziom = @Poziom AND czas.CzasTrwaniaLong = (SELECT MAX(CzasTrwaniaLong) FROM #CzasyNiezaleznychProduktow wewczas WHERE czas.IdProdOjciec = wewczas.IdProdOjciec GROUP BY wewczas.Technologia)
+
+		SET @Poziom -= 1
+	END
+
+	--Czas trwania technologii
+	UPDATE dt
+	SET CzasTrwaniaLong = su.CzasTrwaniaLong
+	FROM #DaneTechnologiczne dt
+		CROSS APPLY (SELECT MAX(CzasTrwaniaLong) CzasTrwaniaLong FROM #CzasyNiezaleznychProduktow su WHERE dt.ObjectID = su.Technologia GROUP BY su.Technologia) su
+	WHERE dt.Typ = @TypTechnologia
+
+    --Termin technologii
+    SELECT TOP 1 @MaxPoziom = MAX(Kolejnosc) FROM #DaneTechnologiczne
+    SET @Poziom = 1
+    
+    WHILE @Poziom &lt;= @MaxPoziom
+    BEGIN
+        UPDATE dt
+        SET TerminLong = techprod.TerminLong - dt.CzasTrwaniaLong
+        FROM #DaneTechnologiczne dt
+            JOIN #DaneTechnologiczne elemtech ON elemtech.Technologia = dt.Technologia AND elemtech.Typ = @TypProdukt
+            JOIN #DaneTechnologiczne prod ON elemtech.ObjectID = prod.PtzTechnologiaZasob AND prod.Typ = @TypPolProdukt
+            JOIN #DaneTechnologiczne techprod ON techprod.Technologia = prod.Technologia AND techprod.Typ = @TypTechnologia
+        WHERE dt.Typ = @TypTechnologia AND dt.Kolejnosc = @Poziom AND techprod.Technologia &lt;&gt; dt.Technologia
+
+        SET @Poziom = @Poziom + 1
+    END
+	
+    --Termin operacji
+    UPDATE dt
+    SET TerminLong = techdt.TerminLong + sumaCzasuTrwaniaPopOpe
+    FROM #DaneTechnologiczne dt
+        JOIN #DaneTechnologiczne techdt ON dt.Technologia = techdt.Technologia AND techdt.Typ = @TypTechnologia
+		CROSS APPLY (SELECT COALESCE(MAX(czas.CzasTrwaniaLong), 0) sumaCzasuTrwaniaPopOpe FROM #CzasyNiezaleznychProduktow czas WHERE dt.ObjectID = czas.IdCzynOjciec) suma
+    WHERE dt.Typ = @TypCzynnosc
+
+    --Aktualizuj kolejnosc kosztow dodatkowych
+    IF EXISTS(SELECT TOP 1 1 FROM CDN.ProdKalkulacjaKosztuElem WHERE PKS_PKK = @PKKId AND PKS_Typ =@TypKosztDodatkowy)
+    BEGIN
+        DECLARE @Max INT
+        SELECT @Max = MAX(NrKolejnyListy) FROM #DaneTechnologiczne
+
+        ;WITH CTE AS
+        (
+            SELECT PKS_NrKolejnyListy,
+            ROW_NUMBER() OVER (ORDER BY PKS_NrKolejnyListy, PKS_Poziom) AS RN
+            FROM CDN.ProdKalkulacjaKosztuElem
+            WHERE PKS_Typ = @TypKosztDodatkowy AND PKS_PKK = @PKKId
+        )
+        UPDATE cte SET PKS_NrKolejnyListy = @Max + RN
+        FROM CTE cte
+    END
+
+    INSERT INTO CDN.ProdKalkulacjaKosztuElem
+    SELECT @PKKId, Kod, Nazwa, Ilosc, Koszt1, Cena1, Koszt2, Cena2, Kosztorys, 0, 0, Kolejnosc, 0, ObjectID, PTC_Ojciec, Poziom, Lp, Typ, Zmieniono, KosztPoliczony, Ewidencyjny, IloscWgTech, 
+        PtzTechnologiaZasob, TerminLong, CzasTrwaniaLong, IdCzynKolejnosciMin, 0, 0, Bylo, Polprodukt, KosztDodatkowyRodzaj, KosztDodatkowyWartoscOrg, ZaznaczonyPoprzedniStan, TwrNumer, 0, 0, 
+        NrKolejnyListy, PTZKoszt, 0, ProduktZTechnologiiDomyslnej, 0, 0, NalezyDoTechPolproduktu, Technologia, 0, Jm, IloscPom, JmPom
+    FROM #DaneTechnologiczne
+    
+    IF @@ROWCOUNT &lt;&gt; 0
+        EXEC CDN.KalkulacjaKosztowPrzeliczWszystkieKoszty @PKKId, @SposobSymulacjiKosztuSurowca, @SposobSymulacjiKosztuFunkcji, @SposobSymulacjiKosztuZasobu, 0, @NrKursu, @KursLicznik, @KursMianownik
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,139 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[CzyNaliczycRabatyBudzetowe]"></A><PRE>
+          <FONT SIZE="2"><I>/* [CzyNaliczycRabatyBudzetowe] */</I><BR>
+CREATE FUNCTION [CDN].[CzyNaliczycRabatyBudzetowe](	
+	@p_DokTyp			SMALLINT,		-- gidTyp dokumentu
+	@p_DokNumer			INTEGER,		-- gidNumer dokumentu
+	@p_OpeNumer			INTEGER,		-- identyfiaktor zalogowanego operatora
+	@p_KntTyp			SMALLINT,		-- gidTyp kontrahenta dla którego sprawdzać budżety rabatowe
+	@p_KntNumer			INTEGER,		-- gidNumer kontrahenta dla którego sprawdzać budżety rabatowe
+	@p_Data				INTEGER,		-- data na dzień, który sprawdzamy budżety (najczęściej data wystawienia dokumentu
+	@p_FormaNr 			INTEGER,		-- numer formy płatności
+	@p_FormaTermin 		INTEGER,		-- termin formy płatności
+	@p_SposobDostawy	INTEGER,		-- sposób dostawy
+    @p_Magazyn			INTEGER,		-- numer magazynu
+	@p_FrsId			VARCHAR(max)	-- oddzielone przecinkami miejsca w strukturze firmy)
+	)
+RETURNS int
+AS
+BEGIN
+
+	IF @p_DokTyp = 960 BEGIN
+
+		IF EXISTS(SELECT * FROM CDN.ZamElem 
+			inner join CDN.PrmHistoria on ZaE_GIDTyp=PrH_GIDTyp AND ZaE_GIDNumer=PrH_GIDNumer AND ZaE_GIDLp=PrH_GIDLp
+			where ZAE_GIDNumer = @p_DokNumer AND PrH_BudzetId &gt; 0)
+			RETURN 0
+
+		IF EXISTS(SELECT *
+		FROM CDN.PrmKarty
+		JOIN CDN.PltPromocje ON PPr_PrmID=Prm_ID
+		JOIN CDN.SpDPromocje ON SpD_PrmID=Prm_ID
+		JOIN CDN.MagPromocje ON MPR_PrmID=Prm_ID
+		LEFT JOIN CDN.OpePromocje ON OPm_PrmId=Prm_Id and OPm_OpeNumer=@p_OpeNumer
+		LEFT JOIN CDN.OpeKarty ON Ope_GidNumer=OPm_OpeNumer	
+		join (
+			select KPr_PrmId,Kpr_ID
+			from (
+				select KnL_GROTyp KntTyp, KnL_GRONumer KntNumer
+				from CDN.KntLinki 
+				where KnL_GIDTyp=@p_KntTyp and KnL_GIDNumer=@p_KntNumer
+				union all
+				select @p_KntTyp, @p_KntNumer
+			) Knt
+			inner join CDN.KntPromocje  on KPr_KntTyp=KntTyp and KPr_KntNumer=KntNumer
+		) KPr on KPr_PrmId=Prm_Id 
+		join (
+			select FPr_PrmId
+			from CDN.Str2List(@p_FrsId)
+			inner join CDN.FrsPromocje  on FPr_FrsId=Num
+		) FPr on FPr_PrmId=Prm_Id
+		join (
+			select TPr_PrmId, TPr_TwGNumer, TPr_TwrTyp, TPr_TwrNumer, TPr_Typ, TPr_Wartosc, TPr_Waluta, TPr_FlagaNB, TPr_Prog, TPr_Lp, TPr_ZstId
+			from (
+				select TwL_GROTyp TwrTyp, TwL_GRONumer TwrNumer
+				from CDN.TwrLinki 
+				JOIN CDN.ZamElem ON TwL_GIDTyp=ZaE_TwrTyp and TwL_GIDNumer=ZaE_TwrNumer
+				where ZaE_GIDNumer = @p_DokNumer
+				union all
+				SELECT ZaE_TwrTyp, ZaE_TwrNumer FROM CDN.ZamElem WHERE ZaE_GIDNumer = @p_DokNumer
+			) Twr
+			inner join CDN.TwrPromocje on TPr_TwrTyp=TwrTyp and TPr_TwrNumer=TwrNumer
+		) TPr on TPr_PrmId=Prm_Id
+		WHERE PRM_Stan=1
+			AND CDN.CzyPromocjaObowiazuje(PRM_DataOd,PRM_DataDo,PRM_Cykliczna,@p_Data,PRM_CyklRodzaj,PRM_CyklCzestotliwosc,PRM_CyklWystepowanie,PRM_CyklDniOd,PRM_CyklDniDo)=1
+			AND PPr_PltID in (@p_FormaNr,-1) and (PPr_TerminMaks&gt;@p_FormaTermin or PPr_TerminMaks in (@p_FormaTermin,-1))
+			AND SpD_SpDLp in (@p_SposobDostawy,-1)
+			AND MPR_MagNumer in (@p_Magazyn,-1)
+			AND ((OPm_PrmId IS NOT NULL AND PRM_Typ = 9) OR (PRM_Typ=10))
+			) 
+			RETURN 1
+		END
+	ELSE BEGIN
+		IF EXISTS(SELECT * FROM CDN.TraElem 
+			inner join CDN.PrmHistoria on TrE_GIDTyp=PrH_GIDTyp AND TrE_GIDNumer=PrH_GIDNumer AND TrE_GIDLp=PrH_GIDLp
+			where TrE_GIDNumer = @p_DokNumer AND PrH_BudzetId &gt; 0)
+			RETURN 0
+
+		IF EXISTS(SELECT *
+		FROM CDN.PrmKarty
+		JOIN CDN.PltPromocje ON PPr_PrmID=Prm_ID
+		JOIN CDN.SpDPromocje ON SpD_PrmID=Prm_ID
+		JOIN CDN.MagPromocje ON MPR_PrmID=Prm_ID
+		LEFT JOIN CDN.OpePromocje ON OPm_PrmId=Prm_Id and OPm_OpeNumer=@p_OpeNumer
+		LEFT JOIN CDN.OpeKarty ON Ope_GidNumer=OPm_OpeNumer	
+		join (
+			select KPr_PrmId,Kpr_ID
+			from (
+				select KnL_GROTyp KntTyp, KnL_GRONumer KntNumer
+				from CDN.KntLinki 
+				where KnL_GIDTyp=@p_KntTyp and KnL_GIDNumer=@p_KntNumer
+				union all
+				select @p_KntTyp, @p_KntNumer
+			) Knt
+			inner join CDN.KntPromocje  on KPr_KntTyp=KntTyp and KPr_KntNumer=KntNumer
+		) KPr on KPr_PrmId=Prm_Id 
+		join (
+			select FPr_PrmId
+			from CDN.Str2List(@p_FrsId)
+			inner join CDN.FrsPromocje  on FPr_FrsId=Num
+		) FPr on FPr_PrmId=Prm_Id
+		join (
+			select TPr_PrmId, TPr_TwGNumer, TPr_TwrTyp, TPr_TwrNumer, TPr_Typ, TPr_Wartosc, TPr_Waluta, TPr_FlagaNB, TPr_Prog, TPr_Lp, TPr_ZstId
+			from (
+				select TwL_GROTyp TwrTyp, TwL_GRONumer TwrNumer
+				from CDN.TwrLinki 
+				JOIN CDN.TraElem ON TwL_GIDTyp=TrE_TwrTyp and TwL_GIDNumer=TrE_TwrNumer
+				where TrE_GIDNumer = @p_DokNumer
+				union all
+				SELECT TrE_TwrTyp, TrE_TwrNumer FROM CDN.TraElem WHERE TrE_GIDNumer = @p_DokNumer
+			) Twr
+			inner join CDN.TwrPromocje on TPr_TwrTyp=TwrTyp and TPr_TwrNumer=TwrNumer
+		) TPr on TPr_PrmId=Prm_Id
+		WHERE PRM_Stan=1
+			AND CDN.CzyPromocjaObowiazuje(PRM_DataOd,PRM_DataDo,PRM_Cykliczna,@p_Data,PRM_CyklRodzaj,PRM_CyklCzestotliwosc,PRM_CyklWystepowanie,PRM_CyklDniOd,PRM_CyklDniDo)=1
+			AND PPr_PltID in (@p_FormaNr,-1) and (PPr_TerminMaks&gt;@p_FormaTermin or PPr_TerminMaks in (@p_FormaTermin,-1))
+			AND SpD_SpDLp in (@p_SposobDostawy,-1)
+			AND MPR_MagNumer in (@p_Magazyn,-1)
+			AND ((OPm_PrmId IS NOT NULL AND PRM_Typ = 9) OR (PRM_Typ=10))
+			) 
+			RETURN 1
+		END		 	
+	RETURN 0
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

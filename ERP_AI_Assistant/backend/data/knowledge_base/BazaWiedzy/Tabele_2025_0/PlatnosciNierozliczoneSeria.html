@@ -1,0 +1,161 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="PlatnosciNierozliczoneSeria"></A><PRE>
+          <FONT SIZE="2"><I>/* PlatnosciNierozliczoneSeria */</I><BR>
+CREATE procedure cdn.PlatnosciNierozliczoneSeria( @Data_ int, @Typ_ int, @TypDaty_ int, @Waluta_ varchar(5), @KursDok smallint, @Seria_ varchar(15), @FormaPl smallint, @PRL_ smallint, @p1_ int, @p2_ int, @p3_ int, @p4_ int, @p5_ int, @p6_ int, @CDN_Filtr varchar(2048)) 
+as 
+declare @Data varchar(10); 
+declare @Typ  varchar(5);
+declare @TypPrzec varchar(5)
+declare @TypPrzec_ smallint 
+declare @TypDaty varchar(30); 
+
+declare @Korekty smallint; 
+declare @sql1 varchar(8000); 
+declare @sql2 varchar(8000); 
+declare @sql3 varchar(8000)
+
+declare @TypKAZ varchar(3)
+
+set @TypKAZ = '784'
+set @TypPrzec_ = 3-@Typ_
+set @TypPrzec = cast(@TypPrzec_ as varchar)
+ 
+set @Data = cast( @Data_ as varchar ); 
+Set @Typ  = cast( @Typ_ as varchar ); 
+ 
+If @TypDaty_ = 1  SET @TypDaty = 'TTV_Data' 
+Else              SET @TypDaty = 'TTV_Termin' 
+ 
+if IsNull(@Seria_,'') = '' or IsNull(@Seria_,'') = 'Wszystkie' 
+  SET @Seria_ = '' 
+else 
+  SET @Seria_ = Rtrim(@Seria_) 
+
+IF ISNULL(@Waluta_,'')='' SET @Waluta_='%' ;
+IF @Waluta_='' SET @Waluta_='%' ;
+ 
+SELECT @Korekty=ISNULL(Kon_Wartosc,'0') FROM CDN.Konfig WHERE Kon_Numer=2085
+ 
+set @sql1 = 'select sumy.TTV_Seria Seria, sum(sumy.razem) Razem, sum(sumy.nieprzet) nieprzeterminowane, sum(sumy.p1) p1, sum(sumy.p2) p2, sum(sumy.p3) p3, sum(sumy.p4) p4, sum(sumy.p5) p5, sum(sumy.p6) p6, sum(sumy.p7) p7, ' +
+  'sum(sumy.razemPrzecWal) ''RazemPrzecWal'', ' +
+  'sum(sumy.Wplaty) ''Wplaty'', sum(sumy.Wyplaty) ''Wyplaty'', ' +
+  CASE WHEN @Typ_ = 2 THEN 'sum(sumy.razemwal) - sum(sumy.Wplaty) + sum(sumy.Wyplaty) - sum(sumy.razemPrzecWal) '
+  WHEN @Typ_ = 1 THEN 'sum(sumy.razemwal) + sum(sumy.Wplaty) - sum(sumy.Wyplaty) - sum(sumy.razemPrzecWal) ' 
+  ELSE '0.0' END + '''Saldo''' +
+  'from( select TTV_Seria, ' +
+CASE WHEN @Korekty &lt;&gt; 0 THEN
+	  'CASE WHEN TTV_GIDTyp='+@TypKAZ+' THEN 0 ELSE CASE WHEN ' +
+		CASE WHEN @Typ_ = 1 THEN '(max(TTV_Typ)=1 AND TTV_GIDTyp NOT IN(2009,2008,2013,2041,2045,2044,2042,2043,2047,1625,1832,7680,7681) OR max(TTV_Typ)=2 AND TTV_GIDTyp IN(1497,2010,1528,1529,1320,1498) OR max(TTV_BOS_DC)=2 AND TTV_GIDTyp IN(7680, 7681)) '
+	             WHEN @Typ_ = 2 THEN '(max(TTV_Typ)=2 AND TTV_GIDTyp NOT IN(1497,2010,1528,1529,1320,1498,7680,7681) OR max(TTV_Typ)=1 AND TTV_GIDTyp IN(2009,2008,2013,2041,2045,2044,2042,2043,2047,1625,1832) OR max(TTV_BOS_DC)=1 AND TTV_GIDTyp IN(7680, 7681)) '
+	    	END + ' THEN CASE WHEN ' +
+		' max(TTV_Typ)='+@Typ+' THEN 1 ELSE -1 END * ( max(TTV_Kwota)-SUM(case WHEN ISNULL(R2_DataRozliczenia,0)=0 THEN 0 WHEN R2_DataRozliczenia &lt;='+@Data+' THEN R2_KwotaWal1 ELSE 0 END) ) ' + CASE WHEN @Waluta_='%' THEN ' * ' + CASE WHEN @KursDok&lt;&gt;0 THEN ' TTV_KursL/case when isnull(TTV_KursM,0)=0 then 1 else TTV_KursM end ' ELSE ' ISNULL((SELECT TOP 1 CASE WHEN ISNULL(WaE_KursM,0)&lt;&gt;0 THEN (WaE_KursL/WaE_KursM) ELSE 1 END FROM CDN.WalElem WHERE WaE_Symbol=TTV_Waluta AND WaE_Lp=TTV_NrKursu AND WaE_KursTS &lt;= datediff(second,convert(datetime,''1990-1-1'',120),dateadd(day,'+@Data+'+1,convert(datetime,''1800-12-28'',120)))-1 ORDER BY WAE_KursTS DESC),1)' END ELSE '' END + ' ELSE 0 END END razem, ' +
+	  'CASE WHEN TTV_GIDTyp='+@TypKAZ+' THEN 0 ELSE CASE WHEN ' +
+		CASE WHEN @Typ_ = 1 THEN '(max(TTV_Typ)=1 AND TTV_GIDTyp NOT IN(2009,2008,2013,2041,2045,2044,2042,2043,2047,1625,1832,7680,7681) OR max(TTV_Typ)=2 AND TTV_GIDTyp IN(1497,2010,1528,1529,1320,1498) OR max(TTV_BOS_DC)=2 AND TTV_GIDTyp IN(7680, 7681)) '
+	             WHEN @Typ_ = 2 THEN '(max(TTV_Typ)=2 AND TTV_GIDTyp NOT IN(1497,2010,1528,1529,1320,1498,7680,7681) OR max(TTV_Typ)=1 AND TTV_GIDTyp IN(2009,2008,2013,2041,2045,2044,2042,2043,2047,1625,1832) OR max(TTV_BOS_DC)=1 AND TTV_GIDTyp IN(7680, 7681)) '
+	    	END + ' THEN CASE WHEN ' +
+	  	' max(TTV_Typ)='+@Typ+' THEN 1 ELSE -1 END * ( max(TTV_Kwota)-SUM(case WHEN ISNULL(R2_DataRozliczenia,0)=0 THEN 0 WHEN R2_DataRozliczenia &lt;='+@Data+' THEN R2_KwotaWal1 ELSE 0 END) ) ELSE 0 END END razemWal, ' +
+	  'CASE WHEN TTV_GIDTyp='+@TypKAZ+' THEN 0 ELSE CASE WHEN ' +
+		CASE WHEN @TypPrzec_ = 1 THEN '(max(TTV_Typ)=1 AND TTV_GIDTyp NOT IN(2009,2008,2013,2041,2045,2044,2042,2043,2047,1625,1832,7680,7681) OR max(TTV_Typ)=2 AND TTV_GIDTyp IN(1497,2010,1528,1529,1320,1498) OR max(TTV_BOS_DC)=2 AND TTV_GIDTyp IN(7680, 7681)) '
+	             WHEN @TypPrzec_ = 2 THEN '(max(TTV_Typ)=2 AND TTV_GIDTyp NOT IN(1497,2010,1528,1529,1320,1498,7680,7681) OR max(TTV_Typ)=1 AND TTV_GIDTyp IN(2009,2008,2013,2041,2045,2044,2042,2043,2047,1625,1832) OR max(TTV_BOS_DC)=1 AND TTV_GIDTyp IN(7680, 7681)) '
+	    	END + ' THEN CASE WHEN ' +
+		' max(TTV_Typ)='+@TypPrzec+' THEN 1 ELSE -1 END * ( max(TTV_Kwota)-SUM(case WHEN ISNULL(R2_DataRozliczenia,0)=0 THEN 0 WHEN R2_DataRozliczenia &lt;='+@Data+' THEN R2_KwotaWal1 ELSE 0 END) ) ELSE 0 END END razemPrzecWal, ' +
+	  'CASE WHEN TTV_GIDTyp='+@TypKAZ+' THEN 0 ELSE CASE WHEN '+@Data+'-max('+@TypDaty+') &lt;= 0 then CASE WHEN ' +
+		CASE WHEN @Typ_ = 1 THEN '(max(TTV_Typ)=1 AND TTV_GIDTyp NOT IN(2009,2008,2013,2041,2045,2044,2042,2043,2047,1625,1832,7680,7681) OR max(TTV_Typ)=2 AND TTV_GIDTyp IN(1497,2010,1528,1529,1320,1498) OR max(TTV_BOS_DC)=2 AND TTV_GIDTyp IN(7680, 7681)) '
+	             WHEN @Typ_ = 2 THEN '(max(TTV_Typ)=2 AND TTV_GIDTyp NOT IN(1497,2010,1528,1529,1320,1498,7680,7681) OR max(TTV_Typ)=1 AND TTV_GIDTyp IN(2009,2008,2013,2041,2045,2044,2042,2043,2047,1625,1832) OR max(TTV_BOS_DC)=1 AND TTV_GIDTyp IN(7680, 7681)) '
+	    	END + ' THEN CASE WHEN ' +
+		' max(TTV_Typ)='+@Typ+' THEN 1 ELSE -1 END * ( max(TTV_Kwota)-SUM(case WHEN ISNULL(R2_DataRozliczenia,0)=0 THEN 0 WHEN R2_DataRozliczenia &lt;='+@Data+' THEN R2_KwotaWal1 ELSE 0 END) ) ' + CASE WHEN @Waluta_='%' THEN ' * ' + CASE WHEN @KursDok&lt;&gt;0 THEN ' TTV_KursL/case when isnull(TTV_KursM,0)=0 then 1 else TTV_KursM end ' ELSE ' ISNULL((SELECT TOP 1 CASE WHEN ISNULL(WaE_KursM,0)&lt;&gt;0 THEN (WaE_KursL/WaE_KursM) ELSE 1 END FROM CDN.WalElem WHERE WaE_Symbol=TTV_Waluta AND WaE_Lp=TTV_NrKursu AND WaE_KursTS &lt;= datediff(second,convert(datetime,''1990-1-1'',120),dateadd(day,'+@Data+'+1,convert(datetime,''1800-12-28'',120)))-1 ORDER BY WAE_KursTS DESC),1)' END ELSE '' END + ' ELSE 0 END ELSE 0 END END nieprzet, ' +
+	  'CASE WHEN TTV_GIDTyp='+@TypKAZ+' THEN 0 ELSE CASE WHEN '+@Data+'-max('+@TypDaty+') between 1 and '                          +cast(@p1_ as varchar)+' then CASE WHEN ' +
+		CASE WHEN @Typ_ = 1 THEN '(max(TTV_Typ)=1 AND TTV_GIDTyp NOT IN(2009,2008,2013,2041,2045,2044,2042,2043,2047,1625,1832,7680,7681) OR max(TTV_Typ)=2 AND TTV_GIDTyp IN(1497,2010,1528,1529,1320,1498) OR max(TTV_BOS_DC)=2 AND TTV_GIDTyp IN(7680, 7681)) '
+	             WHEN @Typ_ = 2 THEN '(max(TTV_Typ)=2 AND TTV_GIDTyp NOT IN(1497,2010,1528,1529,1320,1498,7680,7681) OR max(TTV_Typ)=1 AND TTV_GIDTyp IN(2009,2008,2013,2041,2045,2044,2042,2043,2047,1625,1832) OR max(TTV_BOS_DC)=1 AND TTV_GIDTyp IN(7680, 7681)) '
+	    	END + ' THEN CASE WHEN ' +
+		' max(TTV_Typ)='+@Typ+' THEN 1 ELSE -1 END * ( max(TTV_Kwota)-SUM(case WHEN ISNULL(R2_DataRozliczenia,0)=0 THEN 0 WHEN R2_DataRozliczenia &lt;='+@Data+' THEN R2_KwotaWal1 ELSE 0 END) ) ' + CASE WHEN @Waluta_='%' THEN ' * ' + CASE WHEN @KursDok&lt;&gt;0 THEN ' TTV_KursL/case when isnull(TTV_KursM,0)=0 then 1 else TTV_KursM end ' ELSE ' ISNULL((SELECT TOP 1 CASE WHEN ISNULL(WaE_KursM,0)&lt;&gt;0 THEN (WaE_KursL/WaE_KursM) ELSE 1 END FROM CDN.WalElem WHERE WaE_Symbol=TTV_Waluta AND WaE_Lp=TTV_NrKursu AND WaE_KursTS &lt;= datediff(second,convert(datetime,''1990-1-1'',120),dateadd(day,'+@Data+'+1,convert(datetime,''1800-12-28'',120)))-1 ORDER BY WAE_KursTS DESC),1)' END ELSE '' END + ' ELSE 0 END ELSE 0 END END p1, '
+  ELSE
+	  'CASE WHEN TTV_GIDTyp='+@TypKAZ+' THEN 0 ELSE CASE WHEN max(TTV_Typ)='+@Typ+' THEN ( max(TTV_Kwota)-SUM(case WHEN ISNULL(R2_DataRozliczenia,0)=0 THEN 0 WHEN R2_DataRozliczenia &lt;='+@Data+' THEN R2_KwotaWal1 ELSE 0 END) ) ' + CASE WHEN @Waluta_='%' THEN ' * ' + CASE WHEN @KursDok&lt;&gt;0 THEN ' TTV_KursL/case when isnull(TTV_KursM,0)=0 then 1 else TTV_KursM end ' ELSE ' ISNULL((SELECT TOP 1 CASE WHEN ISNULL(WaE_KursM,0)&lt;&gt;0 THEN (WaE_KursL/WaE_KursM) ELSE 1 END FROM CDN.WalElem WHERE WaE_Symbol=TTV_Waluta AND WaE_Lp=TTV_NrKursu AND WaE_KursTS &lt;= datediff(second,convert(datetime,''1990-1-1'',120),dateadd(day,'+@Data+'+1,convert(datetime,''1800-12-28'',120)))-1 ORDER BY WAE_KursTS DESC),1)' END ELSE '' END + ' ELSE 0 END END razem, ' +
+	  'CASE WHEN TTV_GIDTyp='+@TypKAZ+' THEN 0 ELSE CASE WHEN max(TTV_Typ)='+@Typ+' THEN ( max(TTV_Kwota)-SUM(case WHEN ISNULL(R2_DataRozliczenia,0)=0 THEN 0 WHEN R2_DataRozliczenia &lt;='+@Data+' THEN R2_KwotaWal1 ELSE 0 END) ) ELSE 0 END END razemWal, ' +
+	  'CASE WHEN TTV_GIDTyp='+@TypKAZ+' THEN 0 ELSE CASE WHEN max(TTV_Typ)='+@TypPrzec+' THEN ( max(TTV_Kwota)-SUM(case WHEN ISNULL(R2_DataRozliczenia,0)=0 THEN 0 WHEN R2_DataRozliczenia &lt;='+@Data+' THEN R2_KwotaWal1 ELSE 0 END) ) ELSE 0 END END razemPrzecWal, ' +
+	  'CASE WHEN TTV_GIDTyp='+@TypKAZ+' THEN 0 ELSE CASE WHEN '+@Data+'-max('+@TypDaty+') &lt;= 0 then CASE WHEN max(TTV_Typ)='+@Typ+' THEN ( max(TTV_Kwota)-SUM(case WHEN ISNULL(R2_DataRozliczenia,0)=0 THEN 0 WHEN R2_DataRozliczenia &lt;='+@Data+' THEN R2_KwotaWal1 ELSE 0 END) ) ELSE 0 END ' + CASE WHEN @Waluta_='%' THEN ' * ' + CASE WHEN @KursDok&lt;&gt;0 THEN ' TTV_KursL/case when isnull(TTV_KursM,0)=0 then 1 else TTV_KursM end ' ELSE ' ISNULL((SELECT TOP 1 CASE WHEN ISNULL(WaE_KursM,0)&lt;&gt;0 THEN (WaE_KursL/WaE_KursM) ELSE 1 END FROM CDN.WalElem WHERE WaE_Symbol=TTV_Waluta AND WaE_Lp=TTV_NrKursu AND WaE_KursTS &lt;= datediff(second,convert(datetime,''1990-1-1'',120),dateadd(day,'+@Data+'+1,convert(datetime,''1800-12-28'',120)))-1 ORDER BY WAE_KursTS DESC),1)' END ELSE '' END + ' ELSE 0 END END nieprzet,' +
+	  'CASE WHEN TTV_GIDTyp='+@TypKAZ+' THEN 0 ELSE CASE WHEN '+@Data+'-max('+@TypDaty+') between 1 and '                          +cast(@p1_ as varchar)+' then CASE WHEN max(TTV_Typ)='+@Typ+' THEN ( max(TTV_Kwota)-SUM(case WHEN ISNULL(R2_DataRozliczenia,0)=0 THEN 0 WHEN R2_DataRozliczenia &lt;='+@Data+' THEN R2_KwotaWal1 ELSE 0 END) ) ELSE 0 END ' + CASE WHEN @Waluta_='%' THEN ' * ' + CASE WHEN @KursDok&lt;&gt;0 THEN ' TTV_KursL/case when isnull(TTV_KursM,0)=0 then 1 else TTV_KursM end ' ELSE ' ISNULL((SELECT TOP 1 CASE WHEN ISNULL(WaE_KursM,0)&lt;&gt;0 THEN (WaE_KursL/WaE_KursM) ELSE 1 END FROM CDN.WalElem WHERE WaE_Symbol=TTV_Waluta AND WaE_Lp=TTV_NrKursu AND WaE_KursTS &lt;= datediff(second,convert(datetime,''1990-1-1'',120),dateadd(day,'+@Data+'+1,convert(datetime,''1800-12-28'',120)))-1 ORDER BY WAE_KursTS DESC),1)' END ELSE '' END + ' ELSE 0 END END p1, '
+  END
+
+
+set @sql2 = 
+CASE WHEN @Korekty &lt;&gt; 0 THEN
+	  'CASE WHEN TTV_GIDTyp='+@TypKAZ+' THEN 0 ELSE CASE WHEN '+@Data+'-max('+@TypDaty+') between '+cast(@p1_ as varchar)+'+1 and '+cast(@p2_ as varchar)+' then CASE WHEN ' +
+		CASE WHEN @Typ_ = 1 THEN '(max(TTV_Typ)=1 AND TTV_GIDTyp NOT IN(2009,2008,2013,2041,2045,2044,2042,2043,2047,1625,1832,7680,7681) OR max(TTV_Typ)=2 AND TTV_GIDTyp IN(1497,2010,1528,1529,1320,1498) OR max(TTV_BOS_DC)=2 AND TTV_GIDTyp IN(7680, 7681)) '
+	             WHEN @Typ_ = 2 THEN '(max(TTV_Typ)=2 AND TTV_GIDTyp NOT IN(1497,2010,1528,1529,1320,1498,7680,7681) OR max(TTV_Typ)=1 AND TTV_GIDTyp IN(2009,2008,2013,2041,2045,2044,2042,2043,2047,1625,1832) OR max(TTV_BOS_DC)=1 AND TTV_GIDTyp IN(7680, 7681)) '
+	    	END + ' THEN CASE WHEN ' +
+		' max(TTV_Typ)='+@Typ+' THEN 1 ELSE -1 END * ( max(TTV_Kwota)-SUM(case WHEN ISNULL(R2_DataRozliczenia,0)=0 THEN 0 WHEN R2_DataRozliczenia &lt;='+@Data+' THEN R2_KwotaWal1 ELSE 0 END) ) ' + CASE WHEN @Waluta_='%' THEN ' * ' + CASE WHEN @KursDok&lt;&gt;0 THEN ' TTV_KursL/case when isnull(TTV_KursM,0)=0 then 1 else TTV_KursM end ' ELSE ' ISNULL((SELECT TOP 1 CASE WHEN ISNULL(WaE_KursM,0)&lt;&gt;0 THEN (WaE_KursL/WaE_KursM) ELSE 1 END FROM CDN.WalElem WHERE WaE_Symbol=TTV_Waluta AND WaE_Lp=TTV_NrKursu AND WaE_KursTS &lt;= datediff(second,convert(datetime,''1990-1-1'',120),dateadd(day,'+@Data+'+1,convert(datetime,''1800-12-28'',120)))-1 ORDER BY WAE_KursTS DESC),1)' END ELSE '' END + ' ELSE 0 END ELSE 0 END END p2, ' +
+	  'CASE WHEN TTV_GIDTyp='+@TypKAZ+' THEN 0 ELSE CASE WHEN '+@Data+'-max('+@TypDaty+') between '+cast(@p2_ as varchar)+'+1 and '+cast(@p3_ as varchar)+' then CASE WHEN ' +
+		CASE WHEN @Typ_ = 1 THEN '(max(TTV_Typ)=1 AND TTV_GIDTyp NOT IN(2009,2008,2013,2041,2045,2044,2042,2043,2047,1625,1832,7680,7681) OR max(TTV_Typ)=2 AND TTV_GIDTyp IN(1497,2010,1528,1529,1320,1498) OR max(TTV_BOS_DC)=2 AND TTV_GIDTyp IN(7680, 7681)) '
+	             WHEN @Typ_ = 2 THEN '(max(TTV_Typ)=2 AND TTV_GIDTyp NOT IN(1497,2010,1528,1529,1320,1498,7680,7681) OR max(TTV_Typ)=1 AND TTV_GIDTyp IN(2009,2008,2013,2041,2045,2044,2042,2043,2047,1625,1832) OR max(TTV_BOS_DC)=1 AND TTV_GIDTyp IN(7680, 7681)) '
+	    	END + ' THEN CASE WHEN ' +
+		' max(TTV_Typ)='+@Typ+' THEN 1 ELSE -1 END * ( max(TTV_Kwota)-SUM(case WHEN ISNULL(R2_DataRozliczenia,0)=0 THEN 0 WHEN R2_DataRozliczenia &lt;='+@Data+' THEN R2_KwotaWal1 ELSE 0 END) ) ' + CASE WHEN @Waluta_='%' THEN ' * ' + CASE WHEN @KursDok&lt;&gt;0 THEN ' TTV_KursL/case when isnull(TTV_KursM,0)=0 then 1 else TTV_KursM end ' ELSE ' ISNULL((SELECT TOP 1 CASE WHEN ISNULL(WaE_KursM,0)&lt;&gt;0 THEN (WaE_KursL/WaE_KursM) ELSE 1 END FROM CDN.WalElem WHERE WaE_Symbol=TTV_Waluta AND WaE_Lp=TTV_NrKursu AND WaE_KursTS &lt;= datediff(second,convert(datetime,''1990-1-1'',120),dateadd(day,'+@Data+'+1,convert(datetime,''1800-12-28'',120)))-1 ORDER BY WAE_KursTS DESC),1)' END ELSE '' END + ' ELSE 0 END ELSE 0 END END p3, ' +
+	  'CASE WHEN TTV_GIDTyp='+@TypKAZ+' THEN 0 ELSE CASE WHEN '+@Data+'-max('+@TypDaty+') between '+cast(@p3_ as varchar)+'+1 and '+cast(@p4_ as varchar)+' then CASE WHEN ' + 
+		CASE WHEN @Typ_ = 1 THEN '(max(TTV_Typ)=1 AND TTV_GIDTyp NOT IN(2009,2008,2013,2041,2045,2044,2042,2043,2047,1625,1832,7680,7681) OR max(TTV_Typ)=2 AND TTV_GIDTyp IN(1497,2010,1528,1529,1320,1498) OR max(TTV_BOS_DC)=2 AND TTV_GIDTyp IN(7680, 7681)) '
+	             WHEN @Typ_ = 2 THEN '(max(TTV_Typ)=2 AND TTV_GIDTyp NOT IN(1497,2010,1528,1529,1320,1498,7680,7681) OR max(TTV_Typ)=1 AND TTV_GIDTyp IN(2009,2008,2013,2041,2045,2044,2042,2043,2047,1625,1832) OR max(TTV_BOS_DC)=1 AND TTV_GIDTyp IN(7680, 7681)) '
+	    	END + ' THEN CASE WHEN ' +
+		' max(TTV_Typ)='+@Typ+' THEN 1 ELSE -1 END * ( max(TTV_Kwota)-SUM(case WHEN ISNULL(R2_DataRozliczenia,0)=0 THEN 0 WHEN R2_DataRozliczenia &lt;='+@Data+' THEN R2_KwotaWal1 ELSE 0 END) ) ' + CASE WHEN @Waluta_='%' THEN ' * ' + CASE WHEN @KursDok&lt;&gt;0 THEN ' TTV_KursL/case when isnull(TTV_KursM,0)=0 then 1 else TTV_KursM end ' ELSE ' ISNULL((SELECT TOP 1 CASE WHEN ISNULL(WaE_KursM,0)&lt;&gt;0 THEN (WaE_KursL/WaE_KursM) ELSE 1 END FROM CDN.WalElem WHERE WaE_Symbol=TTV_Waluta AND WaE_Lp=TTV_NrKursu AND WaE_KursTS &lt;= datediff(second,convert(datetime,''1990-1-1'',120),dateadd(day,'+@Data+'+1,convert(datetime,''1800-12-28'',120)))-1 ORDER BY WAE_KursTS DESC),1)' END ELSE '' END + ' ELSE 0 END ELSE 0 END END p4, ' +
+	  'CASE WHEN TTV_GIDTyp='+@TypKAZ+' THEN 0 ELSE CASE WHEN '+@Data+'-max('+@TypDaty+') between '+cast(@p4_ as varchar)+'+1 and '+cast(@p5_ as varchar)+' then CASE WHEN ' + 
+		CASE WHEN @Typ_ = 1 THEN '(max(TTV_Typ)=1 AND TTV_GIDTyp NOT IN(2009,2008,2013,2041,2045,2044,2042,2043,2047,1625,1832,7680,7681) OR max(TTV_Typ)=2 AND TTV_GIDTyp IN(1497,2010,1528,1529,1320,1498) OR max(TTV_BOS_DC)=2 AND TTV_GIDTyp IN(7680, 7681)) '
+	             WHEN @Typ_ = 2 THEN '(max(TTV_Typ)=2 AND TTV_GIDTyp NOT IN(1497,2010,1528,1529,1320,1498,7680,7681) OR max(TTV_Typ)=1 AND TTV_GIDTyp IN(2009,2008,2013,2041,2045,2044,2042,2043,2047,1625,1832) OR max(TTV_BOS_DC)=1 AND TTV_GIDTyp IN(7680, 7681)) '
+	    	END + ' THEN CASE WHEN ' +
+		' max(TTV_Typ)='+@Typ+' THEN 1 ELSE -1 END * ( max(TTV_Kwota)-SUM(case WHEN ISNULL(R2_DataRozliczenia,0)=0 THEN 0 WHEN R2_DataRozliczenia &lt;='+@Data+' THEN R2_KwotaWal1 ELSE 0 END) ) ' + CASE WHEN @Waluta_='%' THEN ' * ' + CASE WHEN @KursDok&lt;&gt;0 THEN ' TTV_KursL/case when isnull(TTV_KursM,0)=0 then 1 else TTV_KursM end ' ELSE ' ISNULL((SELECT TOP 1 CASE WHEN ISNULL(WaE_KursM,0)&lt;&gt;0 THEN (WaE_KursL/WaE_KursM) ELSE 1 END FROM CDN.WalElem WHERE WaE_Symbol=TTV_Waluta AND WaE_Lp=TTV_NrKursu AND WaE_KursTS &lt;= datediff(second,convert(datetime,''1990-1-1'',120),dateadd(day,'+@Data+'+1,convert(datetime,''1800-12-28'',120)))-1 ORDER BY WAE_KursTS DESC),1)' END ELSE '' END + ' ELSE 0 END ELSE 0 END END p5, ' +
+	  'CASE WHEN TTV_GIDTyp='+@TypKAZ+' THEN 0 ELSE CASE WHEN '+@Data+'-max('+@TypDaty+') between '+cast(@p5_ as varchar)+'+1 and '+cast(@p6_ as varchar)+' then CASE WHEN ' +
+		CASE WHEN @Typ_ = 1 THEN '(max(TTV_Typ)=1 AND TTV_GIDTyp NOT IN(2009,2008,2013,2041,2045,2044,2042,2043,2047,1625,1832,7680,7681) OR max(TTV_Typ)=2 AND TTV_GIDTyp IN(1497,2010,1528,1529,1320,1498) OR max(TTV_BOS_DC)=2 AND TTV_GIDTyp IN(7680, 7681)) '
+	             WHEN @Typ_ = 2 THEN '(max(TTV_Typ)=2 AND TTV_GIDTyp NOT IN(1497,2010,1528,1529,1320,1498,7680,7681) OR max(TTV_Typ)=1 AND TTV_GIDTyp IN(2009,2008,2013,2041,2045,2044,2042,2043,2047,1625,1832) OR max(TTV_BOS_DC)=1 AND TTV_GIDTyp IN(7680, 7681)) '
+	    	END + ' THEN CASE WHEN ' +
+		' max(TTV_Typ)='+@Typ+' THEN 1 ELSE -1 END * ( max(TTV_Kwota)-SUM(case WHEN ISNULL(R2_DataRozliczenia,0)=0 THEN 0 WHEN R2_DataRozliczenia &lt;='+@Data+' THEN R2_KwotaWal1 ELSE 0 END) ) ' + CASE WHEN @Waluta_='%' THEN ' * ' + CASE WHEN @KursDok&lt;&gt;0 THEN ' TTV_KursL/case when isnull(TTV_KursM,0)=0 then 1 else TTV_KursM end ' ELSE ' ISNULL((SELECT TOP 1 CASE WHEN ISNULL(WaE_KursM,0)&lt;&gt;0 THEN (WaE_KursL/WaE_KursM) ELSE 1 END FROM CDN.WalElem WHERE WaE_Symbol=TTV_Waluta AND WaE_Lp=TTV_NrKursu AND WaE_KursTS &lt;= datediff(second,convert(datetime,''1990-1-1'',120),dateadd(day,'+@Data+'+1,convert(datetime,''1800-12-28'',120)))-1 ORDER BY WAE_KursTS DESC),1)' END ELSE '' END + ' ELSE 0 END ELSE 0 END END p6, ' +
+	  'CASE WHEN TTV_GIDTyp='+@TypKAZ+' THEN 0 ELSE CASE WHEN '+@Data+'-max('+@TypDaty+') &gt; '                                      +cast(@p6_ as varchar)+' then CASE WHEN ' +
+		CASE WHEN @Typ_ = 1 THEN '(max(TTV_Typ)=1 AND TTV_GIDTyp NOT IN(2009,2008,2013,2041,2045,2044,2042,2043,2047,1625,1832,7680,7681) OR max(TTV_Typ)=2 AND TTV_GIDTyp IN(1497,2010,1528,1529,1320,1498) OR max(TTV_BOS_DC)=2 AND TTV_GIDTyp IN(7680, 7681)) '
+	             WHEN @Typ_ = 2 THEN '(max(TTV_Typ)=2 AND TTV_GIDTyp NOT IN(1497,2010,1528,1529,1320,1498,7680,7681) OR max(TTV_Typ)=1 AND TTV_GIDTyp IN(2009,2008,2013,2041,2045,2044,2042,2043,2047,1625,1832) OR max(TTV_BOS_DC)=1 AND TTV_GIDTyp IN(7680, 7681)) '
+	    	END + ' THEN CASE WHEN ' +
+		' max(TTV_Typ)='+@Typ+' THEN 1 ELSE -1 END * ( max(TTV_Kwota)-SUM(case WHEN ISNULL(R2_DataRozliczenia,0)=0 THEN 0 WHEN R2_DataRozliczenia &lt;='+@Data+' THEN R2_KwotaWal1 ELSE 0 END) ) ' + CASE WHEN @Waluta_='%' THEN ' * ' + CASE WHEN @KursDok&lt;&gt;0 THEN ' TTV_KursL/case when isnull(TTV_KursM,0)=0 then 1 else TTV_KursM end ' ELSE ' ISNULL((SELECT TOP 1 CASE WHEN ISNULL(WaE_KursM,0)&lt;&gt;0 THEN (WaE_KursL/WaE_KursM) ELSE 1 END FROM CDN.WalElem WHERE WaE_Symbol=TTV_Waluta AND WaE_Lp=TTV_NrKursu AND WaE_KursTS &lt;= datediff(second,convert(datetime,''1990-1-1'',120),dateadd(day,'+@Data+'+1,convert(datetime,''1800-12-28'',120)))-1 ORDER BY WAE_KursTS DESC),1)' END ELSE '' END + ' ELSE 0 END ELSE 0 END END p7, '
+  ELSE
+	  'CASE WHEN TTV_GIDTyp='+@TypKAZ+' THEN 0 ELSE CASE WHEN '+@Data+'-max('+@TypDaty+') between '+cast(@p1_ as varchar)+'+1 and '+cast(@p2_ as varchar)+' then CASE WHEN max(TTV_Typ)='+@Typ+' THEN ( max(TTV_Kwota)-SUM(case WHEN ISNULL(R2_DataRozliczenia,0)=0 THEN 0 WHEN R2_DataRozliczenia &lt;='+@Data+' THEN R2_KwotaWal1 ELSE 0 END) ) ELSE 0 END ' + CASE WHEN @Waluta_='%' THEN ' * ' + CASE WHEN @KursDok&lt;&gt;0 THEN ' TTV_KursL/case when isnull(TTV_KursM,0)=0 then 1 else TTV_KursM end ' ELSE ' ISNULL((SELECT TOP 1 CASE WHEN ISNULL(WaE_KursM,0)&lt;&gt;0 THEN (WaE_KursL/WaE_KursM) ELSE 1 END FROM CDN.WalElem WHERE WaE_Symbol=TTV_Waluta AND WaE_Lp=TTV_NrKursu AND WaE_KursTS &lt;= datediff(second,convert(datetime,''1990-1-1'',120),dateadd(day,'+@Data+'+1,convert(datetime,''1800-12-28'',120)))-1 ORDER BY WAE_KursTS DESC),1)' END ELSE '' END + ' ELSE 0 END END p2, ' +
+	  'CASE WHEN TTV_GIDTyp='+@TypKAZ+' THEN 0 ELSE CASE WHEN '+@Data+'-max('+@TypDaty+') between '+cast(@p2_ as varchar)+'+1 and '+cast(@p3_ as varchar)+' then CASE WHEN max(TTV_Typ)='+@Typ+' THEN ( max(TTV_Kwota)-SUM(case WHEN ISNULL(R2_DataRozliczenia,0)=0 THEN 0 WHEN R2_DataRozliczenia &lt;='+@Data+' THEN R2_KwotaWal1 ELSE 0 END) ) ELSE 0 END ' + CASE WHEN @Waluta_='%' THEN ' * ' + CASE WHEN @KursDok&lt;&gt;0 THEN ' TTV_KursL/case when isnull(TTV_KursM,0)=0 then 1 else TTV_KursM end ' ELSE ' ISNULL((SELECT TOP 1 CASE WHEN ISNULL(WaE_KursM,0)&lt;&gt;0 THEN (WaE_KursL/WaE_KursM) ELSE 1 END FROM CDN.WalElem WHERE WaE_Symbol=TTV_Waluta AND WaE_Lp=TTV_NrKursu AND WaE_KursTS &lt;= datediff(second,convert(datetime,''1990-1-1'',120),dateadd(day,'+@Data+'+1,convert(datetime,''1800-12-28'',120)))-1 ORDER BY WAE_KursTS DESC),1)' END ELSE '' END + ' ELSE 0 END END p3, ' +
+	  'CASE WHEN TTV_GIDTyp='+@TypKAZ+' THEN 0 ELSE CASE WHEN '+@Data+'-max('+@TypDaty+') between '+cast(@p3_ as varchar)+'+1 and '+cast(@p4_ as varchar)+' then CASE WHEN max(TTV_Typ)='+@Typ+' THEN ( max(TTV_Kwota)-SUM(case WHEN ISNULL(R2_DataRozliczenia,0)=0 THEN 0 WHEN R2_DataRozliczenia &lt;='+@Data+' THEN R2_KwotaWal1 ELSE 0 END) ) ELSE 0 END ' + CASE WHEN @Waluta_='%' THEN ' * ' + CASE WHEN @KursDok&lt;&gt;0 THEN ' TTV_KursL/case when isnull(TTV_KursM,0)=0 then 1 else TTV_KursM end ' ELSE ' ISNULL((SELECT TOP 1 CASE WHEN ISNULL(WaE_KursM,0)&lt;&gt;0 THEN (WaE_KursL/WaE_KursM) ELSE 1 END FROM CDN.WalElem WHERE WaE_Symbol=TTV_Waluta AND WaE_Lp=TTV_NrKursu AND WaE_KursTS &lt;= datediff(second,convert(datetime,''1990-1-1'',120),dateadd(day,'+@Data+'+1,convert(datetime,''1800-12-28'',120)))-1 ORDER BY WAE_KursTS DESC),1)' END ELSE '' END + ' ELSE 0 END END p4, ' +
+	  'CASE WHEN TTV_GIDTyp='+@TypKAZ+' THEN 0 ELSE CASE WHEN '+@Data+'-max('+@TypDaty+') between '+cast(@p4_ as varchar)+'+1 and '+cast(@p5_ as varchar)+' then CASE WHEN max(TTV_Typ)='+@Typ+' THEN ( max(TTV_Kwota)-SUM(case WHEN ISNULL(R2_DataRozliczenia,0)=0 THEN 0 WHEN R2_DataRozliczenia &lt;='+@Data+' THEN R2_KwotaWal1 ELSE 0 END) ) ELSE 0 END ' + CASE WHEN @Waluta_='%' THEN ' * ' + CASE WHEN @KursDok&lt;&gt;0 THEN ' TTV_KursL/case when isnull(TTV_KursM,0)=0 then 1 else TTV_KursM end ' ELSE ' ISNULL((SELECT TOP 1 CASE WHEN ISNULL(WaE_KursM,0)&lt;&gt;0 THEN (WaE_KursL/WaE_KursM) ELSE 1 END FROM CDN.WalElem WHERE WaE_Symbol=TTV_Waluta AND WaE_Lp=TTV_NrKursu AND WaE_KursTS &lt;= datediff(second,convert(datetime,''1990-1-1'',120),dateadd(day,'+@Data+'+1,convert(datetime,''1800-12-28'',120)))-1 ORDER BY WAE_KursTS DESC),1)' END ELSE '' END + ' ELSE 0 END END p5, ' +
+	  'CASE WHEN TTV_GIDTyp='+@TypKAZ+' THEN 0 ELSE CASE WHEN '+@Data+'-max('+@TypDaty+') between '+cast(@p5_ as varchar)+'+1 and '+cast(@p6_ as varchar)+' then CASE WHEN max(TTV_Typ)='+@Typ+' THEN ( max(TTV_Kwota)-SUM(case WHEN ISNULL(R2_DataRozliczenia,0)=0 THEN 0 WHEN R2_DataRozliczenia &lt;='+@Data+' THEN R2_KwotaWal1 ELSE 0 END) ) ELSE 0 END ' + CASE WHEN @Waluta_='%' THEN ' * ' + CASE WHEN @KursDok&lt;&gt;0 THEN ' TTV_KursL/case when isnull(TTV_KursM,0)=0 then 1 else TTV_KursM end ' ELSE ' ISNULL((SELECT TOP 1 CASE WHEN ISNULL(WaE_KursM,0)&lt;&gt;0 THEN (WaE_KursL/WaE_KursM) ELSE 1 END FROM CDN.WalElem WHERE WaE_Symbol=TTV_Waluta AND WaE_Lp=TTV_NrKursu AND WaE_KursTS &lt;= datediff(second,convert(datetime,''1990-1-1'',120),dateadd(day,'+@Data+'+1,convert(datetime,''1800-12-28'',120)))-1 ORDER BY WAE_KursTS DESC),1)' END ELSE '' END + ' ELSE 0 END END p6, ' +
+	  'CASE WHEN TTV_GIDTyp='+@TypKAZ+' THEN 0 ELSE CASE WHEN '+@Data+'-max('+@TypDaty+') &gt; '                                      +cast(@p6_ as varchar)+' then CASE WHEN max(TTV_Typ)='+@Typ+' THEN ( max(TTV_Kwota)-SUM(case WHEN ISNULL(R2_DataRozliczenia,0)=0 THEN 0 WHEN R2_DataRozliczenia &lt;='+@Data+' THEN R2_KwotaWal1 ELSE 0 END) ) ELSE 0 END ' + CASE WHEN @Waluta_='%' THEN ' * ' + CASE WHEN @KursDok&lt;&gt;0 THEN ' TTV_KursL/case when isnull(TTV_KursM,0)=0 then 1 else TTV_KursM end ' ELSE ' ISNULL((SELECT TOP 1 CASE WHEN ISNULL(WaE_KursM,0)&lt;&gt;0 THEN (WaE_KursL/WaE_KursM) ELSE 1 END FROM CDN.WalElem WHERE WaE_Symbol=TTV_Waluta AND WaE_Lp=TTV_NrKursu AND WaE_KursTS &lt;= datediff(second,convert(datetime,''1990-1-1'',120),dateadd(day,'+@Data+'+1,convert(datetime,''1800-12-28'',120)))-1 ORDER BY WAE_KursTS DESC),1)' END ELSE '' END + ' ELSE 0 END END p7, '
+  END 
+
+set @sql3 = 
+  'CASE WHEN TTV_GIDTyp&lt;&gt;'+@TypKAZ+' THEN 0 ELSE CASE WHEN max(TTV_Typ)=2 THEN sign(max(TTV_Kwota))*(abs(max(TTV_Kwota))-SUM(case WHEN ISNULL(R2_DataRozliczenia,0)=0 THEN 0 WHEN R2_DataRozliczenia &lt;='+@Data+' THEN R2_KwotaWal1 ELSE 0 END)) ' + CASE WHEN @Waluta_='%' THEN ' * ' + CASE WHEN @KursDok&lt;&gt;0 THEN ' TTV_KursL/case when isnull(TTV_KursM,0)=0 then 1 else TTV_KursM end ' ELSE ' ISNULL((SELECT TOP 1 CASE WHEN ISNULL(WaE_KursM,0)&lt;&gt;0 THEN (WaE_KursL/WaE_KursM) ELSE 1 END FROM CDN.WalElem WHERE WaE_Symbol=TTV_Waluta AND WaE_Lp=TTV_NrKursu AND WaE_KursTS &lt;= datediff(second,convert(datetime,''1990-1-1'',120),dateadd(day,'+@Data+'+1,convert(datetime,''1800-12-28'',120)))-1 ORDER BY WAE_KursTS DESC),1)' END ELSE '' END + ' ELSE 0 END END Wplaty, ' +
+  'CASE WHEN TTV_GIDTyp&lt;&gt;'+@TypKAZ+' THEN 0 ELSE CASE WHEN max(TTV_Typ)=1 THEN sign(max(TTV_Kwota))*(abs(max(TTV_Kwota))-SUM(case WHEN ISNULL(R2_DataRozliczenia,0)=0 THEN 0 WHEN R2_DataRozliczenia &lt;='+@Data+' THEN R2_KwotaWal1 ELSE 0 END)) ' + CASE WHEN @Waluta_='%' THEN ' * ' + CASE WHEN @KursDok&lt;&gt;0 THEN ' TTV_KursL/case when isnull(TTV_KursM,0)=0 then 1 else TTV_KursM end ' ELSE ' ISNULL((SELECT TOP 1 CASE WHEN ISNULL(WaE_KursM,0)&lt;&gt;0 THEN (WaE_KursL/WaE_KursM) ELSE 1 END FROM CDN.WalElem WHERE WaE_Symbol=TTV_Waluta AND WaE_Lp=TTV_NrKursu AND WaE_KursTS &lt;= datediff(second,convert(datetime,''1990-1-1'',120),dateadd(day,'+@Data+'+1,convert(datetime,''1800-12-28'',120)))-1 ORDER BY WAE_KursTS DESC),1)' END ELSE '' END + ' ELSE 0 END END Wyplaty ' +    
+  'FROM CDN.TrpTrnKazView LEFT OUTER JOIN (select R2_Dok1Typ as R2_DokTyp, R2_Dok1Numer as R2_DokNumer, R2_Dok1Lp as R2_DokLp, R2_DataRozliczenia, R2_KwotaWal1 '+
+  'from CDN.Rozliczenia where R2_Wycena = 0'+
+  ' union all select R2_Dok2Typ as R2_DokTyp, R2_Dok2Numer as R2_DokNumer, R2_Dok2Lp as R2_DokLp, R2_DataRozliczenia, R2_KwotaWal1 '+
+  'from CDN.Rozliczenia where R2_Wycena = 0'+
+  ' ) as pod on R2_DokTyp=TTV_GIDTyp AND R2_DokNumer=TTV_GIDNumer AND R2_DokLp=TTV_GIDLp '+
+  ' JOIN CDN.KntKarty KntKarty ON Knt_GIDTyp=TTV_KntTyp AND Knt_GIDNumer=TTV_KntNumer ' +
+  'LEFT OUTER JOIN CDN.KntOpiekun ON KtO_KntTyp=Knt_GIDTyp AND KtO_KntNumer=Knt_GIDNumer ' +    
+  'WHERE TTV_Rozliczona&lt;2 and TTV_Data &lt;= ' + @Data +' AND TTV_DataRozliczenia&gt;=' +@Data+ ' AND TTV_Waluta LIKE ''' + @Waluta_ +'''' + ' AND ' +
+  '((TTV_GIDTyp &lt;&gt; 784 AND TTV_Seria like '''+@Seria_+'%'') or TTV_GIDTyp = 784) ' +
+  CASE WHEN @PRL_ = 0 Then ' AND TTV_GIDTyp NOT IN (7684,7690) ' ELSE ' AND TTV_GIDTyp NOT IN (7690) ' END +
+  CASE WHEN isnull(@CDN_Filtr,'') = '' THEN '' ELSE ' AND ' + @CDN_Filtr End +
+  CASE 
+	WHEN @FormaPl = 1 THEN ' AND (TTV_GIDTyp &lt;&gt; 784 AND TTV_TRP_FormaNr = 20 or TTV_GIDTyp = 784 and TTV_KAZ_Typ = 2)'
+	WHEN @FormaPl = 2 THEN ' AND (TTV_GIDTyp &lt;&gt; 784 AND TTV_TRP_FormaNr &lt;&gt; 20 or TTV_GIDTyp = 784 and TTV_KAZ_Typ = 1)'
+	ELSE ''
+  END +
+  ' GROUP BY TTV_GIDTyp, TTV_GIDNumer, TTV_GIDLp, TTV_Seria ' +
+  CASE WHEN @Waluta_='%' THEN ',TTV_Waluta,TTV_NrKursu,TTV_KursL,TTV_KursM' ELSE '' END +
+  ' ) sumy group by sumy.TTV_Seria '+
+  ' HAVING sum(sumy.razem) &lt;&gt; 0 or sum(sumy.Wplaty) &lt;&gt; 0 or sum(sumy.Wyplaty) &lt;&gt; 0 order by seria'
+  exec (@sql1 + @sql2 + @sql3); 
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

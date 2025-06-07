@@ -1,0 +1,137 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="PrzeliczKwoteVatPodzielonejPlatnosci"></A><PRE>
+          <FONT SIZE="2"><I>/* PrzeliczKwoteVatPodzielonejPlatnosci */</I><BR>
+CREATE PROCEDURE cdn.PrzeliczKwoteVatPodzielonejPlatnosci
+	@GidTyp		smallint,
+    @GidNumer	int,
+    @GidLp		smallint
+
+AS
+SET NOCOUNT ON
+
+DECLARE @TrPSpiTyp SMALLINT
+DECLARE @TrPSpiNumer INT
+DECLARE @TrPRodzaj TINYINT
+DECLARE @TrPKwota DECIMAL(15,2)
+DECLARE @TrPSPKwotaVat DECIMAL(15,2)
+DECLARE @TrPTyp SMALLINT
+DECLARE @MaxVat DECIMAL(15,2)
+DECLARE @SPVatNaInnych DECIMAL(15,2)
+
+IF NOT EXISTS (select * from cdn.TraPlat
+				WHERE TrP_GIDTyp = @GidTyp AND TrP_GIDNumer = @GidNumer AND TrP_GIDLp = @GidLp
+				AND TrP_SplitPayment = 1 
+				AND TrP_Status IN (0, 1)	-- do wysĹ‚ania lub wstrzymano
+				AND TrP_SpiTyp NOT IN (3387, 3386, 3379, 3378, 3344, 3352,		-- FKS, FKZ, FWS, FWZ, FAI, FKI
+									   7942, 7943, 7690, 7684,					-- PRG, PRK, PRW, PRP
+									   4144, 4145, 4146, 4608, 7680, 7681,		-- NM, UNM, UNK, KBN, BO, BOK
+									   2768, 7696, 7712, 7691 ))				-- Deklaracje VAT-7, VAT-7K, VAT-7D, Deklaracja definiowana
+	RETURN
+
+SELECT	@TrPSpiTyp = TrP_SpiTyp,
+		@TrPSpiNumer = TrP_SpiNumer,
+		@TrPRodzaj = TrP_Rodzaj,
+		@TrPKwota = TrP_Kwota,
+		@TrPTyp = TrP_Typ
+FROM cdn.TraPlat 
+WHERE TrP_GIDTyp = @GidTyp AND TrP_GIDNumer = @GidNumer AND TrP_GIDLp = @GidLp
+
+IF @TrPRodzaj = 1
+BEGIN
+	SET @TrPSPKwotaVat = @TrPKwota
+	SET @MaxVat = @TrPKwota
+END
+
+select @SPVatNaInnych = isnull((select sum(trp_spkwotavat) from cdn.traplat 
+							where TrP_GIDNumer = @GidNumer and TrP_GIDTyp = @GidTyp and TrP_GIDLp &lt;&gt; @GidLp 
+							and TrP_SplitPayment = 1 and trp_TYP = @TrPTyp), 0)
+
+IF @TrPSpiTyp IN (3376, 3377) --SAD, SSC
+BEGIN
+	IF NOT EXISTS (select 1 from cdn.SadNag
+				   where SaN_GIDNumer = @TrPSpiNumer and SaN_GIDTyp = @TrPSpiTyp)
+		RETURN
+
+	IF @TrPRodzaj &lt;&gt; 1
+	BEGIN
+		select 
+			@TrPSPKwotaVat = SaN_VAT,
+			@MaxVat = ABS(SaN_VAT) - @SPVatNaInnych
+		from cdn.SadNag
+		where SaN_GIDNumer = @TrPSpiNumer and SaN_GIDTyp = @TrPSpiTyp
+	END
+END
+ELSE IF NOT @TrPSpiTyp = 2984 --DLG
+BEGIN
+	IF NOT EXISTS (select 1 from cdn.TraNag
+				   where TrN_GIDNumer = @TrPSpiNumer and TrN_GIDTyp = @TrPSpiTyp and TrN_KorektaDanych = 0)
+		RETURN
+
+	IF @TrPRodzaj &lt;&gt; 1
+	BEGIN
+		select  @TrPSPKwotaVat = CASE WHEN TrN_NettoR &lt;&gt; 0 OR TrN_VatR &lt;&gt; 0 
+									THEN ABS((@TrPKwota/(TrN_NettoR + TrN_VatR)) * TrN_VatR)
+									ELSE ABS((@TrPKwota/(TrN_NettoP + TrN_VatP)) * TrN_VatP)
+									END,
+				@MaxVat = CASE WHEN TrN_VatR &lt;&gt; 0 THEN ABS(TrN_VatR) - @SPVatNaInnych ELSE ABS(TrN_VatP) - @SPVatNaInnych END
+		from cdn.TraNag
+		where TrN_GIDNumer = @TrPSpiNumer and TrN_GIDTyp = @TrPSpiTyp
+	END
+END
+ELSE
+	RETURN
+
+DECLARE @SPKwotaRoz1 DECIMAL(15,2)
+DECLARE @SPKwotaRoz2 DECIMAL(15,2)
+DECLARE @Rozliczone DECIMAL(15,2)
+
+select @SPKwotaRoz1 = isnull((select sum(R2_KwotaSys) from cdn.TraPlat
+             join cdn.Rozliczenia on TrP_GIDTyp=R2_Dok1Typ AND TrP_GIDNumer=R2_Dok1Numer AND TrP_GIDLp=R2_Dok1Lp
+             where TrP_GIDTyp = @GidTyp AND TrP_GIDNumer = @GidNumer AND TrP_GIDLp = @GidLp 
+				 and R2_Dok1Typ &lt;&gt; 784 --zapis kasowy
+				 AND R2_Dok1Typ &lt;&gt; 0 AND R2_Dok1Typ &lt;&gt; 435 --rĂłĹĽnica kursowa
+             group by TrP_Kwota),0)
+
+select @SPKwotaRoz2 = isnull((select sum(R2_KwotaSys) from cdn.TraPlat
+             join cdn.Rozliczenia on TrP_GIDTyp=R2_Dok2Typ AND TrP_GIDNumer=R2_Dok2Numer AND TrP_GIDLp=R2_Dok2Lp
+             where TrP_GIDTyp = @GidTyp AND TrP_GIDNumer = @GidNumer AND TrP_GIDLp = @GidLp 
+				 and R2_Dok1Typ &lt;&gt; 784 --zapis kasowy
+				 AND R2_Dok1Typ &lt;&gt; 0 AND R2_Dok1Typ &lt;&gt; 435 --rĂłĹĽnica kursowa
+             group by TrP_Kwota),0)
+
+SET @Rozliczone = @SPKwotaRoz1 + @SPKwotaRoz2
+
+IF @TrPRodzaj &lt;&gt; 1
+	SET @TrPSPKwotaVat *= 1 - (@Rozliczone/@TrPKwota)
+ELSE
+	SET @TrPSPKwotaVat -= @Rozliczone
+
+IF @TrPKwota - @Rozliczone &lt; @TrPSPKwotaVat 
+	SET @TrPSPKwotaVat = @TrPKwota - @Rozliczone
+
+IF @TrPSPKwotaVat &lt;&gt; 0 AND @TrPSPKwotaVat &gt; @MaxVat
+	SET @TrPSPKwotaVat = @MaxVat
+
+UPDATE CDN.TraPlat 
+SET TrP_SPKwotaVAT = @TrPSPKwotaVat
+WHERE TrP_GIDTyp = @GidTyp AND TrP_GIDNumer = @GidNumer AND TrP_GIDLp = @GidLp
+
+SET NOCOUNT OFF
+RETURN 0
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

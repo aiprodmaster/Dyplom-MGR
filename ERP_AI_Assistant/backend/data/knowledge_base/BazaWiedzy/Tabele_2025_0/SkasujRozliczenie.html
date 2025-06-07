@@ -1,0 +1,561 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="SkasujRozliczenie"></A><PRE>
+          <FONT SIZE="2"><I>/* SkasujRozliczenie */</I><BR>
+CREATE PROCEDURE CDN.SkasujRozliczenie
+@GIDFirma int,
+@ID INT
+AS
+
+/*
+declare @TypRK smallint
+set @TypRK = 435
+declare @TypKAZ smallint
+set @TypKAZ = 784
+*/
+
+
+declare @RKN_ID int
+declare @RKN_Znak tinyint
+
+declare @ParID int
+
+
+DECLARE @GIDTyp1 SMALLINT
+DECLARE @GIDNumer1 INT
+DECLARE @GIDLp1 SMALLINT
+DECLARE @GIDTyp2 SMALLINT
+DECLARE @GIDNumer2 INT
+DECLARE @GIDLp2 SMALLINT
+DECLARE @UserID INT
+DECLARE @WalutaSys varchar(3)
+declare @EdycjaGIDTyp SMALLINT
+declare @EdycjaGIDNumer INT
+declare @R2_DekretNumer int
+declare @R2_Wycena tinyint
+declare @err int
+declare @RCount int
+declare @R2_WycenaParID int
+declare @KWGIDNumer int
+declare @KWZaksiegowany tinyint
+declare @KWRozliczony tinyint
+declare @KPGIDNumer int
+declare @KWKursWgWyceny tinyint
+declare @ZewnetrznyID int
+declare @ZewnetrznyID1 int
+declare @ZewnetrznyID2 int
+declare @ZewnetrznySys int
+declare @ZewnetrznyTyp int
+declare @rv int
+
+declare @szMsg1 varchar(30)
+
+declare @KWWycenaKolejnosc tinyint
+declare @WycenaRK decimal(15,2)
+declare @KWCzasZapisu int
+declare @KPCzasZapisu int
+declare @KWKrpLp smallint
+declare @KPKrpLp smallint
+declare @KWRK decimal(15,2)
+declare @KPRK decimal(15,2)
+
+SET NOCOUNT ON
+
+/*
+1. Kasowanie Trp1 lub Trp2 (niezaksiegowane)
+
+2. Kasowanie Dok RK - @KasujDokRK = 1 (niezaksiegowane)
+3. Kasowanie rozliczenia Trp1-Trp2
+4. Kasowanie rozliczenia TrpX-DokRK
+5. 
+
+*/
+/*
+1. sprawdz czy nie ma rozrachunku, jesli jest to wylaz z bledem
+2. jesli jest to wycena
+	- sprawdz czy KW jest zaksiegowany, jesli tak to wylaz z bledem
+	- sprawdz czy KW jest rozliczony, jesli tak to wylaz z bledem
+	- jesli nie to 
+		- usun rozliczenia wraz z dok RK
+		- aktualizuj kwoty na zapisach
+3. jesli jest to normalne rozliczenie
+	- sprawdz czy w rozliczeniu bral udzial KW wyceniany, jesli tak
+		- usun rozliczenia wraz z dok RK
+		- aktualizuj kwoty na zapisach + platnosciach
+		- aktualizuj kwoty na rozliczeniu wyceny KW
+
+	- jesli nie
+		- usun rozliczenia wraz z dok RK
+		- aktualizuj kwoty na zapisach lub platnosciach
+
+*/
+
+BEGIN TRAN
+
+
+SELECT @WalutaSys = KON_Wartosc FROM CDN.Konfig with(nolock) WHERE KON_Numer = 211
+
+
+
+select
+		@RKN_ID = max(case when R2_Dok1Typ = 435 then R2_Dok1Numer 
+							when R2_Dok2Typ = 435 then R2_Dok2Numer 
+					else 0 end),
+		
+		@R2_DekretNumer = max(isnull(R2_Dekret1Numer,0)),	
+		
+		
+		@R2_Wycena = max(R2_Wycena),
+
+		@R2_WycenaParID = max(R2_WycenaParID),
+
+		@ParID = max(R2_ParID),
+		
+		@ZewnetrznyID = MAX(isnull(R2_ZewnetrznyId,0)),
+		
+		@ZewnetrznySys = MAX(isnull(r2_ZewnetrznySys,0)),
+
+        @ZewnetrznyTyp = MAX(isnull(R2_ZewnetrznyTyp,0))
+from cdn.Rozliczenia
+where R2_ParID = (select b.R2_ParID from cdn.Rozliczenia b where b.R2_ID = @ID)
+
+select @Err = @@Error, @RCount = @@ROWCOUNT
+
+if @Err &lt;&gt; 0
+begin
+  ROLLBACK TRAN
+  RAISERROR('1:Kasowanie rozliczeń. Błąd odczytu rekordu z tabeli Rozliczenia', 16, 1) 
+  RETURN 1
+END
+
+
+if @RCount = 0
+begin
+  ROLLBACK TRAN
+  RAISERROR('1:Kasowanie rozliczeń. Nie znaleziono rekordu w tabeli Rozliczenia o podanym ID (%d)', 16, 1, @ID) 
+  RETURN 1
+END
+
+
+IF isnull(@R2_DekretNumer,0) &lt;&gt; 0
+BEGIN
+  ROLLBACK TRAN
+  RAISERROR('10:W module księgowym dokonano już rozrachunku zapisów pochodzących z rozliczonych dokumentów. Skasowanie rozliczenia niemożliwe. Usuń w pierwszej kolejności rozrachunek lub odksięguj jeden z dokumentów.', 16, 1) 
+  RETURN 10
+END
+
+
+
+
+if @R2_Wycena = 1
+begin
+	--pobierz KW
+	select 
+		@KWGIDNumer = kw.KAZ_GIDNumer,
+		@KWZaksiegowany = kw.KAZ_Zaksiegowano,
+		@KWKursWgWyceny = kw.KAZ_KursWgWyceny,
+		@KWRozliczony = (case when exists(select c.R2_ID from cdn.Rozliczenia c where c.R2_Dok1Typ = 784 and c.R2_Dok1Numer = kw.KAZ_GIDNumer and c.R2_Dok1Lp = 0 and c.R2_Wycena = 0
+										union all
+										select c.R2_ID from cdn.Rozliczenia c where c.R2_Dok2Typ = 784 and c.R2_Dok2Numer = kw.KAZ_GIDNumer and c.R2_Dok2Lp = 0 and c.R2_Wycena = 0)
+								then 1 else 0 end),
+		@KWCzasZapisu = kw.KAZ_CzasZapisu,
+		@KWKrpLp = kw.KAZ_KRPLp,
+		@KPGIDNumer = kp.KAZ_GIDNumer,
+		@KPCzasZapisu = kp.KAZ_CzasZapisu,	
+		@KPKrpLp = kp.KAZ_KRPLp,	
+		@WycenaRK = R2_RK,
+		@KPRK = case when Strona = 3-R2_RKStrona then R2_RK else 0 end,
+		@KWRK = case when Strona = R2_RKStrona then R2_RK else 0 end
+	from (select 
+				1 Strona,
+				R2_Dok1Typ R2_Dok1Typ,
+				R2_Dok1Numer R2_Dok1Numer,
+				R2_Dok1Lp R2_Dok1Lp,
+				R2_Dok2Typ R2_Dok2Typ,
+				R2_Dok2Numer R2_Dok2Numer,
+				R2_Dok2Lp R2_Dok2Lp,
+				isnull(R2_RK,0) R2_RK,
+				isnull(R2_RKStrona,0) R2_RKStrona
+			from cdn.Rozliczenia
+			where R2_ParID = @ParID and R2_Dok1Typ = 784 and R2_Dok2Typ &lt;&gt; 435
+			union all
+			select 
+				2 Strona,
+				R2_Dok2Typ R2_Dok1Typ,
+				R2_Dok2Numer R2_Dok1Numer,
+				R2_Dok2Lp R2_Dok1Lp,
+				R2_Dok1Typ R2_Dok2Typ,
+				R2_Dok1Numer R2_Dok2Numer,
+				R2_Dok1Lp R2_Dok2Lp,
+				isnull(R2_RK,0) R2_RK,
+				isnull(R2_RKStrona,0) R2_RKStrona
+			from cdn.Rozliczenia
+			where R2_ParID = @ParID and R2_Dok2Typ = 784 and R2_Dok1Typ &lt;&gt; 435
+		) a 
+			join cdn.Zapisy kw
+				on R2_Dok1Typ = 784 and R2_Dok1Numer = kw.KAZ_GIDNumer and kw.KAZ_Znak = 1
+			join cdn.Zapisy kp
+				on R2_Dok2Typ = 784 and R2_Dok2Numer = kp.KAZ_GIDNumer and kp.KAZ_Znak = 2
+	
+
+	select @Err = @@Error, @RCount = @@ROWCOUNT
+
+	if @Err &lt;&gt; 0
+	begin
+	  ROLLBACK TRAN
+	  RAISERROR('1:Kasowanie rozliczeń wyceny. Błąd odczytu rekordów z tabeli Zapisy', 16, 1) 
+	  RETURN 1
+	END
+
+
+	if @RCount = 0
+	begin
+	  ROLLBACK TRAN
+	  RAISERROR('1:Kasowanie rozliczeń wyceny. Nie znaleziono rekordu w tabeli Zapisy', 16, 1) 
+	  RETURN 1
+	END
+
+
+
+
+	
+
+
+	if @KWZaksiegowany &lt;&gt; 0 and @KWKursWgWyceny &lt;&gt; 0
+	begin
+	  set @szMsg1 = cdn.NazwaObiektu (784, @KWGIDNumer, 0, 2)
+	  ROLLBACK TRAN
+	  RAISERROR('1:Skasowanie wyceny niemożliwe. Wyceniony zapis %s został już zaksięgowany ', 16, 1, @szMsg1) 
+	  RETURN 1
+	END
+	
+	
+
+	select @RKN_Znak = RKN_Znak from cdn.RozniceKursowe where RKN_ID = @RKN_ID
+	if @@Error &lt;&gt; 0 
+	begin
+		Rollback tran
+		RAISERROR('1:Błąd odczytu dokumentu Różnicy kursowej', 16, 1) 
+		RETURN 1
+	END		
+	
+	
+
+	if @KWKursWgWyceny &lt;&gt; 0
+	begin
+		UPDATE CDN.Zapisy SET 	
+			KAZ_KwotaSys = KAZ_KwotaSys - SIGN(KAZ_Kwota) * cdn.PlatnoscSumaRozliczenia(784, KAZ_GIDNumer, 0, 3, @ParID, 1),
+			KAZ_PozostajeSys = KAZ_PozostajeSys - SIGN(KAZ_Kwota) * cdn.PlatnoscSumaRozliczenia(784, KAZ_GIDNumer, 0, 3, @ParID, 1),
+			KAZ_PozostajeWycena = KAZ_PozostajeWycena + SIGN(KAZ_Kwota)* cdn.PlatnoscSumaRozliczenia(784, KAZ_GIDNumer, 0, 0, @ParID, 1),
+			KAZ_PozostajeWycenaSys = 0,
+  			KAZ_Wyceniony = case when KAZ_PozostajeWycena + SIGN(KAZ_Kwota)* cdn.PlatnoscSumaRozliczenia(784, KAZ_GIDNumer, 0, 0, @ParID, 1) = 0 then 1 else 0 end
+		FROM CDN.Zapisy 
+		WHERE KAZ_GIDNumer = @KWGIDNumer
+
+		IF @@ERROR &lt;&gt; 0
+		BEGIN
+		  ROLLBACK TRAN
+		  RAISERROR('3:Błąd aktualizacji wiersza w tabeli Zapisy.', 16, 1) 
+		  RETURN 3
+		END
+	end
+	else
+	begin
+		
+			
+	
+		UPDATE CDN.Zapisy SET 			
+			KAZ_PozostajeWycena = KAZ_PozostajeWycena + SIGN(KAZ_Kwota)* cdn.PlatnoscSumaRozliczenia(784, KAZ_GIDNumer, 0, 0, @ParID, 1),
+			KAZ_PozostajeWycenaSys = KAZ_PozostajeWycenaSys + SIGN(KAZ_Kwota) * cdn.PlatnoscSumaRozliczenia(784, KAZ_GIDNumer, 0, 3, @ParID, 1),
+  			KAZ_Wyceniony = case when KAZ_PozostajeWycena + SIGN(KAZ_Kwota)* cdn.PlatnoscSumaRozliczenia(784, KAZ_GIDNumer, 0, 0, @ParID, 1) = 0 then 1 else 0 end,
+  			KAZ_WycenaRK = KAZ_WycenaRK - sign(KAZ_Kwota) * @KPRK,
+			KAZ_WycenaRKStan = KAZ_WycenaRKStan - case when @RKN_Znak=1 then 1 else -1 end * case when @KWCzasZapisu &gt; @KPCzasZapisu or @KWCzasZapisu = @KPCzasZapisu and @KWKrpLp &gt; @KpKrpLp  then @WycenaRK else 0 end
+		FROM CDN.Zapisy 
+		WHERE KAZ_GIDNumer = @KWGIDNumer
+
+		IF @@ERROR &lt;&gt; 0
+		BEGIN
+		  ROLLBACK TRAN
+		  RAISERROR('3:Błąd aktualizacji wiersza w tabeli Zapisy.', 16, 1) 
+		  RETURN 3
+		END
+	end
+
+
+
+	UPDATE CDN.Zapisy SET 			
+		KAZ_PozostajeWycena = KAZ_PozostajeWycena + SIGN(KAZ_Kwota)* cdn.PlatnoscSumaRozliczenia(784, KAZ_GIDNumer, 0, 0, @ParID, 1),
+		KAZ_PozostajeWycenaSys = KAZ_PozostajeWycenaSys + SIGN(KAZ_Kwota) * cdn.PlatnoscSumaRozliczenia(784, KAZ_GIDNumer, 0, 3, @ParID, 1),
+  		KAZ_Wyceniony = case when KAZ_PozostajeWycena + SIGN(KAZ_Kwota)* cdn.PlatnoscSumaRozliczenia(784, KAZ_GIDNumer, 0, 0, @ParID, 1) = 0 then 1 else 0 end,
+  		KAZ_WycenaRK = KAZ_WycenaRK - sign(KAZ_Kwota) * @KWRK,
+		KAZ_WycenaRKStan = KAZ_WycenaRKStan - case when @RKN_Znak=1 then 1 else -1 end * case when @KPCzasZapisu &gt; @KWCzasZapisu or @KPCzasZapisu = @KWCzasZapisu and @KPKrpLp &gt; @KWKrpLp then @WycenaRK else 0 end
+	FROM CDN.Zapisy 
+    WHERE KAZ_GIDNumer = @KPGIDNumer
+
+	IF @@ERROR &lt;&gt; 0
+	BEGIN
+	  ROLLBACK TRAN
+	  RAISERROR('3:Błąd aktualizacji wiersza w tabeli Zapisy.', 16, 1) 
+	  RETURN 3
+	END
+
+
+	goto lUsunRozliczenie
+end
+else
+begin --normalne rozliczenie
+	
+
+	UPDATE CDN.Zapisy SET 
+			KAZ_Pozostaje = KAZ_Pozostaje + SIGN(KAZ_Kwota)* cdn.PlatnoscSumaRozliczenia(784, KAZ_GIDNumer, 0, case when KAZ_Waluta = @WalutaSys then 3 else 0 end, @ParID, 0),
+			KAZ_PozostajeSys = KAZ_PozostajeSys + SIGN(KAZ_Kwota) * cdn.PlatnoscSumaRozliczenia(784, KAZ_GIDNumer, 0, 3, @ParID, 0),
+			KAZ_PozostajeRoz = KAZ_PozostajeRoz + SIGN(KAZ_Kwota) * cdn.PlatnoscSumaRozliczenia(784, KAZ_GIDNumer, 0, 0, @ParID, 0),
+			KAZ_Rozliczony = case when KAZ_PozostajeRoz + SIGN(KAZ_Kwota) * cdn.PlatnoscSumaRozliczenia(784, KAZ_GIDNumer, 0, 0, @ParID, 0) &lt;&gt; 0 then 0 else 1 end,
+			KAZ_DataRozliczenia = 999999,
+			@ZewnetrznyID1 = case when KAZ_Znak = 1 then KAZ_ZewnetrznyID end,
+			@ZewnetrznyID2 = case when KAZ_Znak = 2 then KAZ_ZewnetrznyID end
+	FROM CDN.Zapisy 
+	WHERE exists(select R2_ID from CDN.Rozliczenia 
+			where KAZ_GIDTyp=R2_Dok1Typ AND KAZ_GIDNumer=R2_Dok1Numer AND KAZ_GIDLp=R2_Dok1Lp
+			and R2_ParID = @ParID and R2_Dok2Typ &lt;&gt; 435
+			union all
+			select R2_ID from CDN.Rozliczenia 
+			where KAZ_GIDTyp=R2_Dok2Typ AND KAZ_GIDNumer=R2_Dok2Numer AND KAZ_GIDLp=R2_Dok2Lp
+			and R2_ParID = @ParID and R2_Dok1Typ &lt;&gt; 435
+			)
+
+
+	IF @@ERROR &lt;&gt; 0
+	BEGIN
+	  ROLLBACK TRAN
+	  RAISERROR('3:Błąd aktualizacji wiersza w tabeli Zapisy.', 16, 1) 
+	  RETURN 3
+	END
+
+
+
+
+	if isnull(@R2_WycenaParID,0) &lt;&gt; 0
+	begin
+
+		update r set  
+			r.R2_PozostajeZWyc = r.R2_PozostajeZWyc + isnull(b.R2_KwotaWal,0),
+			r.R2_PozostajeZWycSys = r.R2_PozostajeZWycSys + isnull(b.R2_KwotaSys,0)
+		from cdn.Rozliczenia r
+			left join cdn.Zapisy zap1
+				on R2_Dok1Typ = 784 and r2_Dok1Numer = zap1.KAZ_GIDNumer and R2_Dok1Lp =0 and zap1.KAZ_Znak = 1
+			left join cdn.Zapisy zap2
+				on R2_Dok2Typ = 784 and r2_Dok2Numer = zap2.KAZ_GIDNumer and R2_Dok2Lp =0 and zap2.KAZ_Znak = 1
+			left join (
+				select R2_WycenaParID, R2_DokTyp, R2_DokNumer, R2_DokLp, sum(R2_KwotaWal) as r2_KwotaWal, sum(R2_KwotaSys) as R2_KwotaSys
+				from (select R2_WycenaParID, R2_Dok1Typ R2_DokTyp, R2_Dok1Numer R2_DokNumer, R2_Dok1Lp R2_DokLp, sum(R2_KwotaWal1) as r2_KwotaWal, sum(R2_KwotaSys + case when R2_RKStrona=1 then R2_RK else 0 end) as R2_KwotaSys
+					from cdn.Rozliczenia
+					where R2_Wycena = 0 and R2_WycenaParID = @R2_WycenaParID and R2_ParID = @ParID and R2_Dok2Typ &lt;&gt; 435
+					group by R2_WycenaParID, R2_Dok1Typ, R2_Dok1Numer, R2_Dok1Lp
+					union all
+					select R2_WycenaParID, R2_Dok2Typ, R2_Dok2Numer, R2_Dok2Lp, sum(R2_KwotaWal2) as r2_KwotaWal, sum(R2_KwotaSys + case when R2_RKStrona=2 then R2_RK else 0 end) as R2_KwotaSys
+					from cdn.Rozliczenia
+					where R2_Wycena = 0 and R2_WycenaParID = @R2_WycenaParID and R2_ParID = @ParID and R2_Dok1Typ &lt;&gt; 435
+					group by R2_WycenaParID, R2_Dok2Typ, R2_Dok2Numer, R2_Dok2Lp
+					) a
+				group by R2_WycenaParID, R2_DokTyp, R2_DokNumer, R2_DokLp
+				) b
+					on r.R2_ParID = b.R2_WycenaParID and b.R2_DokTyp = 784 and b.R2_DokNumer = isnull(zap1.KAZ_GIDNumer,zap2.KAZ_GIDNumer) and b.R2_DokLp = 0
+		where r.R2_Wycena = 1 and r.R2_ParID = @R2_WycenaParID 
+
+
+		IF @@ERROR &lt;&gt; 0
+		BEGIN
+		  ROLLBACK TRAN
+		  RAISERROR('3:Błąd aktualizacji wiersza w tabeli Rozliczenia', 16, 1) 
+		  RETURN 3
+		END
+	end
+
+
+
+	--aktualizuj Trp (uwzgledniaj tylko rozliczenie Trp1-Trp2)
+	UPDATE CDN.TraPlat SET 
+		--TRP_Pozostaje = TRP_Pozostaje + R2_KwotaWal1 * SIGN(TRP_Kwota),
+		TRP_Pozostaje = TRP_Pozostaje + SIGN(TRP_Kwota)* cdn.PlatnoscSumaRozliczenia(TrP_GIDTyp, TRP_GIDNumer, TrP_GIDLp, case when TrP_Waluta = @WalutaSys then 3 else 0 end, @ParID, 0),
+		TRP_PozostajeSys = TRP_PozostajeSys + SIGN(TrP_Kwota) * cdn.PlatnoscSumaRozliczenia(TrP_GIDTyp, TRP_GIDNumer, TrP_GIDLp, 3, @ParID, 0),
+  		TRP_Rozliczona = 0,  	
+		TRP_DataRozliczenia = 999999,
+  		@ZewnetrznyID1 = case when TRP_Typ = 1 then TRP_ZewnetrznyID end,
+		@ZewnetrznyID2 = case when TRP_Typ = 2 then TRP_ZewnetrznyID end
+  	WHERE exists(select R2_ID from CDN.Rozliczenia 
+			where TRP_GIDTyp=R2_Dok1Typ AND TRP_GIDNumer=R2_Dok1Numer AND TRP_GIDLp=R2_Dok1Lp
+			and R2_ParID = @ParID and R2_Dok2Typ &lt;&gt; 435
+			union all
+			select R2_ID from CDN.Rozliczenia 
+			where TRP_GIDTyp=R2_Dok2Typ AND TRP_GIDNumer=R2_Dok2Numer AND TRP_GIDLp=R2_Dok2Lp
+			and R2_ParID = @ParID and R2_Dok1Typ &lt;&gt; 435
+			)			
+	IF @@ERROR &lt;&gt; 0
+	BEGIN
+	  ROLLBACK TRAN
+	  RAISERROR('2:Błąd aktualizacji wiersza w tabeli TraPlat.', 16, 1) 
+	  RETURN 2
+	END
+
+end
+
+
+lUsunRozliczenie:
+
+SELECT R2_Dok1Typ, R2_Dok1Numer, R2_Dok1Lp, R2_Dok2Typ, R2_Dok2Numer, R2_Dok2Lp, R2_ParID
+INTO #tmpRozliczenia
+FROM CDN.Rozliczenia WHERE R2_ParID=@ParID
+
+DELETE FROM CDN.Rozliczenia WHERE R2_ParID = @ParID
+IF @@ERROR &lt;&gt; 0
+BEGIN
+  ROLLBACK TRAN
+  RAISERROR('4:Błąd kasowania wiersza tabeli Rozliczenia.', 16, 1) 
+  RETURN 4
+END
+
+
+DECLARE RozliczeniaCur CURSOR LOCAL FOR 
+SELECT R2_Dok1Typ, R2_Dok1Numer, R2_Dok1Lp, R2_Dok2Typ, R2_Dok2Numer, R2_Dok1Lp FROM #tmpRozliczenia WHERE R2_ParID=@ParID
+
+OPEN RozliczeniaCur
+FETCH NEXT FROM RozliczeniaCur INTO @GIDTyp1, @GIDNumer1, @GIDLp1, @GIDTyp2, @GIDNumer2, @GIDLp2
+WHILE @@FETCH_STATUS = 0
+BEGIN
+	if @GIDTyp1 &lt;&gt; 435
+	begin
+		EXEC CDN.AktualizujNaglowek @GIDTyp1, @GIDNumer1, @UserID, @GIDFirma, @EdycjaGIDTyp, @EdycjaGIDNumer
+		IF @@TRANCOUNT = 0
+		begin
+			CLOSE RozliczeniaCur
+			DEALLOCATE RozliczeniaCur
+			RETURN 0
+		end		  
+
+		IF @GIDTyp1 &lt;&gt; 784
+		BEGIN
+			EXEC CDN.PrzeliczKwoteVatPodzielonejPlatnosci @GIDTyp1, @GIDNumer1, @GIDLp1
+			IF @@TRANCOUNT = 0
+			begin
+				CLOSE RozliczeniaCur
+				DEALLOCATE RozliczeniaCur
+				RETURN 0
+			end		  
+		END
+	end
+
+
+	if @GIDTyp2 &lt;&gt; 435
+	begin
+		EXEC CDN.AktualizujNaglowek @GIDTyp2, @GIDNumer2, @UserID, @GIDFirma, @EdycjaGIDTyp, @EdycjaGIDNumer
+		IF @@TRANCOUNT = 0
+		begin
+			CLOSE RozliczeniaCur
+			DEALLOCATE RozliczeniaCur
+			RETURN 0
+		end
+
+		IF @GIDTyp2 &lt;&gt; 784
+		BEGIN
+			EXEC CDN.PrzeliczKwoteVatPodzielonejPlatnosci @GIDTyp2, @GIDNumer2, @GIDLp2
+			IF @@TRANCOUNT = 0
+			begin
+				CLOSE RozliczeniaCur
+				DEALLOCATE RozliczeniaCur
+				RETURN 0
+			end		  
+		END
+	end
+
+ 	FETCH NEXT FROM RozliczeniaCur INTO @GIDTyp1, @GIDNumer1, @GIDLp1, @GIDTyp2, @GIDNumer2, @GIDLp2
+END
+CLOSE RozliczeniaCur
+DEALLOCATE RozliczeniaCur
+DROP TABLE #tmpRozliczenia
+
+if isnull(@RKN_ID,0) &lt;&gt; 0
+begin
+	declare @RKN_Zaksiegowano smallint
+	declare @RKN_Aktywny int
+
+
+	select 
+		@RKN_Zaksiegowano = RKN_Zaksiegowano,
+		@RKN_Aktywny = RKN_Aktywny
+	from cdn.RozniceKursowe
+	where RKN_ID = @RKN_ID
+
+
+	select @Err = @@Error, @RCount = @@ROWCOUNT
+
+	if @Err &lt;&gt; 0
+	begin
+	  ROLLBACK TRAN
+	  RAISERROR('1:Błąd odczytu rekordów z tabeli RozniceKursowe', 16, 1) 
+	  RETURN 1
+	END
+
+
+	if @RCount = 0
+	begin
+	  goto lExit_ok
+	END
+
+
+	--sprawdz czy nie jest aktywny
+	if isnull(@RKN_Aktywny,0) &lt;&gt; 0
+	BEGIN
+	  ROLLBACK TRAN
+	  RAISERROR('7:Operacja anulowana. Dokument Różnicy Kursowej jest w edycji', 16, 1) 
+	  RETURN 7
+	END
+	
+	--sprawdz czy nie jest zaksiegowany
+	if isnull(@RKN_Zaksiegowano,0) &lt;&gt; 0
+	BEGIN
+	  ROLLBACK TRAN
+	  RAISERROR('7:Operacja anulowana. Dokument Różnicy Kursowej jest zaksięgowany.', 16, 1) 
+	  RETURN 7
+	END
+
+
+	delete from cdn.OpisWymNag where OWN_GIDTyp = 435 and OWN_GIDNumer = @RKN_ID
+	IF @@ERROR &lt;&gt; 0
+	BEGIN
+	  ROLLBACK TRAN
+	  RAISERROR('7:Błąd kasowania opisu analitycznego dokumentu Różnicy Kursowej', 16, 1) 
+	  RETURN 7
+	END	
+
+
+	--skasuj DokRk
+	DELETE FROM CDN.RozniceKursowe WHERE RKN_ID = @RKN_ID
+	IF @@ERROR &lt;&gt; 0
+	BEGIN
+	  ROLLBACK TRAN
+	  RAISERROR('5:Błąd kasowania dokumentu Różnicy Kursowej.', 16, 1) 
+	  RETURN 5
+	END
+end
+
+
+lExit_ok:
+COMMIT TRAN
+SET NOCOUNT OFF
+RETURN 0
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

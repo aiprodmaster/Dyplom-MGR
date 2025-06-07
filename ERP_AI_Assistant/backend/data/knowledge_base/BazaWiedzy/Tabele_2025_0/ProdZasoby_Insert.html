@@ -1,0 +1,222 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="ProdZasoby_Insert"></A><PRE>
+          <FONT SIZE="2"><I>/* ProdZasoby_Insert */</I><BR>
+CREATE PROCEDURE CDN.ProdZasoby_Insert @PZAID int, @PTZID int, @PCZID int, @Ilosc decimal(11,4), @TypZasobu int, @Planowany int, @ZasobDoZwiazania int,@FirmaId INT,@OpeNr INT,
+	@IloscPom DECIMAL(11,4) = NULL, @PTEKopiujZalaczniki TINYINT,@Cecha VARCHAR(255) = NULL, @KlasaCechy INT = NULL, @IdWzorcaNrPartii INT = NULL
+AS
+begin
+	DECLARE @IdDodanego INT
+	DECLARE @PTZDodanego INT
+
+	if @PZAID &gt; 0
+	begin
+		insert into cdn.ProdZasoby
+		(PZA_Czynnosc,PZA_TechnologiaZasob,PZA_Ilosc,PZA_IloscPom,PZA_Koszt,PZA_TypKosztu,PZA_KosztUstalony,PZA_KosztSurowca,PZA_Termin,
+		PZA_MagNumer,PZA_NumerSeryjny,PZA_Cecha,PZA_KlasaCechy,PZA_TypZasobu,PZA_TwrTyp,PZA_TwrNumer,PZA_Zasob,PZA_KopTyp,PZA_KopNumer,
+		PZA_WagaKosztu,PZA_WagaIlosc,PZA_Cena,PZA_IloscTechnologiczna,PZA_Planowany,PZA_RodzajUbocznego,PZA_KodNiezgodnosci,PZA_Opis,PZA_PrzeliczajWgPomocniczej,PZA_JednostkaPom,
+		PZA_PodlegaKJ,PZA_PKJNId, PZA_IdWzorcaNrPartii)
+		select
+			isnull(@PCZID,Z1.PZA_Czynnosc)		--PZA_Czynnosc
+			,Z1.PZA_TechnologiaZasob
+			,@Ilosc
+			,CASE WHEN ISNULL(PTZ1.PTZ_NiezaleznaOdJedPod,1) = 0 OR @IloscPom IS NULL THEN (@Ilosc * z1.PZA_IloscPom)/CASE WHEN Z1.PZA_Ilosc&gt;0 THEN Z1.PZA_Ilosc ELSE 1 END
+			ELSE @IloscPom END
+			,CASE WHEN ISNULL(@ZasobDoZwiazania,Z1.PZA_Zasob) &gt; 0 AND Z1.PZA_TypKosztu = 1 THEN 
+				CASE WHEN Z2.PZA_PrzeliczajWgPomocniczej = 1 THEN 
+					CASE WHEN ISNULL(PTZ1.PTZ_NiezaleznaOdJedPod,1) = 0 OR @IloscPom IS NULL THEN (@Ilosc * z1.PZA_IloscPom)/
+						CASE WHEN Z1.PZA_Ilosc&gt;0 THEN Z1.PZA_Ilosc ELSE 1 END ELSE @IloscPom END 
+				ELSE @Ilosc END * Z2.PZA_Cena
+			ELSE
+				CASE WHEN Z1.PZA_TypKosztu = 1 THEN
+					ROUND(((
+					CASE WHEN isnull(@Planowany,Z1.PZA_Planowany) = 1 AND PTZ1.PTZ_TypZasobu IN (1,2) AND PTZ2.PTZ_PrzeliczajWgPomocniczej = 1 THEN
+							CASE WHEN ISNULL(PTZ1.PTZ_NiezaleznaOdJedPod,1) = 0 OR @IloscPom IS NULL THEN (@Ilosc * z1.PZA_IloscPom)/(CASE WHEN Z1.PZA_Ilosc&gt;0 THEN Z1.PZA_Ilosc ELSE 1 END) 
+							ELSE @IloscPom 
+							END						 
+					ELSE
+						CASE WHEN Z1.PZA_PrzeliczajWgPomocniczej = 0 OR (Z1.PZA_TechnologiaZasob = 0 AND Z1.PZA_JednostkaPom = '') 
+							OR (Z1.PZA_TechnologiaZasob &gt; 0 AND ISNULL(PTZ1.PTZ_JednostkaPom,'') = '')  
+							THEN @Ilosc 
+						ELSE 
+							CASE WHEN ISNULL(PTZ1.PTZ_NiezaleznaOdJedPod,1) = 0 OR @IloscPom IS NULL THEN (@Ilosc * z1.PZA_IloscPom)/(CASE WHEN Z1.PZA_Ilosc&gt;0 THEN Z1.PZA_Ilosc ELSE 1 END) 
+							ELSE @IloscPom 
+							END 
+						END 
+					END)
+						* ISNULL(Z2.PZA_Cena,Z1.PZA_Cena)),2)
+				ELSE (CASE WHEN Z1.PZA_PrzeliczajWgPomocniczej = 0 OR Z1.PZA_JednostkaPom = '' THEN @Ilosc 
+						ELSE CASE WHEN ISNULL(PTZ1.PTZ_NiezaleznaOdJedPod,1) = 0 OR @IloscPom IS NULL THEN (@Ilosc * z1.PZA_IloscPom)/CASE WHEN Z1.PZA_Ilosc&gt;0 THEN Z1.PZA_Ilosc ELSE 1 END 
+						ELSE @IloscPom END END 
+						* Z1.PZA_Koszt)/CASE WHEN Z1.PZA_Ilosc&gt;0 THEN Z1.PZA_Ilosc ELSE 1 END END END			
+			,Z1.PZA_TypKosztu
+			,Z1.PZA_KosztUstalony
+			,Z1.PZA_KosztSurowca
+			,Z1.PZA_Termin
+			,Z1.PZA_MagNumer
+			,ISNULL(z2.PZA_NumerSeryjny,Z1.PZA_NumerSeryjny)
+			,COALESCE(@Cecha,Z2.PZA_Cecha,Z1.PZA_Cecha)
+			,COALESCE(@KlasaCechy,z2.PZA_KlasaCechy,Z1.PZA_KlasaCechy)
+			,isnull(@TypZasobu,Z1.PZA_TypZasobu)	--PZA_TypZasobu
+			,Z1.PZA_TwrTyp
+			,Z1.PZA_TwrNumer
+			,isnull(@ZasobDoZwiazania,Z1.PZA_Zasob)
+			,Z1.PZA_KopTyp
+			,Z1.PZA_KopNumer
+			,Z1.PZA_WagaKosztu
+			,Z1.PZA_WagaIlosc
+			,ISNULL(Z2.PZA_Cena,Z1.PZA_Cena)
+			,Z1.PZA_IloscTechnologiczna
+			,isnull(@Planowany,Z1.PZA_Planowany)	--PZA_Planowany
+			,Z1.PZA_RodzajUbocznego
+			,Z1.PZA_KodNiezgodnosci
+			,Z1.PZA_Opis
+			,Z1.PZA_PrzeliczajWgPomocniczej
+			,Z1.PZA_JednostkaPom
+			,CASE WHEN isnull(@Planowany,Z1.PZA_Planowany) = 1 THEN ISNULL(PTZ1.PTZ_PodlegaKJ,0) ELSE Z1.PZA_PodlegaKJ END 
+			,CASE WHEN isnull(@Planowany,Z1.PZA_Planowany) = 1 THEN 0 ELSE Z1.PZA_PKJNId END
+			,CASE WHEN COALESCE(@TypZasobu, Z1.PZA_TypZasobu) = 0 THEN COALESCE(@IdWzorcaNrPartii, Z1.PZA_IdWzorcaNrPartii) ELSE 0 END
+		from CDN.ProdZasoby Z1
+		LEFT JOIN CDN.ProdTechnologiaZasoby PTZ1 ON PTZ1.PTZ_Id = Z1.PZA_TechnologiaZasob
+		LEFT JOIN CDN.ProdTechnologiaZasoby PTZ2 ON PTZ2.PTZ_Id = PTZ1.PTZ_TechnologiaZasob
+		LEFT JOIN CDN.ProdTechnologiaCzynnosci ON PTZ1.PTZ_TechnologiaCzynnosc = PTC_Id
+		LEFT JOIN CDN.ProdZasoby Z2 ON Z2.PZA_Id = ISNULL(@ZasobDoZwiazania,Z1.PZA_Zasob) 
+		where Z1.PZA_Id = @PZAID
+
+		SET @IdDodanego = SCOPE_IDENTITY()
+		exec CDN.AtrKopiujAtrybuty @ZrdTyp=14346,@ZrdFirma=@FirmaId,@ZrdNumer=@PZAID,@ZrdLp=0,@ZrdSubLp=0,
+	@DocTyp=14346,@DocFirma=@FirmaId,@DocNumer=@IdDodanego,@DocLp=0,@DocSubLp=0,@OpeTyp=128,@OpeFirma=@FirmaId,@OpeNumer=@OpeNr,@OpeLp=0,@Blad=0
+		IF @PTEKopiujZalaczniki = 1
+		BEGIN
+			SET @PTZDodanego = 0
+			IF @Planowany = 0 OR @Planowany IS NULL
+			BEGIN
+				SET @PTZDodanego = ISNULL((SELECT PZA_TechnologiaZasob FROM CDN.ProdZasoby WHERE PZA_Id = @IdDodanego AND PZA_Planowany = 0),0)
+				
+				IF @PTZDodanego &gt; 0 
+				BEGIN
+					IF @Planowany = 0
+					BEGIN
+						EXEC CDN.ProdKopiujZalaczniki @ZrdTyp = 14342, @ZrdNumer = @PTZDodanego, @DocTyp = 14346, @DocNumer = @IdDodanego
+					END
+					ELSE
+					BEGIN
+						EXEC CDN.ProdKopiujZalaczniki @ZrdTyp = 14346, @ZrdNumer = @PZAID, @DocTyp = 14346, @DocNumer = @IdDodanego
+					END
+				END
+			END
+		END	
+		IF @Planowany = 0 OR @Planowany IS NULL
+		BEGIN
+			INSERT INTO CDN.ProdPKJZas(PKJZ_PKJNId,PKJZ_PZAId)
+			SELECT Z.PKJZ_PKJNId,@IdDodanego
+			FROM CDN.ProdZasoby
+			JOIN CDN.ProdPKJZas Z ON Z.PKJZ_PZAId = PZA_Id
+			WHERE PZA_ID = @PZAID AND PZA_Planowany = 0
+		END
+		return @IdDodanego
+	end
+	else if @PTZID &gt; 0
+	begin
+		insert into cdn.ProdZasoby
+		(PZA_Czynnosc,PZA_TechnologiaZasob,PZA_Ilosc,PZA_IloscPom,PZA_Koszt,PZA_TypKosztu,PZA_KosztUstalony,PZA_KosztSurowca,PZA_Termin,
+		PZA_MagNumer,PZA_NumerSeryjny,PZA_Cecha,PZA_KlasaCechy,PZA_TypZasobu,PZA_TwrTyp,PZA_TwrNumer,PZA_Zasob,PZA_KopTyp,PZA_KopNumer,
+		PZA_WagaKosztu,PZA_WagaIlosc,PZA_Cena,PZA_IloscTechnologiczna,PZA_Planowany,PZA_RodzajUbocznego,PZA_KodNiezgodnosci,PZA_Opis,PZA_PrzeliczajWgPomocniczej,PZA_JednostkaPom,
+		PZA_PodlegaKJ,PZA_PKJNId, PZA_IdWzorcaNrPartii)
+		select
+			@PCZID		--PZA_Czynnosc
+			,PTZ1.PTZ_ID     --PZA_TechnologiaZasob
+			,@Ilosc     --PZA_Ilosc
+			,CASE WHEN ISNULL(PTZ1.PTZ_NiezaleznaOdJedPod,1) = 0 OR @IloscPom IS NULL THEN CDN.ProdIloscAtr(@Ilosc,isnull(PTZ1.PTZ_IloscPom,0),isnull(PTZ1.PTZ_IloscPomAtr,0),4,
+			isnull(PTZ1.PTZ_TypZasobu,0),
+				ISNULL(PTZ1.PTZ_Ilosc,0),ISNULL(PTZ1.PTZ_IloscAtr,0),14340,ISNULL(PTC_Technologia,0),PCZ_TerminRozpoczecia,PCZ_Proces) ELSE @Ilosc END--PZA_IloscPom
+			,
+			CASE WHEN @ZasobDoZwiazania &gt; 0 THEN
+				ROUND(
+				CASE WHEN Z2.PZA_PrzeliczajWgPomocniczej = 1 THEN 
+					CASE WHEN ISNULL(PTZ1.PTZ_NiezaleznaOdJedPod,1) = 0 OR @IloscPom IS NULL THEN 
+						CDN.ProdIloscAtr(@Ilosc,isnull(PTZ1.PTZ_IloscPom,0),isnull(PTZ1.PTZ_IloscPomAtr,0),4,isnull(PTZ1.PTZ_TypZasobu,0),ISNULL(PTZ1.PTZ_Ilosc,0),
+						ISNULL(PTZ1.PTZ_IloscAtr,0),14340,ISNULL(PTC_Technologia,0),PCZ_TerminRozpoczecia,PCZ_Proces) 
+					ELSE @Ilosc END
+				ELSE @Ilosc END * Z2.PZA_Cena,2)
+			ELSE CASE WHEN PTZ1.PTZ_Koszt = 1 THEN ROUND((
+				CASE WHEN (CASE WHEN isnull(@TypZasobu,PTZ1.PTZ_TypZasobu) IN(0,4) OR (@Planowany = 1 AND PTZ1.PTZ_TypZasobu IN(0,4)) 
+					THEN PTZ1.PTZ_PrzeliczajWgPomocniczej WHEN @Planowany = 1 THEN ISNULL(PTZ2.PTZ_PrzeliczajWgPomocniczej,0) ELSE 0 END) = 1 AND PTZ1.PTZ_JednostkaPom &lt;&gt; '' THEN 
+					CASE WHEN ISNULL(PTZ1.PTZ_NiezaleznaOdJedPod,1) = 0 OR @IloscPom IS NULL THEN 
+						CDN.ProdIloscAtr(@Ilosc,isnull(PTZ1.PTZ_IloscPom,0),isnull(PTZ1.PTZ_IloscPomAtr,0),4,isnull(PTZ1.PTZ_TypZasobu,0),	ISNULL(PTZ1.PTZ_Ilosc,0),ISNULL(PTZ1.PTZ_IloscAtr,0),14340,
+					ISNULL(PTC_Technologia,0),PCZ_TerminRozpoczecia,PCZ_Proces) ELSE @IloscPom END ELSE @Ilosc END *PTZ1.PTZ_Cena),2) ELSE 0 END END 
+		
+			--PZA_Koszt
+			,PTZ1.PTZ_Koszt  --PZA_TypKosztu
+			,0			--PZA_KosztUstalony
+			,0			--PZA_KosztSurowca
+			,0			--PZA_Termin
+			,COALESCE(POM_MagNumer, PTZ1.PTZ_MagNumer) --PZA_MagNumer
+			,ISNULL(Z2.PZA_NumerSeryjny,'')			--PZA_NumerSeryjny
+			,COALESCE(@Cecha, CASE WHEN ISNULL(Z2.PZA_Cecha,'') = '&lt;Nr partii/ser. wg wzorca&gt;' THEN Z2.PZA_Cecha ELSE PTZ1.PTZ_Cecha END)	--PZA_Cecha
+			,COALESCE(@KlasaCechy,CASE WHEN ISNULL(Z2.PZA_Cecha,'') = '&lt;Nr partii/ser. wg wzorca&gt;' THEN Z2.PZA_KlasaCechy ELSE PTZ1.PTZ_KlasaCechy END)	--PZA_KlasaCechy
+			,isnull(@TypZasobu,PTZ1.PTZ_TypZasobu)	--PZA_TypZasobu
+			,PTZ1.PTZ_TwrTyp		--PZA_TwrTyp
+			,PTZ1.PTZ_TwrNumer	--PZA_TwrNumer
+			,isnull(@ZasobDoZwiazania,0)	--PZA_Zasob
+			,PTZ1.PTZ_KopTyp			--PZA_KopTyp
+			,PTZ1.PTZ_KopNumer			--PZA_KopNumer
+			,PTZ1.PTZ_WagaKosztu			--PZA_WagaKosztu
+			,PTZ1.PTZ_WagaIlosc			--PZA_WagaIlosc
+			,PTZ1.PTZ_Cena			--PZA_Cena
+			,@Ilosc		--PZA_IloscTechnologiczna
+			,isnull(@Planowany,0)			--PZA_Planowany
+			,PTZ1.PTZ_RodzajUbocznego
+			,0
+			,''
+			,CASE WHEN @Planowany = 1 THEN
+				CASE WHEN PTZ1.PTZ_TypZasobu IN(0,4) THEN PTZ1.PTZ_PrzeliczajWgPomocniczej ELSE 0 END
+			WHEN isnull(@TypZasobu,PTZ1.PTZ_TypZasobu) IN(0,4) THEN PTZ1.PTZ_PrzeliczajWgPomocniczej ELSE 0 END
+			,''
+			,PTZ1.PTZ_PodlegaKJ
+			,0
+			,COALESCE(@IdWzorcaNrPartii, PTZ1.PTZ_IdWzorcaNrPartii)
+		from CDN.ProdTechnologiaZasoby PTZ1 
+		JOIN CDN.ProdTechnologiaCzynnosci ON PTZ_TechnologiaCzynnosc = PTC_Id 
+		JOIN CDN.ProdCzynnosci ON PCZ_Id = @PCZID
+		LEFT JOIN CDN.ProdZasoby Z2 ON Z2.PZA_Id = @ZasobDoZwiazania
+		LEFT JOIN CDN.ProdTechnologiaZasoby PTZ2 ON PTZ2.PTZ_Id = PTZ1.PTZ_TechnologiaZasob
+		LEFT JOIN CDN.ProdOperacjeMagazyny WITH(NOLOCK) ON POM_PTZId = PTZ1.PTZ_Id and POM_PCZId = @PCZID
+		where PTZ1.PTZ_ID = @PTZID
+
+		SET @IdDodanego = SCOPE_IDENTITY()
+		exec CDN.AtrKopiujAtrybuty @ZrdTyp=14342,@ZrdFirma=@FirmaId,@ZrdNumer=@PTZID,@ZrdLp=0,@ZrdSubLp=0,
+			@DocTyp=14346,@DocFirma=@FirmaId,@DocNumer=@IdDodanego,@DocLp=0,@DocSubLp=0,@OpeTyp=128,@OpeFirma=@FirmaId,@OpeNumer=@OpeNr,@OpeLp=0,@Blad=0
+		
+		IF @PTEKopiujZalaczniki = 1
+		BEGIN
+			--SET @PTZDodanego = 0
+			IF @Planowany = 0 OR @Planowany IS NULL
+			BEGIN
+				--SET @PTZDodanego = ISNULL((SELECT PZA_TechnologiaZasob FROM CDN.ProdZasoby WHERE PZA_Id = @IdDodanego),0)
+				
+				IF @PTZID &gt; 0 
+				BEGIN
+					EXEC CDN.ProdKopiujZalaczniki @ZrdTyp = 14342, @ZrdNumer = @PTZID, @DocTyp = 14346, @DocNumer = @IdDodanego
+				END
+			END
+		END	
+
+		return @IdDodanego
+	end
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

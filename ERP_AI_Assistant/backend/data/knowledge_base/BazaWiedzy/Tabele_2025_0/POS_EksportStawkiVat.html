@@ -1,0 +1,55 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[POS_EksportStawkiVat]"></A><PRE>
+          <FONT SIZE="2"><I>/* [POS_EksportStawkiVat] */</I><BR>
+CREATE PROCEDURE [CDN].[POS_EksportStawkiVat]
+	@rowVersion bigint,
+	@PointOfSaleId int
+AS
+BEGIN
+	SET NOCOUNT ON;
+	declare @dbts bigint = cast(@@DBTS as bigint)	
+	select
+		isnull((select max(naz_CzasModyfikacji) from cdn.Nazwy where naz_gidtyp=624 AND naz_CzasModyfikacji &gt; @RowVersion),@RowVersion) as [@RowVersion], (
+		select distinct
+			stawka.naz_gidlp as [@Id],
+			RTRIM(stawka.naz_Nazwa) as [@Name],
+			CAST(CAST(CDN.UsunLitery(RTRIM(stawka.naz_Nazwa)) AS Decimal(15,2))/100 as Decimal(10,6)) as [@Value],
+			ISNULL(SUBSTRING(drukarka.Naz_Opis,r,1),'') as [@MappedVATRate],
+			Case when stawka.naz_Archiwalny = 0 then 'true' else 'false' end as [@IsActive],
+			case when LEFT(RIGHT(stawka.naz_nazwa1,10),2) = '00' then 'true' else 'false' end as [@IsNotSubjectToTaxation],
+			SUBSTRING(RTRIM(stawka.naz_Nazwa),1,1) as [@Symbol],
+			case when  CAST(CDN.UsunLitery(RTRIM(stawka.naz_Nazwa)) as decimal(15,2))=0 then  SUBSTRING(stawka.naz_nazwa1,11,1) else 0 end as [@ExportDocumentType],
+			case when LEFT(RIGHT(stawka.naz_nazwa1,10),2) = '20' then 'true' else 'false' end as [@IsReverseCharge]
+		
+		from (
+			select ROW_NUMBER() OVER(ORDER BY Naz_Gidlp ASC) as lp ,left(naz_nazwa,1) as Grupa,* from cdn.Nazwy where naz_gidtyp=624 AND RIGHT(RTRIM(naz_nazwa),1)  LIKE '[0-9]'
+		) stawka
+		left join cdn.Nazwy drukarka on drukarka.Naz_Nazwa IN (select psa_drukarka from cdn.PicoStanowiska where (@PointOfSaleId is not null and PSa_ID = @PointOfSaleId) or (@PointOfSaleId is null and PSa_TypAplikacji = 2)) AND drukarka.Naz_GIDTyp=2672
+		left join 
+		(
+		select ROW_NUMBER() OVER(ORDER BY Naz_Opis ASC) r,substring(a.Naz_Opis, v.number+1, 1)  s
+			from (select Naz_Opis from cdn.Nazwy where Naz_Nazwa IN (select psa_drukarka from cdn.PicoStanowiska where (@PointOfSaleId is not null and PSa_ID = @PointOfSaleId) or (@PointOfSaleId is null and PSa_TypAplikacji = 2)) AND Naz_GIDTyp=2672) a
+			join master..spt_values v on v.number &lt; len(a.Naz_Opis)
+			where v.type = 'P'
+		) zmapowana on zmapowana.r = stawka.lp * 2 
+
+	for xml path('VATRate'), type)
+	for xml path('VATRates')
+	SET NOCOUNT OFF;	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

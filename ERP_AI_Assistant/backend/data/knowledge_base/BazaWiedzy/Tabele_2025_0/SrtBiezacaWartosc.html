@@ -1,0 +1,478 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Usuwanie funkcji SrtBiezacaWartosc"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Usuwanie funkcji SrtBiezacaWartosc */</I><BR>
+IF EXISTS (SELECT name  FROM sysobjects WHERE name = 'SrtBiezacaWartosc' AND type = 'FN')
+ drop function CDN.SrtBiezacaWartosc;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie funkcji SrtBiezacaWartosc"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie funkcji SrtBiezacaWartosc */</I><BR>
+CREATE FUNCTION CDN.SrtBiezacaWartosc (@Srt_GIDNumer as int, @DataNaDzien int = null, @DataDok int = null, @Kwota  smallint = 0, @Tor smallint = 0, @WartosciSys tinyint = 0, @ZestTryb tinyint = 0)
+RETURNS decimal(21,2)
+ AS
+BEGIN
+--@Kwota (1- netto, 0 -brutto, 2 - poczatkowa (dzien przyjecia) , 3 - odpisy, 4 -zlomowa, 5 - zamortyzowanie, 6 - poczatkowa (do daty eksp))
+--@Tor (0 - umorzenie,  1 - amortyzacja,  2 - tor3,  3 - tor4,  4 - tor 5)
+--@WartosciSys (0 - wartość w walucie obcej, 1 - wartość w walucie systemowej)
+--@ZestTryb	(0 - środek trwały, 1 - element zestawu, 2 - zestaw)
+
+declare @Return_Value decimal(21,2)
+declare @Brutto decimal(21,2)
+declare @Netto decimal(21,2)
+declare @Odpisy decimal(21,2)
+declare @Odpisy_Likw decimal(21,2)
+declare @KwotaZlom decimal(21,2)
+declare @Zamort decimal(21,2)
+declare @Pocz decimal(21,2)
+declare @Pocz6 decimal(21,2)
+declare @DataPierwszeOT int
+declare @DataSrtEksp int
+
+---------------------------------------
+declare @AK   smallint
+declare @AM   smallint
+declare @AMK  smallint
+declare @AMP  smallint
+declare @LT   smallint
+declare @LTK  smallint
+declare @MW   smallint
+declare @MWK  smallint
+declare @OT   smallint
+declare @OTK  smallint
+declare @PK   smallint
+declare @RN   smallint
+declare @RT   smallint
+declare @WN   smallint
+declare @ZKZ  smallint
+declare @ZM   smallint
+declare @ZMT  smallint
+declare @ZO   smallint
+declare @ZPA  smallint
+declare @ZPK  smallint
+declare @ZSA  smallint
+declare @ZW   smallint
+declare @NT   smallint
+
+set @AK   = 2304
+set @AM   = 2064
+set @AMK  = 2192
+set @AMP  = 6208
+set @LT   = 2096
+set @LTK  = 2224
+set @MW   = 2432
+set @MWK  = 2496
+set @OT   = 2048
+set @OTK  = 2176
+set @PK   = 2080
+set @RN   = 2128
+set @RT   = 2532
+set @WN   = 2112
+set @ZKZ  = 2552
+set @ZM   = 2160
+set @ZMT  = 2548
+set @ZO   = 2144
+set @ZPA  = 2050
+set @ZPK  = 2051
+set @ZSA  = 2556
+set @ZW   = 2288
+set @NT   = 2536
+
+declare @ZestTrybSrodek  tinyint = 0
+declare @ZestTrybZestaw  tinyint = 1
+declare @ZestTrybElement tinyint = 2
+
+
+declare @ZestOdlaczenie		tinyint = 1
+declare @ZestPrzylaczenie	tinyint = 2
+---------------------------------------
+
+  declare @zmianaWaluty tinyint = 0
+  
+  
+  declare @DataZapPierwszeOT int
+  declare @SrtLpPierwszeOT smallint
+  declare @SrtGIDNumerPierwszeOT int
+  declare @SZELpPierwszeOT smallint
+  declare @SrtGIDTypPierwszeOT smallint
+  
+	if @ZestTryb = @ZestTrybSrodek		-- dla środka trwałego sprawdzenie, czy była zmiana waluty (wielowalutowość zestawów)
+		if exists (select 1 from cdn.SrtZestElem where SZE_SrtNumer = @Srt_GIDNumer and SZE_Waluta &lt;&gt; SZE_OrgWaluta and SZE_DataPrzylaczenia &lt;= @DataNaDzien and SZE_DataPrzylaczenia &lt;= @DataDok)
+			select @zmianaWaluty = 1
+
+		
+-----------
+	select @DataPierwszeOT = SHE_Data,
+		@DataZapPierwszeOT = SHE_DataZap,
+		@SrtLpPierwszeOT = SHE_SrtLp,
+		@SrtGIDNumerPierwszeOT = SHE_GIDNumer,
+		@SZELpPierwszeOT = SHE_SZELp,
+		@SrtGIDTypPierwszeOT = SHE_GIDTyp
+		
+	from cdn.SrtHistElem
+	where 
+		(@DataDok is null or not @DataDok is null and SHE_DataZap &lt;= @DataDok) and
+		(
+			@ZestTryb = @ZestTrybSrodek
+			and SHE_SrtNumer = @Srt_GIDNumer
+			and SHE_GIDTyp in (@OT, @ZPA)
+			and SHE_SrtLp = 
+			(
+				select max(SHE_SrtLp) from cdn.SrtHistElem
+				where SHE_SrtNumer = @Srt_GIDNumer and SHE_GIDTyp = @OT
+					and (@DataDok is null or not @DataDok is null and SHE_DataZap &lt;= @DataDok)
+					and SHE_Data = 
+					(
+						select max(SHE_Data) from cdn.SrtHistElem
+						where SHE_SrtNumer = @Srt_GIDNumer and SHE_GIDTyp = @OT
+							and (@DataDok is null or not @DataDok is null and SHE_DataZap &lt;= @DataDok)
+					)
+			)
+			and SHE_Data = 
+			(
+				select max(SHE_Data) from cdn.SrtHistElem
+				where SHE_SrtNumer = @Srt_GIDNumer and SHE_GIDTyp = @OT
+					and (@DataDok is null or not @DataDok is null and SHE_DataZap &lt;= @DataDok)
+			)
+		)
+-----------
+
+
+	--poczatkowa wartosc
+	
+	if @Kwota = 2
+	begin
+		if (@DataNaDzien is null or (not @DataNaDzien is null and @DataPierwszeOT &lt;= @DataNaDzien))
+		begin
+			select 
+				@Pocz = sum(
+					case when @WartosciSys = 1 then
+						case @Tor
+							when 0 then
+								case when she_gidtyp in (@LT, @LTK) then -1 else 1 end * SHE_KwotaInwSys								
+							when 1 then								
+								case when she_gidtyp in (@LT, @LTK) then -1 else 1 end * SHE_PodstawaAmSys								
+							when 2 then
+								case when she_gidtyp in (@LT, @LTK) then -1 else 1 end * SHE_PodstawaAmTor3Sys 
+							when 3 then
+								case when she_gidtyp in (@LT, @LTK) then -1 else 1 end * SHE_PodstawaAmTor4Sys 
+							when 4 then
+								case when she_gidtyp in (@LT, @LTK) then -1 else 1 end * SHE_PodstawaAmTor5Sys 
+							end
+					else
+						case @Tor
+							when 0 then
+								case when she_gidtyp in (@LT, @LTK) then -1 else 1 end * SHE_KwotaInw								
+							when 1 then
+								case when she_gidtyp in (@LT, @LTK) then -1 else 1 end * SHE_PodstawaAm								
+							when 2 then
+								case when she_gidtyp in (@LT, @LTK) then -1 else 1 end * SHE_PodstawaAmTor3
+							when 3 then
+								case when she_gidtyp in (@LT, @LTK) then -1 else 1 end * SHE_PodstawaAmTor4
+							when 4 then
+								case when she_gidtyp in (@LT, @LTK) then -1 else 1 end * SHE_PodstawaAmTor5
+							end
+					end)
+			from cdn.SrtHistElem
+			where 
+				( SHE_SrtNumer = @Srt_GIDNumer) 
+				and SHE_Data = @DataPierwszeOT
+				and (@DataDok is null or not @DataDok is null and SHE_DataZap &lt;= @DataDok)
+				and (SHE_GIDTyp in (@OT, @OTK, @MW, @MWK, @NT) 	--@OT, @OTK, @MW, @MWK
+					or SHE_GIDTyp = @LT and isnull(She_Likwidacja,0) = 0 --LT
+					or SHE_GIDTyp = @LTK and isnull(She_Likwidacja,0) = 0) --LTK
+				and not exists (Select E1.SHE_GIDtyp
+						from cdn.SrtHistElem as E1
+						where 
+							E1.She_SrtNumer = @Srt_GIDNumer and 
+							E1.SHE_Data = @DataPierwszeOT and
+							SHE_SrtLp &gt; E1.SHE_SrtLp and
+							(@DataDok is null or not @DataDok is null and E1.SHE_DataZap &lt;= @DataDok) and
+							(E1.SHE_GIDTyp in (@AM, @AMK, @AMP, @AK, @PK) --@AM, @AMK, @AMP, @AK, @PK
+								or E1.SHE_GIDTyp = @LT and isnull(E1.She_Likwidacja,0) &lt;&gt; 0
+								or E1.SHE_GIDTyp = @LTK and isnull(E1.She_Likwidacja,0) &lt;&gt; 0))
+		end
+		else
+			set @Pocz = 0
+	end
+
+
+	if @Kwota = 6
+	begin		
+		select @DataSrtEksp = Srt_DataEksp from cdn.SrtKarty where Srt_GIDNumer = @Srt_GIDNumer
+		
+		select 
+			@Pocz6 = sum(
+				case when @WartosciSys = 1 then
+					case @Tor
+					when 0 then
+						case when she_gidtyp in (@LT, @LTK) then -1 else 1 end * SHE_KwotaInwSys						
+					when 1 then
+						case when she_gidtyp in (@LT, @LTK) then -1 else 1 end * SHE_PodstawaAmSys
+					when 2 then
+						case when she_gidtyp in (@LT, @LTK) then -1 else 1 end * SHE_PodstawaAmTor3Sys
+					when 3 then
+						case when she_gidtyp in (@LT, @LTK) then -1 else 1 end * SHE_PodstawaAmTor4Sys
+					when 4 then
+						case when she_gidtyp in (@LT, @LTK) then -1 else 1 end * SHE_PodstawaAmTor5Sys
+					end
+				else
+					case @Tor
+					when 0 then
+						case when she_gidtyp in (@LT, @LTK) then -1 else 1 end * SHE_KwotaInw
+					when 1 then
+						case when she_gidtyp in (@LT, @LTK) then -1 else 1 end * SHE_PodstawaAm
+					when 2 then
+						case when she_gidtyp in (@LT, @LTK) then -1 else 1 end * SHE_PodstawaAmTor3
+					when 3 then
+						case when she_gidtyp in (@LT, @LTK) then -1 else 1 end * SHE_PodstawaAmTor4
+					when 4 then
+						case when she_gidtyp in (@LT, @LTK) then -1 else 1 end * SHE_PodstawaAmTor5
+					end
+				end
+				)
+		from cdn.SrtHistElem
+		where 
+			She_SrtNumer = @Srt_GIDNumer 			  
+			and SHE_Data &lt;= @DataSrtEksp
+			and (@DataNaDzien is null or ( not @DataNaDzien is null and SHE_Data &lt;= @DataNaDzien))
+			and (@DataDok is null or not @DataDok is null and SHE_DataZap &lt;= @DataDok)
+			and (SHE_GIDTyp in (@OT, @OTK, @MW, @MWK, @NT)  	 --@OT, @OTK, @MW, @MWK
+				or SHE_GIDTyp = @LT and isnull(She_Likwidacja,0) = 0 --LT
+				or SHE_GIDTyp = @LTK and isnull(She_Likwidacja,0) = 0) --LTK
+
+	end
+
+
+
+	--brutto
+	if @Kwota = 1 or @Kwota = 0 or @Kwota = 5
+	select 
+		@Brutto = sum(
+			case when (@WartosciSys = 1 OR @zmianaWaluty = 1) then
+				case @Tor
+				when 0 then
+					case when she_gidtyp in (@LT, @LTK) then -1 else 1 end * SHE_KwotaInwSys
+				when 1 then
+					case when she_gidtyp in (@LT, @LTK) then -1 else 1 end * SHE_PodstawaAmSys
+				when 2 then
+					case when she_gidtyp in (@LT, @LTK) then -1 else 1 end * SHE_PodstawaAmTor3Sys
+				when 3 then
+					case when she_gidtyp in (@LT, @LTK) then -1 else 1 end * SHE_PodstawaAmTor4Sys
+				when 4 then
+					case when she_gidtyp in (@LT, @LTK) then -1 else 1 end * SHE_PodstawaAmTor5Sys
+				end
+			else
+				case @Tor
+				when 0 then
+					case when she_gidtyp in (@LT, @LTK) then -1 else 1 end * SHE_KwotaInw
+				when 1 then
+					case when she_gidtyp in (@LT, @LTK) then -1 else 1 end * SHE_PodstawaAm
+				when 2 then
+					case when she_gidtyp in (@LT, @LTK) then -1 else 1 end * SHE_PodstawaAmTor3
+				when 3 then
+					case when she_gidtyp in (@LT, @LTK) then -1 else 1 end * SHE_PodstawaAmTor4
+				when 4 then
+					case when she_gidtyp in (@LT, @LTK) then -1 else 1 end * SHE_PodstawaAmTor5
+				end
+			end)
+	from cdn.SrtHistElem
+	where 
+		She_SrtNumer = @Srt_GIDNumer
+		and (@DataNaDzien is null or ( not @DataNaDzien is null and SHE_Data &lt;= @DataNaDzien))
+		and (@DataDok is null or not @DataDok is null and SHE_DataZap &lt;= @DataDok)
+		and 
+		(	
+			@SrtGIDTypPierwszeOT = @OT or		
+			(
+					(SHE_Data &gt; @DataPierwszeOT and SHE_DataZap &gt; @DataPierwszeOT) or 
+					( SHE_Data = @DataPierwszeOT and SHE_DataZap = @DataPierwszeOT and SHE_SrtLp &gt;= @SrtLpPierwszeOT)  				
+			)
+		)
+		and (SHE_GIDTyp in (@OT, @OTK, @MW, @MWK, @LT, @LTK, @PK, @NT) or SHE_GIDTyp in (@ZPA, @ZPK) and @ZestTryb &lt;&gt; @ZestTrybZestaw)				--@OT, @OTK, @MW, @MWK, @LT, @LTK, @PK
+
+
+
+
+	--odpisy
+	if @Kwota = 1 or @Kwota = 3 or @Kwota = 5
+	select 
+		@Odpisy = sum(
+			case when @WartosciSys = 1 then
+				case @Tor
+				when 0 then
+					case when she_gidtyp in (@LT, @LTK) then -1 else 1 end * SHE_KwotaUmSys
+				when 1 then
+					case when she_gidtyp in (@LT, @LTK) then -1 else 1 end * SHE_KwotaAMSys
+				when 2 then
+					case when she_gidtyp in (@LT, @LTK) then -1 else 1 end * SHE_PodstawaAmTor3Sys
+				when 3 then
+					case when she_gidtyp in (@LT, @LTK) then -1 else 1 end * SHE_PodstawaAmTor4Sys	
+				when 4 then
+					case when she_gidtyp in (@LT, @LTK) then -1 else 1 end * SHE_PodstawaAmTor5Sys
+				end
+			else
+				case @Tor
+				when 0 then
+					case when she_gidtyp in (@LT, @LTK) then -1 else 1 end * SHE_KwotaUm
+				when 1 then
+					case when she_gidtyp in (@LT, @LTK) then -1 else 1 end * SHE_KwotaAM
+				when 2 then
+					case when she_gidtyp in (@LT, @LTK) then -1 else 1 end * SHE_PodstawaAmTor3
+				when 3 then
+					case when she_gidtyp in (@LT, @LTK) then -1 else 1 end * SHE_PodstawaAmTor4
+				when 4 then
+					case when she_gidtyp in (@LT, @LTK) then -1 else 1 end * SHE_PodstawaAmTor5
+				end
+			end),
+		@Odpisy_Likw = sum(SHE_KwotaAm_Likw)
+	from cdn.SrtHistElem
+	where 
+		She_SrtNumer = @Srt_GIDNumer
+		and (@DataNaDzien is null or ( not @DataNaDzien is null and SHE_Data &lt;= @DataNaDzien))
+		and (@DataDok is null or not @DataDok is null and SHE_DataZap &lt;= @DataDok)
+		and @SrtGIDTypPierwszeOT = @OT 
+		and SHE_GIDTyp in (@AM, @AMK, @MW, @MWK, @LT, @LTK, @PK, @AK, @AMP ) 			 --@AM, @AMK, @MW, @MWK, @LT, @LTK, @PK, @AK, @AMP
+
+
+
+
+	if @Kwota = 1 or @Kwota = 5
+		if @Tor = 0
+			set @Netto = isnull(@Brutto,0) - isnull(@Odpisy,0)
+		else
+			set @Netto = isnull(@Brutto,0) - isnull(@Odpisy,0) - isnull(@Odpisy_Likw,0)
+
+	
+
+
+	if @Kwota = 4 or @Kwota = 5
+	begin
+		select 
+			@KwotaZlom = 
+				case when @WartosciSys = 1 then
+					case @Tor 
+					when 0 then 
+						She_KwotaZlomSys
+					when 1 then 
+						She_KwotaZlomAmSys
+					when 2 then 
+						SHE_KwotaZlomTor3Sys
+					when 3 then 
+						SHE_KwotaZlomTor4Sys
+					when 4 then 
+						SHE_KwotaZlomTor5Sys
+					end
+				else
+					case @Tor 
+					when 0 then 
+						She_KwotaZlom
+					when 1 then 
+						She_KwotaZlomAm
+					when 2 then 
+						SHE_KwotaZlomTor3
+					when 3 then 
+						SHE_KwotaZlomTor4
+					when 4 then 
+						SHE_KwotaZlomTor5
+					end
+				end
+	        from cdn.SrtHistElem 
+	        where 
+				She_SrtNumer = @Srt_GIDNumer
+			and (@DataNaDzien is null or ( not @DataNaDzien is null and SHE_Data &lt;= @DataNaDzien))
+			and (@DataDok is null or not @DataDok is null and SHE_DataZap &lt;= @DataDok)
+			and SHE_GIDTyp = @ZKZ
+            and SHE_Data = 
+				(
+					select max(SHE_Data) from cdn.SrtHistElem 
+					where 
+						(She_SrtNumer = @Srt_GIDNumer) 
+						and (@DataNaDzien is null or ( not @DataNaDzien is null and SHE_Data &lt;= @DataNaDzien))
+						and (@DataDok is null or not @DataDok is null and SHE_DataZap &lt;= @DataDok)
+						and SHE_GIDTyp = @ZKZ
+				)
+
+            and SHE_SrtLp = 
+			(
+				select max(SHE_SrtLp) from cdn.SrtHistElem 
+                where SHE_SrtNumer = @Srt_GIDNumer
+					and (@DataNaDzien is null or ( not @DataNaDzien is null and SHE_Data &lt;= @DataNaDzien))
+					and (@DataDok is null or not @DataDok is null and SHE_DataZap &lt;= @DataDok)
+					and SHE_GIDTyp = @ZKZ
+                    and SHE_Data = 
+						(
+							select max(SHE_Data) from cdn.SrtHistElem 
+                            where SHE_SrtNumer = @Srt_GIDNumer
+								and (@DataNaDzien is null or ( not @DataNaDzien is null and SHE_Data &lt;= @DataNaDzien))
+								and (@DataDok is null or not @DataDok is null and SHE_DataZap &lt;= @DataDok)
+								and SHE_GIDTyp = @ZKZ
+						)
+			)
+			
+		
+		if @KwotaZlom is null		-- do modyfikacji po sprawdzeniu Srt_KwotaZlom, Srt_KwotaZlomAm itp.
+			select @KwotaZlom = 
+					case @Tor 
+					when 0 then Srt_KwotaZlom
+					when 1 then Srt_KwotaZlomAm 
+					when 2 then Srt_KwotaZlomTor3 
+					when 3 then Srt_KwotaZlomTor4 
+					when 4 then Srt_KwotaZlomTor5 
+					end
+			from cdn.SrtKarty where Srt_GIDNumer = @Srt_GIDNumer
+	end
+
+	
+
+	if @Kwota = 5
+		if isnull(@Netto,0) &lt;= isnull(@KwotaZlom,0)
+			set @Zamort = 1
+		else
+			set @Zamort = 0
+
+
+
+	set @Return_Value = 
+				case @Kwota
+					when 1 then @Netto
+					when 0 then @Brutto
+					when 2 then @Pocz
+					when 3 then @Odpisy
+					when 4 then @KwotaZlom
+					when 5 then @Zamort
+					when 6 then @Pocz6
+				end
+
+
+
+	return (@Return_Value)
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do funkcji SrtBiezacaWartosc"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do funkcji SrtBiezacaWartosc */</I><BR>
+GRANT EXECUTE ON CDN.SrtBiezacaWartosc TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

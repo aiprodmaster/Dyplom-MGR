@@ -1,0 +1,133 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Usuwanie procedury ProponujKontoKnt"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Usuwanie procedury ProponujKontoKnt */</I><BR>
+if exists (select * from sysobjects where name = 'ProponujKontoKnt' and xtype = 'TF')
+  drop function CDN.ProponujKontoKnt
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury ProponujKontoKnt"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury ProponujKontoKnt */</I><BR>
+CREATE FUNCTION CDN.ProponujKontoKnt(
+		@KntGIDNumer int,
+		@Akronim varchar(20),
+		@Nip varchar(20),
+		@FormaPl int,
+		@Typ int,
+		@SmkID int)
+--Funkcja zwraca tabelę, która zawiera proponowane konto dostawcy,konto odbiorcy, syntetykę dostawcy, syntetykę odbiorcy
+--oraz informacje czy konto należy założyć czy też nie. Wszystko zgodnie z ustawieniami konfiguracyjnymi.
+
+--Wersja 1.00	4.02.2004
+
+--Parametry:
+-- @KntGIDNumer		GIDNumer kontrahenta dla którego mają zostać zaproponowane konta
+-- @Akronim			Akronim kontrahenta
+-- @Nip				Nip kontrahenta
+-- @FormaPl			Forma płatności kontrahenta
+-- @Typ				Typ kontrahenta: 8 - dostawca, 16 - odbiorca, 24 - dostawca/odbiorca
+
+RETURNS @Konta TABLE (Konto varchar(50),Syntetyka varchar(50),ZalozKonto int,TylkoKntKonta smallint)
+AS
+BEGIN
+
+DECLARE @TypAnalityki int
+DECLARE @IloscCyfr int
+DECLARE @Konto varchar(70)
+DECLARE @Syntetyka varchar(50)
+DECLARE @SyntetykaR varchar(70)
+DECLARE @Prefiks varchar(30)
+DECLARE @Filtr varchar(100)
+DECLARE @ZalozKonto int
+DECLARE @TylkoKntKonta smallint
+
+Set @ZalozKonto = 0
+Set @TylkoKntKonta = 0
+
+select @TypAnalityki=CAST(Kon_Wartosc as int) from cdn.konfig where kon_numer=208
+select @IloscCyfr = CAST(Kon_Wartosc as int) from cdn.konfig where kon_numer=209
+Set @Filtr = REPLICATE('[0-9]',@IloscCyfr)
+
+IF @SmkID = 2 and (@Typ = 8 or @Typ = 24)	--dostawca
+BEGIN
+	IF (select Kon_Wartosc from cdn.konfig where kon_numer=2037) = '1' and @FormaPl=10
+	BEGIN
+		select @Konto=Kon_Wartosc from cdn.konfig where kon_numer = 2038
+		Set @TylkoKntKonta = 1
+	END	
+END
+IF @SmkID = 1 and (@Typ = 16 or @Typ = 24)	--odbiorca
+BEGIN
+	IF (select Kon_Wartosc from cdn.konfig where kon_numer=2039) = '1' and @FormaPl=10
+	BEGIN
+		select @Konto=Kon_Wartosc from cdn.konfig where kon_numer = 2040
+		Set @TylkoKntKonta = 1
+	END	
+END
+			
+IF @Konto is null or @Konto = ''
+BEGIN
+	--select @SyntetykaDostawcy=Kon_Wartosc from cdn.konfig where kon_numer=2010
+	select @Syntetyka=smk_konto from cdn.symbolekont where smk_id = @SmkID	--pobranie syntetyki dostawcy
+	IF @Syntetyka is not null and @Syntetyka &lt;&gt;''
+	BEGIN
+		set @SyntetykaR = replace(@Syntetyka, '-', '--')
+		IF @TypAnalityki = 1
+		BEGIN
+			select top 1 @Konto=kks_konto from cdn.konta where kks_konto like @Syntetyka+'-'+@Filtr
+			order by kks_konto desc
+
+			IF @Konto is null
+				Set @Konto = @Syntetyka+'-'+REPLICATE('0',@IloscCyfr)
+			Set @Konto = CAST(CAST(SUBSTRING(@Konto,CHARINDEX('-',@Konto,LEN(@Syntetyka))+1,LEN(@Konto)) as int)+1 as varchar)
+			IF LEN(@Konto)&lt;@IloscCyfr
+				Set @Konto = REPLICATE('0',@IloscCyfr-LEN(@Konto))+@Konto
+			Set @Konto = @SyntetykaR+'-'+@Konto
+		END
+		ELSE IF @TypAnalityki = 2
+			Set @Konto = @SyntetykaR+'-'+replace(replace(replace(UPPER(@Akronim), '-', '--'),' ', '_'),'.','_')
+		ELSE IF @TypAnalityki = 3
+			Set @Konto = @SyntetykaR+'-'+REPLACE(@Nip,'-','')
+		ELSE IF @TypAnalityki = 4
+		BEGIN
+			select @Prefiks = Kon_Wartosc from cdn.konfig where kon_numer=2045
+			Set @Konto = @SyntetykaR+'-'+RTRIM(@Prefiks)+REPLICATE('0',CASE WHEN LEN(CAST(@KntGIDNumer as varchar))&lt;@IloscCyfr THEN @IloscCyfr-LEN(CAST(@KntGIDNumer as varchar)) ELSE 0 END)+CAST(@KntGIDNumer as varchar)
+		END
+		ELSE IF @TypAnalityki = 5
+			Set @Konto = ''
+		IF @Konto is not null AND @Konto &lt;&gt; '' AND (select kon_wartosc from cdn.konfig where kon_numer=2012) = '1'
+			Set @ZalozKonto = 1	
+	END
+END
+
+Insert into @Konta values (@Konto, @SyntetykaR, @ZalozKonto, @TylkoKntKonta)
+RETURN
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury ProponujKontoKnt"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury ProponujKontoKnt */</I><BR>
+GRANT SELECT ON CDN.ProponujKontoKnt TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

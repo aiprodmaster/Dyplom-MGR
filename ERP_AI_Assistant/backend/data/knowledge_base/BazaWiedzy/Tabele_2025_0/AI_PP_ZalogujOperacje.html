@@ -1,0 +1,145 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="AI_PP_ZalogujOperacje"></A><PRE>
+          <FONT SIZE="2"><I>/* AI_PP_ZalogujOperacje */</I><BR>
+CREATE PROCEDURE CDN.AI_PP_ZalogujOperacje @AdresatId INT, @Tresc NVARCHAR(1000), @TypOperacji INT, @DataOperacji VARCHAR(10), @DaneBinarne IMAGE
+AS
+DECLARE @TYP_OPERACJI_TRENING_MODELU_KONIEC INT = 1
+DECLARE @TYP_OPERACJI_BUDUJ_PREDYKCJE_KONIEC INT = 2
+DECLARE @TYP_OPERACJI_TRENING_MODELU_START INT = 3
+DECLARE @ASYSTENT_XL_ID INT = - 1
+DECLARE @E_PCO_WYMIANA_XL_AIPP_PREDYKCJA INT = 11
+DECLARE @E_PCO_WYMIANA_XL_AIPP_MODEL INT = 12
+DECLARE @E_PCO_WYMIANA_XL_AIPP_MODEL_START INT = 13
+DECLARE @E_DAB_TYPID_AI_PP_MODEL INT = -3
+DECLARE @E_DAB_KOD_AI_PP_MODEL  VARCHAR(20) = 'AI_PP_MODEL'
+DECLARE @E_DAB_CZAS_ARCHIWIZACJI_AI_PP_MODEL INT = 2000000000
+DECLARE @OpeNumer INT
+DECLARE @IdKownersacji INT
+DECLARE @UczestnicyKonwersacji VARCHAR(1000) = '-1'
+DECLARE @TypOperacjiSynchro INT
+DECLARE @DataOperacjiSynchro INT
+
+IF (@TypOperacji = @TYP_OPERACJI_TRENING_MODELU_KONIEC)
+	SET @TypOperacjiSynchro = @E_PCO_WYMIANA_XL_AIPP_MODEL
+ELSE IF (@TypOperacji = @TYP_OPERACJI_TRENING_MODELU_START)
+	SET @TypOperacjiSynchro = @E_PCO_WYMIANA_XL_AIPP_MODEL_START
+ELSE
+	SET @TypOperacjiSynchro = @E_PCO_WYMIANA_XL_AIPP_PREDYKCJA
+	
+IF (ISNULL(@DataOperacji, '') = '')	
+	SET @DataOperacjiSynchro =  DATEDIFF(S, '1990-01-01', GETDATE())
+ELSE
+	IF (@DataOperacji = '19900101')
+		SET @DataOperacjiSynchro = 0	
+	ELSE
+		SET @DataOperacjiSynchro =  DATEDIFF(S, '1990-01-01', CAST(@DataOperacji as datetime) + CAST(CAST(GETDATE() as time) as datetime))
+
+MERGE cdn.SynchroTS
+USING (
+	SELECT @TypOperacjiSynchro, @DataOperacjiSynchro
+	) AS zrodlo(Typ, Czas)
+	ON (SYTS_TU = zrodlo.Typ)
+WHEN MATCHED
+	THEN
+		UPDATE
+		SET SYTS_DS = zrodlo.Czas
+WHEN NOT MATCHED
+	THEN
+		INSERT (SYTS_TU, SYTS_DS)
+		VALUES (Typ, Czas);
+
+IF @TypOperacji = @TYP_OPERACJI_TRENING_MODELU_START
+	RETURN
+	
+IF @TypOperacji = @TYP_OPERACJI_TRENING_MODELU_KONIEC
+	BEGIN
+		exec CDN.ZapiszBibliotekeWDanychBinarnych @E_DAB_TYPID_AI_PP_MODEL, @E_DAB_KOD_AI_PP_MODEL, '', @DaneBinarne, @AdresatId
+		update CDN.DaneBinarne set DAB_CzasModyfikacji = @DataOperacjiSynchro where DAB_Kod = @E_DAB_KOD_AI_PP_MODEL AND DAB_CzasArchiwizacji = @E_DAB_CZAS_ARCHIWIZACJI_AI_PP_MODEL
+	END
+
+IF (ISNULL(@AdresatId, 0) = 0)
+	IF (@TypOperacji = @TYP_OPERACJI_TRENING_MODELU_KONIEC)
+		SET @Tresc = 'Automatyczny trening modelu do wyliczania prognozy popytu został zakończony. ' + @Tresc
+	ELSE
+		SET @Tresc = 'Automatyczna prognoza popytu została wyliczona. ' + @Tresc
+
+IF (ISNULL(@AdresatId, 0) &lt;&gt; 0)
+	IF (@TypOperacji = @TYP_OPERACJI_TRENING_MODELU_KONIEC)
+		SET @Tresc = 'Trening modelu do wyliczania prognozy popytu został zakończony. ' + @Tresc
+	ELSE
+		SET @Tresc = 'Prognoza popytu została wyliczona. ' + @Tresc
+
+DECLARE CursorOperatorzy CURSOR LOCAL FAST_FORWARD
+FOR
+SELECT Ope_GIDNumer
+FROM cdn.OpeKarty
+WHERE Ope_InfoKoniecAkcjiAI = 1 AND ISNULL(@AdresatId, 0) = 0 --gdy przekazano adresata to tylko dla niego
+
+UNION
+
+SELECT @AdresatId
+
+OPEN CursorOperatorzy
+
+WHILE 1 = 1
+BEGIN
+	FETCH NEXT
+	FROM CursorOperatorzy
+	INTO @OpeNumer
+
+	IF @@FETCH_STATUS &lt;&gt; 0
+		BREAK
+
+	IF ISNULL(@OpeNumer, 0) = 0
+		CONTINUE
+
+	--pobranie numeru konwersacji, gdy istnienie tylko dla operatora i asystenta
+	SET @IdKownersacji = NULL
+
+	SELECT TOP 1 @IdKownersacji = UKN_IDKonwersacji
+	FROM cdn.UczestnicyKonwersacji
+	LEFT JOIN (
+		SELECT @OpeNumer AS OpeNumer
+		
+		UNION ALL
+		
+		SELECT @ASYSTENT_XL_ID
+		) operatorzy ON UKN_IDOperatora = OpeNumer
+	GROUP BY UKN_IDKonwersacji
+	HAVING COUNT(*) = SUM(CASE WHEN OpeNumer IS NULL THEN 0 ELSE 1 END) --ilość uczestników konwersacji musi być taka sama, gdy liczymy z nullami i bez (COUNT(OpeNumer) liczy dobrze, czyli bez nulli, ale rzuca warning dlatego SUM)
+		AND COUNT(*) = 2 --  operator + Asystent XL
+	ORDER BY UKN_IDKonwersacji DESC
+
+	--utworzenie konwersacji dla operatora i asystenta, gdy takiej nie ma
+	IF ISNULL(@IdKownersacji, 0) = 0
+	BEGIN
+		SET @UczestnicyKonwersacji = '-1,' + CAST(@OpeNumer AS VARCHAR(10))
+
+		SELECT @IdKownersacji = ISNULL(MAX(UKN_IDKonwersacji), 0) + 1
+		FROM cdn.UczestnicyKonwersacji
+
+		EXEC cdn.ZapiszUczestnikowKonwersacji @IdKownersacji, @UczestnicyKonwersacji
+	END
+
+	EXEC cdn.ZapiszWiadomoscWKonwersacji @IdKownersacji, @ASYSTENT_XL_ID, @Tresc, 0
+END
+
+CLOSE CursorOperatorzy
+
+DEALLOCATE CursorOperatorzy
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

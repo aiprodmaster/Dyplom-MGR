@@ -1,0 +1,116 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="WolneRaportBledow"></A><PRE>
+          <FONT SIZE="2"><I>/* WolneRaportBledow */</I><BR>
+CREATE PROCEDURE CDN.WolneRaportBledow 
+	@lRok 			smallint,	-- okresla z ktorego roku maja byc sprawdzane dokumenty
+	@PominAnulowane		smallint,       -- Czy pomijac bledy zwiazane z anulowanymi dokumentami?
+	@PoprawWolne	smallint	-- określa czy poprawiać tabelę CDN.Wolne
+AS 
+        CREATE TABLE #Wolne2
+        (
+                WO2_GIDFirma                    INTEGER        ,
+                WO2_Typ                         SMALLINT       ,
+                WO2_Rok                         SMALLINT       ,
+                WO2_MagNumer                    INTEGER        ,
+                WO2_Miesiac                     SMALLINT       ,
+                WO2_Seria                       VARCHAR (   10) COLLATE Polish_CI_AS,
+                WO2_DataOd                      INTEGER        ,
+                WO2_DataDo                      INTEGER        ,
+                WO2_NumerOd                     INTEGER        ,
+                WO2_NumerDo                     INTEGER        ,
+                WO2_Archiwalne                INTEGER        ,
+                CONSTRAINT WOL_Primary2 PRIMARY KEY
+                        (
+                                                        WO2_Typ                       ,
+                                                        WO2_Rok                       ,
+                                                        WO2_Miesiac                   ,
+                                                        WO2_MagNumer                              ,
+                                                        WO2_Seria                     ,
+                                                        WO2_DataOd                    ,
+                                                        WO2_NumerOd
+                        )
+        );
+        CREATE TABLE #Wolne4
+        (
+                WO4_GIDFirma                    INTEGER        ,
+                WO4_Typ                         SMALLINT       ,
+                WO4_Rok                         SMALLINT       ,
+                WO4_MagNumer                    INTEGER        ,
+                WO4_Miesiac                     SMALLINT       ,
+                WO4_Seria                       VARCHAR (   10) COLLATE Polish_CI_AS   ,
+                WO4_DataOd                      INTEGER        ,
+                WO4_DataDo                      INTEGER        ,
+                WO4_NumerOd                     INTEGER        ,
+                WO4_NumerDo                     INTEGER        ,
+                WO4_Archiwalne                INTEGER        ,
+                CONSTRAINT WOL_Primary4 PRIMARY KEY
+                        (
+                                                        WO4_Typ                       ,
+                                                        WO4_Rok                       ,
+                                                        WO4_Miesiac                   ,
+                                                        WO4_MagNumer                  ,
+                                                        WO4_Seria                     ,
+                                                        WO4_DataOd                    ,
+                                                        WO4_NumerOd
+                        )
+        );
+        insert into #Wolne4 select WOL_GIDFirma,WOL_Typ,WOL_Rok,WOL_MagNumer,WOL_Miesiac,WOL_Seria,
+                                   WOL_DataOd,WOL_DataDo,WOL_NumerOd,WOL_NumerDo,'' from CDN.Wolne
+                            Where WOL_Rok = @lRok AND (WOL_Typ IN (select DISTINCT TrN_TrNTyp from CDN.TraNag (NOLOCK))
+                                                                                                OR WOL_Typ IN (select DISTINCT MaN_TrNTyp from CDN.MagNag (NOLOCK))
+                                                                                                OR WOL_Typ IN (select DISTINCT ImN_ImNTyp from CDN.ImpNag (NOLOCK))
+																								OR WOL_Typ IN (select DISTINCT SaN_SaNTyp from CDN.SaDNag (NOLOCK))
+                                                                                                OR WOL_Typ IN (select DISTINCT ShN_GidTyp from CDN.SrtHistNag (NOLOCK)) 
+                                                                                                OR WOL_Typ = 2600 )
+        insert into #Wolne2 exec CDN.OdbudujWolne @lRok,@PoprawWolne
+
+        select case when WO4_Typ IS Null then 'Brak rekordu w tabeli CDN.Wolne' else 'Niepotrzebny rekord w tabeli CDN.Wolne' end AS Opis,
+        case when WO4_Typ IS Null then WO2_Typ else WO4_Typ end AS 'WOL_Typ',
+        case when WO4_Typ IS Null then WO2_Rok else WO4_Rok end AS 'WOL_Rok',
+        case when WO4_Typ IS Null then WO2_MagNumer else WO4_MagNumer end AS 'WOL_MagNumer',
+        case when WO4_Typ IS Null then WO2_Miesiac else WO4_Miesiac end AS 'WOL_Miesiac',
+        case when WO4_Typ IS Null then WO2_Seria else WO4_Seria end AS 'WOL_Seria',
+        case when WO4_Typ IS Null then WO2_DataOd else WO4_DataOd end AS 'WOL_DataOd',
+        case when WO4_Typ IS Null then WO2_DataDo else WO4_DataDo end AS 'WOL_DataDo',
+        case when WO4_Typ IS Null then WO2_NumerOd else WO4_NumerOd end AS 'WOL_NumerOd',
+        case when WO4_Typ IS Null then WO2_NumerDo else WO4_NumerDo end AS 'WOL_NumerDo',
+        case when (WO2_Typ IS Null) then '-' when WO2_Archiwalne = 1 then 'W tym zakresia znajduja sie dokumenty anulowane' else '' end AS 'Anulowane'
+        from #Wolne2 full outer join #Wolne4 on
+        WO4_GIDFirma = WO2_GIDFirma
+        AND WO4_Typ = WO2_Typ
+        AND WO4_Rok = WO2_Rok
+        AND WO4_MagNumer = WO2_MagNumer
+        AND WO4_Miesiac = WO2_Miesiac
+        AND WO4_Seria = WO2_Seria
+        AND WO4_DataOd = WO2_DataOd
+        AND WO4_DataDo = WO2_DataDo
+        AND WO4_NumerOd = WO2_NumerOd
+        AND WO4_NumerDo = WO2_NumerDo
+        where
+																								(WO2_Typ IS Null AND (WO4_Typ IN (select DISTINCT TrN_TrNTyp from CDN.TraNag)
+                                                                                                OR WO4_Typ IN (select DISTINCT MaN_TrNTyp from CDN.MagNag (NOLOCK))
+                                                                                                OR WO4_Typ IN (select DISTINCT ImN_ImNTyp from CDN.ImpNag (NOLOCK))
+                                                                                                OR WO4_Typ IN (select DISTINCT SaN_SaNTyp from CDN.SaDNag (NOLOCK))
+                                                                                                OR WO4_Typ IN (select DISTINCT ShN_GidTyp from CDN.SrtHistNag (NOLOCK))
+                                                                                                OR WO4_Typ = 2600) AND WO4_Rok = @lRok)
+		OR (WO4_Typ IS Null AND ((@PominAnulowane=1 AND WO2_Archiwalne=0) OR @PominAnulowane&lt;&gt;1))
+
+        drop table #Wolne2
+        drop table #Wolne4
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

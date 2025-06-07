@@ -1,0 +1,260 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="SCMPobierzDateRealizacji"></A><PRE>
+          <FONT SIZE="2"><I>/* SCMPobierzDateRealizacji */</I><BR>
+CREATE FUNCTION CDN.SCMPobierzDateRealizacji(@KalendarzID INT,@SPDstLP INT,@DataWyst INT,@KalendarzTyp SMALLINT,@Tryb TINYINT)
+RETURNS INT
+AS
+BEGIN
+	DECLARE @BiezacyOkres INT
+	DECLARE @BiezacyOkresIter INT
+	DECLARE @ClarSDate DATETIME
+	DECLARE @ClarSTS DATETIME
+	DECLARE @Iter INT
+	DECLARE @Sort INT
+	DECLARE @CzyCzasDostawy TINYINT
+	DECLARE @CzyKolejny TINYINT
+	DECLARE @NajblizszeDostawy TABLE(KolejnyOkres INT,Okres INT,CzasDostawy INT,OkresOd DATETIME,TypOkresu SMALLINT,AktywnyOd INT, AktywnyDo INT)
+	DECLARE @DniWolne TABLE(WOkres INT,WOkresOd DATETIME,WTypOkresu SMALLINT,WAktywnyOd INT, WAktywnyDo INT)
+
+	SET @ClarSDate = CONVERT(DATETIME,'18001228')
+	SET @ClarSTS = CONVERT(DATETIME,'19900101')
+
+	SET @CzyKolejny = CASE WHEN @Tryb = 2 THEN 1 ELSE 0 END
+	SET @CzyCzasDostawy = CASE WHEN @Tryb = 0 THEN 1 ELSE 0 END
+	IF @SPDstLP &gt;= 0
+		INSERT INTO @NajblizszeDostawy 
+		SELECT CASE WHEN POK_Okres = 0 THEN 0 ELSE CEILING(	((@DataWyst+@CzyKolejny+(@CzyCzasDostawy*POK_CzasDostawy))-DATEDIFF(DAY,@ClarSDate,DATEADD(SECOND, POK_OkresOD,@ClarSTS)))
+					/CAST((DATEDIFF(DAY,DATEADD(SECOND, POK_OkresOD,@ClarSTS),
+					(CASE POK_TypOkresu 
+						WHEN 0 THEN DATEADD(DAY,POK_Okres,DATEADD(SECOND, POK_OkresOD,@ClarSTS))
+						WHEN 1 THEN DATEADD(WEEK,POK_Okres,DATEADD(SECOND, POK_OkresOD,@ClarSTS))
+						WHEN 2 THEN DATEADD(MONTH,POK_Okres,DATEADD(SECOND, POK_OkresOD,@ClarSTS))
+						WHEN 3 THEN DATEADD(YEAR,POK_Okres,DATEADD(SECOND, POK_OkresOD,@ClarSTS))
+					END))) AS REAL)
+				) END,--Ustalanie terminu realizacji najbliższego dacie wystawienia
+				POK_Okres,POK_CzasDostawy,DATEADD(SECOND, POK_OkresOD,@ClarSTS),POK_TypOkresu,POK_DataOd,POK_DataDo
+		FROM CDN.ProdKalendarze 
+		JOIN CDN.ProdOkresy ON POK_ObiTyp=14339 AND POK_ObiNumer = PKA_ID AND POK_Dostepny = 1
+		WHERE PKA_ID = @KalendarzID AND PKA_Typ = @KalendarzTyp AND POK_SposobDostawy = @SPDstLP
+	ELSE
+		INSERT INTO @NajblizszeDostawy 
+		SELECT CASE WHEN POK_Okres = 0 THEN 0 ELSE CEILING(	((@DataWyst+@CzyKolejny+(@CzyCzasDostawy*POK_CzasDostawy))-DATEDIFF(DAY,@ClarSDate,DATEADD(SECOND, POK_OkresOD,@ClarSTS)))
+					/CAST((DATEDIFF(DAY,DATEADD(SECOND, POK_OkresOD,@ClarSTS),
+					(CASE POK_TypOkresu 
+						WHEN 0 THEN DATEADD(DAY,POK_Okres,DATEADD(SECOND, POK_OkresOD,@ClarSTS))
+						WHEN 1 THEN DATEADD(WEEK,POK_Okres,DATEADD(SECOND, POK_OkresOD,@ClarSTS))
+						WHEN 2 THEN DATEADD(MONTH,POK_Okres,DATEADD(SECOND, POK_OkresOD,@ClarSTS))
+						WHEN 3 THEN DATEADD(YEAR,POK_Okres,DATEADD(SECOND, POK_OkresOD,@ClarSTS))
+					END))) AS REAL)
+				) END,--Ustalanie terminu realizacji najbliższego dacie wystawienia
+				POK_Okres,POK_CzasDostawy,DATEADD(SECOND, POK_OkresOD,@ClarSTS),POK_TypOkresu,POK_DataOd,POK_DataDo
+		FROM CDN.ProdKalendarze 
+		JOIN CDN.ProdOkresy ON POK_ObiTyp=14339 AND POK_ObiNumer = PKA_ID AND POK_Dostepny = 1
+		WHERE PKA_ID = @KalendarzID AND PKA_Typ = @KalendarzTyp
+	
+	INSERT INTO @DniWolne
+	SELECT POK_Okres,DATEADD(SECOND, POK_OkresOD,@ClarSTS),POK_TypOkresu,POK_DataOd,POK_DataDo
+	FROM CDN.ProdKalendarze 
+	JOIN CDN.ProdOkresy ON POK_ObiTyp=14339 AND POK_ObiNumer = PKA_ID AND POK_Dostepny = 0
+	WHERE PKA_ID = @KalendarzID AND PKA_Typ = @KalendarzTyp
+	
+	SELECT TOP 1 @BiezacyOkres = DATEDIFF(DAY,@ClarSDate,
+			CASE TypOkresu 
+				WHEN 0 THEN DATEADD(DAY,KolejnyOkres*Okres,OkresOd)
+					WHEN 1 THEN DATEADD(WEEK,KolejnyOkres*Okres,OkresOd)
+					WHEN 2 THEN DATEADD(MONTH,KolejnyOkres*Okres,OkresOd)
+					WHEN 3 THEN DATEADD(YEAR,KolejnyOkres*Okres,OkresOd)
+			END)-@DataWyst,@Sort = ABS(DATEDIFF(DAY,@ClarSDate,
+				CASE TypOkresu 
+					WHEN 0 THEN DATEADD(DAY,KolejnyOkres*Okres,OkresOd)
+					WHEN 1 THEN DATEADD(WEEK,KolejnyOkres*Okres,OkresOd)
+					WHEN 2 THEN DATEADD(MONTH,KolejnyOkres*Okres,OkresOd)
+					WHEN 3 THEN DATEADD(YEAR,KolejnyOkres*Okres,OkresOd)
+				END)-@DataWyst) FROM @NajblizszeDostawy 
+			WHERE 
+			DATEDIFF(DAY,@ClarSDate,
+			CASE TypOkresu 
+				WHEN 0 THEN DATEADD(DAY,KolejnyOkres*Okres,OkresOd)
+					WHEN 1 THEN DATEADD(WEEK,KolejnyOkres*Okres,OkresOd)
+					WHEN 2 THEN DATEADD(MONTH,KolejnyOkres*Okres,OkresOd)
+					WHEN 3 THEN DATEADD(YEAR,KolejnyOkres*Okres,OkresOd)
+			END) BETWEEN AktywnyOd AND AktywnyDo
+			ORDER BY 2 ASC
+	SET @BiezacyOkres = @BiezacyOkres + @DataWyst
+	SET @Iter = 0
+	IF @Tryb = 1 --Zlokalizuj pierwszą datę wcześniejszą niż podana data wystawienia
+	BEGIN
+		SET @Iter = -1
+		WHILE @BiezacyOkres &gt;= @DataWyst AND @Iter &gt; -1000
+		BEGIN
+			SELECT TOP 1 @BiezacyOkres = DATEDIFF(DAY,@ClarSDate,
+				CASE TypOkresu 
+					WHEN 0 THEN DATEADD(DAY,(KolejnyOkres+@Iter)*Okres,OkresOd)
+						WHEN 1 THEN DATEADD(WEEK,(KolejnyOkres+@Iter)*Okres,OkresOd)
+						WHEN 2 THEN DATEADD(MONTH,(KolejnyOkres+@Iter)*Okres,OkresOd)
+						WHEN 3 THEN DATEADD(YEAR,(KolejnyOkres+@Iter)*Okres,OkresOd)
+				END) - @DataWyst,@Sort = ABS(DATEDIFF(DAY,@ClarSDate,
+						CASE TypOkresu 
+							WHEN 0 THEN DATEADD(DAY,(KolejnyOkres+@Iter)*Okres,OkresOd)
+							WHEN 1 THEN DATEADD(WEEK,(KolejnyOkres+@Iter)*Okres,OkresOd)
+							WHEN 2 THEN DATEADD(MONTH,(KolejnyOkres+@Iter)*Okres,OkresOd)
+							WHEN 3 THEN DATEADD(YEAR,(KolejnyOkres+@Iter)*Okres,OkresOd)
+						END)-@DataWyst) FROM @NajblizszeDostawy 
+				WHERE 
+				DATEDIFF(DAY,@ClarSDate,
+				CASE TypOkresu 
+					WHEN 0 THEN DATEADD(DAY,(KolejnyOkres+@Iter)*Okres,OkresOd)
+						WHEN 1 THEN DATEADD(WEEK,(KolejnyOkres+@Iter)*Okres,OkresOd)
+						WHEN 2 THEN DATEADD(MONTH,(KolejnyOkres+@Iter)*Okres,OkresOd)
+						WHEN 3 THEN DATEADD(YEAR,(KolejnyOkres+@Iter)*Okres,OkresOd)
+				END) BETWEEN AktywnyOd AND AktywnyDo
+				ORDER BY 2 ASC		
+			SET @BiezacyOkres = @BiezacyOkres + @DataWyst
+			SET @Iter = @Iter-1
+		END
+		IF @Iter &lt;= -1000
+			SET @BiezacyOkres = 0
+	END	
+	--Sprawdz czy dzień wolny
+	WHILE (EXISTS(SELECT WOkres FROM @DniWolne WHERE 0=(SELECT CASE WHEN WOkres = 0 THEN @BiezacyOkres - DATEDIFF(DAY,@ClarSDate,WOkresOD) ELSE
+		 (SELECT CASE WHEN CEILING((@BiezacyOkres-DATEDIFF(DAY,@ClarSDate,WOkresOD))
+					/CAST((DATEDIFF(DAY,WOkresOD,
+					(CASE WTypOkresu 
+						WHEN 0 THEN DATEADD(DAY,WOkres,WOkresOD)
+						WHEN 1 THEN DATEADD(WEEK,WOkres,WOkresOD)
+						WHEN 2 THEN DATEADD(MONTH,WOkres,WOkresOD)
+						WHEN 3 THEN DATEADD(YEAR,WOkres,WOkresOD)
+					END))) AS REAL)
+				)=(@BiezacyOkres-DATEDIFF(DAY,@ClarSDate,WOkresOD))
+					/CAST((DATEDIFF(DAY,WOkresOD,
+					(CASE WTypOkresu 
+						WHEN 0 THEN DATEADD(DAY,WOkres,WOkresOD)
+						WHEN 1 THEN DATEADD(WEEK,WOkres,WOkresOD)
+						WHEN 2 THEN DATEADD(MONTH,WOkres,WOkresOD)
+						WHEN 3 THEN DATEADD(YEAR,WOkres,WOkresOD)
+					END))) AS REAL) THEN 0 ELSE 1 END)
+				END) AND @BiezacyOkres BETWEEN WAktywnyOd AND WAktywnyDo) AND @Iter BETWEEN -1000 AND 1000)
+	BEGIN
+		IF @Tryb = 1 
+		BEGIN
+			--Sprawdz inny okres w ramach tej iteracji
+			SELECT @BiezacyOkresIter = ISNULL((SELECT TOP 1 DATEDIFF(DAY,@ClarSDate,
+					CASE TypOkresu 
+							WHEN 0 THEN DATEADD(DAY,(KolejnyOkres+@Iter)*Okres,OkresOd)
+							WHEN 1 THEN DATEADD(WEEK,(KolejnyOkres+@Iter)*Okres,OkresOd)
+							WHEN 2 THEN DATEADD(MONTH,(KolejnyOkres+@Iter)*Okres,OkresOd)
+							WHEN 3 THEN DATEADD(YEAR,(KolejnyOkres+@Iter)*Okres,OkresOd)
+					END) FROM @NajblizszeDostawy WHERE DATEDIFF(DAY,@ClarSDate,
+					CASE TypOkresu 
+							WHEN 0 THEN DATEADD(DAY,(KolejnyOkres+@Iter)*Okres,OkresOd)
+							WHEN 1 THEN DATEADD(WEEK,(KolejnyOkres+@Iter)*Okres,OkresOd)
+							WHEN 2 THEN DATEADD(MONTH,(KolejnyOkres+@Iter)*Okres,OkresOd)
+							WHEN 3 THEN DATEADD(YEAR,(KolejnyOkres+@Iter)*Okres,OkresOd)
+					END) &lt; @BiezacyOkres
+					AND 
+					DATEDIFF(DAY,@ClarSDate,
+					CASE TypOkresu 
+							WHEN 0 THEN DATEADD(DAY,(KolejnyOkres+@Iter)*Okres,OkresOd)
+							WHEN 1 THEN DATEADD(WEEK,(KolejnyOkres+@Iter)*Okres,OkresOd)
+							WHEN 2 THEN DATEADD(MONTH,(KolejnyOkres+@Iter)*Okres,OkresOd)
+							WHEN 3 THEN DATEADD(YEAR,(KolejnyOkres+@Iter)*Okres,OkresOd)
+					END) BETWEEN AktywnyOd AND AktywnyDo
+					ORDER BY 1 ASC),-9999999)
+			--Sprawdz okresy dla następnej iteracji
+			SELECT @BiezacyOkres = ISNULL((SELECT TOP 1 DATEDIFF(DAY,@ClarSDate,
+					CASE TypOkresu 
+							WHEN 0 THEN DATEADD(DAY,(KolejnyOkres+@Iter+1)*Okres,OkresOd)
+							WHEN 1 THEN DATEADD(WEEK,(KolejnyOkres+@Iter+1)*Okres,OkresOd)
+							WHEN 2 THEN DATEADD(MONTH,(KolejnyOkres+@Iter+1)*Okres,OkresOd)
+							WHEN 3 THEN DATEADD(YEAR,(KolejnyOkres+@Iter+1)*Okres,OkresOd)
+					END) FROM @NajblizszeDostawy WHERE DATEDIFF(DAY,@ClarSDate,
+					CASE TypOkresu 
+							WHEN 0 THEN DATEADD(DAY,(KolejnyOkres+@Iter+1)*Okres,OkresOd)
+							WHEN 1 THEN DATEADD(WEEK,(KolejnyOkres+@Iter+1)*Okres,OkresOd)
+							WHEN 2 THEN DATEADD(MONTH,(KolejnyOkres+@Iter+1)*Okres,OkresOd)
+							WHEN 3 THEN DATEADD(YEAR,(KolejnyOkres+@Iter+1)*Okres,OkresOd)
+					END) &lt; @BiezacyOkres 
+					AND
+					DATEDIFF(DAY,@ClarSDate,
+					CASE TypOkresu 
+							WHEN 0 THEN DATEADD(DAY,(KolejnyOkres+@Iter+1)*Okres,OkresOd)
+							WHEN 1 THEN DATEADD(WEEK,(KolejnyOkres+@Iter+1)*Okres,OkresOd)
+							WHEN 2 THEN DATEADD(MONTH,(KolejnyOkres+@Iter+1)*Okres,OkresOd)
+							WHEN 3 THEN DATEADD(YEAR,(KolejnyOkres+@Iter+1)*Okres,OkresOd)
+					END) BETWEEN AktywnyOd AND AktywnyDo
+					ORDER BY 1 ASC),-9999999)
+			SELECT @BiezacyOkres = CASE WHEN ABS(@BiezacyOkres - @DataWyst) &gt; ABS(@BiezacyOkresIter - @DataWyst) THEN @BiezacyOkresIter ELSE @BiezacyOkres END
+			IF @BiezacyOkres = -1
+				SET @Iter = @Iter - 1	
+		END
+		ELSE
+		BEGIN
+			--Sprawdz inny okres w ramach tej iteracji
+			SELECT @BiezacyOkresIter = ISNULL((SELECT TOP 1 DATEDIFF(DAY,@ClarSDate,
+					CASE TypOkresu 
+							WHEN 0 THEN DATEADD(DAY,(KolejnyOkres+@Iter)*Okres,OkresOd)
+							WHEN 1 THEN DATEADD(WEEK,(KolejnyOkres+@Iter)*Okres,OkresOd)
+							WHEN 2 THEN DATEADD(MONTH,(KolejnyOkres+@Iter)*Okres,OkresOd)
+							WHEN 3 THEN DATEADD(YEAR,(KolejnyOkres+@Iter)*Okres,OkresOd)
+					END) FROM @NajblizszeDostawy WHERE DATEDIFF(DAY,@ClarSDate,
+					CASE TypOkresu 
+							WHEN 0 THEN DATEADD(DAY,(KolejnyOkres+@Iter)*Okres,OkresOd)
+							WHEN 1 THEN DATEADD(WEEK,(KolejnyOkres+@Iter)*Okres,OkresOd)
+							WHEN 2 THEN DATEADD(MONTH,(KolejnyOkres+@Iter)*Okres,OkresOd)
+							WHEN 3 THEN DATEADD(YEAR,(KolejnyOkres+@Iter)*Okres,OkresOd)
+					END) &gt; @BiezacyOkres
+					AND 
+					DATEDIFF(DAY,@ClarSDate,
+					CASE TypOkresu 
+							WHEN 0 THEN DATEADD(DAY,(KolejnyOkres+@Iter)*Okres,OkresOd)
+							WHEN 1 THEN DATEADD(WEEK,(KolejnyOkres+@Iter)*Okres,OkresOd)
+							WHEN 2 THEN DATEADD(MONTH,(KolejnyOkres+@Iter)*Okres,OkresOd)
+							WHEN 3 THEN DATEADD(YEAR,(KolejnyOkres+@Iter)*Okres,OkresOd)
+					END) BETWEEN AktywnyOd AND AktywnyDo
+					ORDER BY 1 ASC),9999999)
+			--Sprawdz okresy dla następnej iteracji
+			SELECT @BiezacyOkres = ISNULL((SELECT TOP 1 DATEDIFF(DAY,@ClarSDate,
+					CASE TypOkresu 
+							WHEN 0 THEN DATEADD(DAY,(KolejnyOkres+@Iter+1)*Okres,OkresOd)
+							WHEN 1 THEN DATEADD(WEEK,(KolejnyOkres+@Iter+1)*Okres,OkresOd)
+							WHEN 2 THEN DATEADD(MONTH,(KolejnyOkres+@Iter+1)*Okres,OkresOd)
+							WHEN 3 THEN DATEADD(YEAR,(KolejnyOkres+@Iter+1)*Okres,OkresOd)
+					END) FROM @NajblizszeDostawy WHERE DATEDIFF(DAY,@ClarSDate,
+					CASE TypOkresu 
+							WHEN 0 THEN DATEADD(DAY,(KolejnyOkres+@Iter+1)*Okres,OkresOd)
+							WHEN 1 THEN DATEADD(WEEK,(KolejnyOkres+@Iter+1)*Okres,OkresOd)
+							WHEN 2 THEN DATEADD(MONTH,(KolejnyOkres+@Iter+1)*Okres,OkresOd)
+							WHEN 3 THEN DATEADD(YEAR,(KolejnyOkres+@Iter+1)*Okres,OkresOd)
+					END) &gt; @BiezacyOkres 
+					AND
+					DATEDIFF(DAY,@ClarSDate,
+					CASE TypOkresu 
+							WHEN 0 THEN DATEADD(DAY,(KolejnyOkres+@Iter+1)*Okres,OkresOd)
+							WHEN 1 THEN DATEADD(WEEK,(KolejnyOkres+@Iter+1)*Okres,OkresOd)
+							WHEN 2 THEN DATEADD(MONTH,(KolejnyOkres+@Iter+1)*Okres,OkresOd)
+							WHEN 3 THEN DATEADD(YEAR,(KolejnyOkres+@Iter+1)*Okres,OkresOd)
+					END) BETWEEN AktywnyOd AND AktywnyDo
+					ORDER BY 1 ASC),9999999)
+			SELECT @BiezacyOkres = CASE WHEN ABS(@BiezacyOkres - @DataWyst) &gt; ABS(@BiezacyOkresIter - @DataWyst) THEN @BiezacyOkresIter ELSE @BiezacyOkres END
+			IF @BiezacyOkres = -1
+				SET @Iter = @Iter + 1
+		END
+	END
+	RETURN ISNULL(@BiezacyOkres,0)
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

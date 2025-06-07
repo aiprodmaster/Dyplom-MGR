@@ -1,0 +1,66 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="RzwListaDlaZasobow "></A><PRE>
+          <FONT SIZE="2"><I>/* RzwListaDlaZasobow  */</I><BR>
+CREATE PROCEDURE CDN.RzwListaDlaZasobow	
+	@_GIDTypy	VARCHAR(MAX),
+	@_sMagazyny	VARCHAR(MAX),
+	@_sCentra	VARCHAR(MAX),
+	@_Today		INT,
+	@_bZWZS		TINYINT,
+	@_bZREZSE	TINYINT
+AS
+SET NOCOUNT ON
+	--TFSID:318813 DISTINCT oraz ,Rez_Priorytet,Rez_DataRealizacji,Rez_DataWaznosci,Rez_DataRezerwacji
+	SELECT DISTINCT Rez_GIDTyp,Rez_GIDNumer,Rez_GIDFirma,Rez_GIDLp,Rez_Ilosc-(Rez_Zrealizowano+Rez_IloscMag+Rez_IloscImp+Rez_IloscSSC+Rez_IloscSAD) AS NiezrealizowanaIlosc,Rez_Priorytet,Rez_DataRealizacji,Rez_DataWaznosci,Rez_DataRezerwacji FROM CDN.Rezerwacje 
+	JOIN CDN.RezMagazyny WITH (NOLOCK) ON ReM_RezNumer = Rez_GIDNumer
+	LEFT OUTER JOIN cdn.zamzamlinki azzl ON Rez_ZrdTyp = azzl.zzl_zsgidtyp AND Rez_ZrdNumer = azzl.zzl_zsgidnumer 
+	LEFT OUTER JOIN CDN.ZamNag WITH (NOLOCK) ON Rez_ZrdTyp = ZaN_gidtyp AND Rez_ZrdNumer = ZaN_GIDNumer 
+	LEFT OUTER JOIN CDN.ZlcNag WITH (NOLOCK) ON Rez_ZrdTyp = ZcN_gidtyp AND Rez_ZrdNumer = ZcN_gidnumer 
+	LEFT OUTER JOIN CDN.ZrnMaterialy WITH (NOLOCK) ON Rez_ZrdTyp = ZrM_gidtyp AND Rez_ZrdNumer = ZrM_GIDNumer 
+	LEFT OUTER JOIN CDN.ZlcRemNag WITH (NOLOCK) ON ZrN_GIDNumer = ZrM_ZRNNumer 
+	LEFT OUTER JOIN CDN.SrwZlcSkladniki WITH (NOLOCK) ON SZS_ID = Rez_ZrdNumer AND Rez_ZrdTyp = 4703 
+	LEFT OUTER JOIN CDN.SrwZlcNag WITH (NOLOCK) ON SZN_ID = SZS_SZNID 
+	LEFT OUTER JOIN CDN.ProdCzynnosci CZ ON CZ.pcz_id = Rez_ZrdNumer AND Rez_ZrdTyp = 14345 
+	LEFT OUTER JOIN CDN.ProdProcesy PRC ON PRC.ppc_id = CZ.pcz_proces 
+	LEFT OUTER JOIN CDN.ProdZlecenia ZLC ON ZLC.pzl_id = PRC.ppc_zlecenie 
+	WHERE Rez_GIDTyp = 2576 AND Rez_Aktywna = 1 AND Rez_Typ = 1 AND Rez_DstTyp = 0 
+	AND ((Rez_ZrdTyp IN (SELECT * FROM CDN.Str2List(@_GIDTypy)) OR @_GIDTypy = '-1') 
+		AND 1=(
+			CASE WHEN Rez_ZrdTyp = 960 AND @_bZWZS&amp;ISNULL(ZaN_Rodzaj,0) &gt; 0 THEN 1 
+			WHEN Rez_ZrdTyp = 4350 AND @_bZREZSE&amp;ISNULL(ZRN_GIDTyp,0) &gt; 0 THEN 1
+			WHEN Rez_ZrdTyp NOT IN (960,4350) THEN 1 
+			ELSE 0 END
+			)
+		)			 
+	AND (Rez_FrsID IN (SELECT * FROM CDN.Str2List(@_sCentra)) OR @_sCentra = '-1')
+	AND (ReM_MagNumer IN (SELECT * FROM CDN.Str2List(@_sMagazyny)) OR @_sMagazyny = '-1')
+	AND (COALESCE(ZaN_RezerwujZasoby,ZcN_RezerwujZasoby,ZrN_RezerwujZasoby,ZLC.PZL_RezerwujZasoby,SZN_RezerwujZasoby)=1 OR Rez_ZrdTyp=14346) 
+	AND Rez_DataWaznosci &gt;= @_Today AND Rez_DataAktywacji&lt;=@_Today	
+	AND (ISNULL(azzl.zzl_zsgidnumer,0)=0 OR ISNULL(azzl.zzl_kierunek,0) IN (32,8,512,0,4) 
+	AND (NOT EXISTS(SELECT * FROM CDN.ZamNag tmpz 
+			JOIN CDN.ZamElem TMPZAE ON TMPZAE.ZaE_GIDNumer = tmpz.ZaN_GIDNumer AND TMPZAE.ZaE_GIDLp = Rez_ZrdLp AND TMPZAE.ZaE_TwrNumer = Rez_TwrNumer 
+			JOIN CDN.ZamZamLinki tmpzzl ON tmpzzl.zzl_zzgidnumer = tmpz.zan_gidnumer AND tmpzzl.zzl_zzgidtyp = tmpz.zan_gidtyp AND tmpzzl.zzl_kierunek IN (32,0,512,4) and tmpzzl.zzl_zzgidlp = TMPZAE.ZaE_GIDLp WHERE tmpzzl.zzl_zsgidnumer = azzl.zzl_zsgidnumer AND tmpz.zan_stan&amp;(16+32) = 0) 
+			AND NOT EXISTS(SELECT * FROM CDN.ProdZlecenia tmpp JOIN CDN.ZamZamLinki tmpzzl ON tmpzzl.zzl_zzgidnumer = tmpp.pzl_id AND tmpzzl.zzl_zzgidtyp = 14343 AND tmpzzl.zzl_kierunek = 512 WHERE tmpzzl.zzl_zsgidnumer = azzl.zzl_zsgidnumer AND tmpp.pzl_datazamkniecia = 0) 
+			AND NOT EXISTS(SELECT * FROM CDN.ZlcRemNag tmpzl JOIN CDN.ZamZamLinki tmpzzl ON tmpzzl.zzl_zzgidnumer = tmpzl.zrn_gidnumer AND tmpzzl.zzl_zzgidtyp = tmpzl.zrn_gidtyp AND tmpzzl.zzl_kierunek = 8 WHERE tmpzzl.zzl_zsgidnumer = azzl.zzl_zsgidnumer AND ((tmpzl.zrn_stan &amp; 16) &lt;&gt; 16 AND(tmpzl.zrn_stan &amp; 32) &lt;&gt; 32 AND tmpzl.zrn_stan &lt;&gt; 3))
+			AND NOT EXISTS(SELECT * FROM CDN.ZlcNag zcnzzl JOIN CDN.ZamZamLinki tmpzzl ON tmpzzl.zzl_zzgidnumer = zcnzzl.ZcN_gidnumer and tmpzzl.zzl_zzgidtyp = zcnzzl.ZcN_gidtyp and tmpzzl.zzl_kierunek = 8 where tmpzzl.zzl_zsgidnumer = azzl.zzl_zsgidnumer and zcnzzl.ZcN_Stan&amp;112 = 0 )
+			)
+		)
+	AND (Rez_Ilosc-(Rez_Zrealizowano+Rez_IloscMag+Rez_IloscImp+Rez_IloscSSC+Rez_IloscSAD) &gt; 0)
+	ORDER BY Rez_Priorytet ASC,Rez_DataRealizacji ASC,Rez_DataWaznosci ASC,Rez_DataRezerwacji ASC
+SET NOCOUNT OFF
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

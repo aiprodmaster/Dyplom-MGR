@@ -1,0 +1,116 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="XLModyfikujElementWzorca"></A><PRE>
+          <FONT SIZE="2"><I>/* XLModyfikujElementWzorca */</I><BR>
+CREATE PROCEDURE CDN.XLModyfikujElementWzorca
+(
+/* ==========================================================================================
+	SQL API: Procedura serwerowa do modyfikacji elementów wzorca wizyty handlowej
+
+	Dla uproszczenia założono, że jeżeli w systemie zewnętrznym zostanie zmodyfikowany element wzorca wizyty handlowa,
+	to w trakcie modyfikacji jej przez API nie ma potrzeby kontrolowania uprawnień do obiektów, z których ona korzysta.
+	
+	Parametry wejściowe: 
+   ========================================================================================== */
+	@CWETyp					SMALLINT,			-- GidTyp elementu, 4181 - element wzorca, 4182 - wzorzec elementu
+	@CWENumer				INT,				-- jeśli wołane w kontekście wzorca elementu to 0, w przeciwnym wypadku identyfikator wzorca do którego dodawany jest element
+	@CWELp					INT,				-- GidLp elementu
+	@OpeNumer				INT,				-- GidNumer operatora, który wykonuje tą operacje
+	@Kod					VARCHAR(20),		-- Kod elementu wizyty
+	@Nazwa					VARCHAR(255)=NULL,	-- Nazwa elementu wizyty
+	@Wymagany				TINYINT=NULL,		-- Czy wymagany do wykonania (0 - nie; 1 - tak)
+	@Wykonano				TINYINT=NULL,		-- Czy wykonano (0 - nie; 1 - tak)
+	@PowodNiewykonaniaId	INTEGER=NULL,		-- Identyfikator powodu niewykonania wizyty
+	@PowodNiewykonania		VARCHAR(49)=NULL,	-- Powód niewykonania elementu wizyty
+	@Opis					VARCHAR(1024)=NULL,	-- Opis elementu wizyty
+	@OpisWykonania			TEXT=NULL,			-- Opis wykonania elementu wizyty
+	@Archiwalny				TINYINT=NULL,		-- Czy element archwiwalny
+	@Url					VARCHAR(255)=NULL,	-- Adres URL
+	@Przypisz				TINYINT=NULL,		-- Przypisz niezakończone działania/wątki/zadania operatora
+	@PrzypiszPrzed			INTEGER=NULL,		-- Termin Od (przed wizytą)
+	@PrzypiszPo				INTEGER=NULL,		-- Termin Do (po wizycie)
+	@Oddzialowy				TINYINT=NULL		-- Czy element został wysłany do oddziału
+/* ==========================================================================================
+	Return:
+	 0 : Operacja zakończona sukcesem (zwrócono ID nowej wizyty)
+	-1 : Nie powiodło się modyfikacja w tabeli CDN.CRMWizytyElem.
+	-2 : Wystąpił błąd podczas modyfikacji elementu wzorca wizyty handlowej. Podany operator nie występuje w bazie.
+	-3 : Nie istnieje wpis w tabeli CDN.CRMWizytyElem o podanych parametrach.
+   ========================================================================================== */   	
+)
+AS
+BEGIN
+
+		
+    DECLARE @Pozycja SMALLINT
+
+    DECLARE @Typ_CWW SMALLINT
+    DECLARE @Typ_CEW SMALLINT
+
+    SET @Typ_CWW = 4181
+	SET @Typ_CEW = 4182
+    
+
+	DECLARE @TimeStamp INT
+    SET @TimeStamp = DATEDIFF(s,'19900101',GETDATE())
+
+  	UPDATE CWE
+	SET
+        CWE_Kod=case when @Kod is null or @Kod='' then CWE.CWE_Kod else @Kod end
+        ,CWE_Nazwa=IsNull(@Nazwa,CWE.CWE_Nazwa)
+        ,CWE_Wymagany=IsNull(@Wymagany,CWE.CWE_Wymagany)
+        ,CWE_Wykonano=IsNull(@Wykonano,CWE.CWE_Wykonano)
+        ,CWE_PowodNiewykonaniaId=IsNull(@PowodNiewykonaniaId,CWE.CWE_PowodNiewykonaniaId)
+        ,CWE_PowodNiewykonania=IsNull(@PowodNiewykonania,CWE.CWE_PowodNiewykonania)
+        ,CWE_Opis=IsNull(@Opis,CWE.CWE_Opis)
+        ,CWE_OpisWykonania=IsNull(@OpisWykonania,CWE.CWE_OpisWykonania)
+        ,CWE_OpeNumerM=@OpeNumer
+        ,CWE_Url=IsNull(@Url,CWE.CWE_Url)
+        ,CWE_Przypisz=IsNull(@Przypisz,CWE.CWE_Przypisz)
+        ,CWE_PrzypiszPrzed=case when IsNull(@Przypisz,CWE.CWE_Przypisz)=0 then -1 else IsNull(@PrzypiszPrzed,CWE.CWE_PrzypiszPrzed) end
+        ,CWE_PrzypiszPo=case when IsNull(@Przypisz,CWE.CWE_Przypisz)=0 then -1 else IsNull(@PrzypiszPo,CWE.CWE_PrzypiszPo) end
+        ,CWE_CzasModyfikacji=@TimeStamp
+        ,CWE_CzasModyfikacjiC=@TimeStamp
+        ,CWE_CzasArchiwizacji=case when @Archiwalny is null then CWE.CWE_CzasArchiwizacji else (case when @Archiwalny=0 then 0 else @TimeStamp end) end
+        ,CWE_OpeNumerA=case when @Archiwalny is null then CWE.CWE_OpeNumerA else (case when @Archiwalny=0 then 0 else @OpeNumer end) end
+        ,CWE_Oddzialowy=IsNull(@Oddzialowy,CWE.CWE_Oddzialowy)
+	FROM cdn.CRMWizytyElem as CWE 
+	JOIN CDN.OpeKarty ON Ope_GIDNumer=@OpeNumer
+	WHERE CWE_GidTyp=@CWETyp AND CWE_GidNumer=@CWENumer AND CWE_GidLp=@CWELp
+
+	IF @@ERROR&lt;&gt;0 BEGIN
+
+		IF NOT EXISTS(SELECT * FROM CDN.OpeKarty WHERE Ope_GIDNumer=@OpeNumer) BEGIN
+			RAISERROR ('Wystąpił błąd podczas modyfikacji elementu wzorca wizyty handlowej. Podany operator nie występuje w bazie.', 16, 1)
+			RETURN -2
+		END	
+
+		IF NOT EXISTS(SELECT * FROM CDN.CRMWizytyElem WHERE CWE_GidTyp=@CWETyp AND CWE_GidNumer=@CWENumer AND CWE_GidLp=@CWELp) BEGIN 
+			RAISERROR ('Nie istnieje wpis w tabeli CDN.CRMWizytyElem o podanych parametrach.', 16, 1)
+			RETURN -3
+		END			
+			
+		-- inny powód błędu:						
+		RAISERROR ('Nie powiodło się modyfikacja w tabeli CDN.CRMWizytyElem.', 16, 1)
+		RETURN -1
+	END
+	
+	--OK:
+	RETURN 0
+	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

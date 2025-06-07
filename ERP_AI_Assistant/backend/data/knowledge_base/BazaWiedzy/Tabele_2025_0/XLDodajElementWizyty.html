@@ -1,0 +1,531 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="XLDodajElementWizyty"></A><PRE>
+          <FONT SIZE="2"><I>/* XLDodajElementWizyty */</I><BR>
+CREATE PROCEDURE CDN.XLDodajElementWizyty
+(
+/* ==========================================================================================
+	SQL API: Procedura serwerowa do dodawania elementów wizyty handlowej
+
+	Dla uproszczenia założono, że jeżeli w systemie zewnętrznym zostanie wystawiona wizyta handlowa,
+	to w trakcie wystawiania jej przez API nie ma potrzeby kontrolowania uprawnień do obiektów, z których ona korzysta.
+
+	Dodatkowo jeśli nie podano jakiegoś parametru, a sama wizyta ma zapisany na nagłówku identyfikator wzorca, 
+	to część parametrów jest ustalana na podstawie takiego wzorca.
+	
+	Parametry wejściowe: 
+   ========================================================================================== */
+	@CWN_ID					INT,				-- identyfikator wizyty, do której dodajemy ten element
+	@CWE_GIDLp              INT = NULL,  
+	@OpeNumer				INT,				-- GidNumer operatora, który wykonuje tą operacje
+	@RodzajId				INTEGER,			-- Identyfikator rodzaju elementu wizyty	
+	@Kod					VARCHAR(20),		-- Kod elementu wizyty
+	@Nazwa					VARCHAR(255)=NULL,	-- Nazwa elementu wizyty
+	@Wymagany				TINYINT=NULL,		-- Czy wymagany do wykonania (0 - nie; 1 - tak)
+	@Wykonano				TINYINT=NULL,		-- Czy wykonano (0 - nie; 1 - tak)
+	@PowodNiewykonaniaId	INTEGER=NULL,		-- Identyfikator powodu niewykonania wizyty
+	@PowodNiewykonania		VARCHAR(49)=NULL,	-- Powód niewykonania elementu wizyty
+	@Opis					VARCHAR(1024)=NULL,	-- Opis elementu wizyty
+	@OpisWykonania			TEXT=NULL,			-- Opis wykonania elementu wizyty
+	@DataUtworzenia			INTEGER=NULL,		-- Data utworzenia - co do sekundy
+	@Archiwalny				TINYINT=NULL,		-- Czy element archwiwalny
+	@Url					VARCHAR(255)=NULL,	-- Adres URL
+	@Przypisz				TINYINT=NULL,		-- Przypisz niezakończone działania/wątki/zadania operatora
+	@PrzypiszPrzed			INTEGER=NULL,		-- Termin Od (przed wizytą)
+	@PrzypiszPo				INTEGER=NULL,		-- Termin Do (po wizycie)
+	@Oddzialowy				TINYINT=NULL		-- Czy element został wysłany do oddziału
+/* ==========================================================================================
+	Return:
+	 0 : Operacja zakończona sukcesem (zwrócono ID nowej wizyty)
+	-1 : Nie powiodło się dodawanie wpisu do tabeli CDN.CRMWizytyElem
+	-2 : Wystąpił błąd podczas dodawania elementu wizyty handlowej. Podana wizyta nie występuje w bazie.
+	-3 : Wystąpił błąd podczas dodawania elementu wizyty handlowej. Podany operator nie występuje w bazie.
+
+   ========================================================================================== */   	
+)
+AS
+BEGIN
+
+    DECLARE @CWNLp SMALLINT
+    DECLARE @CWWLp SMALLINT
+    DECLARE @Pozycja SMALLINT
+
+    DECLARE @Typ_WH SMALLINT
+    DECLARE @Typ_CWW SMALLINT
+    SET @Typ_WH = 4180
+    SET @Typ_CWW = 4181
+    DECLARE @WzNumer INT
+    DECLARE @CWNKntNumer INT
+    DECLARE @CWNKntOsobaLp SMALLINT
+    
+    SELECT @WzNumer=CWN_WzNumer, @CWNKntNumer=CWN_KntNumer, @CWNKntOsobaLp=CWN_KntOsobaLp FROM CDN.CRMWizytyNag WHERE CWN_ID=@CWN_ID
+    
+    SELECT @CWNLp=ISNULL(@CWE_GIDLp, IsNull(MAX(CWE_GidLp),0)+1), @Pozycja=IsNull(MAX(CWE_Pozycja),0)+1 FROM CDN.CRMWizytyElem WHERE CWE_GidTyp=@Typ_WH AND CWE_GidNumer=@CWN_ID
+    SELECT @CWWLp=ISNULL(@CWE_GIDLp, CWE_GidLp) FROM CDN.CRMWizytyElem WHERE CWE_GidTyp=@Typ_CWW AND CWE_GidNumer=@WzNumer AND CWE_Pozycja=@Pozycja
+
+	INSERT INTO CDN.CRMWizytyElem
+           (CWE_GidTyp
+           ,CWE_GidFirma
+           ,CWE_GidNumer
+           ,CWE_GidLp
+           ,CWE_Kod
+           ,CWE_Nazwa
+           ,CWE_Pozycja
+           ,CWE_Wymagany
+           ,CWE_Wykonano
+           ,CWE_PowodNiewykonaniaId
+           ,CWE_PowodNiewykonania
+           ,CWE_Opis
+           ,CWE_OpisWykonania
+           ,CWE_RodzajId
+           ,CWE_DataUtworzenia
+           ,CWE_OpeNumerU
+           ,CWE_OpeNumerM
+           ,CWE_Url
+           ,CWE_Przypisz
+           ,CWE_PrzypiszPrzed
+           ,CWE_PrzypiszPo
+           ,CWE_CzasModyfikacji
+           ,CWE_CzasModyfikacjiC
+           ,CWE_CzasArchiwizacji
+           ,CWE_OpeNumerA
+           ,CWE_Oddzialowy)
+	SELECT
+			@Typ_WH--CWE_GidTyp
+           ,Ope_GIDFirma--CWE_GidFirma
+           ,CWN_ID--CWE_GidNumer
+           ,@CWNLp--CWE_GidLp
+           ,ISNULL(@Kod,ISNULL(CWE_Kod,''))--CWE_Kod
+           ,ISNULL(@Nazwa,ISNULL(CWE_Nazwa,''))--CWE_Nazwa
+           ,@Pozycja--CWE_Pozycja
+           ,ISNULL(@Wymagany,ISNULL(CWE_Wymagany,0))--CWE_Wymagany
+           ,ISNULL(@Wykonano,0)--CWE_Wykonano
+           ,ISNULL(@PowodNiewykonaniaId,0)--CWE_PowodNiewykonaniaId
+           ,ISNULL(@PowodNiewykonania,'')--CWE_PowodNiewykonania
+           ,ISNULL(@Opis,ISNULL(CWE_Opis,''))--CWE_Opis
+           ,ISNULL(@OpisWykonania,'')--CWE_OpisWykonania
+           ,ISNULL(SLW_ID,ISNULL(CWE_RodzajId,IsNull((SELECT TOP 1 SLW_ID FROM CDN.SlownikiStruktura INNER JOIN CDN.Slowniki ON SLS_Id=SLW_SLSId WHERE SLW_Aktywny=1 AND SLW_Predefiniowany=0 AND SLS_Predefiniowany=97),0)))
+           ,ISNULL(@DataUtworzenia,DATEDIFF(s,'19900101',GETDATE()))--CWE_DataUtworzenia
+           ,@OpeNumer--CWE_OpeNumerU
+           ,@OpeNumer--CWE_OpeNumerM
+           ,ISNULL(@Url,'')--CWE_Url
+           ,ISNULL(@Przypisz,0)--CWE_Przypisz
+           ,ISNULL(CASE WHEN @Przypisz=0 THEN -1 ELSE @PrzypiszPrzed END,-1)--CWE_PrzypiszPrzed
+           ,ISNULL(CASE WHEN @Przypisz=0 THEN -1 ELSE @PrzypiszPo END,-1)--CWE_PrzypiszPo
+           ,DATEDIFF(s,'19900101',GETDATE())--CWE_CzasModyfikacji
+           ,DATEDIFF(s,'19900101',GETDATE())--CWE_CzasModyfikacjiC
+           ,CASE WHEN ISNULL(@Archiwalny,0)=0 THEN 0 ELSE DATEDIFF(s,'19900101',GETDATE()) END--CWE_CzasArchiwizacji
+           ,CASE WHEN ISNULL(@Archiwalny,0)=0 THEN 0 ELSE @OpeNumer END--CWE_OpeNumerA
+           ,ISNULL(@Oddzialowy,0)--CWE_Oddzialowy
+	FROM CDN.CRMWizytyNag
+	INNER JOIN CDN.OpeKarty	ON Ope_GIDNumer=@OpeNumer
+	LEFT OUTER JOIN CDN.Slowniki ON SLW_ID=@RodzajId
+	LEFT OUTER JOIN CDN.CRMWizytyElem ON CWE_GidTyp=@Typ_CWW AND CWE_GidNumer=CWN_WzNumer AND CWE_GidLp=@CWWLp
+	WHERE CWN_ID=@CWN_ID 
+	GROUP BY Ope_GIDFirma,CWN_ID,SLW_ID,CWE_RodzajId,CWE_Kod,CWE_Nazwa,CWE_Wymagany,CWE_Opis
+
+	IF @@ROWCOUNT=0 BEGIN
+
+		IF NOT EXISTS(SELECT * FROM CDN.CRMWizytyNag WHERE CWN_ID=@CWN_ID) BEGIN 
+			RAISERROR ('Wystąpił błąd podczas dodawania elementu wizyty handlowej. Podana wizyta nie występuje w bazie.', 16, 1)
+			RETURN -2
+		END
+		IF NOT EXISTS(SELECT * FROM CDN.OpeKarty WHERE Ope_GIDNumer=@OpeNumer) BEGIN
+			RAISERROR ('Wystąpił błąd podczas dodawania elementu wizyty handlowej. Podany operator nie występuje w bazie.', 16, 1)
+			RETURN -3
+		END				
+			
+		-- inny powód błędu:						
+		RAISERROR ('Nie powiodło się dodawanie wpisu do tabeli CDN.CRMWizytyElem.', 16, 1)
+		RETURN -1
+	END
+
+	DECLARE @SlwPredefiniowany INT 
+	DECLARE @ZadId INT
+
+	SELECT @SlwPredefiniowany=SLW_Predefiniowany
+	FROM CDN.CRMWizytyElem
+	JOIN CDN.Slowniki ON SLW_ID=CWE_RodzajId
+	WHERE CWE_GidTyp=@Typ_WH AND CWE_GidNumer=@CWN_ID AND CWE_GidLp=@CWNLp
+
+	DECLARE @TimeStamp INT
+	SET @TimeStamp = DATEDIFF(s,'19900101',GETDATE())
+	
+	IF @SlwPredefiniowany=26 -- Ankiety
+		BEGIN
+		
+			DECLARE @AntId INT
+			DECLARE @TWRTyp SMALLINT
+			DECLARE @TWRNumer INT
+			
+			--Przepisywanie ankiet:
+			INSERT INTO CDN.CRMWizytyElemObiekty (CWO_CWETyp,CWO_CWENumer,CWO_CWELp,CWO_ObiTyp,CWO_ObiNumer,CWO_ObiLp)
+			SELECT @Typ_WH,@CWN_ID,@CWNLp,CWO_ObiTyp,CWO_ObiNumer,CWO_ObiLp
+			FROM CDN.CRMWizytyElemObiekty
+			WHERE CWO_CWETyp=@Typ_CWW AND CWO_CWENumer=@WzNumer AND CWO_CWELp=@CWWLp AND CWO_ObiTyp=14460--Typ_Ankieta )
+
+			DECLARE C_ANT CURSOR FAST_FORWARD FOR
+				SELECT CWO_ObiNumer,CWA_TWRTyp,CWA_TWRNumer
+				FROM CDN.CRMWizytyElemObiekty
+				LEFT OUTER JOIN CDN.CRMWizytyAnkiety ON CWA_CWETyp=@Typ_CWW AND CWA_CWENumer=@WzNumer  AND CWA_CWELp=@CWWLp AND CWA_ANTId=CWO_ObiNumer
+				WHERE CWO_CWETyp=@Typ_WH AND CWO_CWENumer=@CWN_ID AND CWO_CWELp=@CWNLp AND CWO_ObiTyp=14460
+			OPEN C_ANT;
+			FETCH NEXT FROM C_ANT INTO @AntId,@TWRTyp,@TWRNumer
+			
+			WHILE @@fetch_status = 0
+			BEGIN			
+				DECLARE @Ant_Kod VARCHAR(40)
+				DECLARE @Ant_Nazwa VARCHAR(100)
+				DECLARE @CWN_TerminOd INT 
+				DECLARE @CWN_TerminDo INT 
+				DECLARE @CWN_KntTyp SMALLINT 
+				DECLARE @CWN_KntNumer INT 
+				
+				SELECT @Ant_Kod=Ant_Kod, @Ant_Nazwa=Ant_Nazwa FROM CDN.Ankiety WHERE ANT_Id=@AntId 
+				SELECT @CWN_KntTyp=CWN_KntTyp, @CWN_KntNumer=CWN_KntNumer, @CWN_TerminOd=CWN_TerminOd, @CWN_TerminDo=CWN_TerminDo FROM CDN.CRMWizytyNag WHERE CWN_ID=@CWN_ID
+				
+				EXEC @ZadId=CDN.XLNoweZadanieTERMINARZ	
+					@Kod = @Ant_Kod,
+					@Nazwa = @Ant_Nazwa,
+					@OpeTyp = 128,
+					@OpeNumer = @OpeNumer,
+					--@Priorytet = NULL, -- TODO - domyślny priorytet dla zadań w Clarionie: SlwDomyslny(e_SLW_KAT_PriorytetyZadan,1)
+					@Opis = '',
+					--@Przypomnienie,
+					--@CzasPrzypomnienia,
+					--@CzasPrzypomnieniaJedn,
+					@CzasUtworzenia = @TimeStamp,
+					@TerminOd = @CWN_TerminOd,
+					@TerminDo = @CWN_TerminDo,
+					--@CzasPlanowany = NULL,
+					--@CzasPlanowanyJedn = NULL,
+					--@PowtarzajCo = NULL,
+					--@PowtarzajOkres = NULL,
+					@RezerwujCzas = 0,
+					@ZrdTyp = 14460,
+					@ZrdNumer = @AntId,
+					@ZrdLp = 0,
+					@ZrdPytania = 0,
+					--@OkresId = NULL,
+					--@Notatki = NULL,
+					--@Cykliczne = NULL,
+					--@OpeIdent = NULL,
+					@ObiTyp = @CWN_KntTyp,
+					@ObiNumer = @CWN_KntNumer,
+					--@OpePrcJakoObiekt,
+					@IgnorujBledy = 1	-- TODO
+					
+					/* TODO
+					@IgnorujBledy = NULL
+					  -- poprawić w 10.5 XLNoweZadanieTERMINARZ:::
+							if exists(select * from cdn.Zadania where Zad_TerminOd = @TerminOd and Zad_TerminDo = @TerminDo and Zad_Kod  like '%'+ @Kod + '%')
+							begin
+									rollback tran XLNoweZadanieTERMINARZ
+									if @IgnorujBledy is null
+											raiserror('Istnieje już zadanie o danym kodzie i w danym terminie - (-7)',16,1)
+									return -7
+							end
+					*/
+					
+				IF @ZadId&gt;0 BEGIN
+					INSERT INTO CDN.PytaniaZadania (PYZ_ZadId, PYZ_AntId, PYZ_PytId, PYZ_PytWaga, PYZ_GrupWaga, PYZ_Opis, PYZ_Pozycja)
+					SELECT @ZadId, PAN_AntId, PAN_PytId, PAN_PytWaga, PAN_GrupWaga, PAN_Opis, PAN_Pozycja FROM CDN.PytaniaAnkiety
+					WHERE PAN_AntId=@AntId
+
+					INSERT INTO CDN.CRMWizytyAnkiety (CWA_CWETyp,CWA_CWENumer,CWA_CWELp,CWA_ANTId,CWA_ZadId,CWA_TWRTyp,CWA_TWRNumer)
+					SELECT @Typ_WH,@CWN_ID,@CWNLp,@AntId,@ZadId,IsNull(@TWRTyp,0),IsNull(@TWRNumer,0)
+				END
+				FETCH NEXT FROM C_ANT INTO @AntId,@TWRTyp,@TWRNumer
+			END
+			CLOSE C_ANT;
+			DEALLOCATE C_ANT;
+                    
+		END
+	--ELSE IF @SlwPredefiniowany=27 --Kampanie
+		--BEGIN
+			--PrzypiszZKK
+		--END
+	--ELSE IF @SlwPredefiniowany=28 --Konwersacje
+		--BEGIN
+			--PrzypiszZKK	
+		--END
+	--ELSE IF @SlwPredefiniowany=29--Naleznosci	
+	--ELSE IF @SlwPredefiniowany=30--Przejazdy	
+	ELSE IF @SlwPredefiniowany=31--Dokumenty
+		BEGIN
+			--Przepisywanie typów dokumentów:
+			INSERT INTO CDN.CRMWizytyElemDok (CWD_CWETyp,CWD_CWENumer,CWD_CWELp,CWD_DokTyp)
+			SELECT @Typ_WH,@CWN_ID,@CWNLp,CWD_DokTyp 
+			FROM CDN.CRMWizytyElemDok 
+			WHERE CWD_CWETyp=@Typ_CWW AND CWD_CWENumer=@WzNumer AND CWD_CWELp=@CWWLp
+			
+			--Przepisywanie towarów:
+			INSERT INTO CDN.CRMWizytyDokTwr (CDT_CWETyp,CDT_CWENumer,CDT_CWELp,CDT_TwrNumer,CDT_Ilosc,CDT_Wymagaj)
+			SELECT @Typ_WH,@CWN_ID,@CWNLp,CDT_TwrNumer,CDT_Ilosc,CDT_Wymagaj
+			FROM CDN.CRMWizytyDokTwr
+			WHERE CDT_CWETyp=@Typ_CWW AND CDT_CWENumer=@WzNumer AND CDT_CWELp=@CWWLp
+		END	
+	ELSE IF @SlwPredefiniowany=32--Zadania
+		BEGIN
+			DECLARE @CDZ_ID	INTEGER
+			DECLARE @CDZ_Tytul	VARCHAR(80)	
+			DECLARE @CDZ_Priorytet	TINYINT
+			DECLARE @CDZ_TypId	INTEGER
+			DECLARE @CDZ_Rodzaj	TINYINT
+			DECLARE @CDZ_Opis	VARCHAR(5000)
+			DECLARE @CDZ_Obsluga	TINYINT	
+			DECLARE @CDZ_OpeONumer	INTEGER
+			DECLARE @CDZ_FrsId	INTEGER
+			DECLARE @CDZ_GenerujAutomatycznie	TINYINT
+			DECLARE @CDZ_LaczZadania	TINYINT	
+			DECLARE @CDZ_TerminZadania	INTEGER	
+			DECLARE @CDZ_CzasPlanowany	INTEGER	
+			DECLARE @CDZ_CzasPlanowanyJedn	TINYINT
+			DECLARE @CDZ_Przypomnienie	TINYINT	
+			DECLARE @CDZ_CzasPrzypomnienia	INTEGER
+			DECLARE @CDZ_CzasPrzypomnieniaJedn	TINYINT
+			DECLARE @CDZ_Terminarz	TINYINT
+			DECLARE @CDZ_CDZId	INTEGER
+			DECLARE @newCDZID INTEGER
+			DECLARE @CDZ_CalyDzien INTEGER
+
+			DECLARE C_ZAD CURSOR FAST_FORWARD FOR
+			SELECT CDZ_ID
+				  ,CDZ_Tytul
+				  ,CDZ_Priorytet
+				  ,CDZ_TypId
+				  ,CDZ_Rodzaj
+				  ,CDZ_Opis
+				  ,CDZ_Obsluga
+				  ,CDZ_OpeONumer
+				  ,CDZ_FrsId
+				  ,CDZ_GenerujAutomatycznie
+				  ,CDZ_LaczZadania
+				  ,CDZ_TerminZadania
+				  ,CDZ_CzasPlanowany
+				  ,CDZ_CzasPlanowanyJedn
+				  ,CDZ_Przypomnienie
+				  ,CDZ_CzasPrzypomnienia
+				  ,CDZ_CzasPrzypomnieniaJedn
+				  ,CDZ_Terminarz
+				  ,CDZ_CDZId
+				  ,CDZ_CalyDzien
+			  FROM CDN.CRMDefZadania WHERE CDZ_CkeTyp=@Typ_CWW AND CDZ_CkeNumer=@WzNumer AND CDZ_CkeLp=@CWWLp
+			OPEN C_ZAD;
+			FETCH NEXT FROM C_ZAD INTO @CDZ_ID,@CDZ_Tytul,@CDZ_Priorytet,@CDZ_TypId,@CDZ_Rodzaj,@CDZ_Opis,@CDZ_Obsluga,@CDZ_OpeONumer,@CDZ_FrsId,
+									   @CDZ_GenerujAutomatycznie,@CDZ_LaczZadania,@CDZ_TerminZadania,@CDZ_CzasPlanowany,@CDZ_CzasPlanowanyJedn,
+									   @CDZ_Przypomnienie,@CDZ_CzasPrzypomnienia,@CDZ_CzasPrzypomnieniaJedn,@CDZ_Terminarz,@CDZ_CDZId,@CDZ_CalyDzien
+			
+			WHILE @@fetch_status = 0
+			BEGIN			
+				--Przepisywanie definicji zadań:
+				INSERT INTO CDN.CRMDefZadania
+							(CDZ_CkeTyp,CDZ_CkeNumer,CDZ_CkeLp
+							,CDZ_DataUtworzenia
+							,CDZ_OpeUNumer,CDZ_OpeMNumer,
+							CDZ_Tytul,CDZ_Priorytet,CDZ_TypId,CDZ_Rodzaj,CDZ_Opis,CDZ_Obsluga,CDZ_OpeONumer,CDZ_FrsId,
+							CDZ_GenerujAutomatycznie,CDZ_LaczZadania,CDZ_TerminZadania,CDZ_CzasPlanowany,CDZ_CzasPlanowanyJedn,
+							CDZ_Przypomnienie,CDZ_CzasPrzypomnienia,CDZ_CzasPrzypomnieniaJedn,CDZ_Terminarz,CDZ_CDZId,CDZ_CalyDzien)							
+					 SELECT @Typ_WH,@CWN_ID,@CWNLp
+							,@TimeStamp
+							,@OpeNumer,@OpeNumer,
+							@CDZ_Tytul,@CDZ_Priorytet,@CDZ_TypId,@CDZ_Rodzaj,@CDZ_Opis,@CDZ_Obsluga,@CDZ_OpeONumer,@CDZ_FrsId,
+							@CDZ_GenerujAutomatycznie,@CDZ_LaczZadania,@CDZ_TerminZadania,@CDZ_CzasPlanowany,@CDZ_CzasPlanowanyJedn,
+							@CDZ_Przypomnienie,@CDZ_CzasPrzypomnienia,@CDZ_CzasPrzypomnieniaJedn,@CDZ_Terminarz,@CDZ_ID,@CDZ_CalyDzien
+							
+				SET @newCDZID = SCOPE_IDENTITY()
+													
+				--Przepisywanie obiektów dla def. zadań:
+				INSERT INTO CDN.CRMZadaniaObiekty (CZO_CDZId,CZO_SseNumer,CZO_SseLp,CZO_ObiTyp, CZO_ObiNumer,CZO_DataUtworzenia) 
+                SELECT @newCDZID,0,0,CZO_ObiTyp,CZO_ObiNumer,@TimeStamp FROM CDN.CRMZadaniaObiekty WHERE CZO_CDZId=@CDZ_ID
+                           
+				--Generowanie zadań na podstawie definicji
+				DECLARE @SsNNumer INTEGER
+				DECLARE @SsELp SMALLINT
+				SET @SsNNumer=0
+				SET @newCDZID = -1*@newCDZID
+				EXEC @SsELp=CDN.XLDodajElementDoWatkuCRM				
+					@Tytul=null,
+					@ElementTyp=2,
+					@OpeStartNumer=@OpeNumer,
+					@SsNNumer=@SsNNumer output,
+					@KntNumer=@CWNKntNumer,
+					@KntLp=0,
+					@KntOsobaLp=@CWNKntOsobaLp,
+					@CkeNumer=null,
+					@CkeLp=null,					
+					@CdzID=@newCDZID
+				SET @newCDZID = -1*@newCDZID					
+				PRINT @SsNNumer 
+				PRINT @SsELp
+				INSERT INTO CDN.CRMWizytyElemObiekty (CWO_CWETyp,CWO_CWENumer,CWO_CWELp,CWO_ObiTyp,CWO_ObiNumer,CWO_ObiLp)
+				SELECT @Typ_WH,@CWN_ID,@CWNLp,339,@SsNNumer,@SsELp
+				
+				--koniec
+				FETCH NEXT FROM C_ZAD INTO @CDZ_ID,@CDZ_Tytul,@CDZ_Priorytet,@CDZ_TypId,@CDZ_Rodzaj,@CDZ_Opis,@CDZ_Obsluga,@CDZ_OpeONumer,@CDZ_FrsId,
+										   @CDZ_GenerujAutomatycznie,@CDZ_LaczZadania,@CDZ_TerminZadania,@CDZ_CzasPlanowany,@CDZ_CzasPlanowanyJedn,
+										   @CDZ_Przypomnienie,@CDZ_CzasPrzypomnienia,@CDZ_CzasPrzypomnieniaJedn,@CDZ_Terminarz,@CDZ_CDZId,@CDZ_CalyDzien
+			
+			END
+			CLOSE C_ZAD;
+			DEALLOCATE C_ZAD;			
+        --PrzypiszZKK
+		END
+	--ELSE IF @SlwPredefiniowany=33--Realizacja zamówień sprzedaży
+	ELSE IF (@SlwPredefiniowany=83 or @SlwPredefiniowany=84) --RaportObecnosciTowarow lub RaportTowarowKonkurencji
+		BEGIN
+			--Przepisywanie raportów:
+			INSERT INTO CDN.CRMWizytyElemObiekty (CWO_CWETyp,CWO_CWENumer,CWO_CWELp,CWO_ObiTyp,CWO_ObiNumer,CWO_ObiLp)
+			SELECT @Typ_WH,@CWN_ID,@CWNLp,CWO_ObiTyp,CWO_ObiNumer,CWO_ObiLp
+			FROM CDN.CRMWizytyElemObiekty
+			JOIN CDN.CRMRaportyDef on CWO_ObiNumer=CRD_Id
+			WHERE CWO_CWETyp=@Typ_CWW AND CWO_CWENumer=@WzNumer AND CWO_CWELp=@CWWLp AND CWO_ObiTyp=4184--Typ_CRD
+			AND CRD_CzasArchiwizacji=0
+
+				
+	        --Przepisywanie dodatkowych kolumn raportów
+			DECLARE  @raporty Table(
+				lp int,
+				IdRaportu int
+			)	
+			insert into @raporty(lp,IdRaportu) 
+			select distinct ROW_NUMBER() OVER (ORDER BY cwo_obinumer ASC), cwo_obinumer FROM CDN.CRMWizytyElemObiekty
+			JOIN CDN.CRMRaportyDef on CWO_ObiNumer=CRD_Id
+			WHERE CWO_CWETyp=@Typ_CWW AND CWO_CWENumer=@WzNumer AND CWO_CWELp=@CWWLp AND CWO_ObiTyp=4184--Typ_CRD
+			AND CRD_CzasArchiwizacji=0
+			
+			declare 
+					@iter int,
+					@do int,
+					@rptId int
+
+			DECLARE @ATKiD1 INT,
+					@ATKiD2 INT,
+					@ATKiD3 INT,
+					@ATKiD4 INT,
+					@ATKiD5 INT,
+					@WYM1	INT,
+					@WYM2	INT,
+					@WYM3	INT,
+					@WYM4	INT,
+					@WYM5	INT,
+					@CRDiD  INT
+
+			set @iter = 1
+			select @do = max(lp) from @raporty
+			WHILE @iter &lt;= @do
+			BEGIN
+				select @rptId = IdRaportu from @raporty where lp = @iter
+				select 
+					@ATKiD1 = 0,
+					@ATKiD2 = 0,
+					@ATKiD3 = 0,
+					@ATKiD4 = 0,
+					@ATKiD5 = 0,
+					@WYM1	= 0,
+					@WYM2	= 0,
+					@WYM3	= 0,
+					@WYM4	= 0,
+					@WYM5	= 0,
+					@CRDiD  = 0
+
+				SELECT 
+					 @ATKiD1 = CASE WHEN CRK_Pozycja = 1 THEN AtK_ID ELSE @ATKiD1 END,
+					 @ATKiD2 = CASE WHEN CRK_Pozycja = 2 THEN AtK_ID ELSE @ATKiD2 END,
+					 @ATKiD3 = CASE WHEN CRK_Pozycja = 3 THEN AtK_ID ELSE @ATKiD3 END,
+					 @ATKiD4 = CASE WHEN CRK_Pozycja = 4 THEN AtK_ID ELSE @ATKiD4 END,
+					 @ATKiD5 = CASE WHEN CRK_Pozycja = 5 THEN AtK_ID ELSE @ATKiD5 END,
+					 @WYM1 = CASE WHEN CRK_Pozycja = 1 THEN CrK_Wymagana ELSE @WYM1 END,
+					 @WYM2 = CASE WHEN CRK_Pozycja = 2 THEN CrK_Wymagana ELSE @WYM2 END,
+					 @WYM3 = CASE WHEN CRK_Pozycja = 3 THEN CrK_Wymagana ELSE @WYM3 END,
+					 @WYM4 = CASE WHEN CRK_Pozycja = 4 THEN CrK_Wymagana ELSE @WYM4 END,
+					 @WYM5 = CASE WHEN CRK_Pozycja = 5 THEN CrK_Wymagana ELSE @WYM5 END,
+					 @CRDiD = COALESCE(CRD_ID,@CRDiD,0)				
+				FROM CDN.CRMWizytyElemObiekty
+				JOIN CDN.CRMRaportyDef on CWO_ObiNumer=CRD_Id
+				JOIN CDN.CRMRaportyKolumny ON CRD_Id=CRK_CRDId
+				JOIN CDN.ATRYBUTYKLASY ON AtK_ID=CRK_AtKID
+				WHERE CWO_CWETyp=@Typ_CWW AND CWO_CWENumer=@WzNumer AND CWO_CWELp=@CWWLp AND CWO_ObiTyp=4184--Typ_CRD
+				AND CRD_CzasArchiwizacji=0 AND CWO_ObiNumer=@rptId
+			    
+
+				SELECT 
+				@ATKiD1 = ISNULL(@ATKiD1,0),
+				@ATKiD2 = ISNULL(@ATKiD2,0),
+				@ATKiD3 = ISNULL(@ATKiD3,0),
+				@ATKiD4 = ISNULL(@ATKiD4,0),
+				@ATKiD5 = ISNULL(@ATKiD5,0),
+				@WYM1 = ISNULL(@WYM1,0),
+				@WYM2 = ISNULL(@WYM2,0),
+				@WYM3 = ISNULL(@WYM3,0),
+				@WYM4 = ISNULL(@WYM4,0),
+				@WYM5 = ISNULL(@WYM5,0)
+			
+				IF @CRDiD IS NOT NULL AND @CRDiD&gt;0
+				BEGIN 
+					INSERT INTO cdn.CRMWizytyRptKolumny(CWRK_CWETyp, CWRK_CWENumer, CWRK_CWELp, CWRK_CRDId, CWRK_AtKID1, CWRK_Wymagana1, CWRK_AtKID2, CWRK_Wymagana2, CWRK_AtKID3, CWRK_Wymagana3, CWRK_AtKID4, CWRK_Wymagana4, CWRK_AtKID5, CWRK_Wymagana5)
+					VALUES(@Typ_WH,@CWN_ID,@CWNLp,@CRDiD,@ATKiD1,@WYM1,@ATKiD2,@WYM2,@ATKiD3,@WYM3,@ATKiD4,@WYM4,@ATKiD5,@WYM5)
+				END
+
+				SET @iter = @iter + 1;
+			END
+										
+			--przepisywanie towarów:
+			INSERT INTO CDN.CRMWizytyRptTwr 
+				  (CWT_CWETyp,CWT_CWENumer,CWT_CWELp,CWT_CRDId,CWT_TwrNumer,CWT_Obecny,CWT_Ilosc,CWT_Jm,CWT_Cena,CWT_Ekspozycja,CWT_Facing,CWT_KntTyp,CWT_KntNumer)
+			SELECT CWO_CWETyp,CWO_CWENumer,CWO_CWELp,CRT_CRDId,CRT_TwrNumer,0,0.0000,IsNull(TwJ_JmZ,Twr_Jm),0.00,0,0,0,0
+			FROM CDN.CRMWizytyElemObiekty
+			JOIN CDN.CRMRaportyTwr on CRT_CRDId=CWO_ObiNumer
+			JOIN CDN.TwrKarty ON Twr_GIDNumer=CRT_TwrNumer
+			LEFT JOIN CDN.TwrJm ON Twr_GIDNumer=TwJ_TwrNumer AND Twr_JmDomyslna=TwJ_TwrLp
+			WHERE CWO_CWETyp=@Typ_WH AND CWO_CWENumer=@CWN_ID AND CWO_CWELp=@CWNLp AND CWO_ObiTyp=4184--Typ_CRD
+                        
+		END						
+	ELSE IF @SlwPredefiniowany=86--Merchandising 
+		BEGIN
+			
+	    DECLARE @DAO_Pozycja tinyint	
+	    select @DAO_Pozycja = max(isNull(DAO_Pozycja,0))+1 from CDN.DaneObiekty where DAO_ObiTyp = @Typ_CWW and DAO_ObiNumer = @WzNumer
+																								
+			--przepisywanie wzorców:
+			INSERT INTO CDN.DaneObiekty
+			   ([DAO_DABId],
+			   [DAO_ObiTyp],[DAO_ObiNumer],[DAO_ObiLp],
+			   [DAO_Domyslna],[DAO_Blokada],[DAO_PPPrawa],[DAO_PKPrawa],[DAO_eSklep],[DAO_iMall],[DAO_MobSpr],[DAO_ObiSubLp],[DAO_Systemowa],
+			   [DAO_Retail],[DAO_Pozycja])
+			SELECT
+				[DAO_DABId],
+				@Typ_WH,@CWN_ID,@CWNLp
+			   ,[DAO_Domyslna],[DAO_Blokada],[DAO_PPPrawa],[DAO_PKPrawa],[DAO_eSklep],[DAO_iMall],[DAO_MobSpr],[DAO_ObiSubLp],[DAO_Systemowa],
+			   [DAO_Retail],@DAO_Pozycja
+			FROM CDN.DaneObiekty
+			WHERE DAO_ObiTyp=@Typ_CWW AND DAO_ObiNumer=@WzNumer AND DAO_ObiLp=@CWWLp
+		END	
+	
+	--Atrybuty automatyczne:
+	INSERT INTO CDN.Atrybuty(Atr_ObiTyp,Atr_ObiFirma,Atr_ObiNumer,Atr_ObiLp,Atr_ObiSubLp
+							,Atr_AtkId,Atr_Wartosc,Atr_AtrTyp,Atr_AtrFirma,Atr_AtrNumer,Atr_AtrLp,Atr_AtrSubLp,Atr_OptimaId)
+	SELECT @Typ_WH,CDN.GIDFirma(),@CWN_ID,@CWNLp,0,Atk_Id,'',0,0,0,0,0,0
+	FROM CDN.AtrybutyKlasy
+	JOIN CDN.AtrybutyObiekty ON AtO_AtKId=AtK_ID
+	WHERE AtK_Automat=1 AND AtO_GIDTyp=@Typ_WH AND AtO_Element=1
+		                    
+	--OK:
+	RETURN @CWNLp
+	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

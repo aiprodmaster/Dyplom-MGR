@@ -1,0 +1,106 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="ESKLEP_EksportRodzajowZgod"></A><PRE>
+          <FONT SIZE="2"><I>/* ESKLEP_EksportRodzajowZgod */</I><BR>
+CREATE PROCEDURE CDN.ESKLEP_EksportRodzajowZgod
+  @ID INT      -- ID e-sklepu
+ ,@TypExp INT  -- Typ eksportu (0 - różnicowy, 1 - pełny)
+AS
+
+	CREATE TABLE #tmpRecordSet(Kategoria SMALLINT,ID VARCHAR(38),VerID VARCHAR(38),DataOd DATETIME,SlwID INT,NazwaPL VARCHAR(256),TrescPL VARCHAR(2048))
+	INSERT INTO #tmpRecordSet
+	SELECT (CASE SLW_WartoscL1 WHEN 0 THEN 1 WHEN 5 THEN 2 WHEN 4 THEN 3 WHEN 1 THEN 4 WHEN 3 THEN 5 ELSE 1 END) AS Kategoria,
+		CAST(NEWID() AS VARCHAR(36)) AS ID,CAST(NEWID() AS VARCHAR(36)) AS VerID,
+		DATEADD(second,SLW_CzasModyfikacji,CONVERT(DATETIME,'1990-01-01',120) ) AS DataOd,SLW_ID AS SlwID, SLW_WartoscS AS NazwaPL, SLW_WartoscS3 AS TrescPL
+	FROM CDN.SlownikiStruktura 
+	JOIN CDN.Slowniki ON SLW_SLSId = SLS_ID 
+	JOIN CDN.PicoKonfig ON Pck_PicoID = @ID
+	JOIN CDN.PicoRelacje ON PCR_ID = Pck_PicoID AND PcR_ObiTyp = 6560 AND PcR_OBINumer = SLW_ID
+	LEFT JOIN CDN.PicoLog ZgodaWyslana ON ZgodaWyslana.PCL_PckID = Pck_PicoID AND ZgodaWyslana.PCL_ObiTyp = -6560 AND ZgodaWyslana.PCL_ObiNumer = SLW_ID
+	WHERE SLS_Predefiniowany = 173 AND ZgodaWyslana.PCL_ObiektGUID IS NULL AND SLW_Aktywny = 1 AND SLW_WersjaNr &lt;= 1
+
+	INSERT INTO #tmpRecordSet
+	SELECT (CASE RodzajeZgod.SLW_WartoscL1 WHEN 0 THEN 1 WHEN 5 THEN 2 WHEN 4 THEN 3 WHEN 1 THEN 4 WHEN 3 THEN 5 ELSE 1 END) AS Kategoria,
+		COALESCE(ZgodaRodzic.ID,ZgodaRodzicSlw.SLW_WartoscS4) AS ID,CAST(NEWID() AS VARCHAR(36)) AS VerID,
+		DATEADD(second,RodzajeZgod.SLW_CzasModyfikacji,CONVERT(DATETIME,'1990-01-01',120) ) AS DataOd,RodzajeZgod.SLW_ID AS SlwID, RodzajeZgod.SLW_WartoscS AS NazwaPL, RodzajeZgod.SLW_WartoscS3 AS TrescPL
+	FROM CDN.SlownikiStruktura 
+	JOIN CDN.Slowniki RodzajeZgod ON RodzajeZgod.SLW_SLSId = SLS_ID 
+	JOIN CDN.PicoKonfig ON Pck_PicoID = @ID
+	JOIN CDN.PicoRelacje ON PCR_ID = Pck_PicoID AND PcR_ObiTyp = 6560 AND PcR_OBINumer = SLW_ID
+	LEFT JOIN CDN.PicoLog ZgodaWyslana ON ZgodaWyslana.PCL_PckID = Pck_PicoID AND ZgodaWyslana.PCL_ObiTyp = -6560 AND ZgodaWyslana.PCL_ObiNumer = SLW_ID
+	LEFT JOIN #tmpRecordSet ZgodaRodzic ON ZgodaRodzic.SlwID = SLW_WersjaZrodlo
+	LEFT JOIN CDN.Slowniki ZgodaRodzicSlw ON ZgodaRodzicSlw.SLW_Id = RodzajeZgod.SLW_WersjaZrodlo
+	WHERE SLS_Predefiniowany = 173 AND ZgodaWyslana.PCL_ObiektGUID IS NULL AND RodzajeZgod.SLW_Aktywny = 1  AND RodzajeZgod.SLW_WersjaNr &gt; 1
+
+	SELECT 1 AS Tag, NULL AS Parent,Kategoria AS [ZGD!1!Kategoria],ID AS [ZGD!1!ID],VerID AS [ZGD!1!VerID],
+		DataOd AS [ZGD!1!DataOd],NULL AS [ZGDJI!2!],NULL AS [ZGDJ!3!JezykID],NULL AS [ZGDJ!3!Nazwa],NULL AS [ZGDJ!3!Tresc],
+		NULL AS [ZGDKI!4!],NULL AS [ZGDK!5!ID]
+	FROM #tmpRecordSet
+	UNION ALL
+	SELECT 2 AS Tag, 1 AS Parent,Kategoria AS [ZGD!1!Kategoria],ID AS [ZGD!1!ID],VerID AS [ZGD!1!VerID],
+		DataOd AS [ZGD!1!DataOd],NULL AS [ZGDJI!2!],NULL AS [ZGDJ!3!JezykID],NULL AS [ZGDJ!3!Nazwa],NULL AS [ZGDJ!3!Tresc],
+		NULL AS [ZGDKI!4!],NULL AS [ZGDK!5!ID]
+	FROM #tmpRecordSet	
+	UNION ALL -- Język polski
+	SELECT 3 AS Tag, 2 AS Parent,Kategoria AS [ZGD!1!Kategoria],ID AS [ZGD!1!ID],VerID AS [ZGD!1!VerID],
+		DataOd AS [ZGD!1!DataOd],NULL AS [ZGDJI!2!],1 AS [ZGDJ!3!JezykID],NazwaPL AS [ZGDJ!3!Nazwa],CASE WHEN LEN(TrescPL) = 0 THEN NazwaPL ELSE TrescPL END AS [ZGDJ!3!Tresc],
+		NULL AS [ZGDKI!4!],NULL AS [ZGDK!5!ID]
+	FROM #tmpRecordSet
+	UNION ALL
+	SELECT 3 AS Tag, 2 AS Parent,Kategoria AS [ZGD!1!Kategoria],ID AS [ZGD!1!ID],VerID AS [ZGD!1!VerID],
+		DataOd AS [ZGD!1!DataOd],NULL AS [ZGDJI!2!],SLW_WartoscL3 AS [ZGDJ!3!JezykID],Nazwa.Tlm_Tekst AS [ZGDJ!3!Nazwa],CASE WHEN LEN(Tresc.Tlm_Tekst) = 0 THEN Nazwa.Tlm_Tekst ELSE Tresc.Tlm_Tekst END AS [ZGDJ!3!Tresc],
+		NULL AS [ZGDKI!4!],NULL AS [ZGDK!5!ID]
+	FROM #tmpRecordSet
+	JOIN CDN.Tlumaczenia Nazwa ON Nazwa.Tlm_Typ = 8225 AND Nazwa.Tlm_Numer = SlwID AND Nazwa.Tlm_Pole = 2
+	JOIN CDN.Tlumaczenia Tresc ON Tresc.Tlm_Typ = 8225 AND Tresc.Tlm_Numer = SlwID AND Tresc.Tlm_Pole = 3 AND Tresc.TLM_Jezyk = Nazwa.Tlm_Jezyk
+	JOIN CDN.Slowniki ON SLW_ID = Tresc.Tlm_Jezyk AND SLW_WartoscL2 IN (2,3) AND SLW_Predefiniowany IN (21,22,23,24,25,34,35,36,98,99,100,101,110)
+	UNION ALL -- Kanały
+	SELECT DISTINCT 4 AS Tag, 1 AS Parent,Kategoria AS [ZGD!1!Kategoria],ID AS [ZGD!1!ID],VerID AS [ZGD!1!VerID],
+		DataOd AS [ZGD!1!DataOd],NULL AS [ZGDJI!2!],NULL AS [ZGDJ!3!JezykID],NULL AS [ZGDJ!3!Nazwa],NULL AS [ZGDJ!3!Tresc],
+		NULL AS [ZGDKI!4!],NULL AS [ZGDK!5!ID]
+	FROM #tmpRecordSet
+	JOIN CDN.SlwLinki ON SLL_IdNadrzedny = SLWID
+	JOIN CDN.Slowniki FormyKontaktu ON FormyKontaktu.SLW_ID = SLL_IdPodrzedny
+	WHERE CDN.ESKLEP_PobierzIdFormyKontaktu(FormyKontaktu.SLW_WartoscS) IS NOT NULL
+	UNION ALL -- Kanały
+	SELECT 5 AS Tag, 4 AS Parent,Kategoria AS [ZGD!1!Kategoria],ID AS [ZGD!1!ID],VerID AS [ZGD!1!VerID],
+		DataOd AS [ZGD!1!DataOd],NULL AS [ZGDJI!2!],NULL AS [ZGDJ!3!JezykID],NULL AS [ZGDJ!3!Nazwa],NULL AS [ZGDJ!3!Tresc],
+		NULL AS [ZGDKI!4!],CDN.ESKLEP_PobierzIdFormyKontaktu(SLW_WartoscS) AS [ZGDK!5!ID]
+	FROM #tmpRecordSet
+	JOIN CDN.SlwLinki ON SLL_IdNadrzedny = SLWID
+	JOIN CDN.Slowniki FormyKontaktu ON FormyKontaktu.SLW_ID = SLL_IdPodrzedny
+	WHERE CDN.ESKLEP_PobierzIdFormyKontaktu(FormyKontaktu.SLW_WartoscS) IS NOT NULL
+	ORDER BY ID,VerID,Tag,Parent
+	FOR XML EXPLICIT, ROOT('ZGDI')
+
+	DECLARE @TimeStamp INT
+	SET @TimeStamp = DATEDIFF(s,CONVERT(DATETIME,'19900101',121),GETDATE())
+
+	--Nowa zgoda	
+    INSERT INTO CDN.PicoLog ( PcL_PckID, PcL_ObiTyp, PcL_ObiNumer, PcL_ObiektID,PcL_ObiektTyp,PcL_Komentarz, PcL_Info, PcL_TStamp, PcL_ObiektGUID) 
+	SELECT @ID,-6560,SlwID,-1,0,'Rodzaj zgody - '+ NazwaPL,'',@TimeStamp,VerID --TFSID:373921,ID
+	FROM #tmpRecordSet
+	LEFT JOIN CDN.PicoLog ON PCL_PckID = @ID AND PcL_ObiTyp = -6560 AND PcL_ObiNumer = SlwID AND PcL_ObiektID = -1
+	WHERE PCL_PckID IS NULL
+
+	--TFSID:369911
+	UPDATE CDN.Slowniki SET SLW_WartoscS4 = ID 
+	FROM CDN.Slowniki 
+	JOIN #tmpRecordSet ON Slw_ID = SlWID 
+	JOIN CDN.PicoLog ON PCL_PckID = @ID AND PcL_ObiTyp = -6560 AND PcL_ObiNumer = SlwID AND PcL_ObiektID = -1
+			
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

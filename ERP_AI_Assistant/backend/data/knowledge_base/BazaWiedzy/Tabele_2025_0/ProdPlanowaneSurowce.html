@@ -1,0 +1,275 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[ProdPlanowaneSurowce]"></A><PRE>
+          <FONT SIZE="2"><I>/* [ProdPlanowaneSurowce] */</I><BR>
+CREATE FUNCTION [CDN].[ProdPlanowaneSurowce](@Czynnosc int,@Proces int,@Zlecenie int,@TechnologiaCzynnosc int,@Ilosc decimal(11,4),@Termin int,@Teraz int,@Centrum int, @IgnorujPowiazaniaPPPlanowanych int,
+@PCZPartia int = 0, @PPCPartia INT = 0, @RealizacjaWgPlanu INT = 0, @PolprodPartia INT = 0, @OsobnePartie tinyint = 0)
+
+returns @surowce table ( Czynnosc int, TypZasobu smallint, Zasob int, Kod varchar(40), TwrTyp smallint, TwrNumer int,
+                         Potrzeba decimal(15,4), Jest decimal(15,4), JestRezIDok decimal(15,4), JestRezZasob decimal(15,4),
+                        Termin int, TechnologiaZasob int, TechnologiaCzynnosc int, Technologia int, IloscCzynnosci decimal(15,4),
+                        TwrArchiwalny TINYINT,NiePlanujWPartiach TINYINT )
+as
+begin
+
+if isnull(@Proces,0)=0 and @Czynnosc&lt;&gt;0
+        select @Proces=PCZ_Proces from CDN.ProdCzynnosci where PCZ_Id=@Czynnosc
+if isnull(@Zlecenie,0)=0 and @Proces&lt;&gt;0
+        select @Zlecenie=PPC_Zlecenie from CDN.ProdProcesy where PPC_Id=@Proces
+if isnull(@Centrum,0)=0 and @Zlecenie&lt;&gt;0
+                select @Centrum=PZL_FrsId from CDN.ProdZlecenia where PZL_Id=@Zlecenie
+
+declare @zasoby table (Czynnosc int, TypZasobu smallint, Zasob int, Zamiennik int, Kod varchar(40),TwrTyp smallint, TwrNumer int,
+						Potrzeba decimal(15,4), Jest decimal(15,4), JestRezIDok decimal(15,4), JestRezZasob decimal(15,4),
+						JestJuz decimal(15,4), JestPrzed decimal(20,4), JestPo decimal(20,4), JestJuzPrzed decimal(20,4), JestJuzPo decimal(20,4),JestZwiazane decimal(15,4),
+                        Termin int, TechnologiaZasob int, TechnologiaCzynnosc int, Technologia int,
+						PTC_Ilosc decimal(15,4), PTC_IloscAtr int, PTZ_Ilosc decimal(15,4), PTZ_IloscAtr int, JestProdZas decimal(15,4), StalaIlosc decimal(15,4),IloscZwZam DECIMAL(15,4),
+                        JestRezNiezasob decimal(15,4),TwrArchiwalny TINYINT,NiePlanujWPartiach TINYINT )
+
+insert into @zasoby
+select Czynnosc, TypZasobu, Zasob, Zamiennik, Kod, TwrTyp, TwrNumer, Potrzeba,
+        case when TechnologiaZasob&lt;&gt;0
+                then convert(decimal(15,4),substring(PlanIloscITerm,1,charindex(':',PlanIloscITerm)-1))+JestRez--then CDN.ProdPlanowanaIlosc(TechnologiaZasob,Czynnosc,Termin,Proces,Zlecenie,Oddzial)
+                when substring(SumaDostepnychZasobow,1,1)='-' then 0+JestRez
+                else
+					/*case when PTZMagnumer &gt; 0 then*/
+					       case when convert(decimal(15,4),substring(SumaDostepnychZasobow,1,charindex(':',SumaDostepnychZasobow)-1))-
+					                 convert(decimal(15,4),(select StrValue from CDN.Split(SumaDostepnychZasobow,':',3)))- RezZasoboweNaRealiz+ JestRez &gt; 0
+					            then convert(decimal(15,4),substring(SumaDostepnychZasobow,1,charindex(':',SumaDostepnychZasobow)-1))-
+					                 convert(decimal(15,4),(select StrValue from CDN.Split(SumaDostepnychZasobow,':',3))) - RezZasoboweNaRealiz + JestRez
+					        else 0
+							end 
+					/*else CASE WHEN convert(decimal(15,4),substring(SumaDostepnychZasobow,1,charindex(':',SumaDostepnychZasobow)-1)) -  RezZasoboweNaRealiz &gt; 0 THEN
+					                                    convert(decimal(15,4),substring(SumaDostepnychZasobow,1,charindex(':',SumaDostepnychZasobow)-1)) -  RezZasoboweNaRealiz ELSE 0 END
+                    end*/
+                end+JestRezZasob+JestDok Jest, /*JestRez+*/JestRezZasob+JestDok+StalaIlosc/*+JestProdZas*/ JestRezIDok,
+        case when TechnologiaZasob&lt;&gt;0
+                then convert(decimal(15,4),substring(PlanIloscITerm,1,charindex(':',PlanIloscITerm)-1))--then CDN.ProdPlanowanaIlosc(TechnologiaZasob,Czynnosc,Termin,Proces,Zlecenie,Oddzial)
+                when substring(SumaDostepnychZasobow,1,1)='-' then 0
+                ELSE /*case when PTZMagnumer &gt; 0 then*/
+					       case when convert(decimal(15,4),substring(SumaDostepnychZasobow,1,charindex(':',SumaDostepnychZasobow)-1))-
+					                 convert(decimal(15,4),(select StrValue from CDN.Split(SumaDostepnychZasobow,':',3)))- RezZasoboweNaRealiz &gt;0
+					            then convert(decimal(15,4),substring(SumaDostepnychZasobow,1,charindex(':',SumaDostepnychZasobow)-1))-
+					                 convert(decimal(15,4),(select StrValue from CDN.Split(SumaDostepnychZasobow,':',3)))- RezZasoboweNaRealiz
+					       else 0
+						end
+					/*else CASE WHEN convert(decimal(15,4),substring(SumaDostepnychZasobow,1,charindex(':',SumaDostepnychZasobow)-1))-  RezZasoboweNaRealiz &gt; 0 THEN
+					                                    convert(decimal(15,4),substring(SumaDostepnychZasobow,1,charindex(':',SumaDostepnychZasobow)-1))-  RezZasoboweNaRealiz ELSE 0 END
+                    end*/
+                end+JestDok+JestRezZasob+case when isnull(max(ZaE_GIDNumer),0)&gt;0 then isnull(sum(case when ZaE_GIDLp=ZZL_ZZGIDLp then ZZL_ZwiazanaIlosc else 0 end),0) else 0 end JestRezZasob,
+                /*JestRez+*/JestRezZasob+JestDok+StalaIlosc/*+JestProdZas*/ JestJuz,
+                case when Zamiennik=0 then 0 else null end JestPrzed, null JestPo,
+                case when Zamiennik=0 then 0 else null end JestJuzPrzed, null JestJuzPo,
+                isnull(SUM(PPZwiazane.PPPlanowanyIlosc),0) JestZwiazane,
+        case when TechnologiaZasob&lt;&gt;0
+        then convert(int,(select StrValue from CDN.Split(PlanIloscITerm,':',2)))--then CDN.ProdPlanowanyTermin(TechnologiaZasob,Potrzeba,Czynnosc,Proces,Zlecenie,Oddzial)
+        else isnull(case when max(ZaE_DataPotwDst) &gt;= 93890 then 2147483647 else ((max(ZaE_DataPotwDst)-69035)*86400) + 43200 end,isnull(@Teraz,0)+CzasDst*86400) end Termin,
+        TechnologiaZasob, TechnologiaCzynnosc, Technologia, PTC_Ilosc, PTC_IloscAtr, PTZ_Ilosc, PTZ_IloscAtr, JestProdZas,StalaIlosc,
+                case when isnull(max(ZaE_GIDNumer),0)&gt;0 then isnull(sum(case when ZaE_GIDLp=ZZL_ZZGIDLp then ZaE_Ilosc else 0 end),0) else 0 end IloscZwZam,
+                case when TechnologiaZasob &lt;&gt; 0 or substring(SumaDostepnychZasobow,1,1)='-' then 0 else CASE WHEN JestRez - (convert(decimal(15,4),substring(SumaDostepnychZasobow,1,charindex(':',SumaDostepnychZasobow)-1))- RezZasoboweNaRealiz) &gt; 0 THEN
+					JestRez - (convert(decimal(15,4),substring(SumaDostepnychZasobow,1,charindex(':',SumaDostepnychZasobow)-1))- RezZasoboweNaRealiz) ELSE 0 END
+                end JestRez,Twr_Archiwalny,PTC_NiePlanujWPartiachGdyNastOpeWPartiach
+from (
+        select Czynnosc, Zasob, TypZasobu, Zamiennik, Kod, TwrTyp, TwrNumer,
+                        Potrzeba, Zlecenie, Proces,  Oddzial, SumaDostepnychZasobow,  JestRez, JestRezZasob,
+                        isnull(sum(case when TrE_GIDNumer is null then 0 else TrS_Ilosc end),0) JestDok,
+                        Termin, CzasDst, TechnologiaZasob, TechnologiaCzynnosc, Technologia, PTC_Ilosc, PTC_IloscAtr, PTZ_Ilosc, PTZ_IloscAtr, JestProdZas, PTZMagNumer,
+                                                ISNULL(RezZasobNaRealiz.RezZasoboweIlosc,0) RezZasoboweNaRealiz,StalaIlosc,
+                                                CASE WHEN TechnologiaZasob &lt;&gt; 0 THEN cdn.ProdPlanowanaIloscITermin(TechnologiaZasob,Czynnosc,Termin,Proces,Zlecenie,Oddzial,
+												CASE WHEN PTC_NiePlanujWPartiachGdyNastOpeWPartiach = 1 THEN NULL ELSE @PCZPartia END,
+												CASE WHEN PTC_NiePlanujWPartiachGdyNastOpeWPartiach = 1 THEN NULL ELSE @PPCPartia END, @PolprodPartia, CASE WHEN @OsobnePartie = 1 THEN Zasob ELSE 0 END,TechnologiaO) ELSE '' END PlanIloscITerm, Twr_Archiwalny,PTC_NiePlanujWPartiachGdyNastOpeWPartiach
+        from
+        (
+                select
+                        Czynnosc, Zasob, TypZasobu, Zamiennik,  Kod,  TwrTyp,  TwrNumer,Potrzeba, /* case when Ptz_iloscFormat = 5 then*/ sum(Zrealizowano)/*+sum(PlanowanyPP)*/ /*else 0 end*/ JestProdZas,
+                                                case when Ptz_iloscFormat = 5 then sum(Zrealizowano) else 0 end StalaIlosc, Zlecenie, Proces,  Oddzial, JestRez, JestRezZasob, Termin,CzasDst, TechnologiaZasob, TechnologiaCzynnosc,
+                                                Technologia, PTC_Ilosc,PTC_IloscAtr, PTZ_Ilosc,PTZ_IloscAtr, PTZ_IloscFormat, SumaDostepnychZasobow, PTZMagNumer,JestZas, Twr_Archiwalny,PTC_NiePlanujWPartiachGdyNastOpeWPartiach, TechnologiaO
+                        from
+                        (
+                                select isnull(PCZ_Id,0) Czynnosc, Zasoby.PTZ_Id Zasob, Zasoby.PTZ_TypZasobu TypZasobu,
+                                                Zasoby.PTZ_Zamiennik Zamiennik, Zasoby.PTZ_Kod Kod, Zasoby.PTZ_TwrTyp TwrTyp, Zasoby.PTZ_TwrNumer TwrNumer,
+                                                CDN.ProdIloscAtr(case when isnull(@Ilosc,0)=0 and PCZ_Ilosc&gt;0 then PCZ_Ilosc else ABS(isnull(@Ilosc,0)) - CASE WHEN ISNULL(@Ilosc,0) &lt; 0 THEN PCZZrealizowano ELSE 0 END end,
+                                                                                                                Zasoby.PTZ_Ilosc,Zasoby.PTZ_IloscAtr,Zasoby.PTZ_IloscFormat,Zasoby.PTZ_TypZasobu,SCZ.PTC_Ilosc,SCZ.PTC_IloscAtr,14340,SCZ.PTC_Technologia,
+                                                                                                                case when isnull(@Termin,0)&lt;&gt;0 then abs(@Termin) else PCZ_TerminRozpoczecia end,PPC_Id)  Potrzeba,
+                                                                                                                -- case when sur.Ptz_iloscFormat = 5 then Zrealizowano else 0 end Potrzeba,
+                                                PZL_Id Zlecenie, PPC_Id Proces, case when PCZ.PTC_Oddzial&lt;&gt;0 then PCZ.PTC_Oddzial else isnull(PPC_Oddzial,0) end Oddzial,
+                                                case when Zasoby.PTZ_TypZasobu=0 OR Zasoby.PTZ_TypZasobu = 4 OR Zasoby.PTZ_TechnologiaZasob &lt;&gt; 0 then '-' else /*when Zasoby.PTZ_MagNumer&gt;0
+                                                then*/ CDN.DokSumaStanowTowaru(Zasoby.PTZ_TwrTyp,Twr_GIDFirma,Zasoby.PTZ_TwrNumer,Twr_Typ,0,1,1,Twr_GIDFirma,Zasoby.PTZ_MagNumer,0,0,0, case when isnull(@Termin,0)&lt;&gt;0 then abs(@Termin) else PCZ_TerminRozpoczecia end/86400+69035,0,3,@Centrum,0,0,0,0,0,0,-1)
+                                                /*else CDN.DokSumaDostepnychZasobow(Zasoby.PTZ_TwrTyp,Zasoby.PTZ_TwrNumer,2, case when isnull(@Termin,0)&lt;&gt;0 then abs(@Termin) else PCZ_TerminRozpoczecia end/86400+69035,0,0,@Centrum,isnull(PZL_FrsId,@Centrum),1616,0,0,0,0,1)*/
+                                                end  SumaDostepnychZasobow, JestZas,isnull(sum(case when Rez_DstNumer &gt; 0 or Rez_Typ = 0 then 0 else Rez_Ilosc-Rez_Zrealizowano end),0) JestRez,
+                                                sum(case when Rez_DstNumer &gt; 0 then Rez_Ilosc-Rez_Zrealizowano else 0 end) JestRezZasob,
+                                                case when isnull(@Termin,0)=0 then PCZ_TerminRozpoczecia else @Termin end Termin, coalesce(TwD_Czas,Twr_CzasDst,0) CzasDst,
+                                                Zasoby.PTZ_TechnologiaZasob TechnologiaZasob, isnull(PCZ.PTC_Id,0) TechnologiaCzynnosc, isnull(PCZ.PTC_Technologia,0) Technologia,
+                                                PCZ.PTC_Ilosc, PCZ.PTC_IloscAtr, Prod.PTZ_Ilosc, Prod.PTZ_IloscAtr, Zasoby.ptz_iloscFormat, Zrealizowano, Zasoby.PTZ_MagNumer PTZMagNumer,Zaplanowano, 
+												Twr_Archiwalny,PCZ.PTC_NiePlanujWPartiachGdyNastOpeWPartiach, TechnologiaO
+                                from (
+										select PZL_Id, PZL_FrsId, PPC_Id, PPC_Oddzial, case when Czynnosci.PCZ_Realizuje&gt;0 then Czynnosci.PCZ_Realizuje else Czynnosci.PCZ_Id end PCZ_Id,
+												 Czynnosci.PCZ_Ilosc - Czynnosci.PCZZrealizowano AS PCZ_Ilosc, Czynnosci.PCZ_TerminRozpoczecia, PTZ_TechnologiaCzynnosc, PTZ_Id Zasob,
+												 ISNULL(SUM(ISNULL(Z1.PZA_Ilosc,0)),0) Zrealizowano,isnull(sum(Rez_Ilosc - Rez_Zrealizowano),0) JestZas,isnull(sum(ISNULL(Z1.PZA_Ilosc,0)),0) + isnull(sum(ISNULL(Z2.PZA_Ilosc,0)),0) Zaplanowano,PTZ_Id,
+												 PTZ_TwrTyp,PTZ_TwrNumer,PTZ_TypZasobu,PTZ_Zamiennik,PTZ_Kod,PTZ_MagNumer,PTZ_Ilosc,PTZ_IloscAtr,PTZ_TechnologiaZasob,PTZ_IloscFormat, PCZZrealizowano, TechnologiaO
+										from (
+													select PZL_Id, PZL_FrsId, PPC_Id, PPC_Oddzial, C.PCZ_Id, P.PCZ_Id PCZ_Realizuje, 
+													P.PCZ_Ilosc PCZ_Ilosc,isnull(sum(isnull(R.PCZ_Ilosc,0)),0) PCZZrealizowano, P.PCZ_TerminRozpoczecia, COALESCE(C.PCZ_TechnologiaCzynnosc,@TechnologiaCzynnosc) PCZ_TechnologiaCzynnosc, PPC_Technologia TechnologiaO
+													from CDN.ProdZlecenia
+													inner join CDN.ProdProcesy on PPC_Zlecenie=PZL_Id and isnull(@Proces,0) in(0,PPC_Id)
+													left outer join CDN.ProdCzynnosci C1 on C1.PCZ_Proces=PPC_Id  and (isnull(@Czynnosc,0)=0 and isnull(@TechnologiaCzynnosc,0)=0 and C1.PCZ_Realizuje=0 /*or @Czynnosc=C.PCZ_Id*/)
+													left outer join CDN.ProdCzynnosci C2 on C2.PCZ_Proces=PPC_Id AND @Czynnosc=C2.PCZ_Id
+													left outer join CDN.ProdCzynnosci C on C.PCZ_Id = COALESCE(C2.PCZ_Id,C1.PCZ_Id)
+													left outer join CDN.ProdCzynnosci P on P.PCZ_Id =coalesce(nullif(C.PCZ_Realizuje,0),C.PCZ_Id)--case when C.PCZ_Realizuje=0 then C.PCZ_Id else C.PCZ_Realizuje end
+													left outer join CDN.ProdCzynnosci R on R.PCZ_Realizuje = P.PCZ_Id
+													where PZL_Id=@Zlecenie
+													group by PZL_Id, PZL_FrsId, PPC_Id, PPC_Oddzial, C.PCZ_Id, P.PCZ_Id, P.PCZ_Ilosc, P.PCZ_TerminRozpoczecia, C.PCZ_Realizuje, C.PCZ_Ilosc, C.PCZ_TerminRozpoczecia, C.PCZ_TechnologiaCzynnosc, PPC_Technologia
+										) Czynnosci
+										JOIN CDN.ProdTechnologiaZasoby  ON PTZ_TechnologiaCzynnosc = Czynnosci.PCZ_TechnologiaCzynnosc and (@RealizacjaWgPlanu = 0 or PTZ_TypZasobu in (0,4))--in (Czynnosci.PCZ_TechnologiaCzynnosc,case when PCZ_Id IS NULL then @TechnologiaCzynnosc else 0 end)
+										left outer join cdn.ProdCzynnosci Realizacje ON Realizacje.PCZ_Realizuje = Czynnosci.PCZ_Realizuje
+										left outer join CDN.ProdZasoby Z1 on Z1.PZA_TechnologiaZasob = PTZ_Id AND (Z1.PZA_Czynnosc=Realizacje.PCZ_Id AND Z1.PZA_Planowany = 0)-- OR (PZA_Czynnosc = Czynnosci.PCZ_Realizuje AND PZA_Planowany = 1))
+										left outer join CDN.ProdZasoby Z2 on Z2.PZA_TechnologiaZasob = PTZ_Id AND (Z2.PZA_Czynnosc = Czynnosci.PCZ_Realizuje AND Z2.PZA_Planowany = 1)
+										left outer join CDN.Rezerwacje on Rez_ZrdTyp=14346 and Rez_ZrdNumer=Z1.PZA_Id
+										where PTZ_TypZasobu &lt;&gt; 4 OR PTZ_PlanujUboczne = 1
+										group by PZL_Id, PZL_FrsId, PPC_Id, PPC_Oddzial, Czynnosci.PCZ_Id, Czynnosci.PCZ_Realizuje, Czynnosci.PCZ_Ilosc, Czynnosci.PCZZrealizowano, Czynnosci.PCZ_TerminRozpoczecia, PTZ_TechnologiaCzynnosc, PTZ_ID,PTZ_TwrTyp,PTZ_TwrNumer,
+										PTZ_TypZasobu,PTZ_Zamiennik,PTZ_Kod,PTZ_MagNumer,PTZ_Ilosc,PTZ_IloscAtr,PTZ_TechnologiaZasob,PTZ_IloscFormat, TechnologiaO
+								) Zasoby
+                                inner join CDN.ProdTechnologiaCzynnosci SCZ on SCZ.PTC_Id=PTZ_TechnologiaCzynnosc
+                                left outer join CDN.ProdTechnologiaZasoby Prod on Prod.PTZ_Id=Zasoby.PTZ_TechnologiaZasob
+                                left outer join CDN.ProdTechnologiaCzynnosci PCZ on PCZ.PTC_Id=Prod.PTZ_TechnologiaCzynnosc
+                                left outer join CDN.TwrKarty on Twr_GIDNumer=Zasoby.PTZ_TwrNumer and Zasoby.PTZ_TwrTyp = 16
+                                left outer join CDN.TwrDost on TwD_TwrNumer=Twr_GIDNumer and TwD_TwrLp=Twr_DstDomyslny AND TWD_KlasaKnt = 8
+                                left outer join CDN.Rezerwacje on Rez_ZrdTyp=14345 and Rez_ZrdNumer=PCZ_Id and Rez_TwrTyp=Zasoby.PTZ_TwrTyp and Rez_TwrNumer=Zasoby.PTZ_TwrNumer and Rez_PTZId=Zasoby.PTZ_Id AND Zasoby.PTZ_TypZasobu = 1 --and  Rez_DstNumer &gt; 0
+
+                                group by PCZ_Id, PCZ_Ilosc, PCZZrealizowano, PCZ_TerminRozpoczecia, Zasoby.PTZ_Id, Zasoby.PTZ_Zamiennik, Zasoby.PTZ_TypZasobu, Zasoby.PTZ_Kod, Zasoby.PTZ_MagNumer,
+                                                Zasoby.PTZ_TwrTyp, Zasoby.PTZ_TwrNumer, Zasoby.PTZ_Ilosc, Zasoby.PTZ_IloscAtr, Zasoby.PTZ_IloscFormat, Zasoby.PTZ_TypZasobu, SCZ.PTC_Ilosc, SCZ.PTC_IloscAtr, SCZ.PTC_Technologia,
+                                                PCZ.PTC_Oddzial, PZL_Id, PPC_Id, PPC_Oddzial, PZL_FrsId, TwD_Czas, Twr_GIDFirma, Twr_Typ, Twr_CzasDst, Zasoby.PTZ_TechnologiaZasob,
+                                                PCZ.PTC_Id, PCZ.PTC_Technologia, PCZ.PTC_Ilosc, PCZ.PTC_IloscAtr, Prod.PTZ_Ilosc, Prod.PTZ_IloscAtr, JestZas, Zrealizowano, Zasoby.PTZ_MagNumer,
+												Zaplanowano, Twr_Archiwalny,PCZ.PTC_NiePlanujWPartiachGdyNastOpeWPartiach, TechnologiaO
+
+                        )Realizacje
+                        group by  Czynnosc, Zasob, TypZasobu, Zamiennik,  Kod,  TwrTyp,  TwrNumer,
+                        Zlecenie, Proces,  Oddzial, JestRez, Termin, CzasDst, TechnologiaZasob,  TechnologiaCzynnosc,  Technologia,     PTC_Ilosc,
+                        PTC_IloscAtr, PTZ_Ilosc,PTZ_IloscAtr, PTZ_IloscFormat, Potrzeba,  SumaDostepnychZasobow, JestRezZasob, PTZMagNumer,JestZas,Twr_Archiwalny,PTC_NiePlanujWPartiachGdyNastOpeWPartiach, TechnologiaO
+        ) Rezerwacje
+        left outer join CDN.TraSElem on TrS_ZlcTyp=14345 and TrS_ZlcNumer=Czynnosc
+        left outer join CDN.TraElem on TrE_GIDNumer=TrS_GIDNumer and TrE_GIDLp=TrS_GIDLp and TrE_TwrTyp=TwrTyp and TrE_TwrNumer=TwrNumer
+		LEFT OUTER JOIN 
+			(
+				SELECT SUM(Rez_Ilosc - Rez_Zrealizowano) RezZasoboweIlosc, PCZ_Realizuje, PZA_TechnologiaZasob 
+				FROM CDN.ProdCzynnosci 
+				JOIN CDN.ProdZasoby ON PZA_Czynnosc = PCZ_Id
+				JOIN CDN.Rezerwacje ON Rez_ZrdTyp = 14346 AND Rez_ZrdNumer = PZA_Id AND Rez_DstTyp = 0 and Rez_Typ = 0
+				WHERE PCZ_PZLId = @Zlecenie AND PCZ_Realizuje &gt; 0  GROUP BY PCZ_Realizuje,PZA_TechnologiaZasob
+			) RezZasobNaRealiz ON PZA_TechnologiaZasob = Zasob AND PCZ_Realizuje = Czynnosc
+        group by Czynnosc, Zasob, TypZasobu, Zamiennik, Kod, TwrTyp, TwrNumer,Potrzeba, Zlecenie, Proces,  Oddzial, SumaDostepnychZasobow, JestRez,
+                        Termin, CzasDst, TechnologiaZasob, TechnologiaCzynnosc, Technologia, PTC_Ilosc, PTC_IloscAtr, PTZ_Ilosc, PTZ_IloscAtr,
+                        JestProdZas, JestRezZasob, PTZMagNumer,StalaIlosc, Twr_Archiwalny, RezZasoboweIlosc,PTC_NiePlanujWPartiachGdyNastOpeWPartiach, TechnologiaO
+) Zasoby
+left outer join CDN.ZamZamLinki on ZZL_ZSGIDTyp=14345 and ZZL_ZSGIDNumer=Czynnosc
+left outer join CDN.ZamElem on ZaE_GIDNumer=ZZL_ZZGIDNumer and ZaE_GIDLp=ZZL_ZZGIDLp and ZaE_TwrTyp=TwrTyp and ZaE_TwrNumer=TwrNumer
+left outer join
+(
+        select case when @IgnorujPowiazaniaPPPlanowanych = 0 then sum(isnull(PZP_Ilosc,0)) else 0 end PPPlanowanyIlosc,PZP_PZAIDPlanowany,PZA_Czynnosc,PZA_TechnologiaZasob
+        from cdn.ProdZwiazanePolprodukty
+        join cdn.ProdZasoby on PZA_ID = PZP_PZAIDPlanowany
+        group by PZP_PZAIDPlanowany,PZA_Czynnosc,PZA_TechnologiaZasob
+) PPZwiazane on PPZwiazane.PZA_Czynnosc = Czynnosc and PPZwiazane.PZA_TechnologiaZasob = Zasob
+group by Czynnosc, Zasob, TypZasobu, Zamiennik, Kod, TwrTyp, TwrNumer, Termin, Potrzeba, Zlecenie, Proces, Oddzial, SumaDostepnychZasobow,
+        JestRez, JestDok, CzasDst, TechnologiaZasob, TechnologiaCzynnosc, Technologia, PTC_Ilosc, PTC_IloscAtr, PTZ_Ilosc, PTZ_IloscAtr,
+                JestProdZas, JestRezZasob, PTZMagNumer,RezZasoboweNaRealiz,StalaIlosc,PlanIloscITerm,Twr_Archiwalny,PTC_NiePlanujWPartiachGdyNastOpeWPartiach--,PPZwiazane.PPPlanowanyIlosc
+
+
+declare @zasobyIlosci table(IloscPomniejsz decimal(11,4), Zasob int)
+
+insert into @zasobyIlosci
+select isnull((select SUM(p.Potrzeba - p.JestZwiazane) from @zasoby p where p.TechnologiaZasob = zas.TechnologiaZasob and p.Zasob &lt; zas.Zasob),0) IloscPomniejsz, zas.Zasob
+from @zasoby zas
+where zas.TechnologiaZasob &gt; 0
+
+update Zas set Jest = CASE WHEN zas.Jest - z.IloscPomniejsz &gt; 0 then zas.Jest - z.IloscPomniejsz else 0 end, JestRezZasob = CASE WHEN zas.JestRezZasob - z.IloscPomniejsz &gt; 0 then zas.JestRezZasob - z.IloscPomniejsz else 0 end
+from @zasoby zas
+join @zasobyIlosci z on z.Zasob = zas.Zasob 
+where zas.TechnologiaZasob &gt; 0 and z.IloscPomniejsz &gt; 0
+
+update Zas set JestPo=0, JestJuzPo=0
+from @zasoby Zas
+left outer join @zasoby Zam on Zam.Czynnosc=Zas.Czynnosc and Zam.Zamiennik=Zas.Zasob
+where Zam.Zasob is null
+while 1=1
+begin
+        update Zas set JestPo = MinJestPo, JestJuzPo = MinJestJuzPo
+        from (
+                select Zas.Czynnosc, Zas.Zasob,
+                        min(((Zam.JestPo+case when Zam.TechnologiaZasob=0 then Zam.Jest else Zam.Potrzeba end)*Zas.Potrzeba )
+                                / case when Zam.Potrzeba&gt;0 then Zam.Potrzeba else 1 end ) MinJestPo,
+                       min( (Zam.JestJuzPo+Zam.JestJuz) *Zas.Potrzeba / case when Zam.Potrzeba&gt;0 then Zam.Potrzeba else 1 end ) MinJestJuzPo
+                from @zasoby Zas
+                inner join @zasoby Zam on Zam.Czynnosc=Zas.Czynnosc and Zam.Zamiennik=Zas.Zasob
+                where Zam.JestPo is not null and Zas.JestPo is null
+                group by Zas.Czynnosc, Zas.Zasob
+        ) Zam
+        inner join @zasoby Zas on Zas.Czynnosc=Zam.Czynnosc and Zas.Zasob=Zam.Zasob
+		where not exists(select 1 from @zasoby z where z.Zamiennik = Zas.Zasob and z.JestPo is null)
+        if @@rowcount=0 break
+end
+
+while 1=1
+begin
+        update Zam set JestPrzed = (case when Zas.TechnologiaZasob&lt;&gt;0 then Zas.JestPrzed + Zas.Potrzeba
+                                                                        when Inny.Zasob is not null and Zas.JestPrzed+Zas.Jest&lt;Zas.Potrzeba-Zas.JestPo
+                                                                        then Zas.Potrzeba - Zas.JestPo 
+																		else case when Zas.JestPrzed + Zas.Jest- Zas.JestRezNiezasob &gt; 0 then Zas.JestPrzed + Zas.Jest- Zas.JestRezNiezasob else 0 end end)
+                                                        * Zam.Potrzeba / case when Zas.Potrzeba&gt;0 then Zas.Potrzeba else 1 end,
+                                                JestJuzPrzed = (Zas.JestJuzPrzed + Zas.JestJuz)
+                                                        * Zam.Potrzeba / case when Zas.Potrzeba&gt;0 then Zas.Potrzeba else 1 end
+        from @zasoby Zas
+        inner join @zasoby Zam on Zam.Czynnosc=Zas.Czynnosc and Zam.Zamiennik=Zas.Zasob
+        left outer join @zasoby Inny on Inny.Czynnosc=Zas.Czynnosc and Inny.Zamiennik=Zas.Zasob and Inny.Zasob&lt;&gt;Zam.Zasob
+        where Zas.JestPrzed is not null and Zam.JestPrzed is null
+        if @@rowcount=0 break
+end
+
+delete @zasoby
+where (JestPrzed+JestJuzPo&gt;=Potrzeba and JestJuz=0) or JestJuzPrzed&gt;=Potrzeba
+        or (Jest=0 and (Zamiennik&lt;&gt;0 or JestPo&gt;=Potrzeba) and TechnologiaZasob=0)
+
+
+
+insert into @surowce
+select Czynnosc, TypZasobu, Zasob, Kod, TwrTyp, TwrNumer, Potrzeba, Jest, JestRezIDok, JestRezZasob,
+        case when IloscZwZam = 0 AND Jest-JestJuz&gt;=Potrzeba and TechnologiaZasob=0 then isnull(@Teraz,0) else Termin end Termin,
+        TechnologiaZasob, TechnologiaCzynnosc, Technologia,
+        case when Potrzeba&gt;Jest and TechnologiaZasob&lt;&gt;0
+        then CDN.ProdIloscAtr(Potrzeba-Jest,PTC_Ilosc,PTC_IloscAtr,4,0,PTZ_Ilosc,PTZ_IloscAtr,14340,Technologia,Termin,@Proces)
+        else 0 end IloscCzynnosci,TwrArchiwalny,NiePlanujWPartiach
+from (
+        select Czynnosc, TypZasobu, Zasob, Zamiennik, Kod, TwrTyp, TwrNumer,
+                case when isnull(JestJuzPrzed,0)+isnull(JestJuz,0)&gt;=isnull(Potrzeba,0) then isnull(Potrzeba,0)-isnull(JestJuzPrzed,0) --MF (2013-02-20) - do wszystkich pól z ilościami dopisuję isnull ze względu na TID: 186269
+                      when isnull(JestPrzed,0)+isnull(JestJuz,0)&gt;isnull(Potrzeba,0)-isnull(JestJuzPo,0) then isnull(JestJuz,0)
+                      when TechnologiaZasob&lt;&gt;0 or isnull(JestPrzed,0)+case when (isnull(Jest,0) - isnull(JestRezNiezasob,0)) &gt;= 0 THEN (isnull(Jest,0) - isnull(JestRezNiezasob,0)) else 0 end&gt;=isnull(Potrzeba,0)-isnull(JestJuzPo,0) then isnull(Potrzeba,0)-isnull(JestJuzPo,0)-isnull(JestPrzed,0)-isnull(JestZwiazane,0)
+                        when Zamiennik=0 and
+							case when (isnull(Jest,0) - isnull(JestRezNiezasob,0)) &gt;= 0 THEN (isnull(Jest,0) - isnull(JestRezNiezasob,0))
+							else 0 end + ISNULL(JestPo,0)
+							&gt;= isnull(Potrzeba,0) then case when (isnull(Jest,0) - isnull(JestRezNiezasob,0)) &gt;= 0 THEN (isnull(Jest,0) - isnull(JestRezNiezasob,0)) else 0 end/*-isnull(JestProdZas,0)  */     --MF (TFSID: 129569, 129623), było isnull(Jest,0)-isnull(JestJuz,0), tutaj powinno być to co jest pewne na zleceniu, czyli rezerwacje zasobowe + to co jest na dokumentach + stan magazynowy minus to co zrealizowaliśmy na zleceniu wcześniej
+                        when Zamiennik=0 then isnull(Potrzeba,0)-isnull(JestPo,0)
+                        else isnull(Jest,0)
+                        end - isnull(StalaIlosc,0)/*- isnull(JestProdZas,0)*/ Potrzeba,
+                        (isnull(Jest,0)-isnull(JestJuz,0)) Jest, isnull(JestRezIDok,0) JestRezIDok, isnull(JestRezZasob,0) JestRezZasob, isnull(JestJuz,0) JestJuz, Termin,
+                TechnologiaZasob, TechnologiaCzynnosc, Technologia,
+                PTC_Ilosc, PTC_IloscAtr, PTZ_Ilosc, PTZ_IloscAtr,IloscZwZam,TwrArchiwalny,NiePlanujWPartiach
+        from @zasoby
+) Zasoby
+where Potrzeba&gt;0
+return
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

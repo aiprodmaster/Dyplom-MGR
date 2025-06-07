@@ -1,0 +1,1027 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Usuwanie widoku CRMDokumentyLinkiView_FullData"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Usuwanie widoku CRMDokumentyLinkiView_FullData */</I><BR>
+IF EXISTS (SELECT * FROM sysobjects WHERE name='CRMDokumentyLinkiView_FullData' AND type='v')
+  DROP VIEW CDN.CRMDokumentyLinkiView_FullData;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie widoku CRMDokumentyLinkiView_FullData"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie widoku CRMDokumentyLinkiView_FullData */</I><BR>
+CREATE VIEW CDN.CRMDokumentyLinkiView_FullData
+AS
+
+/**********************************************************************************************
+        View zwraca elementy potrzebne dla zakładki dokumenty związane na elementach CRM:
+        (Kampania, Etap, Kontrahent w etapie, Wątek konwersacji, pozycji konwersacji oraz zadanie)
+        1) CDLV_CRMTyp   - Typ obiektu CRM
+        2) CDLV_CRMNumer - Numer obiektu CRM
+        3) CDLV_CRMLp    - Lp obiektu CRM
+        4) CDLV_DokTyp   - Typ dokumentu
+        5) CDLV_DokNumer - Numer dokumentu (GidNumer)
+        6) CDLV_Skrot    - Skrót dokumentu
+        7) CDLV_Numer    - Numer dokumentu (wyświetlany)
+        8) CDLV_Rok      - Rok dokumentu (wyświetlany)
+        9) CDLV_Seria    - Seria dokumentu (wyświetlany)
+        10) CDLV_Miesiac  - Miesiac dokumentu (wyświetlany)
+        11) CDLV_NrDok - Pełny numer dokumentu (jako string, wyświetlany)
+        12) CDLV_Akronim  | Dane dotyczące wybranego obiektu (w zależności od typu dokumentu jest to:
+        13) CDLV_Nazwa    | Adres, Kontrahent, Bank, Urząd, Pracownik
+        14) CDLV_Miasto   |
+        15) CDLV_Data - Data wystawienia
+        16) CDLV_Typ powiązania: 1-przychód, 2-koszt
+        17) CDLV_Kwota - Wartość kosztu/przychodu
+        18) CDLV_Netto - Wartość netto dokumentu - w walucie systemowej (UWAGA: dla ZamNag nie zlicza!!)
+        19) CDLV_Stan
+        20) CDLV_Aktywny      - Dla ProdZlecenia: PZL_DataZamkniecia
+        21) CDLV_Zaksięgowano
+        23) CDLV_SmallInt1 -&gt; TrN_TrNLp   |ImN_ImNLp|ZaN_ZamTyp    |              |RLN_Lp            |MaN_TrNLp |               |
+        23) CDLV_SmallInt2 -&gt; TrN_SpiTyp  |         |ZaN_PotwOferty|              |                  |          |               |
+        24) CDLV_SmallInt3 -&gt; TrN_KonTyp  |         |ZaN_Rodzaj    |              |                  |          |               |
+        25) CDLV_TinyInt1  -&gt; TrN_Fiskalny|         |              |Kaz_Anulowany |--RLE_Status      |          |CWN_Zakonczono |Dla SSD - Czy jest proces
+        26) CDLV_VarChar1  -&gt;             |         |              |Kaz_KontoPrzec|CDN.ProdZlecStatus|          |               |
+        27) CDLV_NettoWal       - Wartość netto dokumentu - w walucie dokumentu
+        28) CDLV_Waluta         - Waluta dokumentu
+		29) CDLV_NieKsiegowac   - Nie księgować
+		30) CDLV_CharsetANSI	- Kodowanie w jakim podane są dane obiektu
+ **********************************************************************************************/
+
+SELECT
+
+-- #######  Ogólne pola z Gidami dokumentów oraz obiektów CRM  #######
+CDL_CRMTyp as CDLV_CRMTyp, CDL_CRMNumer as CDLV_CRMNumer, CDL_CRMLp as CDLV_CRMLp,
+CDL_DokTyp as CDLV_DokTyp, CDL_DokNumer as CDLV_DokNumer,
+CASE
+  -- Zamówienia
+     WHEN CDL_DokTyp=960 THEN
+             CASE ZaN_ZaMTyp
+             WHEN 640 THEN 'OZ'
+             WHEN 768 THEN 'OS'
+             WHEN 1152 THEN 'ZZ'
+             WHEN 1280 THEN 'ZS'
+             WHEN 2688 THEN 'ZOZ'
+             WHEN 2816 THEN 'ZOS'
+             ELSE ''
+             END
+  -- Pozostałe
+     ELSE IsNull(OB_Skrot,'')
+END as CDLV_Skrot,
+-- ==============================================================================================================
+-- #######  Numer dokumentu  #######
+CASE
+  -- Importowe
+     WHEN CDL_DokTyp in (3344,3352) THEN ImN_ImNNumer
+  -- Zamówienia
+     WHEN CDL_DokTyp=960 THEN ZaN_ZamNumer
+  -- Magazynowe
+     WHEN CDL_DokTyp=1601 THEN MaN_TrNNumer
+  -- Wizyty
+     WHEN CDL_DokTyp=4180 THEN CWN_Numer
+  -- Noty memotiałowe
+     WHEN CDL_DokTyp in (4144,4145,4146) THEN MEN_Numer
+  -- Zapisy
+     WHEN CDL_DokTyp=784 THEN KRP_Numer
+  -- Upomnienia
+     WHEN CDL_DokTyp in (2832,2833) THEN UPN_Numer
+  -- Reklamacje
+     WHEN CDL_DokTyp in (3584,3585) THEN RLN_Numer
+  -- Nowy serwis
+     WHEN CDL_DokTyp=4700 THEN SZN_Numer
+  -- Plan przeglądu
+	 WHEN CDL_DokTyp=4710 THEN SPP_Numer
+  -- Zlecenia serwisowe/remontowe
+     WHEN CDL_DokTyp in (4345,4346) THEN ZRN_ZlcNumer
+  -- Zlecenia produkcyjne
+     WHEN CDL_DokTyp=14343 THEN PZL_Numer
+  -- Kompletacja/dekompletacja
+     WHEN CDL_DokTyp in (4192,4208) THEN ZcN_ZlcNumer
+  -- Wysyłki
+     WHEN CDL_DokTyp=337 THEN WYS_Numer
+  -- Paczki
+     WHEN CDL_DokTyp=340 THEN WyP_Numer
+  -- Projekty
+     WHEN CDL_DokTyp in (4592,-4592) THEN PRJ_Numer
+  -- Obieg dokumentów
+     WHEN CDL_DokTyp in (14451,14452,14453) THEN SDD_OddNumer
+  -- Umowy
+     WHEN CDL_DokTyp=4800 THEN UmN_Numer
+  -- KBN
+     WHEN CDL_DokTyp=4608 THEN KBNN_Numer
+  -- Lista płac
+     WHEN CDL_DokTyp=2976 THEN PIN_Numer
+  -- Bilans otwarcia
+     WHEN CDL_DokTyp=7680 THEN BON_Numer
+  -- Prolongaty planosci
+     WHEN CDL_DokTyp=7942 THEN PRLN_Numer
+  -- Inne (kwota podana ręcznie)
+     WHEN CDL_DokTyp=14449 THEN CDL_DokNumer
+  -- Handlowe
+     ELSE TrN_TrNNumer
+END as CDLV_Numer,
+-- #######  Rok  #######
+CASE
+  -- Importowe
+     WHEN CDL_DokTyp in (3344,3352) THEN ImN_ImNRok
+  -- Zamówienia
+     WHEN CDL_DokTyp=960 THEN ZaN_ZamRok
+  -- Magazynowe
+     WHEN CDL_DokTyp=1601 THEN MaN_TrNRok
+  -- Wizyty
+     WHEN CDL_DokTyp=4180 THEN CWN_Rok
+  -- Noty memotiałowe
+     WHEN CDL_DokTyp in (4144,4145,4146) THEN (MEN_RokMiesiac/100)
+  -- Zapisy
+     WHEN CDL_DokTyp=784 THEN KAZ_Rok
+  -- Upomnienia
+     WHEN CDL_DokTyp in (2832,2833) THEN UPN_Rok
+  -- Reklamacje
+     WHEN CDL_DokTyp in (3584,3585) THEN RLN_Rok
+  -- Nowy serwis
+     WHEN CDL_DokTyp=4700 THEN SZN_Rok
+  -- Plan przeglądu
+	 WHEN CDL_DokTyp=4710 THEN SPP_Rok
+  -- Zlecenia serwisowe/remontowe
+     WHEN CDL_DokTyp in (4345,4346) THEN ZRN_ZlcRok
+  -- Zlecenia produkcyjne
+     WHEN CDL_DokTyp=14343 THEN PZL_Rok
+  -- Kompletacja/dekompletacja
+     WHEN CDL_DokTyp in (4192,4208) THEN ZcN_ZlcRok
+  -- Wysyłki
+     WHEN CDL_DokTyp=337 THEN WYS_Rok
+  -- Paczki
+     WHEN CDL_DokTyp=340 THEN WyP_Rok
+  -- Projekty
+     WHEN CDL_DokTyp in (4592,-4592) THEN PRJ_Rok
+  -- Obieg dokumentów
+     WHEN CDL_DokTyp in (14451,14452,14453) THEN SDD_OddRok
+  -- Umowy
+     WHEN CDL_DokTyp=4800 THEN UmN_Rok
+  -- KBN
+     WHEN CDL_DokTyp=4608 THEN KBNN_Rok
+  -- Lista płac
+     WHEN CDL_DokTyp=2976 THEN PIN_Rok
+  -- Bilans otwarcia
+     WHEN CDL_DokTyp=7680 THEN (BON_RokMiesiac/100)
+  -- Prolongaty planosci
+     WHEN CDL_DokTyp=7942 THEN PRLN_Rok
+  -- Handlowe, reszta 0: Inne (kwota podana ręcznie)
+     ELSE IsNull(TrN_TrNRok,0)
+END as CDLV_Rok,
+-- #######  Seria  #######
+CASE
+  -- Importowe
+     WHEN CDL_DokTyp in (3344,3352) THEN ImN_ImNSeria
+  -- Zamówienia
+     WHEN CDL_DokTyp=960 THEN ZaN_ZamSeria
+  -- Magazynowe
+     WHEN CDL_DokTyp=1601 THEN MaN_TrNSeria
+  -- Wizyty
+     WHEN CDL_DokTyp=4180 THEN CWN_Seria
+  -- Noty memotiałowe
+     WHEN CDL_DokTyp in (4144,4145,4146) THEN MEN_Seria
+  -- Zapisy
+     WHEN CDL_DokTyp=784 THEN KAZ_Seria
+  -- Upomnienia
+     WHEN CDL_DokTyp in (2832,2833) THEN CONVERT(VARCHAR(5),Upn_Seria)
+  -- Reklamacje
+     WHEN CDL_DokTyp in (3584,3585) THEN RLN_Seria
+  -- Nowy serwis
+     WHEN CDL_DokTyp=4700 THEN SZN_Seria
+  -- Zlecenia serwisowe/remontowe
+     WHEN CDL_DokTyp in (4345,4346) THEN ZRN_ZlcSeria
+  -- Zlecenia produkcyjne
+     WHEN CDL_DokTyp=14343 THEN PZL_Seria
+  -- Kompletacja/dekompletacja
+     WHEN CDL_DokTyp in (4192,4208) THEN ZcN_ZlcSeria
+  -- Wysyłki
+     WHEN CDL_DokTyp=337 THEN WYS_Seria
+  -- Paczki
+     WHEN CDL_DokTyp=340 THEN WyP_Seria
+  -- Projekty
+     WHEN CDL_DokTyp in (4592,-4592) THEN PRJ_Seria
+  -- Obieg dokumentów
+     WHEN CDL_DokTyp in (14451,14452,14453) THEN SDD_OddSeria
+  -- Umowy
+     WHEN CDL_DokTyp=4800 THEN UmN_Seria
+  -- KBN
+     WHEN CDL_DokTyp=4608 THEN KBNN_Seria
+  -- Lista płac
+     WHEN CDL_DokTyp=2976 THEN ''
+  -- Bilans otwarcia
+     WHEN CDL_DokTyp=7680 THEN ''
+  -- Prolongaty planosci
+     WHEN CDL_DokTyp=7942 THEN PRLN_Seria
+  -- Handlowe, reszt pusty string: Inne (kwota podana ręcznie)
+     ELSE IsNull(TrN_TrNSeria,'')
+END as CDLV_Seria,
+-- #######  Miesiac  #######
+CASE
+  -- Importowe
+     WHEN CDL_DokTyp in (3344,3352) THEN ImN_ImNMiesiac
+  -- Zamówienia
+     WHEN CDL_DokTyp=960 THEN ZaN_ZamMiesiac
+  -- Magazynowe
+     WHEN CDL_DokTyp=1601 THEN MaN_TrNMiesiac
+  -- Wizyty
+     WHEN CDL_DokTyp=4180 THEN CWN_Miesiac
+  -- Noty memotiałowe
+     WHEN CDL_DokTyp in (4144,4145,4146) THEN (MEN_RokMiesiac%100)
+  -- Reklamacje
+     WHEN CDL_DokTyp in (3584,3585) THEN RLN_Miesiac
+  -- Nowy serwis
+     WHEN CDL_DokTyp=4700 THEN SZN_Miesiac
+  -- Zlecenia serwisowe/remontowe
+     WHEN CDL_DokTyp in (4345,4346) THEN ZRN_ZlcMiesiac
+  -- Zlecenia produkcyjne
+     WHEN CDL_DokTyp=14343 THEN PZL_Miesiac
+  -- Kompletacja/dekompletacja
+     WHEN CDL_DokTyp in (4192,4208) THEN ZcN_ZlcMiesiac
+  -- Wysyłki
+     WHEN CDL_DokTyp=337 THEN WYS_Miesiac
+  -- Paczki
+     WHEN CDL_DokTyp=340 THEN WyP_Miesiac
+  -- Projekty
+     WHEN CDL_DokTyp in (4592,-4592) THEN PRJ_Miesiac
+  -- Obieg dokumentów
+     WHEN CDL_DokTyp in (14451,14452,14453) THEN SDD_OddMiesiac
+  -- Umowy
+     WHEN CDL_DokTyp=4800 THEN UmN_Miesiac
+  -- KBN
+     WHEN CDL_DokTyp=4608 THEN KBNN_Miesiac
+  -- Lista płac
+     WHEN CDL_DokTyp=2976 THEN PIN_Miesiac
+  -- Bilans otwarcia
+     WHEN CDL_DokTyp=7680 THEN (BON_RokMiesiac%100)
+  -- Prolongaty planosci
+     WHEN CDL_DokTyp=7942 THEN PRLN_Miesiac
+  -- Handlowe, reszta 0: Zapisy, Upomnienia, Inne (kwota podana ręcznie)
+     ELSE IsNull(TrN_TrNMiesiac,0)
+END as CDLV_Miesiac,
+-- #######  CDLV_NrDok  #######
+CASE
+  -- Importowe
+     WHEN CDL_DokTyp in (3344,3352) THEN CDN.NumerDokumentu(ImN_GIDTyp,0,ImN_ImNTyp,ImN_ImNNumer,ImN_ImNRok,ImN_ImNSeria,ImN_ImNMiesiac)
+  -- Zamówienia
+     WHEN CDL_DokTyp=960 THEN CDN.NumerDokumentu(CDN.DokMapTypDokumentu(ZaN_GIDTyp,ZaN_ZamTyp,ZaN_Rodzaj),0,ZaN_ZamTyp,CASE WHEN ZaN_ZamTyp in (2816, 2688) THEN ZaN_PomNumer ELSE ZaN_ZamNumer END,ZaN_ZamRok,ZaN_ZamSeria,ZaN_ZamMiesiac)
+  -- Magazynowe
+     WHEN CDL_DokTyp=1601 THEN CDN.NumerDokumentuZ(MaN_GIDTyp,0,MaN_TrNTyp,MaN_TrNNumer,MaN_TrNRok,MaN_TrNSeria,MaN_TrNMiesiac,0,0,MaN_WMS)
+  -- Wizyty
+     WHEN CDL_DokTyp=4180 THEN CDN.NumerDokumentu(4180,0,0,CWN_Numer,CWN_Rok,CWN_Seria,CWN_Miesiac)
+  -- Noty memotiałowe
+     WHEN CDL_DokTyp in (4144,4145,4146) THEN CDN.NumerDokumentuK(MEN_GIDTyp,0,0,MEN_Numer,(MEN_RokMiesiac/100),MEN_Seria,(MEN_RokMiesiac%100),MEN_OkrSymbol,0,0,0,0)
+  -- Zapisy
+     WHEN CDL_DokTyp=784 THEN CDN.NumerDokumentu(KAZ_GIDTyp,0,KAZ_RaportBO,KRP_Numer,KAZ_Rok,KAZ_Seria,KAZ_KRPLp)
+  -- Upomnienia
+     WHEN CDL_DokTyp in (2832,2833) THEN CDN.NumerDokumentu(UPN_GIDTyp, 0, 0, UPN_Numer, UPN_Rok, Upn_Seria, 0)
+  -- Reklamacje
+     WHEN CDL_DokTyp in (3584,3585) THEN CDN.NumerDokumentu(CDL_DokTyp,0,0,RLN_Numer,RLN_Rok,RLN_Seria,RLN_Miesiac)
+  -- Nowy serwis
+     WHEN CDL_DokTyp=4700 THEN CDN.NumerDokumentu(CDL_DokTyp,0,0,SZN_Numer,SZN_Rok,SZN_Seria,SZN_Miesiac)
+  -- Plan przeglądu 
+	 WHEN CDL_DokTyp=4710 THEN CDN.NumerDokumentu(CDL_DokTyp, 0, 0, SPP_Numer, SPP_Rok, SPP_Seria, SPP_Miesiac) 
+  -- Etapu budżetu
+	 WHEN CDL_DokTyp = 4596 THEN CDN.NumerDokumentu(4595, 0, 0, BPN_Numer, BPN_Rok, BPN_Seria, BPN_Miesiac) + ' '+ BPE_Kod
+  -- Zlecenia serwisowe/remontowe
+     WHEN CDL_DokTyp in (4345,4346) THEN CDN.NumerDokumentu(ZRN_GIDTyp,0,0,ZRN_ZlcNumer,ZRN_ZlcRok,ZRN_ZlcSeria,ZRN_ZlcMiesiac)
+  -- Zlecenia produkcyjne/harmonogramy projektow
+     WHEN CDL_DokTyp=14343 THEN
+                CASE WHEN PZL_PrjId=0
+                THEN CDN.NumerDokumentu(CDL_DokTyp,0,0,PZL_Numer,PZL_Rok,PZL_Seria,PZL_Miesiac)
+                -- harmonogramy projektow
+                ELSE CDN.NumerDokumentu(14350,0,0,PZL_Numer,PZL_Rok,PZL_Seria,PZL_Miesiac)
+                END
+  -- Kompletacja/dekompletacja
+     WHEN CDL_DokTyp in (4192,4208) THEN CDN.NumerDokumentu(ZcN_GIDTyp,0,0,ZcN_ZlcNumer,ZcN_ZlcRok,ZcN_ZlcSeria,ZcN_ZlcMiesiac)
+  -- Wysyłki
+     WHEN CDL_DokTyp=337 THEN CDN.NumerDokumentu(Wys_GIDTyp,0,0,WYS_Numer,WYS_Rok,WYS_Seria,WYS_Miesiac)
+  -- Paczki
+     WHEN CDL_DokTyp=340 THEN CDN.NumerDokumentu(CDL_DokTyp,0,0,WyP_Numer,WyP_Rok,WyP_Seria,WyP_Miesiac)
+  -- Projekty
+     WHEN CDL_DokTyp in (4592,-4592) THEN CDN.NumerDokumentu(CDL_DokTyp,0,0,PRJ_Numer,PRJ_Rok,PRJ_Seria,PRJ_Miesiac)
+  -- Obieg dokumentów
+     WHEN CDL_DokTyp in (14451,14452,14453) THEN  CDN.NumerDokumentu(CDL_DokTyp,0,0,SDD_OddNumer,SDD_OddRok,SDD_OddSeria,SDD_OddMiesiac)
+  -- Umowy
+     WHEN CDL_DokTyp=4800 THEN CDN.NumerDokumentu(CDL_DokTyp,0,0,UmN_Numer,UmN_Rok,UmN_Seria,UmN_Miesiac)
+  -- KBN
+     WHEN CDL_DokTyp=4608 THEN CDN.NumerDokumentu(CDL_DokTyp,0,0,KBNN_Numer,KBNN_Rok,KBNN_Seria,KBNN_Miesiac)
+  -- Lista płac
+     WHEN CDL_DokTyp=2976 THEN CDN.NumerDokumentu(CDL_DokTyp,0,0,PIN_Numer,PIN_Rok,'',PIN_Miesiac)
+  -- Bilans otwarcia
+     WHEN CDL_DokTyp=7680 THEN CDN.NumerDokumentuK(CDL_DokTyp,0,0,BON_Numer,(BON_RokMiesiac/100),'',(BON_RokMiesiac%100),BON_OkrSymbol,0,0,0,0)
+  -- Prolongaty planosci
+     WHEN CDL_DokTyp=7942 THEN CDN.NumerDokumentu(CDL_DokTyp,0,0,PRLN_Numer,PRLN_Rok,PRLN_Seria,PRLN_Miesiac)
+  -- Inne (kwota podana ręcznie)
+     WHEN CDL_DokTyp=14449 THEN CASE WHEN CDL_Typ = 1 THEN 'Przychód' ELSE 'Koszt' END
+  -- Handlowe
+     ELSE CDN.NumerDokumentuZ(TrN_GidTyp,TrN_SpiTyp,TrN_TrNTyp,TrN_TrNNumer,TrN_TrNRok,TrN_TrNSeria,TrN_TrNMiesiac,TrN_ZwrTyp,TrN_ZwrNumer,TrN_WMS)
+END as CDLV_NrDok,
+-- ==============================================================================================================
+--    Dane knt/prc/urz/bnk itp
+-- ==============================================================================================================
+-- #######  CDLV_Akronim  #######
+CASE
+  -- Wysyłki, KBN, Lista płac, Inne (kwota podana ręcznie)
+     WHEN CDL_DokTyp in (337,4608,2976,14449,7680) THEN ''
+  -- Zapisy
+     WHEN CDL_DokTyp=784 THEN
+         CASE KAZ_KNTTyp
+             WHEN 32 THEN IsNull(Knt_Akronim,'')
+             WHEN 48 THEN IsNull(Bnk_Kod,'')
+             WHEN 944 THEN IsNull(Prc_Akronim,'')
+             WHEN 4304 THEN IsNull(Urz_Akronim,'')
+         END
+  -- Noty memotiałowe, Upomnienia, Zlecenia produkcyjne, Kompletacja/dekompletacja, Projekty, Obieg dokumentów,Plan przeglądu, Etapu budżetu,Prolongaty planosci
+     WHEN CDL_DokTyp in (4144,4145,4146,2832,2833,14343,4192,4208,4592,-4592,14451,14452,14453,4800,4710,4596,7942) THEN IsNull(Knt_Akronim,'')
+  -- Handlowe, Importowe, Zamówienia, Reklamacje, Nowy serwis, Zlecenia serwisowe/remontowe, Paczki, Magazynowe, Wizyty
+     ELSE IsNull(KnA_Akronim,'')
+END as CDLV_Akronim,
+-- #######  CDLV_Nazwa  #######
+CASE
+  -- Wysyłki, KBN, Lista płac, Inne (kwota podana ręcznie)
+     WHEN CDL_DokTyp in (337,4608,2976,14449,7680) THEN ''
+  -- Zapisy
+     WHEN CDL_DokTyp=784 THEN
+         CASE KAZ_KNTTyp
+             WHEN 32 THEN IsNull(Knt_Nazwa1,'')+' '+IsNull(Knt_Nazwa2,'')+' '+IsNull(Knt_Nazwa3,'')
+             WHEN 48 THEN IsNull(Bnk_Nazwa,'')
+             WHEN 944 THEN IsNull(Prc_Imie1,'')+' '+IsNull(Prc_Nazwisko,'')
+             WHEN 4304 THEN IsNull(Urz_Nazwa,'')+' '+IsNull(Urz_Nazwa1,'')
+         END
+  -- Noty memotiałowe, Upomnienia, Zlecenia produkcyjne, Kompletacja/dekompletacja, Projekty, Obieg dokumentów, Plan przeglądu, Etapu Budżetu,Prolongaty planosci
+     WHEN CDL_DokTyp in (4144,4145,4146,2832,2833,14343,4192,4208,4592,-4592,14451,14452,14453,4800,4710, 4596,7942) THEN IsNull(Knt_Nazwa1,'')+' '+IsNull(Knt_Nazwa2,'')+' '+IsNull(Knt_Nazwa3,'')
+  -- Handlowe, Importowe, Zamówienia, Reklamacje, Nowy serwis, Zlecenia serwisowe/remontowe, Paczki, Magazynowe, Wizyty
+     ELSE IsNull(KnA_Nazwa1,'')+' '+IsNull(KnA_Nazwa2,'')+' '+IsNull(KnA_Nazwa3,'')
+END as CDLV_Nazwa,
+-- #######  CDLV_Miasto  #######
+CASE
+  -- Wysyłki, KBN, Lista płac, Inne (kwota podana ręcznie)
+     WHEN CDL_DokTyp in (337,4608,2976,14449,7680) THEN ''
+  -- Zapisy
+     WHEN CDL_DokTyp=784 THEN
+         CASE KAZ_KNTTyp
+             WHEN 32 THEN IsNull(Knt_Miasto,'')
+             WHEN 48 THEN IsNull(Bnk_Miasto,'')
+             WHEN 944 THEN IsNull(Prc_Miasto,'')
+             WHEN 4304 THEN IsNull(Urz_Miasto,'')
+         END
+  -- Noty memotiałowe, Upomnienia, Zlecenia produkcyjne, Kompletacja/dekompletacja, Projekty, Obieg dokumentów, Plan przeglądu, Etapu Budżetu,Prolongaty planosci
+     WHEN CDL_DokTyp in (4144,4145,4146,2832,2833,14343,4192,4208,4592,-4592,14451,14452,14453,4800,4710,4596,7942) THEN IsNull(Knt_Miasto,'')
+  -- Handlowe, Importowe, Zamówienia, Reklamacje, Nowy serwis, Zlecenia serwisowe/remontowe, Paczki, Magazynowe, Wizyty
+     ELSE  IsNull(KnA_Miasto,'')
+END as CDLV_Miasto,
+-- ==============================================================================================================
+--    Daty
+-- ==============================================================================================================
+-- #######  CDLV_Data  #######
+CASE
+  -- Importowe
+     WHEN CDL_DokTyp in (3344,3352) THEN ImN_DataWplywu
+  -- Zamówienia
+     WHEN CDL_DokTyp=960 THEN ZaN_DataWystawienia
+  -- Magazynowe
+     WHEN CDL_DokTyp=1601 THEN MaN_Data3
+  -- Wizyty
+     WHEN CDL_DokTyp=4180 THEN CWN_DataWystawienia
+  -- Noty memotiałowe
+     WHEN CDL_DokTyp in (4144,4145,4146) THEN MEN_DataWprow
+  -- Zapisy
+     WHEN CDL_DokTyp=784 THEN KAZ_DataZapisu
+  -- Upomnienia
+     WHEN CDL_DokTyp in (2832,2833) THEN UPN_DataUp
+  -- Reklamacje
+     WHEN CDL_DokTyp in (3584,3585) THEN RLN_DataWyst
+  -- Nowy serwis
+     WHEN CDL_DokTyp=4700 THEN SZN_DataWystawienia
+  -- Plan przeglądu
+	 WHEN CDL_DokTyp=4710 THEN SPP_DataW 
+  -- Etapy budżetu
+	 WHEN CDL_DokTyp = 4596 THEN BPE_DataW 
+  -- Zlecenia serwisowe/remontowe
+     WHEN CDL_DokTyp in (4345,4346) THEN ZRN_DataRozpoczecia
+  -- Zlecenia produkcyjne
+     WHEN CDL_DokTyp=14343 THEN PZL_DataWystawienia
+  -- Kompletacja/dekompletacja
+     WHEN CDL_DokTyp in (4192,4208) THEN ZcN_DataWystawienia
+  -- Wysyłki
+     WHEN CDL_DokTyp=337 THEN WYS_TSWysylki/86400+69035
+  -- Paczki
+     WHEN CDL_DokTyp=340 THEN WyP_DataUtw
+  -- Projekty
+     WHEN CDL_DokTyp in (4592,-4592) THEN PRJ_DataWystawienia
+  -- Umowy
+     WHEN CDL_DokTyp=4800 THEN UmN_DataZawarcia
+  -- KBN
+     WHEN CDL_DokTyp=4608 THEN KBNN_DataWystawienia/86400+69035
+  -- Lista płac
+     WHEN CDL_DokTyp=2976 THEN PIN_DataWyst
+  -- Inne (kwota podana ręcznie)
+     WHEN CDL_DokTyp=14449 THEN CDL_TimeStamp/86400+69035
+  -- Obieg dokumentów
+     WHEN CDL_DokTyp in (14451,14452,14453) THEN SDD_DokData
+  -- Bilans otwarcia
+     WHEN CDL_DokTyp=7680 THEN BON_DataWprow
+  -- Prolongaty planosci
+     WHEN CDL_DokTyp=7942 THEN PRLN_Data
+  -- Handlowe
+     ELSE TrN_Data3
+END as CDLV_Data,
+-- ==============================================================================================================
+--   typ (przychód/koszt) oraz kwoty
+-- ==============================================================================================================
+CDL_Typ as CDLV_Typ,CDL_Kwota as CDLV_Kwota,
+-- #######  CDLV_Netto  #######
+CASE
+  -- Zamówienia, Reklamacje, Nowy serwis, Zlecenia serwisowe/remontowe, Zlecenia produkcyjne, Kompletacja/dekompletacja, , Wysyłki, Paczki, Projekty, Inne (kwota podana ręcznie), Magazynowe, Wizyty, KBN, Lista płac, Plan przeglądu,
+     WHEN CDL_DokTyp in (960,3584,3585,4700,4345,4346,14343,4192,4208,337,340,4592,-4592,14449,1601,4180,4608,4710,2976,7680,7942) THEN CDL_Kwota
+  -- Importowe
+     WHEN CDL_DokTyp in (3344,3352) THEN CONVERT(DECIMAL(15,2),ImN_wartosc*ImN_KursL/ImN_KursM)
+  -- Noty memotiałowe
+	 WHEN CDL_DokTyp in (4144) THEN CASE WHEN CDL_Typ=1 THEN CONVERT(DECIMAL(15,2),(MeN_KwotaPrz)*MeN_KursL/MeN_KursM) ELSE CONVERT(DECIMAL(15,2),(MeN_KwotaRoz)*MeN_KursL/MeN_KursM) END
+	 WHEN CDL_DokTyp in (4145,4146) THEN CASE WHEN CDL_Typ=1 THEN CONVERT(DECIMAL(15,2),(MeN_KwotaRoz)*MeN_KursL/MeN_KursM) ELSE CONVERT(DECIMAL(15,2),(MeN_KwotaPrz)*MeN_KursL/MeN_KursM) END
+  -- Zapisy
+     WHEN CDL_DokTyp=784 THEN CONVERT(DECIMAL(15,2),KaZ_Kwota*KaZ_KursL/KaZ_KursM)
+  -- Upomnienia
+     WHEN CDL_DokTyp in (2832,2833) THEN CONVERT(DECIMAL(15,2),Upn_KwotaOdsSys+Upn_KosztUPSys)
+  -- Obieg dokumentów
+     WHEN CDL_DokTyp in (14451,14452,14453) THEN CONVERT(DECIMAL(15,2),SDD_Wartosc)
+  -- Umowy
+     WHEN CDL_DokTyp=4800 THEN CONVERT(DECIMAL(15,2),(select isnull(sum(UmV_Netto),0) from CDN.UmwVat where UmV_GIDNumer=CDL_DokNumer and UmV_GIDTyp=4800))
+  -- Handlowe
+     ELSE CONVERT(DECIMAL(15,2),CASE WHEN TrN_NettoP+TrN_VatP&lt;&gt;0 THEN Trn_NettoP ELSE Trn_NettoR END)
+END as CDLV_Netto,
+-- ==============================================================================================================
+--   inne pola potrzebne do obsługi listy
+-- ==============================================================================================================
+-- #######  CDLV_Stan  #######
+CASE
+  -- Importowe
+     WHEN CDL_DokTyp in (3344,3352) THEN ImN_Stan
+  -- Zamówienia
+     WHEN CDL_DokTyp=960 THEN ZaN_Stan
+  -- Magazynowe
+     WHEN CDL_DokTyp=1601 THEN MaN_Stan
+  -- Wizyty
+     WHEN CDL_DokTyp=4180 THEN CWN_Stan
+  -- Noty memotiałowe
+     WHEN CDL_DokTyp in (4144,4145,4146) THEN MEN_Stan
+  -- Reklamacje
+     WHEN CDL_DokTyp in (3584,3585) THEN RLN_Stan
+  -- Nowy serwis
+     WHEN CDL_DokTyp=4700 THEN SZN_Stan
+  -- Plan przeglądu
+	 WHEN CDL_DokTyp=4710 THEN SPP_Stan 
+  -- Etapy Budżetu 
+	 WHEN CDL_DokTyp = 4596 THEN BPN_Stan
+  -- Zlecenia serwisowe/remontowe
+     WHEN CDL_DokTyp in (4345,4346) THEN ZRN_Stan
+  -- Kompletacja/dekompletacja
+     WHEN CDL_DokTyp in (4192,4208) THEN ZcN_Stan
+  -- Wysyłki
+     WHEN CDL_DokTyp=337 THEN WYS_Stan
+  -- Paczki
+     WHEN CDL_DokTyp=340 THEN WyP_Stan
+  -- Umowy
+     WHEN CDL_DokTyp=4800 THEN UmN_Stan
+  -- KBN
+     WHEN CDL_DokTyp=4608 THEN KBNN_Stan
+  -- Lista płac
+     WHEN CDL_DokTyp=2976 THEN 0
+  -- Bilans otwarcia
+     WHEN CDL_DokTyp=7680 THEN BON_Status
+  -- Prolongaty planosci
+     WHEN CDL_DokTyp=7942 THEN PRLN_Status
+  -- Handlowe, reszta 0: Zapisy, Upomnienia, zlecenia produkcyjne (stan jest w CDLV_VarChar1), Projekty, Obieg dokumentów, inne (kwota podana ręcznie)
+     ELSE IsNull(TrN_Stan,0)
+END as CDLV_Stan,
+-- #######  CDLV_Aktywny  #######
+CASE
+  -- Importowe
+     WHEN CDL_DokTyp in (3344,3352) THEN ImN_Aktywny
+  -- Zamówienia
+     WHEN CDL_DokTyp=960 THEN ZaN_Aktywny
+  -- Magazynowe
+     WHEN CDL_DokTyp=1601 THEN MaN_Aktywny
+  -- Wizyty
+     WHEN CDL_DokTyp=4180 THEN CWN_Aktywny
+  -- Noty memotiałowe
+     WHEN CDL_DokTyp in (4144,4145,4146) THEN MEN_Aktywny
+  -- Zapisy
+     WHEN CDL_DokTyp=784 THEN KAZ_Aktywny
+  -- Reklamacje
+     WHEN CDL_DokTyp in (3584,3585) THEN RLN_Aktywny
+  -- Nowy serwis
+     WHEN CDL_DokTyp=4700 THEN SZN_Aktywny
+  -- Zlecenia serwisowe/remontowe
+     WHEN CDL_DokTyp in (4345,4346) THEN  ZRN_Aktywny
+  -- Zlecenia produkcyjne
+     WHEN CDL_DokTyp=14343 THEN PZL_DataZamkniecia
+  -- Kompletacja/dekompletacja
+     WHEN CDL_DokTyp in (4192,4208) THEN ZcN_Aktywny
+  -- Wysyłki
+     WHEN CDL_DokTyp=337 THEN WYS_Aktywny
+  -- Paczki
+     WHEN CDL_DokTyp=340 THEN WyP_Aktywny
+  -- Umowy
+     WHEN CDL_DokTyp=4800 THEN UmN_Aktywny
+  -- KBN
+     WHEN CDL_DokTyp=4608 THEN KBNN_Aktywny
+  -- Lista płac
+     WHEN CDL_DokTyp=2976 THEN PIN_Aktywny
+  -- Obieg dokumentów
+     WHEN CDL_DokTyp in (14451,14452,14453) THEN SDD_Aktywny
+  -- Prolongaty planosci
+     WHEN CDL_DokTyp=7942 THEN PRLN_Aktywny
+  -- Handlowe, reszta 0: Upomnienia, Projekty, Inne (kwota podana ręcznie)
+     ELSE IsNull(TrN_Aktywny,0)
+END as CDLV_Aktywny,
+-- #######  CDLV_Zaksiegowano  #######
+CASE
+  -- Importowe
+     WHEN CDL_DokTyp in (3344,3352) THEN ImN_Zaksiegowano
+  -- Noty memotiałowe
+     WHEN CDL_DokTyp in (4144,4145,4146) THEN MeN_Zaksiegowano
+  -- Zapisy
+     WHEN CDL_DokTyp=784 THEN KAZ_Zaksiegowano
+  -- Upomnienia
+     WHEN CDL_DokTyp in (2832,2833) THEN UPN_Zaksiegowano
+  -- Zlecenia produkcyjne
+     WHEN CDL_DokTyp=14343 THEN PZL_Zaksiegowano
+  -- Kompletacja/dekompletacja
+     WHEN CDL_DokTyp in (4192,4208) THEN ZcN_Zaksiegowano
+  -- KBN
+     WHEN CDL_DokTyp=4608 THEN KBNN_Zaksiegowano
+  -- Lista płac
+     WHEN CDL_DokTyp=2976 THEN PIN_Zaksiegowano
+  -- Bilans otwarcia
+     WHEN CDL_DokTyp=7680 THEN BON_Status
+  -- Handlowe, reszta 0 : Zamówienia, Reklamacje, Nowy serwis, Zlecenia serwisowe/remontowe, Wysyłki, Paczki, Projekty, Inne (kwota podana ręcznie), Magazynowe, Wizyty
+     ELSE IsNull(TrN_Zaksiegowano,0)
+END as CDLV_Zaksiegowano,
+-- #######  CDLV_SmallInt1  #######
+CASE
+  -- Importowe
+     WHEN CDL_DokTyp in (3344,3352) THEN ImN_ImNLp
+  -- Zamówienia
+     WHEN CDL_DokTyp=960 THEN ZaN_ZamTyp
+  -- Reklamacje
+     WHEN CDL_DokTyp in (3584,3585) THEN RLN_Lp
+  -- Magazynowe
+     WHEN CDL_DokTyp=1601 THEN MaN_TrNLp 
+  -- Handlowe TrN_TrNLp reszta dokumentów null -&gt; 0
+     ELSE IsNull(TrN_TrNLp,0)
+END as CDLV_SmallInt1,
+-- #######  CDLV_SmallInt2  #######
+CASE
+  -- Zamówienia
+     WHEN CDL_DokTyp=960 THEN ZaN_PotwOferty
+  -- Handlowe TrN_SpiTyp reszta dokumentów null -&gt; 0
+     ELSE IsNull(TrN_SpiTyp,0)
+END as CDLV_SmallInt2,
+-- #######  CDLV_SmallInt3  #######
+CASE
+  -- Zamówienia
+     WHEN CDL_DokTyp=960 THEN ZaN_Rodzaj
+  -- Handlowe TrN_KonTyp reszta dokumentów null -&gt; 0
+     ELSE IsNull(TrN_KonTyp,0)
+END as CDLV_SmallInt3,
+-- #######  CDLV_TinyInt1  #######
+CASE
+  -- Zapisy
+     WHEN CDL_DokTyp=784 THEN Kaz_Anulowany
+  -- Reklamacje
+  -- WHEN CDL_DokTyp in (3584,3585) THEN IsNull(RLE_Status,0)
+  -- Obieg dokumentów
+     WHEN CDL_DokTyp in (14451,14452,14453) THEN CASE WHEN SDD_WflId&gt;0 THEN 1 ELSE 0 END
+  -- Wizyty
+     WHEN CDL_DokTyp=4180 THEN CWN_Zakonczono
+  -- Handlowe TrN_Fiskalny reszta dokumentów null -&gt; 0
+     ELSE IsNull(TrN_Fiskalny,0)
+END as CDLV_TinyInt1,
+-- #######  CDLV_VarChar1  #######
+CASE
+  -- Zapisy
+     WHEN CDL_DokTyp=784 THEN Kaz_KontoPrzec
+  -- Zlecenia produkcyjne
+     WHEN CDL_DokTyp=14343 THEN CDN.ProdZlecStatus(PZL_Id)
+  -- Handlowe,  Upomnienia, Reklamacje, Nowy serwis, Zlecenia serwisowe/remontowe, Kompletacja/dekompletacja, Wysyłki, Paczki, Projekty, Inne (kwota podana ręcznie), Magazynowe, Wizyty
+     ELSE ''
+END CDLV_VarChar1,
+-- #######  CDLV_NettoWal  #######
+CASE
+  -- Zamówienia
+     WHEN CDL_DokTyp=960 THEN CDN.WartoscZamowienia(ZaN_GIDNumer, 0, getdate())
+  -- Reklamacje, Nowy serwis, Zlecenia serwisowe/remontowe, Zlecenia produkcyjne, Kompletacja/dekompletacja, Wysyłki, Paczki, Projekty, Inne (kwota podana ręcznie), Magazynowe, Wizyty, KBN, Lista płac, Plan przeglądu
+     WHEN CDL_DokTyp in (3584,3585,4700,4345,4346,14343,4192,4208,337,340,4592,-4592,14449,1601,4180,4608,4710,2976,7680,7942) THEN CDL_Kwota
+  -- Importowe
+     WHEN CDL_DokTyp in (3344,3352) THEN CONVERT(DECIMAL(15,2),ImN_wartosc)
+  -- Noty memotiałowe
+     WHEN CDL_DokTyp in (4144) THEN CASE WHEN CDL_Typ=1 THEN CONVERT(DECIMAL(15,2),MeN_KwotaPrz) ELSE CONVERT(DECIMAL(15,2),MeN_KwotaRoz) END
+	 WHEN CDL_DokTyp in (4145,4146) THEN CASE WHEN CDL_Typ=1 THEN CONVERT(DECIMAL(15,2),MeN_KwotaRoz) ELSE CONVERT(DECIMAL(15,2),MeN_KwotaPrz) END
+  -- Zapisy
+     WHEN CDL_DokTyp=784 THEN CONVERT(DECIMAL(15,2),KaZ_Kwota)
+  -- Upomnienia
+     WHEN CDL_DokTyp in (2832,2833) THEN CONVERT(DECIMAL(15,2),CASE WHEN UPN_KursL &gt; 0 THEN (UPN_KosztUpSys + UPN_KwotaOdsSys) * UPN_KursM / UPN_KursL ELSE (UPN_KosztUpSys + UPN_KwotaOdsSys) END) --Bug #135359: Umowy/Dokumenty związane: błędna wartość "w walucie dokumentu" dla UP 
+  -- Obieg dokumentów
+     WHEN CDL_DokTyp in (14451,14452,14453) THEN CONVERT(DECIMAL(15,2),SDD_Wartosc)
+  -- Umowy
+         WHEN CDL_DokTyp=4800 THEN CONVERT(DECIMAL(15,2),(select isnull(sum(UmV_Netto),0) from CDN.UmwVat where UmV_GIDNumer=CDL_DokNumer and UmV_GIDTyp=4800))
+  -- FSE,WZE,FKE,WKE  - (S)FSE, (S)FKE, (Z)FKE
+         WHEN CDL_DokTyp in (2037,2005,2045,2013) THEN CONVERT(DECIMAL(15,2), CASE WHEN TrN_FlagaNB='N' THEN trn_wartoscWal ELSE case when TrN_NettoP+TrN_VatP&lt;&gt;0 then TrN_WartoscWal-(TrN_VatP*(TrN_KursM/TrN_KursL)) else TrN_WartoscWal-(TrN_VatR*(TrN_KursM/TrN_KursL)) end END)
+  -- Handlowe
+     ELSE CONVERT(DECIMAL(15,2),CASE WHEN TrN_NettoP+TrN_VatP&lt;&gt;0 THEN Trn_NettoP ELSE Trn_NettoR END)
+END as CDLV_NettoWal,
+-- #######  CDLV_Waluta  #######
+CASE
+  -- Zamówienia
+     WHEN CDL_DokTyp=960 THEN ZaN_Waluta
+
+  -- Importowe
+     WHEN CDL_DokTyp in (3344,3352) THEN ImN_Waluta
+  -- Noty memotiałowe
+     WHEN CDL_DokTyp in (4144,4145,4146) THEN MeN_Waluta
+  -- Zapisy
+     WHEN CDL_DokTyp=784 THEN KAZ_Waluta
+  -- Upomnienia
+     WHEN CDL_DokTyp in (2832,2833) THEN UPN_Waluta
+  -- Umowy
+     WHEN CDL_DokTyp=4800 THEN UmN_Waluta
+  -- Lista płac
+     WHEN CDL_DokTyp=2976 THEN PIN_Waluta
+  -- Handlowe (FSE, FKE, WZE, WKE)
+     WHEN CDL_DokTyp in (2037, 2045, 2005, 2013) THEN TrN_Waluta
+  -- Prolongaty planosci
+     WHEN CDL_DokTyp=7942 THEN PRLN_Waluta
+  -- Reklamacje, Nowy serwis, Zlecenia serwisowe/remontowe, Zlecenia produkcyjne, Kompletacja/dekompletacja, Wysyłki, Paczki, Projekty, Inne (kwota podana ręcznie), Obieg dokumentu, Magazynowe, Wizyty, KBN, Plan przeglądu + pozostałe handlowe
+     --WHEN CDL_DokTyp in (960, 3584,3585,4700,4345,4346,14343,4192,4208,337,340,4592,-4592,14449,14451,14452,14453,1601,4180,4608,4710,7680) THEN 
+	 ELSE IsNull(CONVERT(VARCHAR(3),Kon_Wartosc),'PLN')
+END as CDLV_Waluta,
+-- #######  CDLV_NieKsiegowac  #######
+CASE
+  -- Importowe
+     WHEN CDL_DokTyp in (3344,3352) THEN ImN_NieKsiegowac
+  -- Zlecenia produkcyjne
+     WHEN CDL_DokTyp=14343 THEN PZL_NieKsiegowac
+  -- Kompletacja/dekompletacja
+     WHEN CDL_DokTyp in (4192,4208) THEN ZcN_NieKsiegowac
+  -- Noty memotiałowe
+     WHEN CDL_DokTyp in (4144,4145,4146) THEN MEN_NieKsiegowac
+  -- Zapisy
+     WHEN CDL_DokTyp=784 THEN KRP_NieKsiegowac	
+  -- Upomnienia
+     WHEN CDL_DokTyp in (2832,2833) THEN UPN_NieKsiegowac
+  -- Lista płac
+     WHEN CDL_DokTyp=2976 THEN PIN_NieKsiegowac
+  -- Handlowe, reszta 0
+     ELSE IsNull(TrN_NieKsiegowac,0)
+END as CDLV_NieKsiegowac,
+-- #######  CDLV_CharsetANSI  #######
+CASE
+  -- Wysyłki, KBN, Lista płac, Inne (kwota podana ręcznie)
+     WHEN CDL_DokTyp in (337,4608,2976,14449,7680) THEN 0
+  -- Zapisy
+     WHEN CDL_DokTyp=784 THEN
+         CASE KAZ_KNTTyp
+             WHEN 32 THEN IsNull(Knt_CharsetANSI,0)
+             WHEN 48 THEN 0
+             WHEN 944 THEN 0
+             WHEN 4304 THEN 0
+         END
+  -- Noty memotiałowe, Upomnienia, Zlecenia produkcyjne, Kompletacja/dekompletacja, Projekty, Obieg dokumentów, Plan przeglądu, Etapu Budżetu,Prolongaty planosci
+     WHEN CDL_DokTyp in (4144,4145,4146,2832,2833,14343,4192,4208,4592,-4592,14451,14452,14453,4800,4710, 4596,7942) THEN IsNull(Knt_CharsetANSI,0)
+  -- Handlowe, Importowe, Zamówienia, Reklamacje, Nowy serwis, Zlecenia serwisowe/remontowe, Paczki, Magazynowe, Wizyty
+     ELSE IsNull(KnA_CharsetANSI,0)
+END as CDLV_CharsetANSI
+-- ==============================================================================================================
+FROM CDN.CRMDokumentyLinki
+LEFT JOIN CDN.Obiekty ON OB_GIDTyp=CDL_DokTyp
+LEFT JOIN CDN.Konfig ON Kon_Numer=211 AND Kon_Lp=0
+-- Handlowe
+LEFT JOIN CDN.TraNag on TrN_GIDNumer=CDL_DokNumer AND CDL_DokTyp in (1232,1312,1320,1489,1490,1497,1498,1520,1521,1528,1529,1603,1604,1616,1617,1624,1625,1824,1828,1832,1836,1968,2000,2001,2002,2003,2005,2008,2009,2010,2013,2033,2034,2035,2036,2037,2039,2041,2042,2043,2044,2045,2047)
+-- Importowe
+LEFT JOIN CDN.ImpNag ON ImN_GIDNumer=CDL_DokNumer AND CDL_DokTyp in (3344,3352)
+-- Zamówienia
+LEFT JOIN CDN.ZamNag ON ZaN_GIDNumer=CDL_DokNumer AND CDL_DokTyp=960
+-- Magazynowe
+LEFT JOIN CDN.MagNag ON MaN_GIDNumer=CDL_DokNumer AND CDL_DokTyp=1601
+-- Wizyty
+LEFT JOIN CDN.CRMWizytyNag ON CWN_ID=CDL_DokNumer AND CDL_DokTyp=4180
+-- Noty memotiałowe
+LEFT JOIN CDN.MemNag ON MEN_GIDNumer=CDL_DokNumer AND CDL_DokTyp in (4144,4145,4146)
+-- Zapisy
+LEFT JOIN CDN.Zapisy ON KAZ_GIDNumer=CDL_DokNumer AND CDL_DokTyp=784
+LEFT JOIN CDN.Raporty ON KAZ_KRPNumer = KRP_GIDNumer AND KAZ_KRPTyp=800
+-- Upomnienia
+LEFT JOIN CDN.UpoNag ON UPN_GIDNumer=CDL_DokNumer AND CDL_DokTyp in (2832,2833)
+-- Reklamacje
+LEFT JOIN CDN.ReklNag ON RLN_Id=CDL_DokNumer AND CDL_DokTyp in (3584,3585)
+--LEFT JOIN CDN.ReklElem ON RLN_Id=RLE_RLNId
+-- Nowy serwis
+LEFT JOIN CDN.SrwZlcNag ON SZN_Id=CDL_DokNumer AND CDL_DokTyp=4700
+-- Plan przeglądu
+LEFT JOIN CDN.SrwPlanPrzegladu ON SPP_Id=CDL_DokNumer AND CDL_DokTyp=4710
+-- Etapy Budżetów
+LEFT JOIN CDN.BudzetPrjElem ON CDN.BudzetPrjElem.BPE_Id = CDN.CRMDokumentyLinki.CDL_DokNumer AND CDN.CRMDokumentyLinki.CDL_DokTyp = 4596 
+LEFT JOIN CDN.BudzetPrjNag ON CDN.BudzetPrjElem.BPE_BPNId = CDN.BudzetPrjNag.BPN_Id AND CDN.CRMDokumentyLinki.CDL_DokTyp = 4596 
+-- Zlecenia serwisowe/remontowe
+LEFT JOIN CDN.ZlcRemNag ON ZRN_GIDNumer=CDL_DokNumer AND CDL_DokTyp in (4345,4346)
+-- Zlecenia produkcyjne
+LEFT JOIN CDN.ProdZlecenia ON PZL_Id=CDL_DokNumer AND CDL_DokTyp=14343
+-- Kompletacja/dekompletacja
+LEFT JOIN CDN.ZlcNag ON ZcN_GIDNumer=CDL_DokNumer AND CDL_DokTyp in (4192,4208)
+-- Wysyłki
+LEFT JOIN CDN.Wysylki ON WYS_GIDNumer=CDL_DokNumer AND CDL_DokTyp=337
+-- Paczki
+LEFT JOIN CDN.WysPaczki ON WyP_IdPaczki=CDL_DokNumer AND CDL_DokTyp=340
+-- Projekty
+LEFT JOIN CDN.PrjStruktura ON PRJ_Id=CDL_DokNumer AND CDL_DokTyp in (4592,-4592)
+-- Obieg dokumentów
+LEFT JOIN CDN.SekDokumenty ON SDD_Id=CDL_DokNumer AND CDL_DokTyp in (14451,14452,14453)
+-- Umowy
+LEFT JOIN CDN.UmwNag ON UmN_Id=CDL_DokNumer AND CDL_DokTyp=4800
+-- KBN
+LEFT JOIN CDN.KBNNag ON KBNN_Id=CDL_DokNumer AND CDL_DokTyp=4608
+-- Lista płac
+LEFT JOIN CDN.PikNag ON PIN_GIDNumer=CDL_DokNumer AND CDL_DokTyp=2976
+-- Bilans otwarcia
+LEFT JOIN CDN.BilansOtwarciaNag ON BON_GIDNumer=CDL_DokNumer AND CDL_DokTyp=BON_GIDTyp
+-- Prolongaty planosci
+LEFT JOIN CDN.ProlongNag ON PRLN_ID=CDL_DokNumer AND CDL_DokTyp=7942
+-- Inne (kwota podana ręcznie)
+-- CDL_DokTyp=14449
+-- ==============================================================================================================
+-- Handlowe, Importowe, Zamówienia, Reklamacje, Nowy serwis, Zlecenia serwisowe/remontowe, Paczki, Magazynowe, Wizyty
+LEFT JOIN CDN.KntAdresy ON KnA_GIDTyp=COALESCE(TrN_KnATyp,ZaN_KnATyp,ImN_KnATyp,RLN_KnATyp,SZN_KnATyp,ZRN_KnATypO,WyP_KnATyp,UmN_KnATyp,MaN_KnATyp,CWN_KnATyp)
+        AND KnA_GIDNumer=COALESCE(TrN_KnANumer,ZaN_KnANumer,ImN_KnANumer,RLN_KnANumer,SZN_KnANumer,ZRN_KnANumerO,WyP_KnANumer,UmN_KnANumer,MaN_KnANumer,CWN_KnANumer)
+-- Noty memotiałowe, Zapisy, Upomnienia, Zlecenia produkcyjne, Kompletacja/dekompletacja, Projekty, Obieg dokumentów,Prolongaty planosci
+LEFT JOIN CDN.KntKarty ON Knt_GIDNumer=COALESCE(SDD_KntNumer,PZL_KntNumer,ZcN_KntNumer,MEN_KntNumer,KAZ_KntNumer,UPN_KntNumer,PRJ_KntNumer,UmN_PodNumer,BPE_KntNumer,PRLN_KNTNumer) 
+		AND Knt_GIDTyp=COALESCE(SDD_KntTyp,PZL_KntTyp,ZcN_KntTyp,MEN_KntTyp,KAZ_KNTTyp,UPN_KntTyp,PRJ_KntTyp,UmN_PodTyp,BPE_KntTyp,PRLN_KNTTyp)
+-- Zapisy (obiekty inne niż kontrahent: Bank, Pracownik, Urząd)
+LEFT JOIN CDN.Banki    ON BnK_GIDNumer=KAZ_KNTNumer     AND KAZ_KNTTyp=48
+LEFT JOIN CDN.PrcKarty ON Prc_GIDNumer=KAZ_KNTNumer     AND KAZ_KNTTyp=944
+LEFT JOIN CDN.Urzedy   ON Urz_GIDNumer=KAZ_KNTNumer     AND KAZ_KNTTyp=4304
+-- ==============================================================================================================
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Nadawanie praw do widoku CRMDokumentyLinkiView_FullData"></A><PRE>
+          <FONT SIZE="2"><I>/* Nadawanie praw do widoku CRMDokumentyLinkiView_FullData */</I><BR>
+GRANT SELECT ON CDN.CRMDokumentyLinkiView_FullData TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Usuwanie widoku CRMDokumentyLinkiView"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Usuwanie widoku CRMDokumentyLinkiView */</I><BR>
+IF EXISTS (SELECT * FROM sysobjects WHERE name='CRMDokumentyLinkiView' AND type='v')
+  DROP VIEW CDN.CRMDokumentyLinkiView;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie widoku CRMDokumentyLinkiView"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie widoku CRMDokumentyLinkiView */</I><BR>
+CREATE VIEW CDN.CRMDokumentyLinkiView
+AS
+	SELECT
+		CDL_CRMTyp as CDLV_CRMTyp,
+		CDL_CRMNumer as CDLV_CRMNumer,
+		CDL_CRMLp as CDLV_CRMLp,
+		CDL_DokTyp as CDLV_DokTyp,
+		CDL_DokNumer as CDLV_DokNumer,
+		cast('' as varchar(5)) as CDLV_Skrot,
+		cast(0 as int) as CDLV_Numer,
+		cast(0 as smallint) as CDLV_Rok,
+		cast('' as varchar(5)) as CDLV_Seria,
+		cast(0 as tinyint) as CDLV_Miesiac,
+		cast('' as varchar(30)) as CDLV_NrDok,
+		cast('' as varchar(20)) as CDLV_Akronim,
+		cast('' as varchar(352)) as CDLV_Nazwa,
+		cast('' as varchar(40))  as CDLV_Miasto,
+		cast(0 as int)  as CDLV_Data,
+		CDL_Typ as CDLV_Typ,
+		CDL_Kwota as CDLV_Kwota,
+		cast(0.00 as decimal(15,2)) as CDLV_Netto,
+		cast(0 as smallint) as CDLV_Stan,
+		cast(0 as int) as CDLV_Aktywny,
+		cast(0 as tinyint) as CDLV_Zaksiegowano,
+		cast(0 as smallint) as CDLV_SmallInt1,
+		cast(0 as smallint) as CDLV_SmallInt2,
+		cast(0 as smallint) as CDLV_SmallInt3,
+		cast(0 as tinyint) as CDLV_TinyInt1,
+		cast('' as varchar(254)) CDLV_VarChar1,
+		cast(0.00 as decimal(15,2)) as CDLV_NettoWal,
+		'PLN' as CDLV_Waluta,
+		cast(0 as tinyint) as CDLV_NieKsiegowac,
+		cast(0 as tinyint) as CDLV_CharsetANSI
+	FROM CDN.CRMDokumentyLinki
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Nadawanie praw do widoku CRMDokumentyLinkiView"></A><PRE>
+          <FONT SIZE="2"><I>/* Nadawanie praw do widoku CRMDokumentyLinkiView */</I><BR>
+GRANT SELECT ON CDN.CRMDokumentyLinkiView TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie funkcji CDN.CDLVZwrocKolumne_Long"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie funkcji CDN.CDLVZwrocKolumne_Long */</I><BR>
+IF EXISTS (SELECT Name,xtype FROM sysobjects WHERE Name='CDLVZwrocKolumne_Long' AND xtype in (N'FN', N'IF', N'TF', N'FS', N'FT'))
+	DROP FUNCTION CDN.CDLVZwrocKolumne_Long
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie funkcji CDN.CDLVZwrocKolumne_Long"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie funkcji CDN.CDLVZwrocKolumne_Long */</I><BR>
+CREATE FUNCTION CDN.CDLVZwrocKolumne_Long
+(
+	@p_CRMTyp SMALLINT,			-- Typ obiektu CRM  
+	@p_CRMNumer INTEGER,		-- Numer obiektu CRM
+	@p_CRMLp SMALLINT,			-- Lp obiektu CRM
+	@p_DokTyp SMALLINT,			-- GidTyp wiązanego dokumentu
+	@p_DokNumer INTEGER,		-- GidNumer wiązanego dokumentu
+	@p_NazwaKolumny VARCHAR(40) -- Nazwa kolumny z widoku CRMDokumentyLinkiView
+
+)
+RETURNS INT
+AS
+BEGIN
+	RETURN
+	(	
+		SELECT CASE @p_NazwaKolumny 
+					WHEN 'CDLV_Numer' THEN CDLV_Numer
+					WHEN 'CDLV_Rok' THEN CDLV_Rok
+					WHEN 'CDLV_Miesiac' THEN CDLV_Miesiac
+					WHEN 'CDLV_Data' THEN CDLV_Data
+					WHEN 'CDLV_Typ' THEN CDLV_Typ
+					WHEN 'CDLV_Stan' THEN CDLV_Stan
+					WHEN 'CDLV_Aktywny' THEN CDLV_Aktywny
+					WHEN 'CDLV_Zaksiegowano' THEN CDLV_Zaksiegowano
+					WHEN 'CDLV_SmallInt1' THEN CDLV_SmallInt1
+					WHEN 'CDLV_SmallInt2' THEN CDLV_SmallInt2
+					WHEN 'CDLV_SmallInt3' THEN CDLV_SmallInt3
+					WHEN 'CDLV_TinyInt1' THEN CDLV_TinyInt1
+					WHEN 'CDLV_NieKsiegowac' THEN CDLV_NieKsiegowac
+					WHEN 'CDLV_CharsetANSI' THEN CDLV_CharsetANSI
+					ELSE 0
+				END
+		FROM CDN.CRMDokumentyLinkiView_FullData
+		WHERE CDLV_CRMTyp=@p_CRMTyp AND CDLV_CRMNumer=@p_CRMNumer AND CDLV_CRMLp=@p_CRMLp AND CDLV_DokTyp=@p_DokTyp AND CDLV_DokNumer=@p_DokNumer
+
+	)
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do funkcji CDLVZwrocKolumne_Long"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do funkcji CDLVZwrocKolumne_Long */</I><BR>
+GRANT EXECUTE ON CDN.CDLVZwrocKolumne_Long TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie funkcji CDN.CDLVZwrocKolumne_Decimal"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie funkcji CDN.CDLVZwrocKolumne_Decimal */</I><BR>
+IF EXISTS (SELECT Name,xtype FROM sysobjects WHERE Name='CDLVZwrocKolumne_Decimal' AND xtype in (N'FN', N'IF', N'TF', N'FS', N'FT'))
+	DROP FUNCTION CDN.CDLVZwrocKolumne_Decimal
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie funkcji CDN.CDLVZwrocKolumne_Decimal"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie funkcji CDN.CDLVZwrocKolumne_Decimal */</I><BR>
+CREATE FUNCTION CDN.CDLVZwrocKolumne_Decimal
+(
+	@p_CRMTyp SMALLINT,			-- Typ obiektu CRM  
+	@p_CRMNumer INTEGER,		-- Numer obiektu CRM
+	@p_CRMLp SMALLINT,			-- Lp obiektu CRM
+	@p_DokTyp SMALLINT,			-- GidTyp wiązanego dokumentu
+	@p_DokNumer INTEGER,		-- GidNumer wiązanego dokumentu
+	@p_NazwaKolumny VARCHAR(40) -- Nazwa kolumny z widoku CRMDokumentyLinkiView
+
+)
+RETURNS DECIMAL(15,2)
+AS
+BEGIN
+	RETURN
+	(	
+		SELECT CASE @p_NazwaKolumny 
+					WHEN 'CDLV_Kwota' THEN CDLV_Kwota
+					WHEN 'CDLV_Netto' THEN CDLV_Netto
+					WHEN 'CDLV_NettoWal' THEN CDLV_NettoWal
+					ELSE 0.00
+				END
+		FROM CDN.CRMDokumentyLinkiView_FullData
+		WHERE CDLV_CRMTyp=@p_CRMTyp AND CDLV_CRMNumer=@p_CRMNumer AND CDLV_CRMLp=@p_CRMLp AND CDLV_DokTyp=@p_DokTyp AND CDLV_DokNumer=@p_DokNumer
+
+	)
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do funkcji CDLVZwrocKolumne_Decimal"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do funkcji CDLVZwrocKolumne_Decimal */</I><BR>
+GRANT EXECUTE ON CDN.CDLVZwrocKolumne_Decimal TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie funkcji CDN.CDLVZwrocKolumne_String"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie funkcji CDN.CDLVZwrocKolumne_String */</I><BR>
+IF EXISTS (SELECT Name,xtype FROM sysobjects WHERE Name='CDLVZwrocKolumne_String' AND xtype in (N'FN', N'IF', N'TF', N'FS', N'FT'))
+	DROP FUNCTION CDN.CDLVZwrocKolumne_String
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie funkcji CDN.CDLVZwrocKolumne_String"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie funkcji CDN.CDLVZwrocKolumne_String */</I><BR>
+CREATE FUNCTION CDN.CDLVZwrocKolumne_String
+(
+	@p_CRMTyp SMALLINT,			-- Typ obiektu CRM  
+	@p_CRMNumer INTEGER,		-- Numer obiektu CRM
+	@p_CRMLp SMALLINT,			-- Lp obiektu CRM
+	@p_DokTyp SMALLINT,			-- GidTyp wiązanego dokumentu
+	@p_DokNumer INTEGER,		-- GidNumer wiązanego dokumentu
+	@p_NazwaKolumny VARCHAR(40) -- Nazwa kolumny z widoku CRMDokumentyLinkiView
+
+)
+RETURNS VARCHAR(255)
+AS
+BEGIN
+	RETURN
+	(	
+		SELECT CASE @p_NazwaKolumny 
+					WHEN 'CDLV_Skrot' THEN CDLV_Skrot
+					WHEN 'CDLV_Seria' THEN CDLV_Seria
+					WHEN 'CDLV_NrDok' THEN CDLV_NrDok
+					WHEN 'CDLV_Akronim' THEN CDLV_Akronim
+					WHEN 'CDLV_Nazwa' THEN CDLV_Nazwa
+					WHEN 'CDLV_Miasto' THEN CDLV_Miasto
+					WHEN 'CDLV_VarChar1' THEN CDLV_VarChar1
+					WHEN 'CDLV_Waluta' THEN CDLV_Waluta
+					ELSE ''
+				END
+		FROM CDN.CRMDokumentyLinkiView_FullData
+		WHERE CDLV_CRMTyp=@p_CRMTyp AND CDLV_CRMNumer=@p_CRMNumer AND CDLV_CRMLp=@p_CRMLp AND CDLV_DokTyp=@p_DokTyp AND CDLV_DokNumer=@p_DokNumer
+
+	)
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do funkcji CDLVZwrocKolumne_String"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do funkcji CDLVZwrocKolumne_String */</I><BR>
+GRANT EXECUTE ON CDN.CDLVZwrocKolumne_String TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

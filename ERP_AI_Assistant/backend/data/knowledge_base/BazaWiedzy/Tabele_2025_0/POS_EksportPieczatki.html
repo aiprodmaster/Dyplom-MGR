@@ -1,0 +1,75 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[POS_EksportPieczatki]"></A><PRE>
+          <FONT SIZE="2"><I>/* [POS_EksportPieczatki] */</I><BR>
+CREATE PROCEDURE [CDN].[POS_EksportPieczatki]
+	@RowVersion BIGINT,
+	@PointOfSaleId INT
+AS
+BEGIN
+SET NOCOUNT ON;
+	
+	declare @Wan table (WanID int,WaNCzasModyfikacji int)
+	insert into @Wan
+	select distinct WanID, WaNCzasModyfikacji from cdn.POS_OddzialyDoEksportu(@PointOfSaleId, @RowVersion) cross apply cdn.POS_WanDoEksportu(PSaID,0)
+	select
+		0 as [@RowVersion], (
+		select distinct
+			Frm_GidNumer as [@Id],
+			RTRIM(Frm_Nazwa1 + ' ' + Frm_Nazwa2 + ' ' + Frm_Nazwa3) as [@CompanyName],
+			--as [@LegalForm],
+			--as [@SubsidiaryName],
+			Frm_NIP as [@CompanyTIN],
+			Frm_Regon as [@CompanyEIN],
+			--as [@Industry],
+			--as [@IndustryCode],
+			Frm_DOrganRej as [@RegisteringAuthority],
+			Frm_DNazwaRej as [@RegistryName],
+			Frm_DNumerRej as [@NumberInRegistry],
+			case when Frm_DDataRej = 0 then null else DateAdd(d,Frm_DDataRej,convert(datetime,'28-12-1800',105)) end as [@RegistrationDate],
+			Frm_DKapitalZakladowy as [@ShareCapital],
+			WanID as [@ShareCapitalCurrencyId],
+			Frm_DKapitalWplacony as [@PaidInCapital],
+			WanID as [@PaidInCapitalCurrencyId],
+			frm_GUIDdane as [@CompanyAddressGUID],
+			--as [@SubsidiaryAddressGUID],
+			Frm_Telefon1 as [@CompanyPhoneNumber],
+			--as [@SubsidiaryPhoneNumber],
+			Frm_Fax as [@CompanyFax],
+			--as [@SubsidiaryFax],
+			Frm_Email as [@CompanyEmail],
+			--as [@SubsidiaryEmail],
+			case when exists(select 1 from CDN.PicoStanowiska join cdn.PicoKonfig on PSa_PcKID = PcK_PicoID join cdn.FrmStruktura on FRS_ID = PcK_CentrumID where Frm_GidNumer = FRS_FrmNumer and (PSa_ID = PSaID or @PointOfSaleId is null)) then 'true' else 'false' end as [@IsCurrent],
+			Frm_URL as [@URL]
+		
+		from CDN.Firma
+			--cdn.PicoStanowiska
+			--join cdn.PicoKonfig on PSa_PcKID = PcK_PicoID
+			--join cdn.FrmStruktura on FRS_ID = PcK_CentrumID
+			--join cdn.Firma on Frm_GidNumer = FRS_FrmNumer
+			join cdn.KrajeCelne on KPC_Kod = (case when Frm_Kraj = '' OR Frm_Kraj is null then 'PL' else Frm_Kraj end)
+			cross join cdn.POS_OddzialyDoEksportu(@PointOfSaleId, @RowVersion)
+			LEFT JOIN CDN.WaLNag on Frm_DWalutaKapitalu = WaN_Symbol
+			LEFT JOIN @Wan on WaN_Id = WanID
+			WHERE /*PSa_ID = @PointOfSaleId AND*/ ((case when Frm_CzasModyfikacji &gt;= isnull(WaNCzasModyfikacji,0) THEN Frm_CzasModyfikacji ELSE WaNCzasModyfikacji END) &gt; @RowVersion OR @RowVersion = 0) AND (Frm_DWalutaKapitalu = '' OR WanID is not null)
+
+		 
+		for xml path('Stamp'), type)
+	for xml path('Stamps')
+	SET NOCOUNT OFF;	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

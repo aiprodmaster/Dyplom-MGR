@@ -1,0 +1,154 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="KPDodajPytOSurowiec"></A><PRE>
+          <FONT SIZE="2"><I>/* KPDodajPytOSurowiec */</I><BR>
+CREATE PROCEDURE CDN.KPDodajPytOSurowiec
+(
+	@p_KPNId	INTEGER,		--Identyfikator konfiguracji produktu
+	@p_KTPId	INTEGER,		--Identyfikator konfiguratora produktu
+	@p_PTZId	INTEGER,		--Identyfikator materiału, dla którego pytamy o wybór surowca	
+	@p_FirmaId	INTEGER,		--GidFirma
+	@p_KopiaKPNId	INTEGER=null,	--Identyfikator konfiguracji produktu, z którego ew. przepisywać odpowiedzi na pytania
+	@p_PokazBledy TINYINT=1,		--Czy pokazywać błędy 
+	@Wynik		INTEGER OUTPUT
+	/*
+		 0 : Operacja zakończona sukcesem
+		 -108 : Wystąpił błąd podczas przypisania pytania o wybór surowca dla materiału.
+		Inne &lt;0: Błąd z podrzędnej procedury/funkcji wywoływanej wewnątrz tej metody
+	*/			
+)
+AS
+BEGIN
+
+	DECLARE @WynikProc INT
+	DECLARE @t_KPEId INT
+
+	DECLARE @KPE_Odpowiedz VARCHAR(100)=null
+	DECLARE @KPE_OdpTyp SMALLINT=null
+	DECLARE @KPE_OdpFirma INTEGER=null
+	DECLARE @KPE_OdpNumer INTEGER=null
+	DECLARE @KPE_OdpLp SMALLINT=null
+	DECLARE @KPE_Edycja TINYINT=null
+
+	-- Sprawdzenie czy są surowce z warunkiem SQL
+	DECLARE @PTT_TwXTyp SMALLINT
+	DECLARE @PTT_TwXNumer INTEGER
+	DECLARE @PTT_WarunekWystapienia VARCHAR(4096)
+
+	/**************  BEGIN C1_KPDodajPytOSurowiec **************/
+	DECLARE C1_KPDodajPytOSurowiec CURSOR LOCAL FAST_FORWARD FOR
+		SELECT PTT_TwXTyp, PTT_TwXNumer, PTT_WarunekWystapienia FROM cdn.ProdTechnologiaZasobyTwX
+		WHERE PTT_PTZId=@p_PTZId AND PTT_WarunekWystapienia is not null and PTT_WarunekWystapienia&lt;&gt;''
+	OPEN C1_KPDodajPytOSurowiec;
+	FETCH NEXT FROM C1_KPDodajPytOSurowiec INTO @PTT_TwXTyp,@PTT_TwXNumer,@PTT_WarunekWystapienia
+	WHILE @@fetch_status = 0
+	BEGIN
+				
+		SET @WynikProc = 0
+		EXEC CDN.KPSprawdzWarunek @p_Warunek=@PTT_WarunekWystapienia,@p_KPNId=@p_KPNId,@p_ObiTyp=14342,@p_ObiFirma=@p_FirmaId,@p_ObiNumer=@p_PTZId,@p_ObiLp=0,@p_PokazBledy=@p_PokazBledy,@Wynik=@WynikProc out
+
+		if @WynikProc&lt;0 
+		begin
+			CLOSE C1_KPDodajPytOSurowiec;
+			DEALLOCATE C1_KPDodajPytOSurowiec;
+			set @Wynik = @WynikProc
+			return @Wynik
+		end
+		else if @WynikProc = 1
+		begin
+				SELECT TOP 1 @KPE_Odpowiedz=TwG_Kod FROM CDN.TwrGrupy WHERE TwG_GIDTyp=@PTT_TwXTyp AND TwG_GIDNumer=@PTT_TwXNumer
+				SELECT @KPE_OdpTyp=@PTT_TwXTyp, @KPE_OdpFirma=@p_FirmaId, @KPE_OdpNumer=@PTT_TwXNumer, @KPE_OdpLp=0, @KPE_Edycja=0
+			BREAK 
+		end
+
+		FETCH NEXT FROM C1_KPDodajPytOSurowiec INTO @PTT_TwXTyp,@PTT_TwXNumer,@PTT_WarunekWystapienia
+	END -- WHILE @@fetch_status = 0
+	CLOSE C1_KPDodajPytOSurowiec;
+	DEALLOCATE C1_KPDodajPytOSurowiec;
+	/**************  END C1_KPDodajPytOSurowiec **************/
+
+	INSERT INTO CDN.KonfProdElem
+				(KPE_KPNId
+				,KPE_ObiTyp
+				,KPE_ObiFirma
+				,KPE_ObiNumer
+				,KPE_ObiLp
+				,KPE_TypPytania
+				,KPE_Pozycja
+				,KPE_Tresc
+				,KPE_AtkId
+				,KPE_Odpowiedz
+				,KPE_OdpTyp
+				,KPE_OdpFirma
+				,KPE_OdpNumer
+				,KPE_OdpLp
+				,KPE_Edycja
+				,KPE_Wymagaj
+				,KPE_Kopiuj)
+	SELECT		@p_KPNId--KPE_KPNId
+				,14342--KPE_ObiTyp
+				,@p_FirmaId--KPE_ObiFirma
+				,@p_PTZId--KPE_ObiNumer
+				,0--KPE_ObiLp
+				,7--KPE_TypPytania
+				,1--KPE_Pozycja
+				,REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(SLW_WartoscS2,'&lt;PTE_Kod&gt;',PTE_Kod),'&lt;PTE_Nazwa&gt;',PTE_Nazwa),'&lt;PTC_Kod&gt;',PTC_Kod),'&lt;PTC_Nazwa&gt;',PTC_Nazwa),'&lt;PTZ_Kod&gt;',PTZ_Kod),'&lt;PTZ_Nazwa&gt;',PTZ_Nazwa)--KPE_Tresc
+				,0--KPE_AtkId
+				,Coalesce(@KPE_Odpowiedz,E.KPE_Odpowiedz,'&lt;Brak&gt;')--KPE_Odpowiedz
+				,Coalesce(@KPE_OdpTyp,E.KPE_OdpTyp,0)--KPE_OdpTyp
+				,Coalesce(@KPE_OdpFirma,E.KPE_OdpFirma,0)--KPE_OdpFirma
+				,Coalesce(@KPE_OdpNumer,E.KPE_OdpNumer,0)--KPE_OdpNumer
+				,Coalesce(@KPE_OdpLp,E.KPE_OdpLp,0)--KPE_OdpLp
+				,IsNull(@KPE_Edycja,1)--KPE_Edycja
+				,PTZ_WymagajSurowca--KPE_Wymagaj
+				,0--KPE_Kopiuj
+	FROM CDN.ProdTechnologia
+	JOIN CDN.ProdTechnologiaZasoby ON PTZ_Id=@p_PTZId
+	JOIN CDN.ProdTechnologiaCzynnosci ON PTC_Id=PTZ_TechnologiaCzynnosc
+	JOIN CDN.Slowniki ON SLW_ID=PTZ_DefPytWyborId
+	LEFT JOIN CDN.KonfProdElem E on E.KPE_KPNId=@p_KopiaKPNId and E.KPE_ObiTyp=14342 and E.KPE_ObiFirma=@p_FirmaId and E.KPE_ObiNumer=@p_PTZId and E.KPE_ObiLp=0 and E.KPE_TypPytania=7 and E.KPE_AtkId=0
+	WHERE PTE_Id=@p_KTPId
+
+	if @@error &lt;&gt; 0  
+	begin		
+		if @p_PokazBledy=1
+			raiserror('Wystąpił błąd podczas przypisania pytania o wybór surowca dla materiału.', 16, 1)
+		set @Wynik = -108
+		return @Wynik
+	end
+	else
+		begin
+			SET @t_KPEId = scope_identity()
+
+			-- Pytanie o cechę
+			if (@KPE_OdpTyp is null or @KPE_OdpNumer is null)
+				SELECT @KPE_OdpTyp=KPE_OdpTyp, @KPE_OdpNumer=KPE_OdpNumer FROM CDN.KonfProdElem	WHERE KPE_Id = @t_KPEId
+
+			SET @WynikProc = 0
+
+			EXEC CDN.KPDodajPytanieOCeche @p_KPNId=@p_KPNId, @p_KTPId=@p_KTPId, @p_PTZId=@p_PTZId, @p_FirmaId=@p_FirmaId, @p_TwrTyp=@KPE_OdpTyp, @p_TwrNumer=@KPE_OdpNumer, @p_PokazBledy=@p_PokazBledy, @Wynik=@WynikProc OUTPUT
+			if @WynikProc&lt;0 
+			begin
+				set @Wynik = @WynikProc
+				return @Wynik
+			end			
+		end
+
+	set @Wynik = 0
+    return @Wynik
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

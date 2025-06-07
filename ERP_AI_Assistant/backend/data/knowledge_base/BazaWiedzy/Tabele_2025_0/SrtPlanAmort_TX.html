@@ -1,0 +1,676 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="SrtPlanAmort_TX"></A><PRE>
+          <FONT SIZE="2"><I>/* SrtPlanAmort_TX */</I><BR>
+CREATE PROCEDURE  cdn.SrtPlanAmort_TX (
+@NaDzienC int,
+@Naliczaj smallint, 
+@NaliczajAMP smallint,
+@MiesOdPrzyjecia smallint, 
+@MiesDoKonca smallint, 
+@RokAmort int, 
+@RokSezonowy smallint, 
+@WN_RN smallint, 
+@LiczbaMiesAktAMP smallint,
+@LiczbaMiesAkt smallint,
+@LiczbaMiesAktOd smallint,
+@LiczbaMiesAktTX smallint output, 
+@OldLiczbaMiesAktTX smallint, 
+@IloscMiesRP smallint,
+@IloscMiesRP_AMP smallint output, 
+@poz_decOdpis smallint,
+@poz_decOdpisTeoret smallint,
+@DzielLiczbaMies decimal(3,1),
+@OstatniNaliczaj smallint, 
+@OstatniNaliczajAMP smallint, 
+
+@Srt_DataRozp int, 
+@Srt_DataEksp int,
+@Srt_MsNaliczania smallint, 
+@Srt_PodlegaAMP smallint,
+@MetodaAmObow_TX smallint,
+@Sezonowosc smallint, 
+
+@DataC1 int, 
+@DataC2 int,
+@AMPUmorzenie smallint,
+@AMPUwzglDegresywna smallint,   
+@RodzajStawkaAktywnySezon smallint, 
+@MiesAmortyzacjiAMP smallint, 
+  
+@ZwiekszenieTX decimal(15,2), 
+@ZwiekszeniePlusTX decimal(15,2),
+@ZwiekszenieMiesTX decimal(15,2), 
+@ZwiekszenieMsObow2TX decimal(15,2), 
+@ZwiekszenieLtTX decimal(15,2), 
+@StawkaRokTX decimal(7,2),
+@OldStawkaRokTX decimal(7,2),  
+@WspTX decimal(7,2),
+@OldWspTX decimal(7,2), 
+@WspDegrTX decimal(7,2),
+@OdpisyPKTX decimal(15,2),
+@OdpisyTX_Likw decimal(15,2), -- tylko dla amortyzacji
+@SumaOdpisyAMPTX decimal(15,2),
+
+@TeoretOdpisTX decimal(16,3) output, 
+@TeoretOdpisRPTX decimal(16,3) output,
+@TeoretOdpisNaliczajTX decimal(15,2) output, 
+@TeoretOdpisNaliczajRPTX decimal(15,2) output,
+@OldTeoretOdpisNaliczajTX decimal(15,2), 
+@OldTeoretOdpisNaliczajRPTX decimal(15,2),
+@TeoretOdpisRocznyTX decimal(15,2) output,
+@TeoretOdpisRocznyRPTX decimal(15,2) output,
+@TeoretOdpisLiniowyTX decimal(16,3),   
+@SumaOdpisyRoczneTeoretTX decimal(15,2),
+@SumaOdpisyRoczneTeoretRPTX decimal(15,2),
+@SumaOdpisyAMPTeoretTX decimal(15,2),
+
+@BruttoTX decimal(15,2),
+@BruttoPodstTX decimal(15,2),
+@NettoPodstTX decimal(15,2),
+@NettoTeoretTX decimal(15,2) output,
+@NettoTeoretRPTX decimal(15,2) output,
+@KwotaZlomowaTX decimal(15,2),
+@OldKwotaZlomowaTX decimal(15,2),
+
+@ZaokTX smallint output,
+@Tor smallint,  --- 0 umorzenie; 1 amortyzacja
+@WartRezyd smallint, --- wartość rezydualna: 0 jako wartość graniczna, 1 w podstawie amortyzacji
+@Kon_DegresywnaPierwszyRokTX smallint,
+@Tmp decimal(15,2) output,  --zmienna pomocnicza 
+
+@PrzylaczenieTX decimal(15,2), 
+@OdlaczenieTX decimal(15,2), 
+@Kon_ZestElemAmOdPrzylaczenia smallint,	-- Zestaw: Metoda degresywna – rozpoczęcie amortyzacji elementu z datą przyłączenia
+@Zestaw smallint
+)	
+as
+begin
+
+declare @tmpDec1 decimal(15,2)
+declare @tmpDec2 decimal(15,2)
+declare @tmpDec3 decimal(15,2)
+declare @LiczonyTeoretOdpis smallint
+declare @BruttoPodstWR decimal(15,2) ---Pdostawa brutton z uwzględnieniem wartości rezydualnej
+declare @WartGranZKZ decimal(15,2) --- wartość graniczna odpisów amortyzacyjnych
+
+
+declare @OldTeoretOdpisTX decimal(16,3) --wartosc na wejsciu ( z poprzedniego miesiaca)
+set @OldTeoretOdpisTX = @TeoretOdpisTX
+declare @OldTeoretOdpisRPTX decimal(16,3)
+set @OldTeoretOdpisRPTX = @TeoretOdpisRPTX
+
+
+set @tmp = 0
+set @LiczonyTeoretOdpis = 0
+
+if @WartRezyd = 0
+begin
+  set @BruttoPodstWR  = @BruttoPodstTX
+  set @WartGranZKZ = @KwotaZlomowaTX
+end
+else
+begin
+  set @BruttoPodstWR  = @BruttoPodstTX - @KwotaZlomowaTX
+  set @WartGranZKZ = @KwotaZlomowaTX
+end
+
+
+
+/*select @MiesOdPrzyjecia MiesOdPrzyjecia, @Srt_MsNaliczania Srt_MsNaliczania, @Srt_DataRozp Srt_DataRozp, @DataC1 DataC1, @Srt_DataRozp Srt_DataRozp
+	, @DataC2 DataC2, @Tor Tor, @Srt_PodlegaAMP Srt_PodlegaAMP, @AMPUmorzenie AMPUmorzenie
+	, @RokAmort RokAmort, @MiesDoKonca MiesDoKonca, @IloscMiesRP IloscMiesRP, @MetodaAmObow_TX MetodaAmObow_TX, @ZwiekszenieTX ZwiekszenieTX
+    , @Kon_DegresywnaPierwszyRokTX Kon_DegresywnaPierwszyRokTX
+	, @MiesOdPrzyjecia MiesOdPrzyjecia, @OldStawkaRokTX OldStawkaRokTX, @StawkaRokTX StawkaRokTX
+	, @OldWspTX OldWspTX, @WspTX WspTX
+	, @OldKwotaZlomowaTX OldKwotaZlomowaTX, @KwotaZlomowaTX KwotaZlomowaTX
+	, @AMPUmorzenie AMPUmorzenie, @Srt_DataEksp Srt_DataEksp
+*/
+
+
+
+if isnull(@MiesOdPrzyjecia,0) &gt;= @Srt_MsNaliczania  and (@Srt_DataRozp &gt;= @DataC1 and @Srt_DataRozp &lt;= @DataC2) and ((@Tor in (0,2,3,4) and (@Srt_PodlegaAMP = 0 or @Srt_PodlegaAMP &lt;&gt; 0 and @AMPUmorzenie = 0)) or (@Tor = 1 and @Srt_PodlegaAMP = 0))--data rozp amortyzacji
+	or (@RokAmort &gt; 1 and @MiesDoKonca = @IloscMiesRP) --na poczatku RP
+	or (@MetodaAmObow_TX = 1 and @ZwiekszenieTX &lt;&gt; 0 and @Srt_DataRozp &lt; @DataC1 )--dla zwiekszenia wartosci
+        or (@MetodaAmObow_TX = 2 and @ZwiekszenieTX &lt;&gt; 0 and @RokAmort = 1 and @Kon_DegresywnaPierwszyRokTX = 1)
+	or (@MetodaAmObow_TX = 1 and isnull(@MiesOdPrzyjecia,0) &gt; @Srt_MsNaliczania and (@OldStawkaRokTX &lt;&gt; @StawkaRokTX)) --dla liniowej jesli zmienila sie stawka i nie jest to przyjecie
+	or (@MetodaAmObow_TX = 1 and isnull(@MiesOdPrzyjecia,0) &gt; @Srt_MsNaliczania and (@OldWspTX &lt;&gt; @WspTX)) --dla liniowej jesli zmienil sie wspolczynnik i nie jest to przyjecie
+	or (@MetodaAmObow_TX = 1 and isnull(@MiesOdPrzyjecia,0) &gt; @Srt_MsNaliczania and (@OldKwotaZlomowaTX &lt;&gt; @KwotaZlomowaTX)) --dla liniowej jesli zmienila sie kwota zlomowa
+	or (@Srt_PodlegaAMP &lt;&gt; 0 and ((@Tor in (0,2,3,4) and @AMPUmorzenie &lt;&gt; 0) or (@Tor = 1)) and (@Srt_DataEksp &gt;= @DataC1 and @Srt_DataEksp &lt;= @DataC2)) --dla przyspieszonej , juz w pierwszym miesiacu (niezaleznie od paramtru rozp amortyzacji (ww))
+
+	or ( @MetodaAmObow_TX = 2 and @Zestaw &gt; 0 and (@OdlaczenieTX &lt;&gt; 0 or (@PrzylaczenieTX &lt;&gt; 0 and @Kon_ZestElemAmOdPrzylaczenia = 1)) )	-- dla zestawu odłaczenie od razu uwzględniamy (również dla degresywnej)
+																																			-- przyłączenie w zależności od parametru w konfiguracji
+	begin	
+	--select 'x1'
+		set @LiczonyTeoretOdpis = 1
+
+		if @Srt_PodlegaAMP = 1 and @RokAmort = 1 and ((@Tor in (0,2,3,4) and @AMPUmorzenie &lt;&gt; 0) or (@Tor = 1)) and @MetodaAmObow_TX &lt;&gt; 3
+		begin --dla przyspieszonej w pierwszym roku naliczania (nie dla jednorazowej)
+			if @IloscMiesRP_AMP = 0	--pierwsze naliczanie
+				set @IloscMiesRP_AMP = @MiesDoKonca
+
+
+			set @LiczbaMiesAktTX = @IloscMiesRP_AMP
+
+			--obliczenie wielkosci rocznego odpisu (dla przyspiesoznej musi byc liczony przed liczeniem wielkosci mies teoretodpisu)
+			if @MetodaAmObow_TX &lt;&gt; 0 -- jeżeli nie amrotyzować wówczas nie wyliczamy 
+			    set @TeoretOdpisRocznyTX = round(@BruttoPodstWR * 0.30, @poz_decOdpis)
+
+			--jesli odpis przekroczy kwote zlomowa (kwota zlomowa wieksza niz 70% wart Brutto)
+			if @BruttoPodstWR - @TeoretOdpisRocznyTX &lt; @WartGranZKZ
+				set @TeoretOdpisRocznyTX = @BruttoPodstWR - @WartGranZKZ
+
+			set @TeoretOdpisRocznyRPTX = @TeoretOdpisRocznyTX -- w pierwszym roku sa sobie rowne
+		end
+		else
+		begin
+			if isnull(@RokSezonowy,0) &lt;&gt; 0 
+				if @RodzajStawkaAktywnySezon = 0 --dzielenie przez liczbe wszystkich miesiecy w roku
+					set @LiczbaMiesAktTX = @IloscMiesRP
+				else
+					set @LiczbaMiesAktTX = @LiczbaMiesAkt
+			else
+				set @LiczbaMiesAktTX = @IloscMiesRP
+		end
+
+
+		set @DzielLiczbaMies = convert(decimal,@LiczbaMiesAktTX)
+
+
+		if @MetodaAmObow_TX = 1 --liniowa
+			if @Srt_PodlegaAMP = 1 and @RokAmort = 1 and ((@Tor in (0,2,3,4) and @AMPUmorzenie &lt;&gt; 0) or (@Tor = 1))
+				if @MiesAmortyzacjiAMP = 2 --raz w roku
+				begin
+					SET @TeoretOdpisTX = 0
+				end 	
+				else  --miesieczna/kwartalna
+				begin
+					SET @TeoretOdpisTX = round((@TeoretOdpisRocznyTX) /@DzielLiczbaMies, @poz_decOdpisTeoret)
+					--select 'q1', @TeoretOdpisTX TeoretOdpisTX, @TeoretOdpisRocznyTX TeoretOdpisRocznyTX, @DzielLiczbaMies DzielLiczbaMies, @poz_decOdpisTeoret poz_decOdpisTeoret
+				end
+			else
+			begin
+				SET @TeoretOdpisTX = round(@BruttoPodstWR * isnull(@StawkaRokTX,0) * isnull(@WspTX,0)/(100 * @DzielLiczbaMies), @poz_decOdpisTeoret)
+				--select 'q2', @TeoretOdpisTX TeoretOdpisTX, @BruttoPodstWR BruttoPodstWR, @StawkaRokTX StawkaRokTX, @WspTX WspTX, @DzielLiczbaMies DzielLiczbaMies, @poz_decOdpisTeoret poz_decOdpisTeoret
+			end
+
+		if @MetodaAmObow_TX = 2 --degresywna
+		begin
+                        
+                --select 'a1'        
+			if @Srt_PodlegaAMP = 1 and @RokAmort = 1 and ((@Tor in (0,2,3,4) and @AMPUmorzenie &lt;&gt; 0) or (@Tor = 1))   
+				if @MiesAmortyzacjiAMP = 2 --raz w roku
+				begin
+					SET @TeoretOdpisTX = 0
+				end 	
+				else  --miesieczna/kwartalna
+				begin
+					SET @TeoretOdpisTX = round((@TeoretOdpisRocznyTX) /@DzielLiczbaMies, @poz_decOdpisTeoret)
+					--select 'q3', @TeoretOdpisTX TeoretOdpisTX, @TeoretOdpisRocznyTX TeoretOdpisRocznyTX, @DzielLiczbaMies DzielLiczbaMies, @poz_decOdpisTeoret poz_decOdpisTeoret
+				end						
+			else
+			begin
+				--select 'a2'
+
+				if (@Tor = 1 and @Srt_PodlegaAMP &lt;&gt; 0 and @RokAmort = 2 and @MiesDoKonca = @IloscMiesRP) --dla przyspieszonej , na poczatku drugiego roku (amortyzacja)
+				begin
+					SET @TeoretOdpisTX = round(@BruttoPodstWR * isnull(@StawkaRokTX,0) * isnull(@WspDegrTX,0)/(100 * @DzielLiczbaMies), @poz_decOdpisTeoret)		
+					--select 'q4', @TeoretOdpisTX TeoretOdpisTX, @BruttoPodstWR BruttoPodstWR, @StawkaRokTX StawkaRokTX, @WspDegrTX WspDegrTX, @DzielLiczbaMies DzielLiczbaMies, @poz_decOdpisTeoret poz_decOdpisTeoret
+				end	
+				else
+				begin
+					--select 'a3'
+
+
+        				if @RokAmort = 1 and @Kon_DegresywnaPierwszyRokTX = 1 
+                        begin						
+			  				set @tmpDec1 = @BruttoPodstWR
+                        end
+                        else
+                        begin
+							--select 'a4'
+							
+							if isnull(@NaDzienC,0) &lt;&gt; 0 --nie dla planu
+                            begin
+	  					        set @tmpDec1 = @NettoPodstTX --@NettoTeoretTX KS złazmienna podstawiona
+                                if @WartRezyd = 1
+                                    set @tmpDec1 = @tmpDec1 - @WartGranZKZ
+                            end 
+                            
+		     		      	else	-- dla planu (netto teoret na poczatku miesiaca po zwiekszeniach)
+		     		      			     		      		
+								if @RokAmort = 1 and @Kon_DegresywnaPierwszyRokTX = 0
+								begin
+									set @tmpDec1 = @NettoTeoretTX  - @ZwiekszenieLtTX - @OdpisyPKTX - @OdpisyTX_Likw
+									--select 'a5a'
+								end
+								else
+								begin
+									--select 'a5b'
+									set @tmpDec1 = @NettoTeoretTX + @ZwiekszenieMiesTX - @ZwiekszenieLtTX - @OdpisyPKTX - @OdpisyTX_Likw
+									if @WartRezyd = 1
+										set @tmpDec1 = @tmpDec1 - @WartGranZKZ
+								end
+							
+							
+                        end
+                        
+                        if ( @Zestaw &gt; 0 )
+							begin
+								if @OdlaczenieTX &lt;&gt; 0
+									set @tmpDec1 = @tmpDec1 - ABS(@OdlaczenieTX)
+									
+								if (@PrzylaczenieTX &lt;&gt; 0 and @Kon_ZestElemAmOdPrzylaczenia = 1)
+									set @tmpDec1 = @tmpDec1 + @PrzylaczenieTX
+							end
+
+
+				
+						if (@Srt_PodlegaAMP &lt;&gt; 0 and @AMPUwzglDegresywna = 0)				
+						begin
+							-- z odpisem przyspieszonym nie uwzglednianym w netto jako podstawie do naliczania odpisu
+							if isnull(@NaDzienC,0) &lt;&gt; 0 --nie dla planu
+								set @tmpDec1 = @tmpDec1 + @SumaOdpisyAMPTX
+							else --dla planu (netto teoret na poczatku miesiaca po zwiekszeniach)
+								set @tmpDec1 = @tmpDec1 + @SumaOdpisyAMPTeoretTX
+						end
+                                	
+                            --select @tmpDec1 tmpDec1, @Zestaw Zestaw, @OdlaczenieTX OdlaczenieTX, @PrzylaczenieTX PrzylaczenieTX, @Kon_ZestElemAmOdPrzylaczenia Kon_ZestElemAmOdPrzylaczenia
+	   --select 'a6', @RokAmort RokAmort, @Kon_DegresywnaPierwszyRokTX Kon_DegresywnaPierwszyRokTX
+		                SET @TeoretOdpisTX = round(@tmpDec1 * isnull(@StawkaRokTX,0) * isnull(@WspDegrTX,0)/(100 * @DzielLiczbaMies), @poz_decOdpisTeoret)
+		                --select 'q5', @TeoretOdpisTX TeoretOdpisTX, @tmpDec1, @StawkaRokTX, @WspDegrTX, @DzielLiczbaMies, @poz_decOdpisTeoret
+                end
+
+				SET @TeoretOdpisLiniowyTX = round(@BruttoPodstWR * isnull(@StawkaRokTX,0) /(100 * @DzielLiczbaMies), @poz_decOdpisTeoret)
+
+			end				
+
+			if @TeoretOdpisTX &lt;= @TeoretOdpisLiniowyTX
+			--przejscie degresywnej na liniowa 
+			begin
+				set @TeoretOdpisTX = @TeoretOdpisLiniowyTX
+				--select 'q6', @TeoretOdpisTX TeoretOdpisTX, @TeoretOdpisLiniowyTX TeoretOdpisLiniowyTX
+			end						
+		end			
+
+
+
+		if @MetodaAmObow_TX = 3 --jednorazowa
+		begin
+			SET @TeoretOdpisTX = 0
+		end
+
+
+		--tutaj jeszcze sa sobie rowne
+		SET @TeoretOdpisRPTX = @TeoretOdpisTX
+
+
+		--obliczenie wielkosci rocznego odpisu (nie dla jednorazowej; dla przysp liczony wczesniej)
+		if @MetodaAmObow_TX &lt;&gt; 3 and not (@Srt_PodlegaAMP = 1 and @RokAmort = 1 and ((@Tor in (0,2,3,4) and @AMPUmorzenie &lt;&gt; 0) or (@Tor = 1)) and @MiesAmortyzacjiAMP = 2)
+		begin
+			--oblicz dotychczasowa czesc rocznego odpisu
+			if @MiesDoKonca = 12 -- na poczatku roku
+				set @tmpDec1 = 0 --nie ma poprzedzniej wartosci rocznego odpisu w biezacym RP
+			else
+				if isnull(@RokSezonowy,0) &lt;&gt; 0
+				--dotychczasowe odpisy
+					set @tmpDec1 = isnull(@SumaOdpisyRoczneTeoretTX,0)
+				else
+				--odejmij od starego rocznego odpisu przedzial od biezacego mies do konca RP					
+					set @tmpDec1 = isnull(@SumaOdpisyRoczneTeoretTX,0) +  isnull(@OldTeoretOdpisNaliczajTX,0)
+
+				
+			--wielkosc odpisu na pozostale miesiace w RP
+			set @tmpDec2 = round(@TeoretOdpisTX * @LiczbaMiesAktOd, @poz_DecOdpis)				
+			
+			--czesc netto teoret pozostala do odpisania (uwzgl kwote zlom, zwiekszenia)
+			set @tmpDec3 = (@NettoTeoretTX + @ZwiekszenieMiesTX - @ZwiekszenieLtTX - @OdpisyPKTX - @OdpisyTX_Likw)  - @WartGranZKZ
+			if @tmpDec3 &lt; 0 
+				--zmniejszenie ponizej netto teoret (netto rzeczywiste bylo wieksze od teroet) lub ponizej kwoty zlomowej
+				set @tmpDec3 = 0
+
+			--jesli odpis na dalsze miesiace w danym roku jest wiekszy od mozliwego nettoteroret (po zwiekszeniach w danym miesiacu - w polowie roku srodek zostanie zmortyzowany)
+			if @tmpDec2 &gt; @tmpDec3
+				set @TeoretOdpisRocznyTX = @tmpDec1 + @tmpDec3
+			else
+				set @TeoretOdpisRocznyTX = @tmpDec1 + @tmpDec2
+
+
+
+			--oblicz dotychczasowa czesc rocznego odpisu
+			if @MiesDoKonca = 12 -- na poczatku roku
+				set @tmpDec1 = 0 --nie ma poprzedzniej wartosci rocznego odpisu w biezacym RP
+			else
+				if isnull(@RokSezonowy,0) &lt;&gt; 0
+				--dotychczasowe odpisy
+					set @tmpDec1 = isnull(@SumaOdpisyRoczneTeoretRPTX,0)
+				else
+				--odejmij od starego rocznego odpisu przedzial od biezacego mies do konca RP	
+					set @tmpDec1 = isnull(@SumaOdpisyRoczneTeoretRPTX,0) +  isnull(@OldTeoretOdpisNaliczajRPTX,0)
+
+				
+			--wielkosc odpisu na pozostale miesiace w RP
+			set @tmpDec2 = round(@TeoretOdpisRPTX * @LiczbaMiesAktOd, @poz_DecOdpis)				
+
+
+			--czesc netto teoret pozostala do odpisania (uwzgl kwote zlom, zwiekszenia)
+			set @tmpDec3 = (@NettoTeoretRPTX + @ZwiekszenieMiesTX - @ZwiekszenieLtTX - @OdpisyPKTX - @OdpisyTX_Likw)  - @WartGranZKZ
+			if @tmpDec3 &lt; 0 
+				--zmniejszenie ponizej netto teoret (netto rzeczywiste bylo wieksze od teroet) lub ponizej kwoty zlomowej
+				set @tmpDec3 = 0
+
+			
+			--jesli odpis na dalsze miesiace w danym roku jest wiekszy od mozliwego nettoteroret (po zwiekszeniach w danym miesiacu - w polowie roku srodek zostanie zmortyzowany)
+			if @tmpDec2 &gt; @tmpDec3
+				set @TeoretOdpisRocznyRPTX = @tmpDec1 + @tmpDec3
+			else
+				set @TeoretOdpisRocznyRPTX = @tmpDec1 + @tmpDec2
+
+		end
+
+	end
+
+
+
+
+
+if @MetodaAmObow_TX &lt;&gt; 3 and not (@Srt_PodlegaAMP &lt;&gt; 0 and @RokAmort = 1 and ((@Tor in (0,2,3,4) and @AMPUmorzenie &lt;&gt; 0) or (@Tor = 1)) and @MiesAmortyzacjiAMP = 2)
+begin
+	--select 'x2'
+	--jesli zamortyzowany teoret i nie ma zadnych zwiekszen w danym mies to wyzeruj teroret odpis. 
+	--ponownie zaczyna liczyc gdy pojawi sie jakies zwiekszenie (sterowanie poprzez liczenie TeoretOdpis) (dla degresywnej na poczatku kolejnego roku)
+	--tutaj NettoTeoret jest wartoscia z poczatku mies a wiec przed zwiekszeniami w danym mies												
+	if @NettoTeoretTX &lt;= @WartGranZKZ and @LiczonyTeoretOdpis = 0
+		set @TeoretOdpisTX = 0
+
+	if @NettoTeoretRPTX &lt;= @WartGranZKZ and @LiczonyTeoretOdpis = 0
+		set @TeoretOdpisRPTX = 0
+
+
+	--rozdzielenie TeoretOdpis i TeoretOdpisRP - ToretOdpis jest zerowany w przypadku teoret zamortyzowania, a naliczanie od pocz RP wymaga teoretOdpisu
+	-- to samo z odpisem rocznym
+end
+	
+
+
+
+if (@Srt_PodlegaAMP &lt;&gt; 0 and ((@Tor in (0,2,3,4) and @AMPUmorzenie &lt;&gt; 0) or (@Tor = 1)) and @Srt_DataEksp &lt;= @DataC2)  --dla przyspieszonej w pierwszym miesiacu
+		or (@Srt_PodlegaAMP = 0 and @Srt_DataRozp &lt;= @DataC2) --nie dla przyspieszonej od daty rozp amort
+		or (@Tor in (0,2,3,4) and @Srt_PodlegaAMP &lt;&gt; 0 and @AMPUmorzenie = 0 and @Srt_DataRozp &lt;= @DataC2) --dla przyspieszonej (jedynie amortyzacja) od daty rozp amort (umorzenie)
+begin
+	--select 'x3'
+	if @MetodaAmObow_TX &lt;&gt; 3
+	--nie jednorazowa				
+	begin
+		if not (@Srt_PodlegaAMP = 1 and @RokAmort = 1 and ((@Tor in (0,2,3,4) and @AMPUmorzenie &lt;&gt; 0) or (@Tor = 1)) and @MiesAmortyzacjiAMP = 2)
+		begin --nie dla przyspieszonej rocznej
+			if @Sezonowosc &lt;&gt; 0 and isnull(@RokSezonowy,0) &lt;&gt; 0 --dla roku sezonowego
+			and not (@Srt_PodlegaAMP &lt;&gt; 0 and @RokAmort = 1 and ((@Tor in (0,2,3,4) and @AMPUmorzenie &lt;&gt; 0) or (@Tor = 1))) -- nie dla toru przyspieszonego (w przyspieszonym nie ma sezonowosci)
+			begin
+				if (@Naliczaj &lt;&gt; 0 AND not (@Srt_PodlegaAMP &lt;&gt; 0 and @RokAmort = 1 and ((@Tor in (0,2,3,4) and @AMPUmorzenie &lt;&gt; 0) or (@Tor = 1))))
+				 or (@NaliczajAMP &lt;&gt; 0 and (@Srt_PodlegaAMP &lt;&gt; 0 and @RokAmort = 1 and ((@Tor in (0,2,3,4) and @AMPUmorzenie &lt;&gt; 0) or (@Tor = 1)))) -- w miesiacu naliczania przypisz wartosc wyliczonego teoretodpisu z uwzgl aktywnych miesiecy 
+				begin --dzielenie prez liczbe aktywnych mies w roku
+					--TeoretOdpis zawiera wart odpisu w aktywnym miesiacu sezonowosci
+					Set @TeoretOdpisNaliczajTX = round(isnull(@TeoretOdpisTX,0),@poz_decOdpis, @ZaokTX)
+					Set @TeoretOdpisNaliczajRPTX = round(isnull(@TeoretOdpisRPTX,0),@poz_decOdpis, @ZaokTX)
+					if @ZaokTX = 0
+						set @ZaokTX = 1
+					else
+						set @ZaokTX = 0
+				end
+				else
+				begin
+					Set @TeoretOdpisNaliczajTX = 0
+					Set @TeoretOdpisNaliczajRPTX = 0
+				end
+			end
+			else
+			begin 
+				--dzielenie przez liczbe miesiecy w roku (sumuje narastajaco)
+				Set @TeoretOdpisNaliczajTX = isnull(@OldTeoretOdpisNaliczajTX,0) + round(isnull(@TeoretOdpisTX,0),@poz_decOdpis, @ZaokTX)				
+				Set @TeoretOdpisNaliczajRPTX = isnull(@OldTeoretOdpisNaliczajRPTX,0) + round(isnull(@TeoretOdpisRPTX,0),@poz_decOdpis, @ZaokTX)
+				if @ZaokTX = 0
+					set @ZaokTX = 1
+				else
+					set @ZaokTX = 0
+			end
+
+			-- jesli wstrzymano amortyzacje to nie zwiekszaj odpisu
+			if @WN_RN = 1
+			begin
+				Set @TeoretOdpisNaliczajTX = isnull(@OldTeoretOdpisNaliczajTX,0)
+				Set @TeoretOdpisNaliczajRPTX = isnull(@OldTeoretOdpisNaliczajRPTX,0)
+			end
+
+
+			--ostatni miesiac naliczania w biezacym roku, dociagnij do odpisu rocznego			
+			if (not (@Srt_PodlegaAMP &lt;&gt; 0 and @RokAmort = 1 and ((@Tor in (0,2,3,4) and @AMPUmorzenie &lt;&gt; 0) or (@Tor = 1))) and @OstatniNaliczaj = 1) or 
+				((@Srt_PodlegaAMP &lt;&gt; 0 and @RokAmort = 1 and ((@Tor in (0,2,3,4) and @AMPUmorzenie &lt;&gt; 0) or (@Tor = 1))) and @OstatniNaliczajAMP = 1)				
+			begin
+
+				set @TeoretOdpisNaliczajTX = @TeoretOdpisRocznyTX - @SumaOdpisyRoczneTeoretTX
+				set @TeoretOdpisNaliczajRPTX = @TeoretOdpisRocznyRPTX - @SumaOdpisyRoczneTeoretRPTX
+			end
+
+		end
+		else
+		begin --dla przyspieszonej rocznej 
+			-- w tym przyp. sezonowosc oraz WN nie maja znaczenia poza brakiem mozliwosci dokonania odpisu w mies nie aktywnym
+
+			--odpis jest liczony na podstawie netto
+			Set @TeoretOdpisNaliczajTX = 0
+			Set @TeoretOdpisNaliczajRPTX = 0
+		end
+	end
+	else
+	begin
+		--jednorazowa
+
+		--odpis jest liczony na podstawie netto
+		Set @TeoretOdpisNaliczajTX = 0
+		Set @TeoretOdpisNaliczajRPTX = 0
+
+	end
+end
+else
+begin --jeszcze nie rozp amort
+	--select 'x4'
+	Set @TeoretOdpisNaliczajTX = 0
+	Set @TeoretOdpisNaliczajRPTX = 0
+end
+
+
+
+if (@Srt_PodlegaAMP &lt;&gt; 0 and @RokAmort = 1 and ((@Tor in (0,2,3,4) and @AMPUmorzenie &lt;&gt; 0) or (@Tor = 1)) and @MiesAmortyzacjiAMP = 2) and @MetodaAmObow_TX &lt;&gt; 3
+begin
+		set @NettoTeoretTX = @NettoTeoretTX + @ZwiekszenieMiesTX - @ZwiekszenieLtTX - @OdpisyPKTX - @OdpisyTX_Likw --OdpisyAk tylko w TX; zmienia wartosc netto teoret zeby kolejne AM nie korygowaly wystawionego wczesniej AK ; OdpisyMW - odpisy ze zmniejszen to samo co z AK
+		set @NettoTeoretRPTX = @NettoTeoretRPTX + @ZwiekszenieMiesTX - @ZwiekszenieLtTX - @OdpisyPKTX - @OdpisyTX_Likw --OdpisyAk tylko w TX; zmienia wartosc netto teoret zeby kolejne AM nie korygowaly wystawionego wczesniej AK ; OdpisyMW - odpisy ze zmniejszen to samo co z AK
+
+		--jesli nastapilo zmniejsznie wieksze niz pozostale nettoteroret (poniewaz netto rzeczywiste bylo wieksze od teoret)		
+		if @NettoTeoretTX &lt; 0	
+			set @NettoTeoretTX = 0
+
+		if @NettoTeoretRPTX &lt; 0	
+			set @NettoTeoretRPTX = 0
+
+		if (@Srt_DataEksp &gt;= @DataC1 and @Srt_DataEksp &lt;= @DataC2) 
+			set @tmpDec1 = @BruttoPodstWR --w przypadku przyjecia srodka
+		else
+			set @tmpDec1 = @ZwiekszeniePlusTX -- wprzypadku zwiekszenia juz po dacie eksploatacji
+
+		if @MetodaAmObow_TX &lt;&gt; 0 -- jeżeli nie amrotyzować wówczas nie wyliczamy
+			Set @TeoretOdpisNaliczajTX = isnull(@OldTeoretOdpisNaliczajTX,0) + round(@tmpDec1 * 0.30 , @poz_decOdpis)
+
+		--jesli zmniejszenie srodka
+		if @TeoretOdpisNaliczajTX &lt; 0
+			set @TeoretOdpisNaliczajTX = 0
+
+
+		--jesli odpis przekracza kwote zlomowa
+		if @TeoretOdpisNaliczajTX &gt; @NettoTeoretTX - @WartGranZKZ 
+		begin
+			--netto jest mniejsze od kwoty zlomowej
+			if @NettoTeoretTX &lt; @WartGranZKZ
+				set @TeoretOdpisNaliczajTX = 0
+			else
+				set @TeoretOdpisNaliczajTX = @NettoTeoretTX - @WartGranZKZ
+		end
+	
+
+		set @TeoretOdpisNaliczajRPTX = @TeoretOdpisNaliczajTX
+
+
+		if (@Naliczaj &lt;&gt; 0 AND not (@Srt_PodlegaAMP &lt;&gt; 0 and @RokAmort = 1 and ((@Tor in (0,2,3,4) and @AMPUmorzenie &lt;&gt; 0) or (@Tor = 1))))
+		 or (@NaliczajAMP &lt;&gt; 0 and (@Srt_PodlegaAMP &lt;&gt; 0 and @RokAmort = 1 and ((@Tor in (0,2,3,4) and @AMPUmorzenie &lt;&gt; 0) or (@Tor = 1)))) --zmieniaj netto teoret o wielkosc odpisu tylko w miesiacu naliczania
+		begin
+			set @NettoTeoretTX = @NettoTeoretTX - isnull(@TeoretOdpisNaliczajTX,0) 
+			set @NettoTeoretRPTX = @NettoTeoretRPTX - isnull(@TeoretOdpisNaliczajRPTX,0) 
+		end
+end
+else
+begin
+	--select 'x6'
+	if @MetodaAmObow_TX = 3 
+	begin
+
+
+		set @NettoTeoretTX = @NettoTeoretTX + @ZwiekszenieMiesTX - @ZwiekszenieLtTX - @OdpisyPKTX - @OdpisyTX_Likw --OdpisyAk tylko w TX; zmienia wartosc netto teoret zeby kolejne AM nie korygowaly wystawionego wczesniej AK ; OdpisyMW - odpisy ze zmniejszen to samo co z AK
+		set @NettoTeoretRPTX = @NettoTeoretRPTX + @ZwiekszenieMiesTX - @ZwiekszenieLtTX - @OdpisyPKTX - @OdpisyTX_Likw --OdpisyAk tylko w TX; zmienia wartosc netto teoret zeby kolejne AM nie korygowaly wystawionego wczesniej AK ; OdpisyMW - odpisy ze zmniejszen to samo co z AK
+
+		--jesli nastapilo zmniejsznie wieksze niz pozostale nettoteroret (poniewaz netto rzeczywiste bylo wieksze od teoret)		
+		if @NettoTeoretTX &lt; 0	
+			set @NettoTeoretTX = 0
+
+		if @NettoTeoretRPTX &lt; 0	
+			set @NettoTeoretRPTX = 0
+
+
+		set @TeoretOdpisNaliczajTX = isnull(@OldTeoretOdpisNaliczajTX,0) + @ZwiekszeniePlusTX
+		--jesli zmniejszenie srodka
+		if @TeoretOdpisNaliczajTX &lt; 0
+			set @TeoretOdpisNaliczajTX = 0
+
+
+		--jesli odpis przekracza kwote zlomowa
+		if @TeoretOdpisNaliczajTX &gt; @NettoTeoretTX - @WartGranZKZ 
+		begin
+			--netto jest mniejsze od kwoty zlomowej
+			if @NettoTeoretTX &lt; @WartGranZKZ
+				set @TeoretOdpisNaliczajTX = 0
+			else
+				set @TeoretOdpisNaliczajTX = @NettoTeoretTX - @WartGranZKZ
+		end
+	
+
+		set @TeoretOdpisNaliczajRPTX = isnull(@OldTeoretOdpisNaliczajRPTX,0) + @ZwiekszeniePlusTX
+		if @TeoretOdpisNaliczajRPTX &lt; 0
+			set @TeoretOdpisNaliczajRPTX = 0
+
+		if @TeoretOdpisNaliczajRPTX &gt; @NettoTeoretTX - @WartGranZKZ
+		begin
+			if @NettoTeoretRPTX &lt; @WartGranZKZ
+				set @TeoretOdpisNaliczajRPTX = 0
+			else
+				set @TeoretOdpisNaliczajRPTX = @NettoTeoretRPTX - @WartGranZKZ
+		end
+
+
+
+		if (@Naliczaj &lt;&gt; 0 AND not (@Srt_PodlegaAMP &lt;&gt; 0 and @RokAmort = 1 and ((@Tor in (0,2,3,4) and @AMPUmorzenie &lt;&gt; 0) or (@Tor = 1))))
+		 or (@NaliczajAMP &lt;&gt; 0 and (@Srt_PodlegaAMP &lt;&gt; 0 and @RokAmort = 1 and ((@Tor in (0,2,3,4) and @AMPUmorzenie &lt;&gt; 0) or (@Tor = 1)))) --zmieniaj netto teoret o wielkosc odpisu tylko w miesiacu naliczania
+		begin
+			set @NettoTeoretTX = @NettoTeoretTX - isnull(@TeoretOdpisNaliczajTX,0) 
+			set @NettoTeoretRPTX = @NettoTeoretRPTX - isnull(@TeoretOdpisNaliczajRPTX,0) 
+		end
+	end
+	else
+	begin		
+		
+		
+		------------------------------------------
+		
+		set @NettoTeoretTX = @NettoTeoretTX + @ZwiekszenieMiesTX - @ZwiekszenieLtTX - @OdpisyPKTX - @OdpisyTX_Likw --OdpisyAk tylko w TX; zmienia wartosc netto teoret zeby kolejne AM nie korygowaly wystawionego wczesniej AK ; OdpisyMW - odpisy ze zmniejszen to samo co z AK
+		set @NettoTeoretRPTX = @NettoTeoretRPTX + @ZwiekszenieMiesTX - @ZwiekszenieLtTX - @OdpisyPKTX - @OdpisyTX_Likw --OdpisyAk tylko w TX; zmienia wartosc netto teoret zeby kolejne AM nie korygowaly wystawionego wczesniej AK ; OdpisyMW - odpisy ze zmniejszen to samo co z AK
+                
+		
+		--jesli nastapilo zmniejsznie wieksze niz pozostale nettoteroret (poniewaz netto rzeczywiste bylo wieksze od teoret)
+		if @NettoTeoretTX &lt; 0	
+			set @NettoTeoretTX = 0
+
+		if @NettoTeoretRPTX &lt; 0	
+			set @NettoTeoretRPTX = 0
+			
+		---- zabezpieczenie przed błędem 348246 - sytuacja gdy wyliczona amortyzacja przekracza wartość podstawy ----
+        declare @NettoTeoretObowTX decimal(15,2)		
+		declare @NettoTeoretObowRPTX decimal(15,2)		
+
+		if @NettoTeoretTX &gt; @NettoPodstTX		
+			set @NettoTeoretObowTX = @NettoPodstTX
+		else		
+			set @NettoTeoretObowTX = @NettoTeoretTX
+
+			--set @NettoTeoretTX  = @NettoTeoretObowTX
+
+		if @NettoTeoretRPTX &gt; @NettoPodstTX
+			set @NettoTeoretObowRPTX = @NettoPodstTX
+		else		
+			set @NettoTeoretObowRPTX = @NettoTeoretRPTX
+		----
+
+		--skoryguj TeoretOdpisNaliczaj w przypadku zamortyzowania
+		if isnull(@TeoretOdpisNaliczajTX,0) &gt; @NettoTeoretObowTX - @WartGranZKZ
+		begin
+		--odpis juz sie nie miesci
+			if @NettoTeoretTX &lt; @WartGranZKZ
+			--zmniejszono wartosc ponizej kwoty zlomowej
+				set @TeoretOdpisNaliczajTX = 0
+			else
+				set @TeoretOdpisNaliczajTX = @NettoTeoretObowTX - @WartGranZKZ
+		end
+		
+		
+		if isnull(@TeoretOdpisNaliczajRPTX,0) &gt; @NettoTeoretObowRPTX - @WartGranZKZ
+		begin
+		--odpis juz sie nie miesci
+			if @NettoTeoretObowRPTX &lt; @WartGranZKZ
+			--zmniejszono wartosc ponizej kwoty zlomowej
+				set @TeoretOdpisNaliczajRPTX = 0
+			else
+				set @TeoretOdpisNaliczajRPTX = @NettoTeoretObowRPTX - @WartGranZKZ
+		end				
+
+
+
+
+		if (@Naliczaj &lt;&gt; 0 AND not (@Srt_PodlegaAMP &lt;&gt; 0 and @RokAmort = 1 and ((@Tor in (0,2,3,4) and @AMPUmorzenie &lt;&gt; 0) or (@Tor = 1))))
+		 or (@NaliczajAMP &lt;&gt; 0 and (@Srt_PodlegaAMP &lt;&gt; 0 and @RokAmort = 1 and ((@Tor in (0,2,3,4) and @AMPUmorzenie &lt;&gt; 0) or (@Tor = 1)))) --zmieniaj netto teoret o wielkosc odpisu tylko w miesiacu naliczania
+			begin 
+				--wylicz netto na koniec miesiaca
+				set @NettoTeoretTX = @NettoTeoretTX - isnull(@TeoretOdpisNaliczajTX,0)
+
+				--wylicz netto na koniec miesiaca (RP)
+				set @NettoTeoretRPTX = @NettoTeoretRPTX - isnull(@TeoretOdpisNaliczajRPTX,0)
+				declare @ttt int = 0;
+				set @ttt = 5
+			end
+
+	end
+end	
+
+
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

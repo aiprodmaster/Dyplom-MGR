@@ -1,0 +1,204 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="WFL_WykonajZadanieObiekt"></A><PRE>
+          <FONT SIZE="2"><I>/* WFL_WykonajZadanieObiekt */</I><BR>
+Create Procedure CDN.WFL_WykonajZadanieObiekt
+@p_TypObiektu integer,  -- typ procesu
+@p_AkcjaKluczowaDoWykonania integer, -- identyfikaotr akcji kluczowe
+@p_ParametrKluczowej varchar(1024)='', -- parametr akcji kluczowej,
+@p_OBITyp smallint,  -- identyfikato obiektu, na którym chcemy wykonać akcję
+@p_OBINumer integer,
+@p_PrcTyp smallint,
+@p_PrcNumer integer, 
+@p_OPENumer integer, 
+@p_DataWykonania integer=0,
+@p_ZwrotWyniku	smallint=0, --  czy zwracać wyynik selectem
+@p_OpisProcesu varchar(1023) = 'Proces obsługi dokumentu, dodany za pomocą systemu CDNXL',
+@p_OpisZadania varchar(1023) = 'Zadanie dodane przez system CDNXL',
+@p_NazwaObiektu varchar(40) = '', -- nazwa obiektu, numer dokumentu
+@p_PriorytetProcesu integer = 0, -- priorytet procesu
+@p_URLProcesu varchar(255) = '',
+@p_ZrdNumer integer,			-- identyfikator zadania źródłowego (uruchamiającego proces)
+@ret_status integer =0 OUTPUT,
+@p_FrSId integer = 0	-- identyfikator centrum operatora TFS 233768
+as 
+begin
+
+DECLARE @datawdniach integer
+
+DECLARE @lWFZID integer, @lWDZID integer, @lWFPID integer, @OpiTyp integer, @OpiNumer integer
+DECLARE @cNazwaProcesu varchar(255)
+DECLARE @SAV_lWDZID int, @LastWFZID int
+
+SET NOCOUNT ON
+
+SET @ret_status = 0
+if(@p_DataWykonania=0)
+	Set @p_DataWykonania = CDN.WFL_PobierzDate(GETDATE())
+
+Set @datawdniach = @p_DataWykonania/86400 + 69035
+
+
+
+BEGIN TRANSACTION
+
+	
+
+		if not exists(	Select WFP_ID 
+				From cdn.Wf_procesy 
+				Where WFP_DataZamkniecia=0 and WFP_OBITyp=@p_OBITyp and WFP_OBINumer =@p_OBINumer and @p_AkcjaKluczowaDoWykonania not in (513,514))
+		Begin
+			if not exists( Select WDP_id From CDN.WF_DefProcesy  (NOLOCK) where WDP_TypObiektu=@p_TypObiektu)
+			begin
+				set @ret_status = 0
+				GOTO KONIEC
+			end
+			else
+			begin
+				if(@p_TypObiektu in (14451, 14452, 14453))	--dokumenty sekretariatu, uruchamiamy proces, który został wybrany na dokumencie sekretariatu
+					DECLARE cur_zadania cursor static for
+							select distinct 0, WDZ_ID, WDP_ID, WDP_Nazwa, WDO_OPITyp, WDO_OPINumer
+							from cdn.wf_defzadania  (NOLOCK)
+							join cdn.wf_DefOpiekun  (NOLOCK) on wdz_id=wdo_wdzid
+							join CDN.WF_DefAkcje  (NOLOCK) on WDZ_WDAID = WDA_ID
+							join CDN.WF_DEFProcesy  (NOLOCK) on WDZ_WdPID = WDP_ID and WDP_STAN&lt;&gt;0
+							join CDN.SekDokumenty on SDD_WFLId = WDP_ID
+							where WDA_KLuczowa = @p_AkcjaKluczowaDoWykonania and WDZ_WDSID=-1 and 
+							      WDP_TypObiektu = @p_TypObiektu and SDD_ID = @p_OBINumer
+							--and CDN.WFL_JestOpiekunemPracownika (@p_PrcTyp,@p_PrcNumer,WDO_OPITyp, WDO_OPINumer, @datawdniach, @datawdniach)&lt;&gt;0
+							order by wDz_id
+				else
+					DECLARE cur_zadania cursor static for
+						select distinct 0, WDZ_ID, WDP_ID, WDP_Nazwa, WDO_OPITyp, WDO_OPINumer
+						from cdn.wf_defzadania  (NOLOCK) 
+						join cdn.wf_DefOpiekun  (NOLOCK) on wdz_id=wdo_wdzid
+						join CDN.WF_DefAkcje  (NOLOCK) on WDZ_WDAID = WDA_ID
+						join CDN.WF_DEFProcesy  (NOLOCK) on WDZ_WdPID = WDP_ID and WDP_STAN&lt;&gt;0
+						where WDA_KLuczowa = @p_AkcjaKluczowaDoWykonania and WDZ_WDSID=-1 and WDP_TypObiektu = @p_TypObiektu
+						--and CDN.WFL_JestOpiekunemPracownika (@p_PrcTyp,@p_PrcNumer,WDO_OPITyp, WDO_OPINumer, @datawdniach, @datawdniach)&lt;&gt;0 
+						order by wDz_id		
+			end
+
+		End
+		else
+		Begin
+
+			    if(len(@p_ParametrKluczowej)=0)											
+					DECLARE cur_zadania cursor static for
+					select wfz_id, WDZ_ID, WFP_ID, WFP_Nazwa, WFZ_OPITyp, WFZ_OPINumer
+					from cdn.wf_Zadania 
+					join cdn.wf_defzadania  (NOLOCK) on wfz_WDSid = wdz_wdsid 
+					--join cdn.wf_DefOpiekun  (NOLOCK) on wdz_id=wdo_wdzid
+					join CDN.WF_DefAkcje  (NOLOCK) on WDZ_WDAID = WDA_ID
+					join CDN.WF_Procesy on WFZ_WFPID = WFP_ID
+					where WFZ_DataZamkniecia=0 and WFP_DataZamkniecia=0  -- aktywne zadanie i aktywny proces
+					and WDA_KLuczowa = @p_AkcjaKluczowaDoWykonania  
+					and WFP_OBITyp=@p_OBITyp and WFP_OBINumer =@p_OBINumer
+					--and CDN.WFL_JestOpiekunemPracownika (@p_PrcTyp,@p_PrcNumer,WFZ_OPITyp, WFZ_OPINumer, @datawdniach, @datawdniach)&lt;&gt;0 
+					order by wfz_id
+				Else
+					DECLARE cur_zadania cursor static for
+					select wfz_id, WDZ_ID, WFP_ID, WFP_Nazwa, WFZ_OPITyp, WFZ_OPINumer
+					from cdn.wf_Zadania 
+					join cdn.wf_defzadania  (NOLOCK) on wfz_WDSid = wdz_wdsid 
+					--join cdn.wf_DefOpiekun  (NOLOCK) on wdz_id=wdo_wdzid
+					join CDN.WF_DefAkcje  (NOLOCK) on WDZ_WDAID = WDA_ID
+					join CDN.WF_Procesy on WFZ_WFPID = WFP_ID
+					where WFZ_DataZamkniecia=0 and WFP_DataZamkniecia=0  -- aktywne zadanie i aktywny proces
+					and WDA_KLuczowa = @p_AkcjaKluczowaDoWykonania and (','+WDA_Parametry+',') like rtrim(@p_ParametrKLuczowej)
+					and WFP_OBITyp=@p_OBITyp and WFP_OBINumer =@p_OBINumer
+					--and CDN.WFL_JestOpiekunemPracownika (@p_PrcTyp,@p_PrcNumer,WFZ_OPITyp, WFZ_OPINumer, @datawdniach, @datawdniach)&lt;&gt;0 
+					order by wfz_id
+		end
+		
+	set @SAV_lWDZID = 0
+
+	open cur_zadania
+	FETCH NEXT FROM cur_zadania into @lWFZID, @lWDZID, @lWFPID, @cNazwaProcesu, @OpiTyp, @OpiNumer
+	WHILE @@FETCH_STATUS = 0
+	BEGIN
+		if(CDN.WFL_JestOpiekunemPracownika (@p_PrcTyp,@p_PrcNumer,@OpiTyp, @OpiNumer, @datawdniach, @datawdniach, @p_FrSId)&lt;&gt;0 )	--TFS 233768
+		begin			
+            if(@lWFZID=0 and @SAV_lWDZID &lt;&gt; @lWDZID)
+				BEGIN
+					EXECUTE CDN.WFL_DodajProces
+					@p_WDPID = @lWFPID,	-- identyfikator wynkdefinicji procesu
+					@p_Nazwa = @cNazwaProcesu, --  nazwa procesu ( jeśli nie podane to z definicji)
+					@p_WDZID = @lWDZID, -- identyfikator zadania do wykonania, 0 - wybierz zadanie domyślne
+					@p_OpisProcesu =@p_OpisProcesu,
+					@p_OpisZadania =@p_OpisZadania,
+					@p_Priorytet =@p_PriorytetProcesu,
+					@p_URL =@p_URLProcesu,
+					@p_OBITyp   = @p_OBITyp   ,  -- typ obiektu
+					@p_OBINumer =@p_OBINumer,  -- identyfikator obiektu
+					@p_PRCTyp   =@p_PRCTyp, -- typ pracownika
+					@p_PRCNumer =@p_PRCNumer,  -- identyfikator pracownika
+					@p_OPENumer =@p_OPENumer,  -- identyfikator operatora
+					@p_NazwaObiektu = @p_NazwaObiektu,
+					@p_ZrdNumer = @p_ZrdNumer,	-- identyfikator zadania źródłowego (uruchamiającego proces)
+					@p_LastWFZID = @LastWFZID OUTPUT,
+					@ret_status = @ret_status OUTPUT,
+					@p_FrSId = @p_FrSId --TFS 233768
+
+					set @SAV_lWDZID = @lWDZID		--TID: 138826					
+				END
+			else	
+				if exists (select * from cdn.wf_zadania where wfz_id = @lWFZID and wfz_datazamkniecia = 0)		
+				EXECUTE CDN.WFL_WykonajZadanie
+					@p_WFZID = @lWFZID,
+					@p_WDZID = @lWDZID,
+					@p_WFPID = @lWFPID, -- identyfikator procesu
+					@p_OpisZadaniaWykonanego ='',
+					@p_OpisZadaniaNowego =@p_OpisZadania,
+					@p_DataWykonania =@p_DataWykonania, -- data wykonania zadania
+					@p_OBITyp   = @p_OBITyp   ,  -- typ obiektu
+					@p_OBINumer =@p_OBINumer,  -- identyfikator obiektu
+					@p_PRCTyp   =@p_PRCTyp, -- typ pracownika
+					@p_PRCNumer =@p_PRCNumer,  -- identyfikator pracownika
+					@p_OPENumer =@p_OPENumer,  -- identyfikator operatora
+					@p_LastWFZID = @LastWFZID OUTPUT,
+					@ret_status = @ret_status OUTPUT,
+					@p_FrSId = @p_FrSId --identyfikator centrum operatora TFS 233768
+			
+			if (@ret_status&lt;&gt;0)  
+					break
+		end
+	FETCH NEXT FROM cur_zadania into @lWFZID, @lWDZID, @lWFPID, @cNazwaProcesu, @OpiTyp, @OpiNumer
+	END		
+
+	CLOSE cur_zadania
+	Deallocate cur_zadania
+
+	if (@ret_status&lt;&gt;0)
+		GOTO KONIEC
+
+
+KONIEC:
+
+ if (@ret_status&lt;&gt;0)
+	  begin
+		if (@@trancount&gt;0)
+			ROLLBACK TRANSACTION
+	  end
+	  else
+		COMMIT TRANSACTION
+		
+SET NOCOUNT OFF		
+	if (@p_ZwrotWyniku&lt;&gt;0 and @ret_status=0)
+		select cast(@ret_status as varchar(10))+':'+cast(isnull(@LastWFZID,0) as varchar(10)) as T_KODBLEDU
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

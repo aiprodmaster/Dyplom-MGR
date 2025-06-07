@@ -1,0 +1,216 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="OFFLXLSrv_ImportWPR"></A><PRE>
+          <FONT SIZE="2"><I>/* OFFLXLSrv_ImportWPR */</I><BR>
+CREATE PROCEDURE CDN.OFFLXLSrv_ImportWPR
+  @ID		INT		 -- ID oddziału
+ ,@Xml		TEXT 
+ ,@LogID	INT = -1 -- ID loga synchronizacji 
+AS
+	RAISERROR('Procedura OFFLXLSrv_ImportWPR nie jest obługiwana na MSSQL 2000',16,1)
+	
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="OFFLXLSrv_ImportWPR"></A><PRE>
+          <FONT SIZE="2"><I>/* OFFLXLSrv_ImportWPR */</I><BR>
+CREATE PROCEDURE CDN.OFFLXLSrv_ImportWPR
+  @ID           INT               -- ID oddziału
+ ,@Xml          XML
+ ,@LogID        INT = -1  -- ID loga synchronizacji
+AS
+SET NOCOUNT ON
+
+DECLARE @WPRPrcNumer INT,
+		@WPRData INT,
+		@WPRRodzajWydatku INT,
+		@WPRWartosc DECIMAL(15,4),
+		@WPRSamId INT,
+		@WPRKntTyp SMALLINT,
+		@WPRKntNumer INT,
+		@WPRCWNId INT,
+		@WPROpis VARCHAR(1024),
+		@WPRZewnetrznyId INT,
+		@WPRDokTyp SMALLINT,
+		@WPRDokFirma INT,
+		@WPRDokNumer INT,
+		@WPRDokLp SMALLINT,
+		@WPRProcent DECIMAL(15,4),
+		@WPRKwota DECIMAL(15,4),
+		@WPRRokMiesiac INT,
+		@WPRZewnetrznySys INT,
+		@OpeNumer INT
+
+SET		@WPRRodzajWydatku = 0
+SET		@WPRWartosc = 0
+SET		@WPRSamId = 0
+SET		@WPROpis = 0
+SET		@WPRZewnetrznyId = 0
+SET 	@WPRDokTyp = 0
+SET 	@WPRDokFirma = 0
+SET 	@WPRDokNumer = 0
+SET 	@WPRDokLp = 0
+SET 	@WPRProcent = 0
+SET 	@WPRKwota = 0
+SET 	@WPRRokMiesiac = 0
+SET 	@WPRZewnetrznySys = @ID
+
+CREATE TABLE #WPR ( Licznik INT,
+                    WPRPrcNumer INT,
+					WPRData INT,
+					WPRRodzajWydatku INT,
+					WPRWartosc DECIMAL(15,4),
+					WPRSamId INT,
+					WPRKntTyp SMALLINT,
+					WPRKntNumer INT,
+					WPRCWNId INT,
+					WPROpis VARCHAR(1024) COLLATE Polish_CI_AS,
+					WPRZewnetrznyId INT,
+					OpeNumer INT,
+                   PRIMARY KEY  CLUSTERED
+                    ( Licznik )  ON [PRIMARY] ,
+                   ) ON [PRIMARY]
+
+DECLARE  @Licznik               INT
+        ,@MaxLicznik    INT
+        ,@OkLicznik             INT
+        ,@Opis                  VARCHAR(512)
+
+SELECT @Opis = 'Wydatki pracownika'
+EXEC CDN.Log_OtworzPoziom @LogID, @Opis
+
+INSERT INTO #WPR
+        ( Licznik
+		 ,WPRData
+		 ,WPRRodzajWydatku
+		 ,WPRWartosc
+		 ,WPRSamId
+		 ,WPRKntTyp
+		 ,WPRKntNumer
+		 ,WPRCWNId
+		 ,WPROpis
+		 ,WPRZewnetrznyId
+		 ,OpeNumer)
+SELECT
+         ROW_NUMBER() OVER (ORDER BY (SELECT 1))
+        ,WPR.Attribute.value('@Data','INT')
+        ,WPR.Attribute.value('@RodzajWydatku','INT')
+        ,WPR.Attribute.value('@Wartosc','DECIMAL(15,4)')
+        ,WPR.Attribute.value('@SamId','INT')
+        ,WPR.Attribute.value('@KntTyp','SMALLINT')
+        ,WPR.Attribute.value('@KntNumer','INT')
+        ,WPR.Attribute.value('@CWNId','INT')
+        ,WPR.Attribute.value('@Opis','VARCHAR(1024)')
+        ,WPR.Attribute.value('@ZewnetrznyId','INT')
+        ,WPR.Attribute.value('@OpeNumer','INT')
+		FROM @Xml.nodes('/WPRI/WPR') AS WPR(Attribute)
+
+SELECT @Licznik = 1
+          ,@OkLicznik = 0
+          ,@MaxLicznik = COUNT(Licznik)
+FROM #WPR
+
+WHILE @Licznik &lt;= @MaxLicznik
+        BEGIN
+                BEGIN TRY
+
+                        SELECT
+							@WPRData = WPRData,
+							@WPRRodzajWydatku = WPRRodzajWydatku,
+							@WPRWartosc = WPRWartosc,
+							@WPRSamId = WPRSamId,
+							@WPRKntTyp = isnull(WPRKntTyp,0),
+							@WPRKntNumer = isnull(WPRKntNumer,0),
+							@WPRCWNId = isnull(WPRCWNId,0),
+							@WPROpis = WPROpis,
+							@WPRZewnetrznyId = WPRZewnetrznyId,
+							@OpeNumer = OpeNumer
+                        FROM #WPR
+                        WHERE Licznik = @Licznik
+
+						SELECT	@WPRPrcNumer = Ope_PrcNumer from CDN.opekarty where Ope_GIDNumer = @OpeNumer
+						select @WPRData=DATEDIFF(day,convert(datetime,'1800-12-28',120),DATEADD(second,@WPRData,CONVERT(DATETIME,'1990-01-01',120) ) )
+
+						IF NOT EXISTS(SELECT * FROM CDN.WydatkiPracownikow WHERE WPR_ZewnetrznySys = @WPRZewnetrznySys AND WPR_ZewnetrznyId = @WPRZewnetrznyId)
+						BEGIN
+							INSERT INTO CDN.WydatkiPracownikow(
+																			WPR_PrcNumer,
+																			WPR_Data,
+																			WPR_RodzajWydatku,
+																			WPR_Wartosc,
+																			WPR_SamId,
+																			WPR_KntTyp,
+																			WPR_KntNumer,
+																			WPR_CWNId,
+																			WPR_Opis,
+																			WPR_ZewnetrznyId,
+																			WPR_DokTyp,
+																			WPR_DokFirma,
+																			WPR_DokNumer,
+																			WPR_DokLp,
+																			WPR_Procent,
+																			WPR_Kwota,
+																			WPR_RokMiesiac,
+																			WPR_ZewnetrznySys
+																			)
+															VALUES( @WPRPrcNumer,
+																			@WPRData,
+																			@WPRRodzajWydatku,
+																			@WPRWartosc,
+																			@WPRSamId,
+																			@WPRKntTyp,
+																			@WPRKntNumer,
+																			@WPRCWNId,
+																			@WPROpis,
+																			@WPRZewnetrznyId,
+																			@WPRDokTyp,
+																			@WPRDokFirma,
+																			@WPRDokNumer,
+																			@WPRDokLp,
+																			@WPRProcent,
+																			@WPRKwota,
+																			@WPRRokMiesiac,
+																			@WPRZewnetrznySys)
+
+							SET @OkLicznik = @OkLicznik + 1
+                        END
+                        ELSE 
+                        BEGIN
+							SELECT @Opis = 'Wydatek pracownika został już dodany '
+							EXEC CDN.Log_Dopisz @LogID, @Opis, 1
+                        END
+                END TRY
+
+                BEGIN CATCH
+
+                        SELECT @Opis = 'Błąd podczas dodawania wydatku pracownika: ' + CDN.Log_SzczegolyBledu(ERROR_NUMBER(),ERROR_PROCEDURE(),ERROR_LINE(),ERROR_MESSAGE())
+                        EXEC CDN.Log_Dopisz @LogID, @Opis, 2
+
+                END CATCH
+                SET @Licznik = @Licznik + 1
+        END
+
+SELECT @Opis = 'Ilość zaimportowanych wydatków pracownika: '  + CAST(@OkLicznik AS NVARCHAR(10)) + ' z ' + CAST(@MaxLicznik AS NVARCHAR(10))
+EXEC CDN.Log_Dopisz @LogID, @Opis, 0
+EXEC CDN.Log_ZamknijPoziom @LogID
+
+SET NOCOUNT OFF
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

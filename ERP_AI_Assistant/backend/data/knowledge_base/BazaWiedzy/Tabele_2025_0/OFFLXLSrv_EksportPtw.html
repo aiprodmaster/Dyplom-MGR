@@ -1,0 +1,88 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="OFFLXLSrv_EksportPtw"></A><PRE>
+          <FONT SIZE="2"><I>/* OFFLXLSrv_EksportPtw */</I><BR>
+CREATE PROCEDURE CDN.OFFLXLSrv_EksportPtw 
+ @ID INT		 -- ID oddziału
+,@TypExp INT = 0 -- Typ synchronizacji: 0 - różnicowa, 1 - pełna
+AS
+	RAISERROR('Procedura OFFLXLSrv_EksportPtw nie jest obługiwana na MSSQL 2000',16,1)
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="OFFLXLSrv_EksportPtw"></A><PRE>
+          <FONT SIZE="2"><I>/* OFFLXLSrv_EksportPtw */</I><BR>
+CREATE PROCEDURE CDN.OFFLXLSrv_EksportPtw 
+ @ID INT		 -- ID oddziału
+,@TypExp INT = 0 -- Typ synchronizacji: 0 - różnicowa, 1 - pełna
+AS
+
+DECLARE @PcK_TSSynchrPtw	INT
+	   ,@PcK_TSSynchrKntPtw INT
+       ,@PcK_Typ            INT
+
+SELECT  @PcK_TSSynchrPtw = CASE WHEN @TypExp = 0 THEN PcK_TSSynchrPtw ELSE 0 END
+	   ,@PcK_TSSynchrKntPtw = CASE WHEN @TypExp = 0 THEN PcK_TSSynchrKntPtw ELSE 0 END
+       ,@PcK_Typ = PcK_Typ
+FROM CDN.PicoKonfig
+WHERE PcK_PicoID = @ID
+
+/***** Kontrahenci, Adresy *****/
+SELECT PcL_ObiTyp AS [@ObiTyp], PcL_ObiNumer AS [@ObiNumer], PcL_ObiektID AS [@ObiektID]
+FROM   CDN.PicoLog 
+WHERE  PcL_PcKID = @ID AND PcL_TStamp &gt; @PcK_TSSynchrKntPtw AND PcL_ObiTyp IN (32,864,896)
+
+UNION ALL 
+/***** Zamówienia *****/
+SELECT ZaN_GIDTyp, ZaN_GIDNumer, ZaN_OddDokID
+FROM   CDN.ZamNag
+WHERE  ZaN_LastMod &gt; @PcK_TSSynchrPtw 
+       AND ZaN_Stan &gt;= (CASE WHEN @PcK_Typ = 5 THEN 0 ELSE 3 END) AND ZaN_PcKID = @ID
+
+UNION ALL
+/***** Dokumenty *****/
+SELECT TrN_GIDTyp, TrN_GIDNumer, TrN_OddDokID 
+FROM   CDN.TraNag JOIN CDN.FrmStruktura ON TrN_FrsID = FrS_ID
+WHERE  TrN_LastMod &gt; @PcK_TSSynchrPtw AND TrN_Stan&gt;=3 AND TrN_Aktywny=0 
+	   AND CDN.OFFLXL_FrmOddzial(@ID,TrN_FrsID)=1
+
+UNION ALL 
+/***** Raporty *****/
+SELECT KRP_GIDTyp, KRP_GIDNumer, KRP_ZewnetrznyId
+FROM CDN.Raporty 
+WHERE KRP_ZewnetrznySys = @ID AND KRP_CzasModyfikacji &gt; @PcK_TSSynchrPtw 
+
+UNION ALL 
+/***** Zapisy *****/
+SELECT KAZ_GIDTyp, KAZ_GIDNumer, KAZ_ZewnetrznyId
+FROM CDN.Raporty 
+JOIN CDN.Zapisy ON KRP_GIDNumer=KAZ_KRPNumer
+WHERE KRP_ZewnetrznySys = @ID AND KRP_CzasModyfikacji &gt; @PcK_TSSynchrPtw 
+
+UNION ALL
+/***** Rozliczenia *****/
+SELECT 433, R2_ID, R2_ZewnetrznyId
+FROM CDN.Rozliczenia
+LEFT OUTER JOIN CDN.TraNag T1 ON R2_Dok1Typ=T1.TrN_GIDTyp AND R2_Dok1Numer=T1.TrN_GIDNumer 
+LEFT OUTER JOIN CDN.Zapisy Z1 ON R2_Dok1Typ=Z1.KAZ_GIDTyp AND R2_Dok1Numer=Z1.KAZ_GIDNumer 
+WHERE R2_ZewnetrznySys = @ID AND R2_CzasModyfikacji &gt; @PcK_TSSynchrPtw 
+
+FOR XML PATH('PTW'),ROOT('PTWI')
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

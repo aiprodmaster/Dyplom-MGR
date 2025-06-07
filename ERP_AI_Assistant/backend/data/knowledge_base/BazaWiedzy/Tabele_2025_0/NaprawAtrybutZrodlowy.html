@@ -1,0 +1,81 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="NaprawAtrybutZrodlowy"></A><PRE>
+          <FONT SIZE="2"><I>/* NaprawAtrybutZrodlowy */</I><BR>
+CREATE PROCEDURE CDN.NaprawAtrybutZrodlowy
+	@ATZNazwa	varchar(40), 	--Nazwa atrybutu źródłowego
+	@ATZSQL		varchar(2049),	--SQL na definicji atrybutu
+	@ATZPredef	int,		--Numer predefiniowany aktrybutu źródłowego
+	@Obiekty	varchar(2049),	--Lista oddzielonych przecinkami możliwych numerów obiektów docelowych
+	@Elementy	varchar(2049),	--Lista oddzielonych przecinkami możliwych numerów elmentów docelowych (dla @Obiekty)
+	@ATZNazwaObDoc	varchar(40), 	--Nazwa grupy obiektów docelowych
+	@ATZOpis	varchar(1024)   --Opis źródła
+AS
+SET NOCOUNT ON
+DECLARE @atzid		int
+DECLARE @BledneObiekty	TABLE(gidtyp int,element smallint,atkid int)
+DECLARE @ObEl		TABLE(atzid int,obtyp int,elem int)
+DECLARE @curob		int
+DECLARE @curel		int
+DECLARE @lastposOb	int
+DECLARE @nextposOb	int
+DECLARE @lastposEl	int
+DECLARE @nextposEl	int
+
+SET @atzid = NULL
+SET @curob = NULL
+SET @curel = NULL
+
+SELECT @atzid = ATZ_ID FROM CDN.AtrybutyZrodla WHERE ATZ_Predefiniowane = @ATZPredef
+IF @atzid IS NOT NULL
+BEGIN
+	UPDATE CDN.AtrybutyZrodla SET ATZ_Nazwa = @ATZNazwa,ATZ_SQL = @ATZSQL,ATZ_Predefiniowane = @ATZPredef,ATZ_Aktywne = 0,ATZ_NazwaObDoc = @ATZNazwaObDoc,ATZ_Opis = @ATZOpis WHERE ATZ_ID = @atzid
+	DELETE FROM CDN.AtrybutyZrodlaObiekty WHERE AZO_ATZID = @atzid
+END
+ELSE
+BEGIN
+	INSERT INTO CDN.AtrybutyZrodla (ATZ_Nazwa,ATZ_SQL,ATZ_Aktywne,ATZ_Predefiniowane,ATZ_NazwaObDoc,ATZ_Opis) VALUES (@ATZNazwa,@ATZSQL,0,@ATZPredef,@ATZNazwaObDoc,@ATZOpis)
+	SELECT @atzid = ATZ_ID FROM CDN.AtrybutyZrodla WHERE ATZ_Predefiniowane = @ATZPredef
+END
+SET @lastposOb = 0
+SET @lastposEl = 0
+WHILE 1=1
+BEGIN
+	SET @nextposOb = CHARINDEX(',',@Obiekty,@lastposOb+1)
+	SET @nextposEl = CHARINDEX(',',@Elementy,@lastposEl+1)
+	IF @nextposOb &lt;= 0
+	BEGIN
+		SET @curob = SUBSTRING(@Obiekty,@lastposOb,LEN(@Obiekty)+1)
+		SET @curel = SUBSTRING(@Elementy,@lastposEl,LEN(@Elementy)+1)
+		INSERT INTO CDN.AtrybutyZrodlaObiekty VALUES(@atzid,@curob,@curel)
+		BREAK
+	END
+	SET @curob = SUBSTRING(@Obiekty,@lastposOb,@nextposOb-@lastposOb)
+	SET @curel = SUBSTRING(@Elementy,@lastposEl,@nextposEl-@lastposEl)
+	INSERT INTO CDN.AtrybutyZrodlaObiekty VALUES(@atzid,@curob,@curel)
+	SET @lastposOb = @nextposOb + 1
+	SET @lastposEl = @nextposEl + 1
+END
+INSERT INTO @BledneObiekty SELECT ATO_GIDTyp,ATO_Element,ATO_ATKID FROM CDN.AtrybutyObiekty WHERE ATO_ATZID = @atzid AND NOT EXISTS(SELECT AZO_ATZID FROM CDN.AtrybutyZrodlaObiekty WHERE AZO_ATZID = ATO_ATZID AND AZO_ATOGIDTyp = ATO_GIDTyp AND AZO_ATOElement = ATO_Element)
+UPDATE CDN.AtrybutyObiekty SET ATO_ATZID = 0 
+	WHERE ATO_ATZID = @atzid AND 
+	ATO_GIDTyp IN (SELECT gidtyp FROM @BledneObiekty) AND
+	ATO_Element IN (SELECT element FROM @BledneObiekty) AND
+	ATO_AtkID IN (SELECT atkid FROM @BledneObiekty)
+
+SET NOCOUNT OFF
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

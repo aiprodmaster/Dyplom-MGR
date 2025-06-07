@@ -1,0 +1,138 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[XLDodajPrzejazd]"></A><PRE>
+          <FONT SIZE="2"><I>/* [XLDodajPrzejazd] */</I><BR>
+create PROCEDURE [CDN].[XLDodajPrzejazd]
+(
+/* ==========================================================================================
+        SQL API: Procedura serwerowa do dodawania przejazdu 
+
+        Parametry wejściowe:
+   ========================================================================================== */
+	@OpeNumer INT,                              -- Numer operatora modyfikującego
+    @SamId INT,                                 -- Identyfikator samochodu
+    @KierTyp INT,                               -- GidTyp   \ kierowcy
+    @KierNumer INT,                             -- GidNumer 
+    @LicznikPocz DECIMAL(9,2),                  -- Stan licznika w chwili wyjazdu
+    @LicznikKon DECIMAL(9,2),                   -- Stan licznika w chwili przyjazdu
+    @DataWyjazdu INT=NULL,                      -- Data wyjazdu
+    @DataPrzyjazdu INT=NULL,                    -- Data przyjazdu
+    @WyjazdZ VARCHAR(100)=NULL,                 -- Miejsce wyjazdu
+    @PrzyjazdDo VARCHAR(100)=NULL,              -- Miejsce przyjazdu
+    @RodzajPrzejazdu INT=NULL,
+	@Potwierdzony tinyint=0,					-- Czy potwierdzony 
+	@OpeNumerZ int=NULL,						-- Identyfikator operatora potwierdzającego
+    @Opis VARCHAR(1025)=NULL,
+    @GPSSz DECIMAL(9,6) = NULL,
+	@GPSDl DECIMAL(9,6) = NULL,
+	@GPSDataPobrania INT = NULL,
+	@GPSGodzinaPobrania INT = NULL
+
+
+/* ==========================================================================================
+        Return:
+         0 : Operacja zakończona sukcesem
+        -1 : Błędne parametry wejściowe przekazane do procedury
+        -2 : Nie powiodło się dodawanie wpisu do tabeli CDN.SamPrzejazdy
+   ========================================================================================== */
+)
+AS
+BEGIN
+		DECLARE @PrzejazdRok int
+		DECLARE @PrzejazdNumer int
+		DECLARE @SrodekTransportu int=0
+
+        IF @LicznikPocz IS NULL OR @LicznikKon IS NULL OR (@LicznikKon-@LicznikPocz&lt;0) BEGIN
+                RAISERROR('Błędne parametry wejściowe przekazane do procedury CDN.XLDodajPrzejazdWH.',16,1)
+                RETURN -1
+        END
+
+		SET @PrzejazdRok = YEAR(DATEADD(second,IsNull(@DataWyjazdu,DATEDIFF(s,'19900101',GETDATE())),CONVERT(DATETIME,'1990-01-01',120)))
+		
+		select @PrzejazdNumer = (isnull(max(SaP_PrzejazdNumer),0)+1) 
+		from cdn.SamPrzejazdy 
+		where SaP_SamId = @SamId and  YEAR(DATEADD(second,IsNull(SaP_DataWyjazdu,DATEDIFF(s,'19900101',GETDATE())),CONVERT(DATETIME,'1990-01-01',120))) = @PrzejazdRok
+
+		select @SrodekTransportu = SLW_Id from cdn.Slowniki where slw_kategoria='Środki transportu' and SLW_WartoscS='Samochód służbowy'
+
+        INSERT INTO CDN.SamPrzejazdy
+           (SaP_PrzejazdNumer
+		   ,SaP_PrzejazdRok
+		   ,SaP_DataWyjazdu
+           ,SaP_DataPrzyjazdu
+           ,SaP_Odleglosc
+           ,SaP_SamId
+           ,SaP_KierTyp
+           ,SaP_KierNumer
+           ,SaP_RodzajPrzejazdu
+           ,SaP_OpeNumer
+           ,SaP_DataZapisu
+		   ,SaP_Potwierdzony
+		   ,SaP_OpeNumerZ
+		   ,SaP_DataPotwierdzenia
+           ,SaP_ZrdTyp
+           ,SaP_ZrdNumer
+           ,SaP_ZrdLp
+           ,SaP_WyjazdZ
+           ,SaP_PrzyjazdDo
+           ,SaP_LicznikPocz
+           ,SaP_LicznikKon
+		   ,SaP_PrzyjazdGPSSz
+		   ,SaP_PrzyjazdGPSDl
+		   ,SaP_PrzyjazdGPSDataPobrania
+		   ,SaP_PrzyjazdGPSGodzinaPobrania
+           ,SaP_Opis
+		   ,SaP_SrodekTransportu)
+    SELECT
+		   @PrzejazdNumer
+		   ,@PrzejazdRok
+           ,IsNull(@DataWyjazdu,DATEDIFF(s,'19900101',GETDATE()))--SaP_DataWyjazdu
+           ,IsNull(@DataPrzyjazdu,DATEDIFF(s,'19900101',GETDATE()))--SaP_DataPrzyjazdu
+           ,@LicznikKon-@LicznikPocz --SaP_Odleglosc
+           ,@SamId --SaP_SamId
+           ,@KierTyp --SaP_KierTyp
+           ,@KierNumer --SaP_KierNumer
+           ,IsNull(@RodzajPrzejazdu,0)--SaP_RodzajPrzejazdu
+           ,@OpeNumer
+           ,DATEDIFF(s,'19900101',GETDATE())--SaP_DataZapisu
+		   ,@Potwierdzony
+		   ,ISNull(@OpeNumerZ,@OpeNumer)
+		   ,DATEDIFF(s,'19900101',GETDATE())--SaP_DataPotwierdzenia
+           ,0--SaP_ZrdTyp
+           ,0--SaP_ZrdNumer
+           ,0--SaP_ZrdLp
+           ,IsNull(@WyjazdZ,'')--SaP_WyjazdZ
+           ,IsNull(@PrzyjazdDo,'')--SaP_PrzyjazdDo
+           ,@LicznikPocz--SaP_LicznikPocz
+           ,@LicznikKon--SaP_LicznikKon
+		   ,COALESCE(@GPSSz,0) --SaP_PrzyjazdGPSSz
+		   ,COALESCE(@GPSDl,0)--SaP_PrzyjazdGPSDl
+		   ,COALESCE(@GPSDataPobrania,0) --SaP_PrzyjazdGPSDataPobrania
+		   ,COALESCE(@GPSGodzinaPobrania,0) --SaP_PrzyjazdGPSGodzinaPobrania
+           ,IsNull(@Opis,'')--SaP_Opis
+		   ,@SrodekTransportu --SaP_SrodekTransportu
+       FROM CDN.Samochody
+       WHERE SaM_Id=@SamId
+
+        IF @@ROWCOUNT=0 BEGIN
+                RAISERROR ('Nie powiodło się dodawanie wpisu do tabeli CDN.SamPrzejazdy', 16, 1)
+                RETURN -2
+        END
+        RETURN (SELECT @@IDENTITY)
+
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

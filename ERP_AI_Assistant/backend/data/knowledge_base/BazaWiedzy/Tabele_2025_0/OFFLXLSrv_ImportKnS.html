@@ -1,0 +1,274 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="OFFLXLSrv_ImportKnS"></A><PRE>
+          <FONT SIZE="2"><I>/* OFFLXLSrv_ImportKnS */</I><BR>
+CREATE PROCEDURE CDN.OFFLXLSrv_ImportKnS
+ @KnS_KntNumer	INT			-- GIDNumer Kontrahenta
+,@xml			TEXT
+,@LogID			INT = -1	-- ID loga synchronizacji
+AS
+	RAISERROR('Procedura OFFLXLSrv_ImportKnS nie jest obługiwana na MSSQL 2000',16,1)
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="OFFLXLSrv_ImportKnS"></A><PRE>
+          <FONT SIZE="2"><I>/* OFFLXLSrv_ImportKnS */</I><BR>
+CREATE PROCEDURE CDN.OFFLXLSrv_ImportKnS
+ @ID            INT
+,@KnS_KntNumer	INT			-- GIDNumer Kontrahenta
+,@xml			XML
+,@LogID			INT = -1	-- ID loga synchronizacji
+AS
+SET NOCOUNT ON
+
+DECLARE @KnS_KntTyp SMALLINT,
+		@KnS_KntFirma INT,
+		@KnS_KntLp SMALLINT,
+		@KnS_Upowazniona SMALLINT,
+		@KnS_UpowaznionaZam SMALLINT,
+		@KnS_Dzial VARCHAR(40),
+		@KnS_Stanowisko VARCHAR(40),
+		@KnS_Tytul VARCHAR(40),
+		@KnS_Nazwa VARCHAR(40),
+		@KnS_Telefon VARCHAR(30),
+		@KnS_EMail VARCHAR(255),
+		@KnS_HasloChk VARCHAR(2),
+		@KnS_HasloOsoby VARCHAR(11),
+		@KnS_Notatki VARCHAR(1024),
+		@KnS_RolaDecyzyjna INT,
+		@KnS_Fax VARCHAR(30),
+		@KnS_TelefonK VARCHAR(30),
+		@KnS_UpoDoK SMALLINT,
+		@KnS_Archiwalny SMALLINT,
+		@KnS_Pozycja SMALLINT,
+		@KnS_CzasModyfikacji INT,
+		@KnS_CzyDomyslna TINYINT,	
+		@KnS_AdresId INT
+
+DECLARE @index			INT,
+		@max_index		INT,
+		@buffer_size	INT,
+		@xml_buffer		XML,
+		@xml_tmp		XML,
+		@xml_child		XML
+
+DECLARE @Opis			VARCHAR(512)
+
+DECLARE @KnS_GIDNumer   INT
+
+SET @xml = @xml.query('/KNSI/KNS')
+
+SELECT  @index = 0, 
+		@max_index = CAST(CAST(@xml.query ('count(KNS)') AS VARCHAR(20)) AS INT), 
+		@buffer_size = 200
+		
+
+WHILE @index &lt; @max_index
+	BEGIN
+		
+		--BEGIN TRY
+			IF @index % @buffer_size = 0 	
+				SET @xml_buffer = ( SELECT @xml.query('KNS[position()&gt; sql:variable("@index") and position() &lt;= sql:variable("@index") + sql:variable("@buffer_size") ] ')  )
+			SET @xml_tmp = ( SELECT @xml_buffer.query('KNS[position()= (sql:variable("@index") mod sql:variable("@buffer_size")) + 1 ] ')  )
+
+			SELECT
+				@KnS_GIDNumer = KNS.Attribute.value('@GIDNumer','INT'),
+				@KnS_KntTyp = 32,
+				@KnS_KntFirma = CDN.GIDFirma(),
+				@KnS_KntLp = KNS.Attribute.value('@KntLp','SMALLINT'),
+				@KnS_Upowazniona = KNS.Attribute.value('@Upowazniona','SMALLINT'),
+				@KnS_UpowaznionaZam = KNS.Attribute.value('@UpowaznionaZam','SMALLINT'),
+				@KnS_Dzial = KNS.Attribute.value('@Dzial','VARCHAR(40)'),
+				@KnS_Stanowisko = KNS.Attribute.value('@Stanowisko','VARCHAR(40)'),
+				@KnS_Tytul = KNS.Attribute.value('@Tytul','VARCHAR(40)'),
+				@KnS_Nazwa = KNS.Attribute.value('@Nazwa','VARCHAR(40)'),
+				@KnS_Telefon = KNS.Attribute.value('@Telefon','VARCHAR(30)'),
+				@KnS_EMail = KNS.Attribute.value('@EMail','VARCHAR(255)'),
+				@KnS_HasloChk = KNS.Attribute.value('@HasloChk','VARCHAR(2)'),
+				@KnS_HasloOsoby = KNS.Attribute.value('@HasloOsoby','VARCHAR(11)'),
+				@KnS_Notatki = KNS.Attribute.value('@Notatki','VARCHAR(1024)'),
+				@KnS_RolaDecyzyjna = KNS.Attribute.value('@RolaDecyzyjna','INT'),
+				@KnS_Fax = KNS.Attribute.value('@Fax','VARCHAR(30)'),
+				@KnS_TelefonK = KNS.Attribute.value('@TelefonK','VARCHAR(30)'),
+				@KnS_UpoDoK = KNS.Attribute.value('@UpoDoK','SMALLINT'),
+				@KnS_Archiwalny = KNS.Attribute.value('@Archiwalny','SMALLINT'),
+				@KnS_Pozycja = KNS.Attribute.value('@Pozycja','SMALLINT'),
+				@KnS_CzasModyfikacji = KNS.Attribute.value('@CzasModyfikacji','INT'),
+				@KnS_CzyDomyslna = KNS.Attribute.value('@CzyDomyslna','TINYINT'),
+				@KnS_AdresId = KNS.Attribute.value('@AdresId','INT')
+			FROM @xml_tmp.nodes('KNS') AS KNS(Attribute)
+
+			Declare @DodajDoTabeliTymczasowej	BIT
+			SELECT  @DodajDoTabeliTymczasowej = PcK_ImpKntWymagajPotwierdzenia FROM    CDN.PicoKonfig where PcK_PicoID = @ID
+			IF ISNULL(@KnS_AdresId,0) &lt; 0
+			BEGIN
+				SELECT @KnS_AdresId = ISNULL(PCL_ObiNumer,@KnS_AdresId) FROM CDN.PicoLog WHERE PCL_ObiektID = @KnS_AdresId AND PcL_ObiTyp IN (864,896) AND PCL_PckID = @ID
+			END
+			IF @DodajDoTabeliTymczasowej = 1 BEGIN 
+				EXEC CDN.AktualizujOsobeKntMS
+					@ZewnetrznyId= @KnS_GIDNumer,
+					@KntTyp	=  @KnS_KntTyp, 
+					@KntNumer = @KnS_KntNumer,
+					@KntLp = @KnS_KntLp,
+					@Upowazniona =  @KnS_Upowazniona,
+					@UpowaznionaZam = @KnS_UpowaznionaZam,
+					@Dzial =  @KnS_Dzial,
+					@Stanowisko = @KnS_Stanowisko,
+					@Tytul = @KnS_Tytul,
+					@Nazwa = @KnS_Nazwa,
+					@Telefon = @KnS_Telefon,
+					@EMail = @KnS_EMail,
+					@HasloChk = @KnS_HasloChk,
+					@HasloOsoby = @KnS_HasloOsoby,
+					@Notatki = @KnS_Notatki,
+					@RolaDecyzyjna = @KnS_RolaDecyzyjna,
+					@Fax = @KnS_Fax,
+					@TelefonK = @KnS_TelefonK ,
+					@UpoDoK = @KnS_UpoDoK,
+					@Archiwalny = @KnS_Archiwalny,
+					@Pozycja = @KnS_Pozycja,
+					@CzasModyfikacji = @KnS_CzasModyfikacji,
+					@CzyDomyslna  = @KnS_CzyDomyslna,
+					@OddzialID = @ID,
+					@AdresId = @KnS_AdresId
+			END
+			ELSE IF EXISTS (SELECT * FROM CDN.KntOsoby WHERE KnS_KntTyp = @KnS_KntTyp AND KnS_KntNumer = @KnS_KntNumer AND KnS_KntLp = @KnS_KntLp)
+				OR EXISTS (SELECT * FROM CDN.PicoLog WHERE PcL_PcKID = @ID AND PcL_ObiNumer = @KnS_KntNumer AND PcL_ObiTyp &lt; 0 AND PcL_ObiektID = @KnS_GIDNumer)
+				BEGIN
+				UPDATE CDN.KntOsoby 
+					SET KnS_Upowazniona = ISNULL(@KnS_Upowazniona,KnS_Upowazniona),
+						KnS_UpowaznionaZam = ISNULL(@KnS_UpowaznionaZam,KnS_UpowaznionaZam),
+						KnS_Dzial = ISNULL(@KnS_Dzial,KnS_Dzial),
+						KnS_Stanowisko = ISNULL(@KnS_Stanowisko,KnS_Stanowisko),
+						KnS_Tytul = ISNULL(@KnS_Tytul,KnS_Tytul),
+						KnS_Nazwa = ISNULL(@KnS_Nazwa,KnS_Nazwa),
+						KnS_Telefon = ISNULL(@KnS_Telefon,KnS_Telefon),
+						KnS_EMail = ISNULL(@KnS_EMail,KnS_EMail),
+						KnS_HasloChk = ISNULL(@KnS_HasloChk,KnS_HasloChk),
+						KnS_HasloOsoby = ISNULL(@KnS_HasloOsoby,KnS_HasloOsoby),
+						KnS_Notatki = ISNULL(@KnS_Notatki,KnS_Notatki),
+						KnS_RolaDecyzyjna = ISNULL(@KnS_RolaDecyzyjna,KnS_RolaDecyzyjna),
+						KnS_Fax = ISNULL(@KnS_Fax,KnS_Fax),
+						KnS_TelefonK = ISNULL(@KnS_TelefonK,KnS_TelefonK),
+						KnS_UpoDoK = ISNULL(@KnS_UpoDoK,KnS_UpoDoK),
+						KnS_Archiwalny = ISNULL(@KnS_Archiwalny,KnS_Archiwalny),
+						KnS_Pozycja = ISNULL(@KnS_Pozycja,(SELECT ISNULL(MAX(KnS_Pozycja),0) + 1 FROM CDN.KntOsoby WHERE KnS_KntNumer = @KnS_KntNumer)),
+						KnS_CzasModyfikacji = ISNULL(@KnS_CzasModyfikacji, datediff(s, '19900101', getdate()) ),
+						KnS_AdresId = ISNULL(@KnS_AdresId,0)						
+					WHERE KnS_KntTyp = @KnS_KntTyp AND KnS_KntNumer = @KnS_KntNumer AND KnS_KntLp = @KnS_KntLp	
+				END
+			ELSE
+				BEGIN
+				
+				IF @KnS_KntLp = 0 
+				BEGIN
+					SELECT @KnS_KntLp = ISNULL(MAX(KnS_KntLp),0) + 1 FROM CDN.KntOsoby WHERE KnS_KntNumer = @KnS_KntNumer
+				END				
+				
+				INSERT INTO CDN.KntOsoby 
+				  ( KnS_KntTyp,
+					KnS_KntFirma,
+					KnS_KntNumer,
+					KnS_KntLp,
+					KnS_Upowazniona,
+					KnS_UpowaznionaZam,
+					KnS_Dzial,
+					KnS_Stanowisko,
+					KnS_Tytul,
+					KnS_Nazwa,
+					KnS_Telefon,
+					KnS_EMail,
+					KnS_HasloChk,
+					KnS_HasloOsoby,
+					KnS_Notatki,
+					KnS_RolaDecyzyjna,
+					KnS_Fax,
+					KnS_TelefonK,
+					KnS_UpoDoK,
+					KnS_Archiwalny,
+					KnS_Pozycja,
+					KnS_CzasModyfikacji,
+					KnS_AdresId
+					)
+				VALUES
+				  ( @KnS_KntTyp,
+					@KnS_KntFirma,
+					@KnS_KntNumer,
+					@KnS_KntLp,
+					ISNULL(@KnS_Upowazniona,0),
+					ISNULL(@KnS_UpowaznionaZam,0),
+					ISNULL(@KnS_Dzial,''),
+					ISNULL(@KnS_Stanowisko,''),
+					ISNULL(@KnS_Tytul,''),
+					ISNULL(@KnS_Nazwa,''),
+					ISNULL(@KnS_Telefon,''),
+					ISNULL(@KnS_EMail,''),
+					ISNULL(@KnS_HasloChk,''),
+					ISNULL(@KnS_HasloOsoby,''),
+					ISNULL(@KnS_Notatki,''),
+					ISNULL(@KnS_RolaDecyzyjna,0),
+					ISNULL(@KnS_Fax,''),
+					ISNULL(@KnS_TelefonK,''),
+					ISNULL(@KnS_UpoDoK,0),
+					ISNULL(@KnS_Archiwalny,0),
+					COALESCE(@KnS_Pozycja,@KnS_KntLp,0),
+					ISNULL(@KnS_CzasModyfikacji, datediff(s, '19900101', getdate()) ),
+					ISNULL(@KnS_AdresId,0)
+ 					)
+ 			
+ 			IF @KnS_GIDNumer IS NOT NULL
+			BEGIN
+
+				INSERT INTO CDN.PicoLog
+					(
+						PcL_PcKID,
+						PcL_ObiTyp,
+						PcL_ObiNumer,
+						PcL_ObiektTyp,
+						PcL_ObiektID,
+						PcL_Komentarz,
+						PcL_Info,
+						PcL_TStamp
+					)
+					VALUES
+					(
+						@ID,
+						-1 * @KnS_KntLp,
+						@KnS_KntNumer,
+						8211,
+						@KnS_GIDNumer,
+						'',
+						'',
+						DATEDIFF(s,CONVERT(DATETIME,'19900101',121),GETDATE())
+					)
+			END
+			END
+				
+		--END TRY
+		
+		--BEGIN CATCH
+		--	SELECT @Opis = @KnS_Nazwa + ' - Błąd podczas importu osoby kontrahenta: ' + CDN.Log_SzczegolyBledu(ERROR_NUMBER(),ERROR_PROCEDURE(),ERROR_LINE(),ERROR_MESSAGE()) 
+		--	EXEC CDN.Log_Dopisz @LogID, @Opis, 2
+		--END CATCH
+		
+		SET @index = @index + 1
+	END
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

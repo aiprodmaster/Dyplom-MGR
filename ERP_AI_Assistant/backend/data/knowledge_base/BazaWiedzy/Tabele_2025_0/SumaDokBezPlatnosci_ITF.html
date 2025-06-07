@@ -1,0 +1,279 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="SumaDokBezPlatnosciSpietychCzesciowoPerElementKnt"></A><PRE>
+          <FONT SIZE="2"><I>/* SumaDokBezPlatnosciSpietychCzesciowoPerElementKnt */</I><BR>
+CREATE FUNCTION CDN.SumaDokBezPlatnosciSpietychCzesciowoPerElementKnt (@p_KntNumer INT)
+RETURNS TABLE
+AS
+RETURN (
+		WITH cte AS (
+				SELECT TrN_SpiTyp, TrN_SpiNumer, TrE_Ilosc, TrE_KsiegowaBrutto, TrE_KsiegowaNetto, TrE_GIDTyp, TrE_GIDNumer, TrE_GIDLp, cast(zafakturowana.TrS_Ilosc AS DECIMAL(15, 4)) iloscZafakturowana
+				FROM cdn.TraNag dokBezPlat, cdn.TraElem
+				LEFT JOIN (
+					SELECT TrS_SpiNumer SpiNumer, TrS_SpiLp SpiLp, SUM(TrS_Ilosc) TrS_Ilosc
+					FROM cdn.TraSElem
+					WHERE TrS_SpiNumer &lt;&gt; 0
+						AND TrS_SpiLp &lt;&gt; 0 --optymalizacja 
+					GROUP BY TrS_SpiNumer, TrS_SpiLp
+					) zafakturowana ON TrE_GIDNumer = SpiNumer
+					AND TrE_GIDLp = SpiLp
+				WHERE dokBezPlat.TrN_GIDNumer = TrE_GIDNumer
+					AND dokBezPlat.TrN_GIDTyp IN (2001, 1489, 2005) --WZ, PZ, WZE
+					AND dokBezPlat.TrN_KnPTyp = 32
+					AND dokBezPlat.TrN_KnPNumer = @p_KntNumer
+					AND dokBezPlat.TrN_Platnosci = 0
+					AND dokBezPlat.TrN_JestLimitCelowy = 0
+					AND dokBezPlat.TrN_SpiTyp &lt; 0
+					AND (
+						-- gdy oryginał cały zafakturowany to polegamy wyłącznie na TraPlat(?)
+						zafakturowana.TrS_Ilosc IS NULL
+						OR zafakturowana.TrS_Ilosc &lt;&gt; TrE_Ilosc
+						)
+				
+				UNION ALL
+				
+				SELECT korBezPlat.TrN_SpiTyp, korBezPlat.TrN_SpiNumer, korElemBezPlat.TrE_Ilosc, korElemBezPlat.TrE_KsiegowaBrutto, korElemBezPlat.TrE_KsiegowaNetto, korElemBezPlat.TrE_GIDTyp, korElemBezPlat.TrE_GIDNumer, korElemBezPlat.TrE_GIDLp, cast(0 AS DECIMAL(15, 4)) iloscZafakturowana
+				FROM cte, cdn.TraNag korBezPlat, cdn.TraElem korElemBezPlat
+				WHERE korBezPlat.TrN_GIDNumer = korElemBezPlat.TrE_GIDNumer
+					AND EXISTS (
+						SELECT *
+						FROM cdn.TraSElem
+						WHERE korElemBezPlat.TrE_GIDNumer = TrS_GIDNumer
+							AND korElemBezPlat.TrE_GIDLp = TrS_GIDLp
+							AND TrS_OrgNumer = cte.TrE_GIDNumer
+							AND TrS_OrgLp = cte.TrE_GIDLp
+						)
+					AND NOT EXISTS (
+						--pominięcie korekt wygenerowanych automatycznie do spinacza "One są tworzone po to, aby zgadzała się wartość „wydania” i wartość „zafakturowania” danej transakcji (jeżeli Klientowi na takiej zgodności zależy)."
+						SELECT *
+						FROM CDN.DokZwiazane, CDN.TraNag spinacz
+						WHERE DOZ_DOKTyp = korBezPlat.TrN_GIDTyp
+							AND DOZ_DOKNumer = korBezPlat.TrN_GIDNumer
+							AND spinacz.TrN_GIDNumer = DOZ_ZRDNumer
+							AND spinacz.TrN_GIDTyp = DOZ_ZRDTyp
+							AND spinacz.TrN_SpiTyp &lt;&gt; 0
+							AND - spinacz.TrN_SpiTyp = spinacz.TrN_GIDTyp
+						)
+					AND korBezPlat.TrN_GIDTyp IN (2009, 1497, 2013) -- WZK, PZK, WKE
+					AND korBezPlat.TrN_KnPTyp = 32
+					AND korBezPlat.TrN_KnPNumer = @p_KntNumer
+					AND korBezPlat.TrN_Platnosci = 0
+					AND korBezPlat.TrN_JestLimitCelowy = 0
+					AND korBezPlat.TrN_SpiTyp &lt; 0
+				)
+		SELECT TrS_OrgNumer, TrS_OrgTyp, TrS_OrgLp --TrS_GIDLp
+			, TrN_SpiTyp TrN_SpiTyp, TrE_Ilosc, TrE_KsiegowaBrutto, TrE_KsiegowaNetto, TrE_GIDTyp, TrE_GIDNumer, TrE_GIDLp --, TrN_FrsID, TrN_AkwNumer, TrN_AkwTyp, TrN_KnPTyp, TrN_KnPNumer
+		FROM cte, (
+				--SELECT DISTINCT TrS_OrgTyp, TrS_OrgNumer, TrS_GIDNumer, TrS_GIDLp, TrS_OrgLp
+				--FROM cdn.TraSElem
+				--optaymalizacja: sprawdzić z group by zamiast disctinct
+				SELECT TrS_OrgTyp, TrS_OrgNumer, TrS_GIDNumer, TrS_GIDLp, TrS_OrgLp
+				FROM cdn.TraSElem
+				GROUP BY TrS_GIDNumer, TrS_GIDLp, TrS_OrgTyp, TrS_OrgNumer, TrS_OrgLp
+				) dokBezPlatSubElem
+		WHERE TrE_GIDNumer = TrS_GIDNumer
+			AND TrE_GIDLp = TrS_GIDLp
+		)
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="SumaDokBezPlatnosciSpietychCzesciowoKnt"></A><PRE>
+          <FONT SIZE="2"><I>/* SumaDokBezPlatnosciSpietychCzesciowoKnt */</I><BR>
+CREATE FUNCTION CDN.SumaDokBezPlatnosciSpietychCzesciowoKnt (@p_KntNumer INT)
+RETURNS TABLE
+AS
+RETURN (
+		SELECT isnull(sum(CASE 
+						WHEN dokBezPlat.TrE_Ilosc = 0
+							THEN dokBezPlat.TrE_KsiegowaBrutto
+						WHEN dokBezPlat.TrE_Ilosc = zafakturowanaIlosc --spięta cała ilość
+							THEN 0
+						WHEN dokBezPlat.TrS_OrgTyp IN (2001, 2005, 2009, 2013)
+							THEN round((dokBezPlat.TrE_Ilosc - isnull(zafakturowanaIlosc, 0)) * dokBezPlat.TrE_KsiegowaBrutto / dokBezPlat.TrE_Ilosc, 2)
+						WHEN dokBezPlat.TrS_OrgTyp IN (1489, 1497)
+							THEN round(- (dokBezPlat.TrE_Ilosc - isnull(zafakturowanaIlosc, 0)) * dokBezPlat.TrE_KsiegowaBrutto / dokBezPlat.TrE_Ilosc, 2)
+						ELSE 0
+						END), 0) WartoscBrutto, isnull(sum(CASE 
+						WHEN dokBezPlat.TrE_Ilosc = 0
+							THEN dokBezPlat.TrE_KsiegowaNetto
+						WHEN dokBezPlat.TrE_Ilosc = zafakturowanaIlosc --spięta cała ilość
+							THEN 0
+						WHEN dokBezPlat.TrS_OrgTyp IN (2001, 2005, 2009, 2013)
+							THEN round((dokBezPlat.TrE_Ilosc - isnull(zafakturowanaIlosc, 0)) * dokBezPlat.TrE_KsiegowaNetto / dokBezPlat.TrE_Ilosc, 2)
+						WHEN dokBezPlat.TrS_OrgTyp IN (1489, 1497)
+							THEN round(- (dokBezPlat.TrE_Ilosc - isnull(zafakturowanaIlosc, 0)) * dokBezPlat.TrE_KsiegowaNetto / dokBezPlat.TrE_Ilosc, 2)
+						ELSE 0
+						END), 0) WartoscNetto
+		FROM (
+			SELECT SUM(TrE_Ilosc) TrE_Ilosc
+				--, cdn.NazwaObiektu(TrS_OrgTyp, TrS_OrgNumer, TrS_OrgLp, 6) orgDok				 
+				, SUM(TrE_KsiegowaNetto) TrE_KsiegowaNetto, SUM(TrE_KsiegowaBrutto) TrE_KsiegowaBrutto, TrS_OrgTyp, TrS_OrgNumer, TrS_OrgLp, SUM(isnull(zafakturowana.TrS_Ilosc, 0)) zafakturowanaIlosc
+			FROM (
+				cdn.SumaDokBezPlatnosciSpietychCzesciowoPerElementKnt(@p_KntNumer) LEFT JOIN (
+					SELECT TrS_SpiNumer SpiNumer, TrS_SpiLp SpiLp, SUM(TrS_Ilosc) TrS_Ilosc
+					FROM cdn.TraSElem
+					WHERE TrS_SpiNumer &lt;&gt; 0
+						AND TrS_SpiLp &lt;&gt; 0 --optymalizacja 
+					GROUP BY TrS_SpiNumer, TrS_SpiLp
+					) zafakturowana ON TrE_GIDNumer = SpiNumer
+					AND TrE_GIDLp = SpiLp
+				)
+			WHERE -- odrzucenie zafakturowanych koretk w (s)FSK (?)
+				zafakturowana.TrS_Ilosc IS NULL
+				OR zafakturowana.TrS_Ilosc &lt;&gt; TrE_Ilosc
+			GROUP BY TrS_OrgTyp, TrS_OrgNumer, TrS_OrgLp
+			) dokBezPlat
+		)
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="SumaDokBezPlatnosciSpietychCzesciowoPerElementAkw"></A><PRE>
+          <FONT SIZE="2"><I>/* SumaDokBezPlatnosciSpietychCzesciowoPerElementAkw */</I><BR>
+CREATE FUNCTION CDN.SumaDokBezPlatnosciSpietychCzesciowoPerElementAkw (@p_AkwNumer INT, @p_FrsId INT)
+RETURNS TABLE
+AS
+RETURN (
+		WITH cte AS (
+				SELECT TrN_SpiTyp, TrN_SpiNumer, TrE_Ilosc, TrE_KsiegowaBrutto, TrE_KsiegowaNetto, TrE_GIDTyp, TrE_GIDNumer, TrE_GIDLp, cast(zafakturowana.TrS_Ilosc AS DECIMAL(15, 4)) iloscZafakturowana
+				FROM cdn.TraNag dokBezPlat, cdn.TraElem
+				LEFT JOIN (
+					SELECT TrS_SpiNumer SpiNumer, TrS_SpiLp SpiLp, SUM(TrS_Ilosc) TrS_Ilosc
+					FROM cdn.TraSElem
+					WHERE TrS_SpiNumer &lt;&gt; 0
+						AND TrS_SpiLp &lt;&gt; 0 --optymalizacja 
+					GROUP BY TrS_SpiNumer, TrS_SpiLp
+					) zafakturowana ON TrE_GIDNumer = SpiNumer
+					AND TrE_GIDLp = SpiLp
+				WHERE dokBezPlat.TrN_GIDNumer = TrE_GIDNumer
+					AND dokBezPlat.TrN_GIDTyp IN (2001, 1489, 2005) --WZ, PZ, WZE
+					AND dokBezPlat.TrN_AkwTyp = 32
+					AND dokBezPlat.TrN_AkwNumer = @p_AkwNumer
+					AND dokBezPlat.TrN_FrsID = @p_FrsId
+					AND dokBezPlat.TrN_Platnosci = 0
+					AND dokBezPlat.TrN_JestLimitCelowy = 0
+					AND dokBezPlat.TrN_SpiTyp &lt; 0
+					AND (
+						-- gdy oryginał cały zafakturowany to polegamy wyłącznie na TraPlat(?)
+						zafakturowana.TrS_Ilosc IS NULL
+						OR zafakturowana.TrS_Ilosc &lt;&gt; TrE_Ilosc
+						)
+				
+				UNION ALL
+				
+				SELECT korBezPlat.TrN_SpiTyp, korBezPlat.TrN_SpiNumer, korElemBezPlat.TrE_Ilosc, korElemBezPlat.TrE_KsiegowaBrutto, korElemBezPlat.TrE_KsiegowaNetto, korElemBezPlat.TrE_GIDTyp, korElemBezPlat.TrE_GIDNumer, korElemBezPlat.TrE_GIDLp, cast(0 AS DECIMAL(15, 4)) iloscZafakturowana
+				FROM cte, cdn.TraNag korBezPlat, cdn.TraElem korElemBezPlat
+				WHERE korBezPlat.TrN_GIDNumer = korElemBezPlat.TrE_GIDNumer
+					AND EXISTS (
+						SELECT *
+						FROM cdn.TraSElem
+						WHERE korElemBezPlat.TrE_GIDNumer = TrS_GIDNumer
+							AND korElemBezPlat.TrE_GIDLp = TrS_GIDLp
+							AND TrS_OrgNumer = cte.TrE_GIDNumer
+							AND TrS_OrgLp = cte.TrE_GIDLp
+						)
+					AND NOT EXISTS (
+						--pominięcie korekt wygenerowanych automatycznie do spinacza "One są tworzone po to, aby zgadzała się wartość „wydania” i wartość „zafakturowania” danej transakcji (jeżeli Klientowi na takiej zgodności zależy)."
+						SELECT *
+						FROM CDN.DokZwiazane, CDN.TraNag spinacz
+						WHERE DOZ_DOKTyp = korBezPlat.TrN_GIDTyp
+							AND DOZ_DOKNumer = korBezPlat.TrN_GIDNumer
+							AND spinacz.TrN_GIDNumer = DOZ_ZRDNumer
+							AND spinacz.TrN_GIDTyp = DOZ_ZRDTyp
+							AND spinacz.TrN_SpiTyp &lt;&gt; 0
+							AND - spinacz.TrN_SpiTyp = spinacz.TrN_GIDTyp
+						)
+					AND korBezPlat.TrN_GIDTyp IN (2009, 1497, 2013) -- WZK, PZK, WKE
+					AND korBezPlat.TrN_AkwTyp = 32
+					AND korBezPlat.TrN_AkwNumer = @p_AkwNumer
+					AND korBezPlat.TrN_FrsID = @p_FrsId
+					AND korBezPlat.TrN_Platnosci = 0
+					AND korBezPlat.TrN_JestLimitCelowy = 0
+					AND korBezPlat.TrN_SpiTyp &lt; 0
+				)
+		SELECT TrS_OrgNumer, TrS_OrgTyp, TrS_OrgLp --TrS_GIDLp
+			, TrN_SpiTyp TrN_SpiTyp, TrE_Ilosc, TrE_KsiegowaBrutto, TrE_KsiegowaNetto, TrE_GIDTyp, TrE_GIDNumer, TrE_GIDLp --, TrN_FrsID, TrN_AkwNumer, TrN_AkwTyp, TrN_KnPTyp, TrN_KnPNumer
+		FROM cte, (
+				--SELECT DISTINCT TrS_OrgTyp, TrS_OrgNumer, TrS_GIDNumer, TrS_GIDLp, TrS_OrgLp
+				--FROM cdn.TraSElem
+				--optaymalizacja: sprawdzić z group by zamiast disctinct
+				SELECT TrS_OrgTyp, TrS_OrgNumer, TrS_GIDNumer, TrS_GIDLp, TrS_OrgLp
+				FROM cdn.TraSElem
+				GROUP BY TrS_GIDNumer, TrS_GIDLp, TrS_OrgTyp, TrS_OrgNumer, TrS_OrgLp
+				) dokBezPlatSubElem
+		WHERE TrE_GIDNumer = TrS_GIDNumer
+			AND TrE_GIDLp = TrS_GIDLp
+		)
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="SumaDokBezPlatnosciSpietychCzesciowoAkw"></A><PRE>
+          <FONT SIZE="2"><I>/* SumaDokBezPlatnosciSpietychCzesciowoAkw */</I><BR>
+CREATE FUNCTION CDN.SumaDokBezPlatnosciSpietychCzesciowoAkw (@p_AkwNumer INT, @p_FrsId INT)
+RETURNS TABLE
+AS
+RETURN (
+		SELECT isnull(sum(CASE 
+						WHEN dokBezPlat.TrE_Ilosc = 0
+							THEN dokBezPlat.TrE_KsiegowaBrutto
+						WHEN dokBezPlat.TrE_Ilosc = zafakturowanaIlosc --spięta cała ilość
+							THEN 0
+						WHEN dokBezPlat.TrS_OrgTyp IN (2001, 2005, 2009, 2013)
+							THEN round((dokBezPlat.TrE_Ilosc - isnull(zafakturowanaIlosc, 0)) * dokBezPlat.TrE_KsiegowaBrutto / dokBezPlat.TrE_Ilosc, 2)
+						WHEN dokBezPlat.TrS_OrgTyp IN (1489, 1497)
+							THEN round(- (dokBezPlat.TrE_Ilosc - isnull(zafakturowanaIlosc, 0)) * dokBezPlat.TrE_KsiegowaBrutto / dokBezPlat.TrE_Ilosc, 2)
+						ELSE 0
+						END), 0) WartoscBrutto, isnull(sum(CASE 
+						WHEN dokBezPlat.TrE_Ilosc = 0
+							THEN dokBezPlat.TrE_KsiegowaNetto
+						WHEN dokBezPlat.TrE_Ilosc = zafakturowanaIlosc --spięta cała ilość
+							THEN 0
+						WHEN dokBezPlat.TrS_OrgTyp IN (2001, 2005, 2009, 2013)
+							THEN round((dokBezPlat.TrE_Ilosc - isnull(zafakturowanaIlosc, 0)) * dokBezPlat.TrE_KsiegowaNetto / dokBezPlat.TrE_Ilosc, 2)
+						WHEN dokBezPlat.TrS_OrgTyp IN (1489, 1497)
+							THEN round(- (dokBezPlat.TrE_Ilosc - isnull(zafakturowanaIlosc, 0)) * dokBezPlat.TrE_KsiegowaNetto / dokBezPlat.TrE_Ilosc, 2)
+						ELSE 0
+						END), 0) WartoscNetto
+		FROM (
+			SELECT SUM(TrE_Ilosc) TrE_Ilosc
+				--, cdn.NazwaObiektu(TrS_OrgTyp, TrS_OrgNumer, TrS_OrgLp, 6) orgDok				 
+				, SUM(TrE_KsiegowaNetto) TrE_KsiegowaNetto, SUM(TrE_KsiegowaBrutto) TrE_KsiegowaBrutto, TrS_OrgTyp, TrS_OrgNumer, TrS_OrgLp, SUM(isnull(zafakturowana.TrS_Ilosc, 0)) zafakturowanaIlosc
+			FROM (
+				cdn.SumaDokBezPlatnosciSpietychCzesciowoPerElementAkw(@p_AkwNumer, @p_FrsId) LEFT JOIN (
+					SELECT TrS_SpiNumer SpiNumer, TrS_SpiLp SpiLp, SUM(TrS_Ilosc) TrS_Ilosc
+					FROM cdn.TraSElem
+					WHERE TrS_SpiNumer &lt;&gt; 0
+						AND TrS_SpiLp &lt;&gt; 0 --optymalizacja 
+					GROUP BY TrS_SpiNumer, TrS_SpiLp
+					) zafakturowana ON TrE_GIDNumer = SpiNumer
+					AND TrE_GIDLp = SpiLp
+				)
+			WHERE -- odrzucenie zafakturowanych koretk w (s)FSK (?)
+				zafakturowana.TrS_Ilosc IS NULL
+				OR zafakturowana.TrS_Ilosc &lt;&gt; TrE_Ilosc
+			GROUP BY TrS_OrgTyp, TrS_OrgNumer, TrS_OrgLp
+			) dokBezPlat
+		)
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

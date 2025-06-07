@@ -1,0 +1,2394 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie procedury OISO_BiezFiltr"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie procedury OISO_BiezFiltr */</I><BR>
+IF EXISTS (SELECT name  FROM sysobjects WHERE name = 'OISO_BiezFiltr' AND type = 'P')
+  DROP PROCEDURE CDN.OISO_BiezFiltr;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury OISO_BiezFiltr"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury OISO_BiezFiltr */</I><BR>
+CREATE PROCEDURE CDN.OISO_BiezFiltr
+  @Bufor smallint,
+  @PoczatekOOPoczC int,
+  @KoniecOOPoczC int,
+  @OkresID int,
+  @PoczatekC int,
+  @KoniecC int
+AS
+begin
+	;with OISA as (
+			select
+				ob.KKS_KontoOrd,
+				ob.KKS_GIDNumer, 				
+				ob.KKS_SynNumer,
+				ob.KKS_Konto,
+				ob.KKS_Poziom,
+				ob.KKS_Rozrachunkowe,
+				ob.KKS_Analityka,
+				ob.KKS_SaldoWgObr,
+				ob.KKS_TypKonta,
+				ob.KKS_Archiwalny,
+				0 Rok, 0 Miesiac, 
+				ob.KKS_Analityka Przeliczone,
+
+				sum(
+					case when ob.KKS_SaldoWgObr = 1 then
+						BODT
+					else			
+						case when BODT - BOCT &gt; 0 then BODT - BOCT else 0 end
+					end
+				) BODT,
+
+
+				sum(
+					case when ob.KKS_SaldoWgObr = 1 then
+						BOCT
+					else			
+						case when BODT - BOCT &lt; 0 then BOCT - BODT else 0 end
+					end
+				) BOCT,
+	
+
+				sum(ODTP) ODTP,
+				sum(OCTP) OCTP,
+	
+
+				sum(
+					case when ob.KKS_SaldoWgObr = 1 then
+						BODT + ODTP
+					else				
+						case when BODT - BOCT + ODTP - OCTP &gt; 0 then BODT - BOCT + ODTP - OCTP else 0 end			
+					end
+				) SDTP, 
+	
+				sum(
+					case when ob.KKS_SaldoWgObr = 1 then
+						BOCT + OCTP
+					else
+						case when BODT - BOCT + ODTP - OCTP &lt; 0 then abs(BODT - BOCT + ODTP - OCTP) else 0 end
+					end 
+				) SCTP,
+	
+	
+				sum(ODT) ODT,
+				sum(OCT) OCT,
+
+
+				sum(ODTP) + sum(ODT) ODTK,
+				sum(OCTP) + sum(OCT) OCTK,
+
+
+				sum(
+					case when ob.KKS_SaldoWgObr = 1 then
+						ODT
+					else
+						case when ODT - OCT &gt; 0 then ODT - OCT else 0 end
+					end
+				) SDT, 
+	
+				sum(
+					case when ob.KKS_SaldoWgObr = 1 then
+						OCT
+					else
+						case when ODT - OCT &lt; 0 then abs(ODT - OCT) else 0 end
+					end 
+				) SCT,
+				
+		
+				sum(
+					case when ob.KKS_SaldoWgObr = 1 then
+						BODT + ODTP + ODT
+					else
+						case when BODT - BOCT + ODTP - OCTP + ODT - OCT &gt; 0 then BODT - BOCT + ODTP - OCTP + ODT - OCT else 0 end
+					end
+				) SDTK, 
+	
+				sum(
+					case when ob.KKS_SaldoWgObr = 1 then
+						BOCT + OCTP + OCT
+					else
+						case when BODT - BOCT + ODTP - OCTP + ODT - OCT &lt; 0 then abs(BODT - BOCT + ODTP - OCTP + ODT - OCT) else 0 end
+					end 
+				) SCTK	
+				
+			from (
+				
+				select
+					a.KKS_KontoOrd,
+					a.KKS_GIDNumer, 
+					a.KKS_SynNumer,
+					a.KKS_Konto,
+					a.KKS_Poziom,
+					a.KKS_Rozrachunkowe,
+					a.KKS_Analityka,
+					a.KKS_SaldoWgObr,
+					a.KKS_TypKonta,
+					a.KKS_Archiwalny,
+
+					sum(case when dt.DT_KorektaBO = 1 and dt.DT_DataDekr &lt;= @KoniecOOPoczC and dt.DT_DC = 1 then dt.DT_Kwota else 0 end) BODT,
+					sum(case when dt.DT_KorektaBO = 1 and dt.DT_DataDekr &lt;= @KoniecOOPoczC and dt.DT_DC = 2 then dt.DT_Kwota else 0 end) BOCT,
+				
+					sum(case when dt.DT_KorektaBO = 0 and dt.DT_DataDekr &lt; @PoczatekC and dt.DT_DC = 1 then dt.DT_Kwota else 0 end) ODTP,
+					sum(case when dt.DT_KorektaBO = 0 and dt.DT_DataDekr &lt; @PoczatekC and dt.DT_DC = 2 then dt.DT_Kwota else 0 end) OCTP,
+				
+				
+					sum(case when dt.DT_KorektaBO = 0 and dt.DT_DataDekr &gt;= @PoczatekC and dt.DT_DC = 1 then dt.DT_Kwota else 0 end) ODT,
+					sum(case when dt.DT_KorektaBO = 0 and dt.DT_DataDekr &gt;= @PoczatekC and dt.DT_DC = 2 then dt.DT_Kwota else 0 end) OCT
+	
+				from #tmpKonta a
+					join cdn.KontaNastLinki b
+						on a.KKS_GIDNumer = b.KLI_NastNumer
+					join cdn.Okresy o
+						on o.Okr_ID = b.KLI_PoprzOkresID and o.Okr_ID = @OkresID
+					left join cdn.Dekrety dt --
+						on b.KLI_PoprzNumer = dt.DT_KKSNumer 
+							and (dt.DT_DataDekr Between @PoczatekOOPoczC and @KoniecC)
+							and ((@Bufor = 0 and dt.DT_Bufor = '') or (@Bufor &lt;&gt; 0))
+							--and dt.DT_KorektaBO = 0				
+				group by a.KKS_KontoOrd,
+					a.KKS_GIDNumer, 
+					a.KKS_SynNumer,
+					a.KKS_Konto,
+					a.KKS_Poziom,
+					a.KKS_Rozrachunkowe,
+					a.KKS_Analityka,
+					a.KKS_SaldoWgObr,
+					a.KKS_TypKonta,
+					a.KKS_Archiwalny
+				) ob
+			group by 
+				ob.KKS_KontoOrd,
+				ob.KKS_GIDNumer, 
+				ob.KKS_SynNumer,
+				ob.KKS_Konto,
+				ob.KKS_Poziom,
+				ob.KKS_Rozrachunkowe,
+				ob.KKS_Analityka,
+				ob.KKS_SaldoWgObr,
+				ob.KKS_TypKonta,
+				ob.KKS_Archiwalny
+	)
+	select *
+		,CASE WHEN ODT&lt;&gt;0 OR OCT&lt;&gt;0 OR SDTP&lt;&gt;0 OR SCTP&lt;&gt;0 THEN 1 ELSE 0 END NiezeroweObroty
+		,CASE WHEN SDTK&lt;&gt;0 OR SCTK&lt;&gt;0 THEN 1 ELSE 0 END NiezeroweSalda
+	from OISA
+end
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury OISO_BiezFiltr"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury OISO_BiezFiltr */</I><BR>
+GRANT EXECUTE ON CDN.OISO_BiezFiltr TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie procedury OISO_BiezFiltrOkresy"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie procedury OISO_BiezFiltrOkresy */</I><BR>
+IF EXISTS (SELECT name  FROM sysobjects WHERE name = 'OISO_BiezFiltrOkresy' AND type = 'P')
+  DROP PROCEDURE CDN.OISO_BiezFiltrOkresy;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury OISO_BiezFiltrOkresy"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury OISO_BiezFiltrOkresy */</I><BR>
+CREATE PROCEDURE CDN.OISO_BiezFiltrOkresy
+  @Bufor smallint,
+  @PoczatekOOPoczC int,
+  @KoniecOOPoczC int,
+  @PoczatekC int,
+  @KoniecC int
+AS
+begin
+	;with OISA as (
+			select
+				ob.KKS_KontoOrd,
+				ob.KKS_GIDNumer, 			
+				ob.KKS_SynNumer,
+				ob.KKS_Konto,
+				ob.KKS_Poziom,
+				ob.KKS_Rozrachunkowe,
+				ob.KKS_Analityka,
+				ob.KKS_SaldoWgObr,
+				ob.KKS_TypKonta,
+				ob.KKS_Archiwalny,
+				0 Rok, 0 Miesiac, 
+				ob.KKS_Analityka Przeliczone,
+
+				sum(
+					case when ob.KKS_SaldoWgObr = 1 then
+						BODT
+					else			
+						case when BODT - BOCT &gt; 0 then BODT - BOCT else 0 end
+					end
+				) BODT,
+
+
+				sum(
+					case when ob.KKS_SaldoWgObr = 1 then
+						BOCT
+					else			
+						case when BODT - BOCT &lt; 0 then BOCT - BODT else 0 end
+					end
+				) BOCT,
+	
+
+				sum(ODTP) ODTP,
+				sum(OCTP) OCTP,
+	
+
+				sum(
+					case when ob.KKS_SaldoWgObr = 1 then
+						BODT + ODTP
+					else				
+						case when BODT - BOCT + ODTP - OCTP &gt; 0 then BODT - BOCT + ODTP - OCTP else 0 end			
+					end
+				) SDTP, 
+	
+				sum(
+					case when ob.KKS_SaldoWgObr = 1 then
+						BOCT + OCTP
+					else
+						case when BODT - BOCT + ODTP - OCTP &lt; 0 then abs(BODT - BOCT + ODTP - OCTP) else 0 end
+					end 
+				) SCTP,
+	
+	
+				sum(ODT) ODT,
+				sum(OCT) OCT,
+
+
+				sum(ODTP) + sum(ODT) ODTK,
+				sum(OCTP) + sum(OCT) OCTK,
+
+
+				sum(
+					case when ob.KKS_SaldoWgObr = 1 then
+						ODT
+					else
+						case when ODT - OCT &gt; 0 then ODT - OCT else 0 end
+					end
+				) SDT, 
+	
+				sum(
+					case when ob.KKS_SaldoWgObr = 1 then
+						OCT
+					else
+						case when ODT - OCT &lt; 0 then abs(ODT - OCT) else 0 end
+					end 
+				) SCT,
+				
+		
+				sum(
+					case when ob.KKS_SaldoWgObr = 1 then
+						BODT + ODTP + ODT
+					else
+						case when BODT - BOCT + ODTP - OCTP + ODT - OCT &gt; 0 then BODT - BOCT + ODTP - OCTP + ODT - OCT else 0 end
+					end
+				) SDTK, 
+	
+				sum(
+					case when ob.KKS_SaldoWgObr = 1 then
+						BOCT + OCTP + OCT
+					else
+						case when BODT - BOCT + ODTP - OCTP + ODT - OCT &lt; 0 then abs(BODT - BOCT + ODTP - OCTP + ODT - OCT) else 0 end
+					end 
+				) SCTK	
+				
+			from (
+				
+				select
+					a.KKS_KontoOrd,
+					a.KKS_GIDNumer, 
+					a.KKS_SynNumer,
+					a.KKS_Konto,
+					a.KKS_Poziom,
+					a.KKS_Rozrachunkowe,
+					a.KKS_Analityka,
+					a.KKS_SaldoWgObr,
+					a.KKS_TypKonta,
+					a.KKS_Archiwalny,
+
+
+					sum(case when dt.DT_KorektaBO = 1 and dt.DT_DataDekr &lt;= @KoniecOOPoczC and dt.DT_DC = 1 then dt.DT_Kwota else 0 end) BODT,
+					sum(case when dt.DT_KorektaBO = 1 and dt.DT_DataDekr &lt;= @KoniecOOPoczC and dt.DT_DC = 2 then dt.DT_Kwota else 0 end) BOCT,
+				
+					sum(case when dt.DT_KorektaBO = 0 and dt.DT_DataDekr &lt; @PoczatekC and dt.DT_DC = 1 then dt.DT_Kwota else 0 end) ODTP,
+					sum(case when dt.DT_KorektaBO = 0 and dt.DT_DataDekr &lt; @PoczatekC and dt.DT_DC = 2 then dt.DT_Kwota else 0 end) OCTP,
+				
+				
+					sum(case when dt.DT_KorektaBO = 0 and dt.DT_DataDekr &gt;= @PoczatekC and dt.DT_DC = 1 then dt.DT_Kwota else 0 end) ODT,
+					sum(case when dt.DT_KorektaBO = 0 and dt.DT_DataDekr &gt;= @PoczatekC and dt.DT_DC = 2 then dt.DT_Kwota else 0 end) OCT
+	
+				from #tmpKonta a 						
+					left join cdn.KontaNastLinki b
+						on a.KKS_GIDNumer = b.KLI_NastNumer
+					left join cdn.Okresy o
+						on o.Okr_ID = b.KLI_PoprzOkresID and o.Okr_Poczatek Between @PoczatekOOPoczC and @KoniecC 	
+					left join cdn.Dekrety dt --
+						on b.KLI_PoprzNumer = dt.DT_KKSNumer 
+							and (dt.DT_DataDekr Between @PoczatekOOPoczC and @KoniecC)
+							and ((@Bufor = 0 and dt.DT_Bufor = '') or (@Bufor &lt;&gt; 0))
+							--and dt.DT_KorektaBO = 0				
+				group by a.KKS_KontoOrd,
+					a.KKS_GIDNumer, 
+					a.KKS_SynNumer,
+					a.KKS_Konto,
+					a.KKS_Poziom,
+					a.KKS_Rozrachunkowe,
+					a.KKS_Analityka,
+					a.KKS_SaldoWgObr,
+					a.KKS_TypKonta,
+					a.KKS_Archiwalny
+				) ob
+			group by ob.KKS_KontoOrd,
+				ob.KKS_GIDNumer, 
+				ob.KKS_SynNumer,
+				ob.KKS_Konto,
+				ob.KKS_Poziom,
+				ob.KKS_Rozrachunkowe,
+				ob.KKS_Analityka,
+				ob.KKS_SaldoWgObr,
+				ob.KKS_TypKonta,
+				ob.KKS_Archiwalny
+	)
+	select *
+		,CASE WHEN ODT&lt;&gt;0 OR OCT&lt;&gt;0 OR SDTP&lt;&gt;0 OR SCTP&lt;&gt;0 THEN 1 ELSE 0 END NiezeroweObroty
+		,CASE WHEN SDTK&lt;&gt;0 OR SCTK&lt;&gt;0 THEN 1 ELSE 0 END NiezeroweSalda
+	from OISA
+end
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury OISO_BiezFiltrOkresy"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury OISO_BiezFiltrOkresy */</I><BR>
+GRANT EXECUTE ON CDN.OISO_BiezFiltrOkresy TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie procedury OISO_BiezKonto"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie procedury OISO_BiezKonto */</I><BR>
+IF EXISTS (SELECT name  FROM sysobjects WHERE name = 'OISO_BiezKonto' AND type = 'P')
+  DROP PROCEDURE CDN.OISO_BiezKonto;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury OISO_BiezKonto"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury OISO_BiezKonto */</I><BR>
+CREATE PROCEDURE CDN.OISO_BiezKonto
+  @Konto varchar(50),
+  @Bufor smallint,
+  @PoczatekOOPoczC int,
+  @KoniecOOPoczC int,
+  @OkresID int,
+  @PoczatekC int,
+  @KoniecC int
+AS
+begin
+	;with OISA as (
+			select
+				ob.KKS_KontoOrd,
+				ob.KKS_GIDNumer, 			
+				ob.KKS_SynNumer,
+				ob.KKS_Konto,
+				ob.KKS_Poziom,
+				ob.KKS_Rozrachunkowe,
+				ob.KKS_Analityka,
+				ob.KKS_SaldoWgObr,
+				ob.KKS_TypKonta,
+				ob.KKS_Archiwalny,
+				0 KKS_Rok, 0 KKS_Miesiac,
+				ob.KKS_Analityka Przeliczone,
+
+				sum(
+					case when ob.KKS_SaldoWgObr = 1 then
+						BODT
+					else			
+						case when BODT - BOCT &gt; 0 then BODT - BOCT else 0 end
+					end
+				) BODT,
+
+
+				sum(
+					case when ob.KKS_SaldoWgObr = 1 then
+						BOCT
+					else			
+						case when BODT - BOCT &lt; 0 then BOCT - BODT else 0 end
+					end
+				) BOCT,
+
+
+				sum(ODTP) ODTP,
+				sum(OCTP) OCTP,
+				sum(
+					case when ob.KKS_SaldoWgObr = 1 then
+						BODT + ODTP
+					else				
+						case when BODT - BOCT + ODTP - OCTP &gt; 0 then BODT - BOCT + ODTP - OCTP else 0 end			
+					end
+				) SDTP, 
+				sum(
+					case when ob.KKS_SaldoWgObr = 1 then
+						BOCT + OCTP
+					else
+						case when BODT - BOCT + ODTP - OCTP &lt; 0 then abs(BODT - BOCT + ODTP - OCTP) else 0 end
+					end 
+				) SCTP,
+				sum(ODT) ODT,
+				sum(OCT) OCT,
+				sum(ODTP) + sum(ODT) ODTK,
+				sum(OCTP) + sum(OCT) OCTK,
+				sum(
+					case when ob.KKS_SaldoWgObr = 1 then
+						ODT
+					else
+						case when ODT - OCT &gt; 0 then ODT - OCT else 0 end
+					end
+				) SDT, 
+				sum(
+					case when ob.KKS_SaldoWgObr = 1 then
+						OCT
+					else
+						case when ODT - OCT &lt; 0 then abs(ODT - OCT) else 0 end
+					end 
+				) SCT,
+				sum(
+					case when ob.KKS_SaldoWgObr = 1 then
+						BODT + ODTP + ODT
+					else
+						case when BODT - BOCT + ODTP - OCTP + ODT - OCT &gt; 0 then BODT - BOCT + ODTP - OCTP + ODT - OCT else 0 end
+					end
+				) SDTK, 
+				sum(
+					case when ob.KKS_SaldoWgObr = 1 then
+						BOCT + OCTP + OCT
+					else
+						case when BODT - BOCT + ODTP - OCTP + ODT - OCT &lt; 0 then abs(BODT - BOCT + ODTP - OCTP + ODT - OCT) else 0 end
+					end 
+				) SCTK
+				
+			from (
+				select
+					a.KKS_KontoOrd,
+					a.KKS_GIDNumer, 
+					a.KKS_SynNumer,
+					a.KKS_Konto,
+					a.KKS_Poziom,
+					a.KKS_Rozrachunkowe,
+					a.KKS_Analityka,
+					a.KKS_SaldoWgObr,
+					a.KKS_TypKonta,
+					a.KKS_Archiwalny,
+					sum(case when dt.DT_KorektaBO = 1 and dt.DT_DataDekr &lt;= @KoniecOOPoczC and dt.DT_DC = 1 then dt.DT_Kwota else 0 end) BODT,
+					sum(case when dt.DT_KorektaBO = 1 and dt.DT_DataDekr &lt;= @KoniecOOPoczC and dt.DT_DC = 2 then dt.DT_Kwota else 0 end) BOCT,
+					sum(case when dt.DT_KorektaBO = 0 and dt.DT_DataDekr &lt; @PoczatekC and dt.DT_DC = 1 then dt.DT_Kwota else 0 end) ODTP,
+					sum(case when dt.DT_KorektaBO = 0 and dt.DT_DataDekr &lt; @PoczatekC and dt.DT_DC = 2 then dt.DT_Kwota else 0 end) OCTP,
+					sum(case when dt.DT_KorektaBO = 0 and dt.DT_DataDekr &gt;= @PoczatekC and dt.DT_DC = 1 then dt.DT_Kwota else 0 end) ODT,
+					sum(case when dt.DT_KorektaBO = 0 and dt.DT_DataDekr &gt;= @PoczatekC and dt.DT_DC = 2 then dt.DT_Kwota else 0 end) OCT					
+				from cdn.Konta a 				
+					left join cdn.Dekrety dt 
+						on a.KKS_GIDNumer = dt.DT_KKSNumer 					
+							and (dt.DT_DataDekr Between @PoczatekOOPoczC and @KoniecC)
+							and ((@Bufor = 0 and dt.DT_Bufor = '') or (@Bufor &lt;&gt; 0))
+							--and dt.DT_KorektaBO = 0
+				where a.KKS_OkresID = @OkresID 
+					and (a.KKS_Konto like @Konto)
+				group by a.KKS_KontoOrd,
+					a.KKS_GIDNumer, 
+					a.KKS_SynNumer,
+					a.KKS_Konto,
+					a.KKS_Poziom,
+					a.KKS_Rozrachunkowe,
+					a.KKS_Analityka,
+					a.KKS_SaldoWgObr,
+					a.KKS_TypKonta,
+					a.KKS_Archiwalny
+				) ob
+			group by ob.KKS_KontoOrd,
+				ob.KKS_GIDNumer, 
+				ob.KKS_SynNumer,
+				ob.KKS_Konto,
+				ob.KKS_Poziom,
+				ob.KKS_Rozrachunkowe,
+				ob.KKS_Analityka,
+				ob.KKS_SaldoWgObr,
+				ob.KKS_TypKonta,
+				ob.KKS_Archiwalny
+	)
+	select *
+		,CASE WHEN ODT&lt;&gt;0 OR OCT&lt;&gt;0 OR SDTP&lt;&gt;0 OR SCTP&lt;&gt;0 THEN 1 ELSE 0 END NiezeroweObroty
+		,CASE WHEN SDTK&lt;&gt;0 OR SCTK&lt;&gt;0 THEN 1 ELSE 0 END NiezeroweSalda
+	from OISA
+
+end
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury OISO_BiezKonto"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury OISO_BiezKonto */</I><BR>
+GRANT EXECUTE ON CDN.OISO_BiezKonto TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie procedury OISO_BiezKontoOkresy"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie procedury OISO_BiezKontoOkresy */</I><BR>
+IF EXISTS (SELECT name  FROM sysobjects WHERE name = 'OISO_BiezKontoOkresy' AND type = 'P')
+  DROP PROCEDURE CDN.OISO_BiezKontoOkresy;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury OISO_BiezKontoOkresy"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury OISO_BiezKontoOkresy */</I><BR>
+CREATE PROCEDURE CDN.OISO_BiezKontoOkresy
+  @Konto varchar(50),
+  @Bufor smallint,
+  @PoczatekOOPoczC int,
+  @KoniecOOPoczC int,
+  @OkresID int,
+  @PoczatekC int,
+  @KoniecC int
+AS
+begin
+	;with OISA as (
+			select
+				ob.KKS_KontoOrd,
+				ob.KKS_GIDNumer, 			
+				ob.KKS_SynNumer,
+				ob.KKS_Konto,
+				ob.KKS_Poziom,
+				ob.KKS_Rozrachunkowe,
+				ob.KKS_Analityka,
+				ob.KKS_SaldoWgObr,
+				ob.KKS_TypKonta,
+				ob.KKS_Archiwalny,
+				0 KKS_Rok, 0 KKS_Miesiac,
+				ob.KKS_Analityka Przeliczone,
+
+				sum(
+					case when ob.KKS_SaldoWgObr = 1 then
+						BODT
+					else			
+						case when BODT - BOCT &gt; 0 then BODT - BOCT else 0 end
+					end
+				) BODT,
+
+
+				sum(
+					case when ob.KKS_SaldoWgObr = 1 then
+						BOCT
+					else			
+						case when BODT - BOCT &lt; 0 then BOCT - BODT else 0 end
+					end
+				) BOCT,
+	
+
+				sum(ODTP) ODTP,
+				sum(OCTP) OCTP,
+	
+
+				sum(
+					case when ob.KKS_SaldoWgObr = 1 then
+						BODT + ODTP
+					else				
+						case when BODT - BOCT + ODTP - OCTP &gt; 0 then BODT - BOCT + ODTP - OCTP else 0 end			
+					end
+				) SDTP, 
+	
+				sum(
+					case when ob.KKS_SaldoWgObr = 1 then
+						BOCT + OCTP
+					else
+						case when BODT - BOCT + ODTP - OCTP &lt; 0 then abs(BODT - BOCT + ODTP - OCTP) else 0 end
+					end 
+				) SCTP,
+	
+	
+				sum(ODT) ODT,
+				sum(OCT) OCT,
+
+
+				sum(ODTP) + sum(ODT) ODTK,
+				sum(OCTP) + sum(OCT) OCTK,
+
+
+				sum(
+					case when ob.KKS_SaldoWgObr = 1 then
+						ODT
+					else
+						case when ODT - OCT &gt; 0 then ODT - OCT else 0 end
+					end
+				) SDT, 
+	
+				sum(
+					case when ob.KKS_SaldoWgObr = 1 then
+						OCT
+					else
+						case when ODT - OCT &lt; 0 then abs(ODT - OCT) else 0 end
+					end 
+				) SCT,
+				
+		
+				sum(
+					case when ob.KKS_SaldoWgObr = 1 then
+						BODT + ODTP + ODT
+					else
+						case when BODT - BOCT + ODTP - OCTP + ODT - OCT &gt; 0 then BODT - BOCT + ODTP - OCTP + ODT - OCT else 0 end
+					end
+				) SDTK, 
+	
+				sum(
+					case when ob.KKS_SaldoWgObr = 1 then
+						BOCT + OCTP + OCT
+					else
+						case when BODT - BOCT + ODTP - OCTP + ODT - OCT &lt; 0 then abs(BODT - BOCT + ODTP - OCTP + ODT - OCT) else 0 end
+					end 
+				) SCTK	
+				
+			from (
+				
+				select
+					a.KKS_KontoOrd,
+					a.KKS_GIDNumer, 
+					a.KKS_SynNumer,
+					a.KKS_Konto,
+					a.KKS_Poziom,
+					a.KKS_Rozrachunkowe,
+					a.KKS_Analityka,
+					a.KKS_SaldoWgObr,
+					a.KKS_TypKonta,
+					a.KKS_Archiwalny,
+
+					sum(case when dt.DT_KorektaBO = 1 and dt.DT_DataDekr &lt;= @KoniecOOPoczC and dt.DT_DC = 1 then dt.DT_Kwota else 0 end) BODT,
+					sum(case when dt.DT_KorektaBO = 1 and dt.DT_DataDekr &lt;= @KoniecOOPoczC and dt.DT_DC = 2 then dt.DT_Kwota else 0 end) BOCT,
+				
+					sum(case when dt.DT_KorektaBO = 0 and dt.DT_DataDekr &lt; @PoczatekC and dt.DT_DC = 1 then dt.DT_Kwota else 0 end) ODTP,
+					sum(case when dt.DT_KorektaBO = 0 and dt.DT_DataDekr &lt; @PoczatekC and dt.DT_DC = 2 then dt.DT_Kwota else 0 end) OCTP,
+				
+				
+					sum(case when dt.DT_KorektaBO = 0 and dt.DT_DataDekr &gt;= @PoczatekC and dt.DT_DC = 1 then dt.DT_Kwota else 0 end) ODT,
+					sum(case when dt.DT_KorektaBO = 0 and dt.DT_DataDekr &gt;= @PoczatekC and dt.DT_DC = 2 then dt.DT_Kwota else 0 end) OCT					
+
+				from cdn.Konta a 				
+					left join cdn.KontaNastLinki b
+						on a.KKS_GIDNumer = b.KLI_NastNumer 
+					left join cdn.Okresy o
+						on o.Okr_ID = b.KLI_PoprzOkresID and o.Okr_Poczatek Between @PoczatekOOPoczC and @KoniecC
+					left join cdn.Dekrety dt --
+						on b.KLI_PoprzNumer = dt.DT_KKSNumer 
+							and (dt.DT_DataDekr Between @PoczatekOOPoczC and @KoniecC)
+							and ((@Bufor = 0 and dt.DT_Bufor = '') or (@Bufor &lt;&gt; 0))
+							--and dt.DT_KorektaBO = 0
+				where a.KKS_OkresID = @OkresID 
+					and a.KKS_Konto like @Konto					
+				group by a.KKS_KontoOrd,
+					a.KKS_GIDNumer, 
+					a.KKS_SynNumer,
+					a.KKS_Konto,
+					a.KKS_Poziom,
+					a.KKS_Rozrachunkowe,
+					a.KKS_Analityka,
+					a.KKS_SaldoWgObr,
+					a.KKS_TypKonta,
+					a.KKS_Archiwalny
+			) ob
+			group by ob.KKS_KontoOrd,
+				ob.KKS_GIDNumer, 
+				ob.KKS_SynNumer,
+				ob.KKS_Konto,
+				ob.KKS_Poziom,
+				ob.KKS_Rozrachunkowe,
+				ob.KKS_Analityka,
+				ob.KKS_SaldoWgObr,
+				ob.KKS_TypKonta,
+				ob.KKS_Archiwalny
+	)
+	select *
+		,CASE WHEN ODT&lt;&gt;0 OR OCT&lt;&gt;0 OR SDTP&lt;&gt;0 OR SCTP&lt;&gt;0 THEN 1 ELSE 0 END NiezeroweObroty
+		,CASE WHEN SDTK&lt;&gt;0 OR SCTK&lt;&gt;0 THEN 1 ELSE 0 END NiezeroweSalda
+	from OISA
+end
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury OISO_BiezKontoOkresy"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury OISO_BiezKontoOkresy */</I><BR>
+GRANT EXECUTE ON CDN.OISO_BiezKontoOkresy TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie procedury OISO_BiezNumer"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie procedury OISO_BiezNumer */</I><BR>
+IF EXISTS (SELECT name  FROM sysobjects WHERE name = 'OISO_BiezNumer' AND type = 'P')
+  DROP PROCEDURE CDN.OISO_BiezNumer;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury OISO_BiezNumer"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury OISO_BiezNumer */</I><BR>
+CREATE PROCEDURE CDN.OISO_BiezNumer
+  @KKSGIDNumer  INTEGER,
+  @Bufor smallint,
+  @PoczatekOOPoczC int,
+  @KoniecOOPoczC int,
+  @PoczatekC int,
+  @KoniecC int
+AS
+begin
+
+;with OISA as (
+select
+	KKS_KontoOrd,
+	KKS_GIDNumer,	
+	KKS_SynNumer,
+	KKS_Konto,
+	KKS_Poziom,
+	KKS_Rozrachunkowe, 
+	KKS_Analityka, 
+	KKS_SaldoWgObr,
+	KKS_TypKonta, 
+	KKS_Archiwalny,
+	0 Rok, --rok
+	0 Miesiac, --miesiac
+	1 Przeliczone,
+	
+
+	case when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+		BODT
+	else			
+		case when BODT - BOCT &gt; 0 then BODT - BOCT else 0 end
+	end BODT,
+
+
+	case when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+		BOCT
+	else			
+		case when BODT - BOCT &lt; 0 then BOCT - BODT else 0 end
+	end BOCT,
+
+	ODTP,
+	OCTP,
+	
+
+	case when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+		SDTP
+	else
+		case when SDTP &gt; SCTP then SDTP - SCTP else 0 end
+	end SDTP,
+
+	case when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+		SCTP
+	else
+		case when SDTP &lt; SCTP then abs(SDTP - SCTP) else 0 end
+	end SCTP,
+
+	ODT,
+	OCT,
+
+
+	ODTP + ODT as ODTK,
+	OCTP + OCT as OCTK,
+
+
+	case when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+		ODT
+	else
+		case when ODT &gt; OCT then ODT - OCT else 0 end
+	end SDT,	
+
+	case when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+		OCT
+	else
+		case when ODT &lt; OCT then OCT - ODT else 0 end
+	end SCT,
+
+
+	case when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+		SDTK
+	else
+		case when SDTK &gt; SCTK then SDTK - SCTK else 0 end
+	end SDTK,
+
+	case when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+		SCTK
+	else
+		case when SDTK &lt; SCTK then SCTK - SDTK else 0 end
+	end SCTK	
+
+from (
+	select
+		ob.KKS_KontoOrd,
+		ob.KKS_GIDNumer, 
+		ob.KKS_SynNumer,
+		ob.KKS_Konto,
+		ob.KKS_Poziom,
+		ob.KKS_Rozrachunkowe, 
+		ob.KKS_Analityka, 
+		ob.KKS_SaldoWgObr,
+		ob.KKS_TypKonta, 
+		ob.KKS_Archiwalny,
+
+
+		sum(
+			case when ob.KKS_SaldoWgObr = 1 then
+				BODT
+			else			
+				case when BODT - BOCT &gt; 0 then BODT - BOCT else 0 end
+			end
+		) BODT,
+
+
+		sum(
+			case when ob.KKS_SaldoWgObr = 1 then
+				BOCT
+			else			
+				case when BODT - BOCT &lt; 0 then BOCT - BODT else 0 end
+			end
+		) BOCT,
+
+
+		sum(ODTP) ODTP,
+		sum(OCTP) OCTP,
+
+
+		sum(
+			case when ob.KKS_SaldoWgObr = 1 then
+				BODT + ODTP
+			else				
+				case when BODT - BOCT + ODTP - OCTP &gt; 0 then BODT - BOCT + ODTP - OCTP else 0 end			
+			end
+		) SDTP, 
+
+		sum(
+			case when ob.KKS_SaldoWgObr = 1 then
+				BOCT + OCTP
+			else
+				case when BODT - BOCT + ODTP - OCTP &lt; 0 then abs(BODT - BOCT + ODTP - OCTP) else 0 end
+			end 
+		) SCTP,
+
+
+		sum(ODT) ODT,
+		sum(OCT) OCT,
+		
+
+		sum(
+			case when ob.KKS_SaldoWgObr = 1 then
+				BODT + ODTP + ODT
+			else
+				case when BODT - BOCT + ODTP - OCTP + ODT - OCT &gt; 0 then BODT - BOCT + ODTP - OCTP + ODT - OCT else 0 end
+			end
+		) SDTK, 
+
+		sum(
+			case when ob.KKS_SaldoWgObr = 1 then
+				BOCT + OCTP + OCT
+			else
+				case when BODT - BOCT + ODTP - OCTP + ODT - OCT &lt; 0 then abs(BODT - BOCT + ODTP - OCTP + ODT - OCT) else 0 end
+			end 
+		) SCTK
+
+	from (
+		
+		select	
+			a.KKS_KontoOrd,
+			a.KKS_GIDNumer, 
+			a.KKS_SynNumer,
+			a.KKS_Konto,
+			a.KKS_Poziom,
+			a.KKS_Rozrachunkowe, 
+			a.KKS_Analityka, 
+			a.KKS_SaldoWgObr,
+			a.KKS_TypKonta, 
+			a.KKS_Archiwalny,
+			
+			
+			sum(case when dt.DT_KorektaBO &lt;&gt; 0 and dt.DT_DataDekr &lt;= @KoniecOOPoczC and dt.DT_DC = 1 then dt.DT_Kwota else 0 end) BODT,
+			sum(case when dt.DT_KorektaBO &lt;&gt; 0 and dt.DT_DataDekr &lt;= @KoniecOOPoczC and dt.DT_DC = 2 then dt.DT_Kwota else 0 end) BOCT,
+		
+			sum(case when dt.DT_KorektaBO = 0 and dt.DT_DataDekr &lt; @PoczatekC and dt.DT_DC = 1 then dt.DT_Kwota else 0 end) ODTP,
+			sum(case when dt.DT_KorektaBO = 0 and dt.DT_DataDekr &lt; @PoczatekC and dt.DT_DC = 2 then dt.DT_Kwota else 0 end) OCTP,
+		
+		
+			sum(case when dt.DT_KorektaBO = 0 and dt.DT_DataDekr &gt;= @PoczatekC and dt.DT_DC = 1 then dt.DT_Kwota else 0 end) ODT,
+			sum(case when dt.DT_KorektaBO = 0 and dt.DT_DataDekr &gt;= @PoczatekC and dt.DT_DC = 2 then dt.DT_Kwota else 0 end) OCT
+
+		from cdn.Konta a 
+			join cdn.KontaLinki kl
+				on a.KKS_GIDNumer = kl.KKL_SynNumer
+			join cdn.Konta kA
+				on kl.KKL_KKSNumer = kA.KKS_GIDNumer and kA.KKS_Analityka = 1
+			left join cdn.Dekrety dt 
+				on kl.KKL_KKSNumer = dt.DT_KKSNumer 
+					and (dt.DT_DataDekr Between @PoczatekOOPoczC and @KoniecC)
+					and ((@Bufor = 0 and dt.DT_Bufor = '') or (@Bufor &lt;&gt; 0))
+					--and dt.DT_KorektaBO = 0
+		where a.KKS_GIDNumer = @KKSGIDNumer		
+		group by a.KKS_KontoOrd,
+			a.KKS_GIDNumer, 
+			a.KKS_SynNumer,
+			a.KKS_Konto,
+			a.KKS_Poziom,
+			a.KKS_Rozrachunkowe, 
+			a.KKS_Analityka, 
+			a.KKS_SaldoWgObr,
+			a.KKS_TypKonta,
+			a.KKS_Archiwalny,
+			kl.KKL_KKSNumer
+		) ob
+	group by 
+		ob.KKS_KontoOrd,
+		ob.KKS_GIDNumer, 
+		ob.KKS_SynNumer,
+		ob.KKS_Konto,
+		ob.KKS_Poziom,
+		ob.KKS_Rozrachunkowe, 
+		ob.KKS_Analityka, 
+		ob.KKS_SaldoWgObr,
+		ob.KKS_TypKonta,
+		ob.KKS_Archiwalny
+	) ob1
+)
+	select *
+		,CASE WHEN ODT&lt;&gt;0 OR OCT&lt;&gt;0 OR SDTP&lt;&gt;0 OR SCTP&lt;&gt;0 THEN 1 ELSE 0 END NiezeroweObroty
+		,CASE WHEN SDTK&lt;&gt;0 OR SCTK&lt;&gt;0 THEN 1 ELSE 0 END NiezeroweSalda
+	from OISA
+end
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury OISO_BiezNumer"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury OISO_BiezNumer */</I><BR>
+GRANT EXECUTE ON CDN.OISO_BiezNumer TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie procedury OISO_BiezNumerOkresy"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie procedury OISO_BiezNumerOkresy */</I><BR>
+IF EXISTS (SELECT name  FROM sysobjects WHERE name = 'OISO_BiezNumerOkresy' AND type = 'P')
+  DROP PROCEDURE CDN.OISO_BiezNumerOkresy;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury OISO_BiezNumerOkresy"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury OISO_BiezNumerOkresy */</I><BR>
+CREATE PROCEDURE CDN.OISO_BiezNumerOkresy
+  @KKSGIDNumer  INTEGER,
+  @Bufor smallint,
+  @PoczatekOOPoczC int,
+  @KoniecOOPoczC int,
+  @PoczatekC int,
+  @KoniecC int
+AS
+begin
+
+;with OISA as (
+select
+	KKS_KontoOrd,
+	KKS_GIDNumer, 
+	KKS_SynNumer,
+	KKS_Konto,
+	KKS_Poziom,
+	KKS_Rozrachunkowe, 
+	KKS_Analityka, 
+	KKS_SaldoWgObr,
+	KKS_TypKonta, 
+	KKS_Archiwalny,
+	
+	0 Rok, --rok
+	0 Miesiac, --miesiac
+	1 Przeliczone,
+	
+
+	case when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+		BODT
+	else			
+		case when BODT - BOCT &gt; 0 then BODT - BOCT else 0 end
+	end BODT,
+
+
+	case when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+		BOCT
+	else			
+		case when BODT - BOCT &lt; 0 then BOCT - BODT else 0 end
+	end BOCT,
+
+
+	ODTP,
+	OCTP,
+	
+
+	case when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+		SDTP
+	else
+		case when SDTP &gt; SCTP then SDTP - SCTP else 0 end
+	end SDTP,
+
+	case when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+		SCTP
+	else
+		case when SDTP &lt; SCTP then abs(SDTP - SCTP) else 0 end
+	end SCTP,
+
+	ODT,
+	OCT,
+
+
+	ODTP + ODT as ODTK,
+	OCTP + OCT as OCTK,
+
+
+	case when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+		ODT
+	else
+		case when ODT &gt; OCT then ODT - OCT else 0 end
+	end SDT,	
+
+	case when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+		OCT
+	else
+		case when ODT &lt; OCT then OCT - ODT else 0 end
+	end SCT,
+
+
+	case when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+		SDTK
+	else
+		case when SDTK &gt; SCTK then SDTK - SCTK else 0 end
+	end SDTK,
+
+	case when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+		SCTK
+	else
+		case when SDTK &lt; SCTK then SCTK - SDTK else 0 end
+	end SCTK
+
+from (
+	select
+		ob.KKS_KontoOrd,
+		ob.KKS_GIDNumer, 
+		ob.KKS_SynNumer,
+		ob.KKS_Konto,
+		ob.KKS_Poziom,
+		ob.KKS_Rozrachunkowe, 
+		ob.KKS_Analityka, 
+		ob.KKS_SaldoWgObr,
+		ob.KKS_TypKonta, 
+		ob.KKS_Archiwalny,
+
+		sum(
+			case when ob.KKS_SaldoWgObr = 1 then
+				BODT
+			else			
+				case when BODT - BOCT &gt; 0 then BODT - BOCT else 0 end
+			end
+		) BODT,
+
+
+		sum(
+			case when ob.KKS_SaldoWgObr = 1 then
+				BOCT
+			else			
+				case when BODT - BOCT &lt; 0 then BOCT - BODT else 0 end
+			end
+		) BOCT,
+
+
+		sum(ODTP) ODTP,
+		sum(OCTP) OCTP,
+
+
+		sum(
+			case when ob.KKS_SaldoWgObr = 1 then
+				BODT + ODTP
+			else				
+				case when BODT - BOCT + ODTP - OCTP &gt; 0 then BODT - BOCT + ODTP - OCTP else 0 end			
+			end
+		) SDTP, 
+
+		sum(
+			case when ob.KKS_SaldoWgObr = 1 then
+				BOCT + OCTP
+			else
+				case when BODT - BOCT + ODTP - OCTP &lt; 0 then abs(BODT - BOCT + ODTP - OCTP) else 0 end
+			end 
+		) SCTP,
+
+
+		sum(ODT) ODT,
+		sum(OCT) OCT,
+		
+
+		sum(
+			case when ob.KKS_SaldoWgObr = 1 then
+				BODT + ODTP + ODT
+			else
+				case when BODT - BOCT + ODTP - OCTP + ODT - OCT &gt; 0 then BODT - BOCT + ODTP - OCTP + ODT - OCT else 0 end
+			end
+		) SDTK, 
+
+		sum(
+			case when ob.KKS_SaldoWgObr = 1 then
+				BOCT + OCTP + OCT
+			else
+				case when BODT - BOCT + ODTP - OCTP + ODT - OCT &lt; 0 then abs(BODT - BOCT + ODTP - OCTP + ODT - OCT) else 0 end
+			end 
+		) SCTK
+
+	from (
+		
+		select
+			a.KKS_KontoOrd,
+			a.KKS_GIDNumer, 
+			a.KKS_SynNumer,
+			a.KKS_Konto,
+			a.KKS_Poziom,
+			a.KKS_Rozrachunkowe, 
+			a.KKS_Analityka, 
+			a.KKS_SaldoWgObr,
+			a.KKS_TypKonta, 
+			a.KKS_Archiwalny,
+
+			sum(case when dt.DT_KorektaBO = 1 and dt.DT_DataDekr &lt;= @KoniecOOPoczC and dt.DT_DC = 1 then dt.DT_Kwota else 0 end) BODT,
+			sum(case when dt.DT_KorektaBO = 1 and dt.DT_DataDekr &lt;= @KoniecOOPoczC and dt.DT_DC = 2 then dt.DT_Kwota else 0 end) BOCT,
+		
+			sum(case when dt.DT_KorektaBO = 0 and dt.DT_DataDekr &lt; @PoczatekC and dt.DT_DC = 1 then dt.DT_Kwota else 0 end) ODTP,
+			sum(case when dt.DT_KorektaBO = 0 and dt.DT_DataDekr &lt; @PoczatekC and dt.DT_DC = 2 then dt.DT_Kwota else 0 end) OCTP,
+		
+		
+			sum(case when dt.DT_KorektaBO = 0 and dt.DT_DataDekr &gt;= @PoczatekC and dt.DT_DC = 1 then dt.DT_Kwota else 0 end) ODT,
+			sum(case when dt.DT_KorektaBO = 0 and dt.DT_DataDekr &gt;= @PoczatekC and dt.DT_DC = 2 then dt.DT_Kwota else 0 end) OCT
+
+
+		from cdn.Konta a 
+			join cdn.KontaLinki kl
+				on a.KKS_GIDNumer = kl.KKL_SynNumer 
+			join cdn.Konta kA
+				on kl.KKL_KKSNumer = kA.KKS_GIDNumer and kA.KKS_Analityka = 1
+			join cdn.KontaNastLinki b
+				on kl.KKL_KKSNumer = b.KLI_NastNumer 
+			left join cdn.Okresy o
+				on o.Okr_ID = b.KLI_PoprzOkresID and o.Okr_Poczatek Between @PoczatekOOPoczC and @KoniecC
+			left join cdn.Dekrety dt 
+				on b.KLI_PoprzNumer = dt.DT_KKSNumer 
+					and (dt.DT_DataDekr Between @PoczatekOOPoczC and @KoniecC)
+					and ((@Bufor = 0 and dt.DT_Bufor = '') or (@Bufor &lt;&gt; 0))
+					--and dt.DT_KorektaBO = 0
+		where a.KKS_GIDNumer = @KKSGIDNumer			
+		group by a.KKS_KontoOrd,
+			a.KKS_GIDNumer, 
+			a.KKS_SynNumer,
+			a.KKS_Konto,
+			a.KKS_Poziom,
+			a.KKS_Rozrachunkowe, 
+			a.KKS_Analityka, 
+			a.KKS_SaldoWgObr,
+			a.KKS_TypKonta,  
+			a.KKS_Archiwalny,
+			kl.KKL_KKSNumer
+		) ob
+	group by ob.KKS_KontoOrd,
+		ob.KKS_GIDNumer, 
+		ob.KKS_SynNumer,
+		ob.KKS_Konto,
+		ob.KKS_Poziom,
+		ob.KKS_Rozrachunkowe, 
+		ob.KKS_Analityka, 
+		ob.KKS_SaldoWgObr,
+		ob.KKS_TypKonta,
+		ob.KKS_Archiwalny
+	) ob1
+)
+	select *
+		,CASE WHEN ODT&lt;&gt;0 OR OCT&lt;&gt;0 OR SDTP&lt;&gt;0 OR SCTP&lt;&gt;0 THEN 1 ELSE 0 END NiezeroweObroty
+		,CASE WHEN SDTK&lt;&gt;0 OR SCTK&lt;&gt;0 THEN 1 ELSE 0 END NiezeroweSalda
+	from OISA
+
+end
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury OISO_BiezNumerOkresy"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury OISO_BiezNumerOkresy */</I><BR>
+GRANT EXECUTE ON CDN.OISO_BiezNumerOkresy TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie procedury OISO_StanyFiltr"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie procedury OISO_StanyFiltr */</I><BR>
+IF EXISTS (SELECT name  FROM sysobjects WHERE name = 'OISO_StanyFiltr' AND type = 'P')
+  DROP PROCEDURE CDN.OISO_StanyFiltr;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury OISO_StanyFiltr"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury OISO_StanyFiltr */</I><BR>
+CREATE PROCEDURE CDN.OISO_StanyFiltr
+  @Bufor smallint,
+  @PoczRok smallint,
+  @PoczMiesiac smallint,
+  @KoniecRok smallint,
+  @KoniecMiesiac smallint
+AS
+begin
+;with OISA as (
+		select 
+			k1.KKS_KontoOrd,
+			k1.KKS_GIDNumer,			
+			k1.KKS_SynNumer,
+			k1.KKS_Konto,
+			k1.KKS_Poziom,
+			k1.KKS_Rozrachunkowe, 
+			k1.KKS_Analityka, 
+			k1.KKS_SaldoWgObr,
+			k1.KKS_TypKonta, 
+			k1.KKS_Archiwalny,
+			0 Rok,0 Miesiac,
+			CASE WHEN p.ODTP IS NULL THEN 0 ELSE k1.KKS_Analityka END Przeliczone, 
+
+			p.BODT, 
+			p.BOCT, 
+
+			p.ODTP,
+			p.OCTP,
+
+			p.SDTP,
+			p.SCTP,
+
+			k.ODTK - p.ODTP as ODT,
+			k.OCTK - p.OCTP as OCT,
+
+				
+			k.ODTK ODTK,
+			k.OCTK OCTK,
+
+			case when k.SDTK - p.SDTP &gt; 0 then k.SDTK - p.SDTP else 0 end SDT,
+			case when k.SCTK - p.SCTP &gt; 0 then k.SCTK - p.SCTP else 0 end SCT,
+
+			k.SDTK SDTK,
+			k.SCTK SCTK			
+
+		from cdn.Konta k1
+			left join
+				(
+				select 
+					KKS_GIDNumer,
+					BODT,
+					BOCT,
+
+					ODTP,
+					OCTP,
+					
+			
+					case when KKS_SaldoWgObr = 1 then
+						BODT + ODTP
+					else
+						case when BODT + ODTP - (BOCT + OCTP) &gt; 0 then BODT + ODTP - (BOCT + OCTP) else 0 end
+					end SDTP, 
+
+					case when KKS_SaldoWgObr = 1 then
+						BOCT + OCTP
+					else
+						case when BODT + ODTP - (BOCT + OCTP) &lt; 0 then abs(BODT + ODTP - (BOCT + OCTP)) else 0 end
+					end SCTP
+
+				from (
+					select 
+						KKS_GIDNumer,
+						KKS_SaldoWgObr,
+
+						CASE when KKS_SaldoWgObr = 1 then --or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+							BODT
+						else
+							CASE WHEN BODT-BOCT&gt;=0 THEN BODT-BOCT ELSE 0 END				
+						END BODT,
+
+						
+						CASE when KKS_SaldoWgObr = 1 then --or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+							BOCT
+						else
+							CASE WHEN BODT-BOCT&lt;0 THEN BOCT-BODT ELSE 0 END				
+						END BOCT,
+			
+	
+						ODTK - ODT as ODTP,
+						OCTK - OCT as OCTP		
+							
+					from  
+						(				
+						select		
+							a.KKS_GIDNumer,
+							a.KKS_Rozrachunkowe,
+							a.KKS_Analityka,
+							a.KKS_SaldoWgObr,
+							a.KKS_TypKonta, 
+	
+								
+							sum(a.KKS_BODebet) BODT,
+							sum(a.KKS_BOCredit) BOCT,
+
+							sum(case when @Bufor = 0 then DTS_ObrotyDebet else DTS_ObrotyDebetBuf end) ODT,
+							sum(case when @Bufor = 0 then DTS_ObrotyCredit else DTS_ObrotyCreditBuf end) OCT,
+
+							sum(case when @Bufor = 0 then DTS_ObrotyNarDebet else DTS_ObrotyNarDebetBuf end) ODTK,
+							sum(case when @Bufor = 0 then DTS_ObrotyNarCredit else DTS_ObrotyNarCreditBuf end) OCTK
+										
+						from cdn.Konta a
+							join #tmpKonta t
+								on a.KKS_GIDNumer = t.KKS_GIDNumer
+							join cdn.Stany
+								on a.KKS_GIDNumer = DTS_KKSNumer
+								and DTS_RokMiesiac = @PoczRok*100+ @PoczMiesiac
+						group by a.KKS_GIDNumer,
+							a.KKS_Rozrachunkowe, 
+							a.KKS_Analityka, 
+							a.KKS_SaldoWgObr,
+							a.KKS_TypKonta
+						) p0					
+					) p1						
+				) p
+				on k1.KKS_GIDNumer = p.KKS_GIDNumer 
+
+			left join
+				(
+				select 
+					KKS_GIDNumer,
+					
+					ODTK,
+					OCTK,
+				
+				
+					case when KKS_SaldoWgObr = 1 then
+						BODT + ODTK
+					else
+						case when BODT + ODTK - (BOCT + OCTK) &gt; 0 then BODT + ODTK - (BOCT + OCTK) else 0 end
+					end SDTK, 
+
+					case when KKS_SaldoWgObr = 1 then
+						BOCT + OCTK
+					else
+						case when BODT + ODTK - (BOCT + OCTK) &lt; 0 then abs(BODT + ODTK - (BOCT + OCTK)) else 0 end
+					end SCTK
+
+				from (
+					select 
+						KKS_GIDNumer,
+						KKS_SaldoWgObr,
+	
+						CASE when KKS_SaldoWgObr = 1 then --or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+							BODT
+						else
+							CASE WHEN BODT-BOCT&gt;=0 THEN BODT-BOCT ELSE 0 END				
+						END BODT,
+
+
+						CASE when KKS_SaldoWgObr = 1 then --or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+							BOCT
+						else
+							CASE WHEN BODT-BOCT&lt;0 THEN BOCT-BODT ELSE 0 END				
+						END BOCT,
+			
+						
+						ODTK,
+						OCTK
+					from  
+						(				
+						select		 
+							a.KKS_GIDNumer,
+							a.KKS_Rozrachunkowe, 
+							a.KKS_Analityka, 
+							a.KKS_SaldoWgObr,
+							a.KKS_TypKonta, 
+
+							sum(a.KKS_BODebet) BODT,
+							sum(a.KKS_BOCredit) BOCT,		
+
+							sum(case when @Bufor = 0 then DTS_ObrotyNarDebet else DTS_ObrotyNarDebetBuf end) ODTK,
+							sum(case when @Bufor = 0 then DTS_ObrotyNarCredit else DTS_ObrotyNarCreditBuf end) OCTK
+			
+						from cdn.Konta a
+							join #tmpKonta t
+								on a.KKS_GIDNumer = t.KKS_GIDNumer						
+							join cdn.Stany
+								on a.KKS_GIDNumer = DTS_KKSNumer
+								and DTS_RokMiesiac = @KoniecRok*100+ @KoniecMiesiac
+						group by a.KKS_GIDNumer,
+							a.KKS_Rozrachunkowe, 
+							a.KKS_Analityka, 
+							a.KKS_SaldoWgObr,
+							a.KKS_TypKonta
+							
+						) k0							
+					) k5						
+				) k
+				on k1.KKS_GIDNumer = k.KKS_GIDNumer		
+			join #tmpKonta t
+				on k1.KKS_GIDNumer = t.KKS_GIDNumer
+)
+	select *
+		,CASE WHEN ODT&lt;&gt;0 OR OCT&lt;&gt;0 OR SDTP&lt;&gt;0 OR SCTP&lt;&gt;0 THEN 1 ELSE 0 END NiezeroweObroty
+		,CASE WHEN SDTK&lt;&gt;0 OR SCTK&lt;&gt;0 THEN 1 ELSE 0 END NiezeroweSalda
+	from OISA
+
+end
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury OISO_StanyFiltr"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury OISO_StanyFiltr */</I><BR>
+GRANT EXECUTE ON CDN.OISO_StanyFiltr TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie procedury OISO_StanyKonto"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie procedury OISO_StanyKonto */</I><BR>
+IF EXISTS (SELECT name  FROM sysobjects WHERE name = 'OISO_StanyKonto' AND type = 'P')
+  DROP PROCEDURE CDN.OISO_StanyKonto;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury OISO_StanyKonto"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury OISO_StanyKonto */</I><BR>
+CREATE PROCEDURE CDN.OISO_StanyKonto
+  @Konto varchar(50),
+  @Bufor smallint,
+  @OkresIDPoczatek int,
+  @PoczRok smallint,
+  @PoczMiesiac smallint,
+  @KoniecRok smallint,
+  @KoniecMiesiac smallint
+AS
+begin
+	;with OISA as (
+		select 
+			k1.KKS_KontoOrd,
+			k1.KKS_GIDNumer,		
+			k1.KKS_SynNumer,
+			k1.KKS_Konto,
+			k1.KKS_Poziom,
+			k1.KKS_Rozrachunkowe, 
+			k1.KKS_Analityka, 
+			k1.KKS_SaldoWgObr,
+			k1.KKS_TypKonta, 
+			k1.KKS_Archiwalny,
+			0 KKS_Rok, 0 KKS_Miesiac,			
+			CASE WHEN p.ODTP IS NULL THEN 0 ELSE k1.KKS_Analityka END Przeliczone, 
+
+			p.BODT, 
+			p.BOCT, 
+
+			p.ODTP,
+			p.OCTP,
+
+			p.SDTP,
+			p.SCTP,
+
+			k.ODTK - p.ODTP as ODT,
+			k.OCTK - p.OCTP as OCT,
+
+				
+			k.ODTK ODTK,
+			k.OCTK OCTK,
+
+			case when k.SDTK - p.SDTP &gt; 0 then k.SDTK - p.SDTP else 0 end SDT,
+			case when k.SCTK - p.SCTP &gt; 0 then k.SCTK - p.SCTP else 0 end SCT,
+
+			k.SDTK SDTK,
+			k.SCTK SCTK			
+
+		from cdn.Konta k1
+			left join
+				(
+				select 
+					KKS_GIDNumer,
+					BODT,
+					BOCT,
+
+					ODTP,
+					OCTP,
+					
+			
+					case when KKS_SaldoWgObr = 1 then
+						BODT + ODTP
+					else
+						case when BODT + ODTP - (BOCT + OCTP) &gt; 0 then BODT + ODTP - (BOCT + OCTP) else 0 end
+					end SDTP, 
+
+					case when KKS_SaldoWgObr = 1 then
+						BOCT + OCTP
+					else
+						case when BODT + ODTP - (BOCT + OCTP) &lt; 0 then abs(BODT + ODTP - (BOCT + OCTP)) else 0 end
+					end SCTP
+
+				from (
+					select 
+						KKS_GIDNumer,
+						KKS_SaldoWgObr,
+
+						CASE when KKS_SaldoWgObr = 1 then --or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+							BODT
+						else
+							CASE WHEN BODT-BOCT&gt;=0 THEN BODT-BOCT ELSE 0 END				
+						END BODT,
+
+						
+						CASE when KKS_SaldoWgObr = 1 then --or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+							BOCT
+						else
+							CASE WHEN BODT-BOCT&lt;0 THEN BOCT-BODT ELSE 0 END				
+						END BOCT,
+			
+	
+						ODTK - ODT as ODTP,
+						OCTK - OCT as OCTP		
+							
+					from  
+						(				
+						select		
+							KKS_GIDNumer,
+							KKS_Rozrachunkowe,
+							KKS_Analityka,
+							KKS_SaldoWgObr,
+							KKS_TypKonta, 
+	
+								
+							sum(KKS_BODebet) BODT,
+							sum(KKS_BOCredit) BOCT,
+
+							sum(case when @Bufor = 0 then DTS_ObrotyDebet else DTS_ObrotyDebetBuf end) ODT,
+							sum(case when @Bufor = 0 then DTS_ObrotyCredit else DTS_ObrotyCreditBuf end) OCT,
+
+							sum(case when @Bufor = 0 then DTS_ObrotyNarDebet else DTS_ObrotyNarDebetBuf end) ODTK,
+							sum(case when @Bufor = 0 then DTS_ObrotyNarCredit else DTS_ObrotyNarCreditBuf end) OCTK
+										
+						from cdn.Konta 						
+							join cdn.Stany
+								on KKS_GIDNumer = DTS_KKSNumer
+						where KKS_Konto like @Konto and KKS_OkresID = @OkresIDPoczatek
+							and DTS_RokMiesiac = @PoczRok*100+ @PoczMiesiac
+						group by KKS_GIDNumer,
+							KKS_Rozrachunkowe, 
+							KKS_Analityka, 
+							KKS_SaldoWgObr,
+							KKS_TypKonta
+						) p0					
+					) p1						
+				) p
+				on k1.KKS_GIDNumer = p.KKS_GIDNumer 
+
+			left join
+				(
+				select 
+					KKS_GIDNumer,
+					
+					ODTK,
+					OCTK,
+				
+				
+					case when KKS_SaldoWgObr = 1 then
+						BODT + ODTK
+					else
+						case when BODT + ODTK - (BOCT + OCTK) &gt; 0 then BODT + ODTK - (BOCT + OCTK) else 0 end
+					end SDTK, 
+
+					case when KKS_SaldoWgObr = 1 then
+						BOCT + OCTK
+					else
+						case when BODT + ODTK - (BOCT + OCTK) &lt; 0 then abs(BODT + ODTK - (BOCT + OCTK)) else 0 end
+					end SCTK
+
+				from (
+					select 
+						KKS_GIDNumer,
+						KKS_SaldoWgObr,
+	
+						CASE when KKS_SaldoWgObr = 1 then --or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+							BODT
+						else
+							CASE WHEN BODT-BOCT&gt;=0 THEN BODT-BOCT ELSE 0 END				
+						END BODT,
+
+
+						CASE when KKS_SaldoWgObr = 1 then --or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+							BOCT
+						else
+							CASE WHEN BODT-BOCT&lt;0 THEN BOCT-BODT ELSE 0 END				
+						END BOCT,
+			
+						
+						ODTK,
+						OCTK
+					from  
+						(				
+						select		 
+							KKS_GIDNumer,
+							KKS_Rozrachunkowe, 
+							KKS_Analityka, 
+							KKS_SaldoWgObr,
+							KKS_TypKonta, 
+
+							sum(KKS_BODebet) BODT,
+							sum(KKS_BOCredit) BOCT,		
+
+							sum(case when @Bufor = 0 then DTS_ObrotyNarDebet else DTS_ObrotyNarDebetBuf end) ODTK,
+							sum(case when @Bufor = 0 then DTS_ObrotyNarCredit else DTS_ObrotyNarCreditBuf end) OCTK
+			
+						from cdn.Konta 						
+							join cdn.Stany
+								on KKS_GIDNumer = DTS_KKSNumer
+						where KKS_Konto like @Konto and KKS_OkresID = @OkresIDPoczatek
+							and DTS_RokMiesiac = @KoniecRok*100+ @KoniecMiesiac
+						group by KKS_GIDNumer,
+							KKS_Rozrachunkowe, 
+							KKS_Analityka, 
+							KKS_SaldoWgObr,
+							KKS_TypKonta
+							
+						) k0							
+					) k5						
+				) k
+				on k1.KKS_GIDNumer = k.KKS_GIDNumer
+		where k1.KKS_Konto like @Konto and k1.KKS_OkresID = @OkresIDPoczatek
+)
+	select *
+		,CASE WHEN ODT&lt;&gt;0 OR OCT&lt;&gt;0 OR SDTP&lt;&gt;0 OR SCTP&lt;&gt;0 THEN 1 ELSE 0 END NiezeroweObroty
+		,CASE WHEN SDTK&lt;&gt;0 OR SCTK&lt;&gt;0 THEN 1 ELSE 0 END NiezeroweSalda
+	from OISA
+end
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury OISO_StanyKonto"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury OISO_StanyKonto */</I><BR>
+GRANT EXECUTE ON CDN.OISO_StanyKonto TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie procedury OISO_StanyNumer"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie procedury OISO_StanyNumer */</I><BR>
+IF EXISTS (SELECT name  FROM sysobjects WHERE name = 'OISO_StanyNumer' AND type = 'P')
+  DROP PROCEDURE CDN.OISO_StanyNumer;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury OISO_StanyNumer"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury OISO_StanyNumer */</I><BR>
+CREATE PROCEDURE CDN.OISO_StanyNumer
+  @KKSGIDNumer  INTEGER,
+  @Bufor smallint,
+  @PoczRok smallint,
+  @PoczMiesiac smallint,
+  @KoniecRok smallint,
+  @KoniecMiesiac smallint
+AS
+begin
+;with OISA as (
+select 
+	KKS_KontoOrd,
+	KKS_GIDNumer,
+	KKS_SynNumer,
+	KKS_Konto,
+	KKS_Poziom,
+	KKS_Rozrachunkowe, 
+	KKS_Analityka, 
+	KKS_SaldoWgObr,
+	KKS_TypKonta,
+	KKS_Archiwalny, 
+	0 Rok,
+	0 Miesiac,
+	CASE WHEN ODT IS NULL THEN 0 ELSE 1 END Przeliczone,
+
+
+	BODT, 
+	BOCT, 
+
+	ODTP,
+	OCTP,
+
+	case when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+		SDTP
+	else
+		case when SDTP&gt;SCTP then SDTP-(SCTP) else 0 end
+	end SDTP,
+
+	case when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+		SCTP
+	else
+		case when SDTP&lt;SCTP then abs(SDTP-(SCTP)) else 0 end
+	end SCTP,
+
+	ODT,
+	OCT,
+
+	ODTK,
+	OCTK,
+
+
+	case when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+		ODT
+	else
+		case when ODT&gt;OCT then ODT-OCT else 0 end
+	end SDT,
+
+	case when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+		OCT
+	else
+		case when ODT&lt;OCT then OCT-ODT else 0 end
+	end SCT,
+
+
+	case when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+		SDTK
+	else
+		case when SDTK&gt;SCTK then SDTK-(SCTK) else 0 end
+	end SDTK,
+
+	case when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+		SCTK
+	else
+		case when SDTK&lt;SCTK then abs(SDTK-(SCTK)) else 0 end
+	end SCTK	
+from (
+	select 
+		k1.KKS_KontoOrd,
+		k1.KKS_GIDNumer, 
+		k1.KKS_SynNumer,
+		k1.KKS_Konto,
+		k1.KKS_Poziom,
+		k1.KKS_Rozrachunkowe, 
+		k1.KKS_Analityka, 
+		k1.KKS_SaldoWgObr,
+		k1.KKS_TypKonta, 
+		k1.KKS_Archiwalny,
+
+
+		p.BODT, 
+		p.BOCT, 
+
+		p.ODTP,
+		p.OCTP,
+
+		p.SDTP,
+		p.SCTP,
+
+		k.ODTK - p.ODTP as ODT,
+		k.OCTK - p.OCTP as OCT,
+
+			
+		k.ODTK ODTK,
+		k.OCTK OCTK,
+
+		k.SDTK SDTK,
+		k.SCTK SCTK
+
+
+	from cdn.Konta k1
+		left join
+			(
+			select 
+				KKL_SynNumer,
+				sum(BODT) BODT,
+				sum(BOCT) BOCT,
+
+				sum(ODTP) ODTP,
+				sum(OCTP) OCTP,
+				
+				sum(
+					CASE when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+						BODT + ODTP
+					else
+						case when BODT + ODTP - (BOCT + OCTP) &gt; 0 then BODT + ODTP - (BOCT + OCTP) else 0 end
+					end 
+				) SDTP, 
+
+				sum(
+					CASE when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+						BOCT + OCTP
+					else
+						case when BODT + ODTP - (BOCT + OCTP) &lt; 0 then abs(BODT + ODTP - (BOCT + OCTP)) else 0 end
+					end
+				) SCTP
+
+			from (
+				select 
+					KKL_SynNumer,
+					KKS_Rozrachunkowe,
+					KKS_Analityka,
+					KKS_SaldoWgObr,
+					KKS_TypKonta, 
+
+					CASE when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+						BODT
+					else
+						CASE WHEN BODT-BOCT&gt;=0 THEN BODT-BOCT ELSE 0 END				
+					END BODT,
+
+					
+					CASE when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+						BOCT
+					else
+						CASE WHEN BODT-BOCT&lt;0 THEN BOCT-BODT ELSE 0 END				
+					END BOCT,
+		
+
+					ODTK - ODT as ODTP,
+					OCTK - OCT as OCTP		
+						
+				from  
+					(				
+					select		
+						kl.KKL_SynNumer,
+						kl.KKL_KKSNumer,
+						KKS_Rozrachunkowe,
+						KKS_Analityka,
+						KKS_SaldoWgObr,
+						KKS_TypKonta, 
+
+						sum(
+							case when KKS_SaldoWgObr = 1 then
+								KKS_BODebet
+							else			
+								case when KKS_BODebet - KKS_BOCredit &gt; 0 then KKS_BODebet - KKS_BOCredit else 0 end
+							end
+						) BODT,
+		
+		
+						sum(
+							case when KKS_SaldoWgObr = 1 then
+								KKS_BOCredit
+							else			
+								case when KKS_BODebet - KKS_BOCredit &lt; 0 then KKS_BOCredit - KKS_BODebet else 0 end
+							end
+						) BOCT,
+				
+
+						sum(case when @Bufor = 0 then DTS_ObrotyDebet else DTS_ObrotyDebetBuf end) ODT,
+						sum(case when @Bufor = 0 then DTS_ObrotyCredit else DTS_ObrotyCreditBuf end) OCT,
+
+						sum(case when @Bufor = 0 then DTS_ObrotyNarDebet else DTS_ObrotyNarDebetBuf end) ODTK,
+						sum(case when @Bufor = 0 then DTS_ObrotyNarCredit else DTS_ObrotyNarCreditBuf end) OCTK
+									
+					from cdn.KontaLinki kl
+						join cdn.Konta 
+							on kl.KKL_KKSNumer = KKS_GIDNumer
+						join cdn.Stany
+							on kl.KKL_KKSNumer = DTS_KKSNumer
+					where kl.KKL_SynNumer = @KKSGIDNumer and KKS_Analityka = 1
+						and DTS_RokMiesiac = @PoczRok*100+ @PoczMiesiac
+					group by kl.KKL_SynNumer, 
+						kl.KKL_KKSNumer, 
+						KKS_Rozrachunkowe, 
+						KKS_Analityka, 
+						KKS_SaldoWgObr,
+						KKS_TypKonta
+					) p0					
+				) p1
+				group by p1.KKL_SynNumer
+			) p
+			on k1.KKS_GIDNumer = p.KKL_SynNumer 
+
+		left join
+			(
+			select 
+				KKL_SynNumer,
+				
+				sum(ODTK) ODTK,
+				sum(OCTK) OCTK,
+			
+				sum(
+					CASE when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+						BODT + ODTK
+					else
+						case when BODT + ODTK - (BOCT + OCTK) &gt; 0 then BODT + ODTK - (BOCT + OCTK) else 0 end
+					end 
+				) SDTK, 
+
+				sum(
+					CASE when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+						BOCT + OCTK
+					else
+						case when BODT + ODTK - (BOCT + OCTK) &lt; 0 then abs(BODT + ODTK - (BOCT + OCTK)) else 0 end
+					end
+				) SCTK
+
+			from (
+				select 
+					KKL_SynNumer,
+					KKS_Rozrachunkowe, 
+					KKS_Analityka, 
+					KKS_SaldoWgObr,
+					KKS_TypKonta, 
+
+
+					CASE when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+						BODT
+					else
+						CASE WHEN BODT-BOCT&gt;=0 THEN BODT-BOCT ELSE 0 END				
+					END BODT,
+
+
+					CASE when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+						BOCT
+					else
+						CASE WHEN BODT-BOCT&lt;0 THEN BOCT-BODT ELSE 0 END				
+					END BOCT,
+		
+					
+					ODTK,
+					OCTK
+				from  
+					(				
+					select		 
+						kl.KKL_SynNumer,		
+						kl.KKL_KKSNumer,
+						KKS_Rozrachunkowe, 
+						KKS_Analityka, 
+						KKS_SaldoWgObr,
+						KKS_TypKonta, 
+
+						sum(
+							case when KKS_SaldoWgObr = 1 then
+								KKS_BODebet
+							else			
+								case when KKS_BODebet - KKS_BOCredit &gt; 0 then KKS_BODebet - KKS_BOCredit else 0 end
+							end
+						) BODT,
+		
+		
+						sum(
+							case when KKS_SaldoWgObr = 1 then
+								KKS_BOCredit
+							else			
+								case when KKS_BODebet - KKS_BOCredit &lt; 0 then KKS_BOCredit - KKS_BODebet else 0 end
+							end
+						) BOCT,
+
+						sum(case when @Bufor = 0 then DTS_ObrotyNarDebet else DTS_ObrotyNarDebetBuf end) ODTK,
+						sum(case when @Bufor = 0 then DTS_ObrotyNarCredit else DTS_ObrotyNarCreditBuf end) OCTK
+		
+					from cdn.KontaLinki kl
+						join cdn.Konta 
+							on kl.KKL_KKSNumer = KKS_GIDNumer
+						join cdn.Stany
+							on kl.KKL_KKSNumer = DTS_KKSNumer
+					where kl.KKL_SynNumer = @KKSGIDNumer and KKS_Analityka = 1
+						and DTS_RokMiesiac = @KoniecRok*100 + @KoniecMiesiac
+					group by kl.KKL_SynNumer, 
+						kl.KKL_KKSNumer, 
+						KKS_Rozrachunkowe, 
+						KKS_Analityka, 
+						KKS_SaldoWgObr,
+						KKS_TypKonta
+					) k0							
+				) k5
+				group by k5.KKL_SynNumer
+			) k
+			on k1.KKS_GIDNumer = k.KKL_SynNumer
+
+	where k1.KKS_GIDNumer = @KKSGIDNumer	
+	) a
+)
+	select *
+		,CASE WHEN ODT&lt;&gt;0 OR OCT&lt;&gt;0 OR SDTP&lt;&gt;0 OR SCTP&lt;&gt;0 THEN 1 ELSE 0 END NiezeroweObroty
+		,CASE WHEN SDTK&lt;&gt;0 OR SCTK&lt;&gt;0 THEN 1 ELSE 0 END NiezeroweSalda
+	from OISA
+end
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury OISO_StanyNumer"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury OISO_StanyNumer */</I><BR>
+GRANT EXECUTE ON CDN.OISO_StanyNumer TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie procedury OISO_StanyNumerWgMiesiecy"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie procedury OISO_StanyNumerWgMiesiecy */</I><BR>
+IF EXISTS (SELECT name  FROM sysobjects WHERE name = 'OISO_StanyNumerWgMiesiecy' AND type = 'P')
+  DROP PROCEDURE CDN.OISO_StanyNumerWgMiesiecy;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury OISO_StanyNumerWgMiesiecy"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury OISO_StanyNumerWgMiesiecy */</I><BR>
+CREATE PROCEDURE CDN.OISO_StanyNumerWgMiesiecy
+  @KKSGIDNumer  INTEGER,
+  @Bufor smallint,
+  @PoczRok smallint,
+  @PoczMiesiac smallint,
+  @KoniecRok smallint,
+  @KoniecMiesiac smallint
+AS
+begin
+
+--wg miesiecy
+select 
+	KKS_KontoOrd,
+	KKS_GIDNumer, 	
+	KKS_SynNumer,
+	KKS_Konto,
+	KKS_Poziom,
+	KKS_Rozrachunkowe, 
+	KKS_Analityka, 
+	KKS_SaldoWgObr,
+	KKS_TypKonta, 
+	KKS_Archiwalny,
+	
+	ceiling(DTS_RokMiesiac/100) Rok,
+	DTS_RokMiesiac % 100 Miesiac,
+	1,
+
+
+	BODT, 
+	BOCT, 
+
+	ODTP,
+	OCTP,
+
+	case when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+		SDTP
+	else
+		case when SDTP&gt;SCTP then SDTP-(SCTP) else 0 end
+	end SDTP,
+
+	case when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+		SCTP
+	else
+		case when SDTP&lt;SCTP then abs(SDTP-(SCTP)) else 0 end
+	end SCTP,
+
+	ODT,
+	OCT,
+
+	ODTK,
+	OCTK,
+
+
+	case when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+		ODT
+	else
+		case when ODT&gt;OCT then ODT-OCT else 0 end
+	end SDT,
+
+	case when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+		OCT
+	else
+		case when ODT&lt;OCT then OCT-ODT else 0 end
+	end SCT,
+
+
+
+	case when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+		SDTK
+	else
+		case when SDTK&gt;SCTK then SDTK-(SCTK) else 0 end
+	end SDTK,
+
+	case when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+		SCTK
+	else
+		case when SDTK&lt;SCTK then abs(SDTK-(SCTK)) else 0 end
+	end SCTK
+
+from (
+	select 
+		k1.KKS_KontoOrd,
+		k1.KKS_GIDNumer, 
+		k1.KKS_SynNumer,
+		k1.KKS_Konto,
+		k1.KKS_Poziom,
+		k1.KKS_Rozrachunkowe, 
+		k1.KKS_Analityka, 
+		k1.KKS_SaldoWgObr,
+		k1.KKS_TypKonta, 
+		k1.KKS_Archiwalny,
+		
+		DTS_RokMiesiac,
+
+		p.BODT, 
+		p.BOCT, 
+
+		p.ODTP,
+		p.OCTP,
+
+		p.SDTP,
+		p.SCTP,
+
+		p.ODT,
+		p.OCT,
+	
+		p.ODTK ODTK,
+		p.OCTK OCTK,
+
+		p.SDTK,
+		p.SCTK
+
+
+	from cdn.Konta k1
+		left join
+			(
+			select 
+				KKL_SynNumer,
+				DTS_RokMiesiac,
+
+				sum(BODT) BODT,
+				sum(BOCT) BOCT,
+
+				sum(ODTP) ODTP,
+				sum(OCTP) OCTP,
+				
+				sum(
+					case when KKS_SaldoWgObr = 1 then
+						BODT + ODTP
+					else
+						case when BODT + ODTP - (BOCT + OCTP) &gt; 0 then BODT + ODTP - (BOCT + OCTP) else 0 end
+					end 
+				) SDTP, 
+
+				sum(
+					case when KKS_SaldoWgObr = 1 then
+						BOCT + OCTP
+					else
+						case when BODT + ODTP - (BOCT + OCTP) &lt; 0 then abs(BODT + ODTP - (BOCT + OCTP)) else 0 end
+					end
+				) SCTP,
+
+
+				sum(ODT) ODT,
+				sum(OCT) OCT,
+
+				sum(ODTK) ODTK,
+				sum(OCTK) OCTK,
+
+
+
+				sum(
+					CASE when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+						BODT + ODTK
+					else
+						CASE WHEN BODT+ODTK-BOCT-OCTK&gt;=0 THEN BODT+ODTK-BOCT-OCTK ELSE 0 END
+					END
+				) SDTK,
+
+				sum(						
+					CASE when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+						BOCT + OCTK
+					else
+						CASE WHEN BODT+ODTK-BOCT-OCTK&lt;0 THEN abs(BODT+ODTK-BOCT-OCTK) ELSE 0 END				
+					END
+				) SCTK
+
+
+
+			from (
+				select 
+					KKL_SynNumer,
+					KKS_Rozrachunkowe,
+					KKS_Analityka,
+					KKS_SaldoWgObr,
+					KKS_TypKonta,
+					DTS_RokMiesiac,
+
+					CASE when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+						BODT
+					else
+						CASE WHEN BODT-BOCT&gt;=0 THEN BODT-BOCT ELSE 0 END				
+					END BODT,
+
+					
+					CASE when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then
+						BOCT
+					else
+						CASE WHEN BODT-BOCT&lt;0 THEN BOCT-BODT ELSE 0 END				
+					END BOCT,
+		
+
+					ODTK - ODT as ODTP,
+					OCTK - OCT as OCTP,
+	
+					ODT,
+					OCT,
+
+					ODTK,
+					OCTK
+
+						
+				from  
+					(				
+					select		
+						kl.KKL_SynNumer,
+						kl.KKL_KKSNumer,
+						KKS_Rozrachunkowe,
+						KKS_Analityka,
+						KKS_SaldoWgObr,
+						KKS_TypKonta,
+						DTS_RokMiesiac,
+
+							
+						sum(
+							case when KKS_SaldoWgObr = 1 then
+								KKS_BODebet
+							else			
+								case when KKS_BODebet - KKS_BOCredit &gt; 0 then KKS_BODebet - KKS_BOCredit else 0 end
+							end
+						) BODT,
+		
+		
+						sum(
+							case when KKS_SaldoWgObr = 1 then
+								KKS_BOCredit
+							else			
+								case when KKS_BODebet - KKS_BOCredit &lt; 0 then KKS_BOCredit - KKS_BODebet else 0 end
+							end
+						) BOCT,
+
+
+						sum(case when @Bufor = 0 then DTS_ObrotyDebet else DTS_ObrotyDebetBuf end) ODT,
+						sum(case when @Bufor = 0 then DTS_ObrotyCredit else DTS_ObrotyCreditBuf end) OCT,
+
+						sum(case when @Bufor = 0 then DTS_ObrotyNarDebet else DTS_ObrotyNarDebetBuf end) ODTK,
+						sum(case when @Bufor = 0 then DTS_ObrotyNarCredit else DTS_ObrotyNarCreditBuf end) OCTK
+									
+					from cdn.KontaLinki kl
+						join cdn.Konta 
+							on kl.KKL_KKSNumer = KKS_GIDNumer
+						join cdn.Stany
+							on kl.KKL_KKSNumer = DTS_KKSNumer
+					where kl.KKL_SynNumer = @KKSGIDNumer and KKS_Analityka = 1
+						and DTS_RokMiesiac between @PoczRok*100+ @PoczMiesiac and @KoniecRok*100+@KoniecMiesiac
+					group by kl.KKL_SynNumer, 
+						kl.KKL_KKSNumer, 
+						KKS_Rozrachunkowe, 
+						KKS_Analityka, 
+						KKS_SaldoWgObr,
+						KKS_TypKonta,
+						DTS_RokMiesiac
+					) p0					
+				) p1
+				group by p1.KKL_SynNumer, p1.DTS_RokMiesiac
+			) p
+			on k1.KKS_GIDNumer = p.KKL_SynNumer 
+
+		
+
+	where k1.KKS_GIDNumer = @KKSGIDNumer	
+	) a
+end
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury OISO_StanyNumerWgMiesiecy"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury OISO_StanyNumerWgMiesiecy */</I><BR>
+GRANT EXECUTE ON CDN.OISO_StanyNumerWgMiesiecy TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

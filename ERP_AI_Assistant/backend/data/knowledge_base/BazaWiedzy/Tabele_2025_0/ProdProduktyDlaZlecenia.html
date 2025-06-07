@@ -1,0 +1,77 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[ProdProduktyDlaZlecenia]"></A><PRE>
+          <FONT SIZE="2"><I>/* [ProdProduktyDlaZlecenia] */</I><BR>
+CREATE FUNCTION [CDN].[ProdProduktyDlaZlecenia](@PZLId VARCHAR(8000))
+RETURNS TABLE
+AS
+RETURN
+SELECT REK.PZE_Id,REK.Twr_Kod,REK.Twr_Nazwa,REK.Twr_GIDNumer,REK.KlasaCechy,REK.PZE_Cecha,REK.KntAkronim,REK.KntNazwa,REK.KntMiasto,REK.PZE_KntTyp,
+REK.PZE_KntNumer,REK.PZE_Priorytet,REK.TechnologiaKod,REK.PZE_Ilosc,REK.DataRealizacji,ISNULL(REK.DokPW,0) Zrealizowana,
+(ISNULL(REK.LinkiIlosc,0) - ISNULL(REK.DokPW,0)) WToku,ISNULL(REK.Zaplanowana,0) Zaplanowana,REK.Jm,rek.DokZrodlowy,
+ISNULL(REK.LinkiIlosc,0) LinkiIlosc,PZE_Zlecenie,rek.DataRealizZrd,rek.DokZrdTyp,rek.DokZrdNumer,NrZP
+  FROM
+(
+SELECT PZE_Id,Twr_Kod,Twr_Nazwa,Twr_GIDNumer, ISNULL(CCK_Nazwa,'') KlasaCechy,PZE_Cecha,ISNULL(Knt_Akronim,'') KntAkronim,
+ISNULL(Knt_Nazwa1,'') KntNazwa,ISNULL(Knt_Miasto,'') KntMiasto,PZE_KntTyp,PZE_KntNumer,PZE_Priorytet,ISNULL(PTE_Kod,'') TechnologiaKod,PZE_Ilosc,(SELECT CASE WHEN SUM(DokLinki.TrsIlosc) &gt; SUM(DokLinki.PLKPZEIlosc) THEN SUM(DokLinki.PLKPZEIlosc) ELSE SUM(DokLinki.TrsIlosc) END FROM
+(SELECT A.PZA_Id, SUM(A.TrsIlosc) TrsIlosc, SUM(A.PLKPZEIlosc)  PLKPZEIlosc
+FROM
+	(SELECT PZA_Id, ISNULL(SUM(TrS_Ilosc),0) - ISNULL((SELECT SUM(PLK_Ilosc) FROM CDN.ProdLinki JOIN CDN.ProdZlecElem ZL ON PLK_PZEId = ZL.PZE_Id
+	WHERE PLK_ObiTyp = 14346 AND PLK_ObiNumer = PZA_Id AND 
+	(ZL.PZE_Priorytet &lt; ZE.PZE_Priorytet OR (ZL.PZE_Priorytet = ZE.PZE_Priorytet AND ZL.PZE_Lp &lt; ZE.PZE_Lp))),0) TrsIlosc,PLK_Ilosc PLKPZEIlosc 
+		FROM CDN.ProdLinki 
+		JOIN CDN.ProdZasoby ON PZA_Id = PLK_ObiNumer AND PLK_ObiTyp = 14346 
+		JOIN CDN.TraSElem ON TrS_ZlcTyp = 14346 AND TrS_ZlcNumer = PZA_Id AND 
+		EXISTS(SELECT * FROM CDN.TraElem JOIN CDN.TraNag ON TrN_GIDNumer = TrE_GIDNumer WHERE Trn_Stan in (3,5) AND TrE_GIDNumer = TrS_GIDNumer AND TrE_GIDLp = TrS_GIDLp AND TrE_TwrNumer = PZA_TwrNumer) 
+		WHERE PLK_PZEId = ZE.PZE_Id AND PLK_ObiTyp = 14346 GROUP BY PZA_Id, PLK_Id, PLK_Ilosc) A
+GROUP BY A.PZA_Id)
+DokLinki) DokPW, 
+ISNULL(SUM(PLK_Ilosc),0) LinkiIlosc,
+(SELECT A.DataRealiz FROM (SELECT ISNULL(MAX(Rez_DataRealizacji),0) DataRealiz 
+FROM CDN.Rezerwacje JOIN CDN.ProdLinki ON PLK_ObiNumer = Rez_GIDNumer AND PLK_ObiTyp = Rez_GIDTyp WHERE PLK_PZEId = ZE.PZE_Id) A) DataRealizacji,
+(SELECT A.PLKIlosc FROM (SELECT ISNULL(SUM(PLK_Ilosc),0) PLKIlosc 
+	FROM CDN.ProdLinki LEFT JOIN CDN.Rezerwacje ON PLK_ObiNumer = Rez_GIDNumer AND PLK_ObiTyp = Rez_GIDTyp LEFT JOIN CDN.ProdZasoby ON PZA_Planowany = 1 AND PLK_ObiNumer = PZA_Id AND PLK_ObiTyp = 14346 
+	WHERE PLK_PZEId = ZE.PZE_Id AND (Rez_GIDNumer IS NOT NULL OR PZA_Id IS NOT NULL)) A) Zaplanowana,
+Twr_Jm Jm,CASE WHEN ZaN_GIDTyp IS NOT NULL 
+	THEN CDN.NumerDokumentu(CDN.DokMapTypDokumentu(ZaN_GIDTyp,ZaN_ZamTyp,ZaN_Rodzaj),0,0,ZaN_ZamNumer,ZaN_ZamRok,ZaN_ZamSeria,ZaN_ZamMiesiac) 
+WHEN PLN_Id IS NOT NULL THEN CDN.NumerDokumentu(14347,0,14347,PLN_Numer,PLN_Rok,PLN_Seria,PLN_Miesiac) 
+WHEN BsN_ID IS NOT NULL THEN CDN.NumerDokumentu(14448,0,14448,BsN_Numer,BsN_Rok,BsN_Seria,BsN_Miesiac) 
+ELSE '' END DokZrodlowy,ZE.PZE_Zlecenie,CASE WHEN ZaE_GIDTyp IS NOT NULL THEN ZaE_DataPotwDst ELSE 0 END DataRealizZrd,
+CASE WHEN ZaN_GIDTyp IS NOT NULL THEN ZaN_GIDTyp WHEN PLN_Id IS NOT NULL THEN 14347 WHEN BsN_ID IS NOT NULL THEN 14448 ELSE 0 END DokZrdTyp,
+CASE WHEN ZaN_GIDTyp IS NOT NULL THEN ZaN_GIDNumer WHEN PLN_Id IS NOT NULL THEN PLN_Id WHEN BsN_ID IS NOT NULL THEN BsN_ID ELSE 0 END DokZrdNumer,
+CDN.NumerDokumentu(CASE WHEN PZL_PrjId &gt; 0 THEN 14350 ELSE 14343 END,0,CASE WHEN PZL_PrjId &gt; 0 THEN 14350 ELSE 14343 END,PZL_Numer,PZL_Rok,PZL_Seria,PZL_Miesiac) NrZP
+FROM CDN.ProdZlecElem ZE
+JOIN CDN.ProdZlecenia ON ZE.PZE_Zlecenie = PZL_Id
+JOIN CDN.TwrKarty ON ZE.PZE_TwrTyp = 16 AND ZE.PZE_TwrNumer = Twr_GIDNumer
+LEFT JOIN CDN.CechyKlasy ON CCK_GIDNumer = ZE.PZE_KlasaCechy
+LEFT JOIN CDN.KntKarty ON ZE.PZE_KntTyp = 32 AND ZE.PZE_KntNumer = Knt_GIDNumer
+LEFT JOIN CDN.ProdTechnologia ON PTE_Id = ZE.PZE_Technologia
+LEFT JOIN CDN.BstDokumenty ON BsD_DokTyp = 14343 AND BsD_DokNumer = ZE.PZE_Zlecenie
+LEFT JOIN CDN.BstNag ON BsN_ID = BsD_BsNID
+LEFT JOIN CDN.ZamZamLinki ON ZZL_ZZGidTyp = 14343 AND ZZL_ZZGidNumer = ZE.PZE_Id AND BsN_ID IS NULL --aby wykluczyć zamówienia związane z ZP, z których ZP nie zostało wygenerowane bezpośrednio
+LEFT JOIN CDN.ZamElem ON ZaE_GIDTyp = ZZL_ZSGidTyp AND ZaE_GIDNumer = ZZL_ZSGidNumer AND ZaE_GIDLp = ZZL_ZSGidLp 
+LEFT JOIN CDN.ZamNag ON ZaN_GIDTyp = ZZL_ZSGidTyp AND ZaN_GIDNumer = ZZL_ZSGidNumer 
+LEFT JOIN CDN.DokZwiazane ON DOZ_DOKTyp = 14343 AND DOZ_DOKNumer = ZE.PZE_Id
+LEFT JOIN CDN.PlanElem ON PLE_Id = DOZ_ZRDNumer AND DOZ_ZRDTyp = 14347
+LEFT JOIN CDN.PlanNag ON PLN_Id = PLE_Plan
+LEFT JOIN CDN.ProdLinki ON PLK_PZEId = ZE.PZE_Id AND PLK_ObiTyp = 14346 AND 0 = (SELECT PZA_Planowany FROM CDN.ProdZasoby WHERE PZA_Id = PLK_ObiNumer)
+WHERE ZE.PZE_Zlecenie IN(SELECT Num FROM CDN.Str2List(@PZLId))
+GROUP BY ZE.PZE_Id,Twr_Kod,Twr_Nazwa,Twr_Jm,Twr_GIDNumer,CCK_Nazwa,ZE.PZE_Cecha,Knt_Akronim,Knt_Nazwa1,Knt_Miasto,ZE.PZE_KntTyp,ZE.PZE_KntNumer,
+ZE.PZE_Priorytet,PTE_Kod,ZE.PZE_Ilosc,ZaN_GIDTyp,ZaN_GIDNumer,ZaN_Rodzaj,ZaN_ZamNumer,ZaN_ZamRok,ZaN_ZamTyp,ZaN_ZamMiesiac,ZaN_ZamSeria,BsN_ID,BsN_Rok,
+BsN_Miesiac,BsN_Numer,BsN_Seria,PLN_Id,PLN_Numer,PLN_Rok,PLN_Miesiac,PLN_Seria,ZE.PZE_Zlecenie,ZaE_DataPotwDst,ZaE_GIDTyp,ZaE_GIDNumer,ZaE_GIDLp,ZE.PZE_Lp,
+PZL_PrjId,PZL_Rok,PZL_Miesiac,PZL_Seria,PZL_Numer) REK
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

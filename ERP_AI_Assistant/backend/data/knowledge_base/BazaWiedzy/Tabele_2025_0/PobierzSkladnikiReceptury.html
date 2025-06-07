@@ -1,0 +1,63 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="PobierzSkladnikiReceptury"></A><PRE>
+          <FONT SIZE="2"><I>/* PobierzSkladnikiReceptury */</I><BR>
+CREATE FUNCTION CDN.PobierzSkladnikiReceptury(@RenNumer INT, @TypKompletacji SMALLINT, @PokazArchiwalne TINYINT, @TypPozycji TINYINT)
+RETURNS @RecElem TABLE(Id INT, TwrLp SMALLINT, TwrNumer INT, TwrTyp SMALLINT, TwrKod VARCHAR(40), TwrNazwa VARCHAR(255), TwrIlosc DECIMAL(15,4), GidTyp SMALLINT, GIDFirma INT, GidNumer INT, GIDLp SMALLINT,
+GidTypOjciec SMALLINT, GidFirmaOjciec INT, GidNumerOjciec INT, GidLpOjciec SMALLINT, IdOjciec INT, Poziom INT, Archiwalny TINYINT)
+AS
+ 
+BEGIN
+
+	DECLARE @Poziom INT = 0
+
+	DECLARE @MaxId INT = 0
+
+	INSERT INTO @RecElem
+	SELECT ROW_NUMBER() OVER (ORDER BY ReE_GIDLp) Id, ReE_GidLp as TwrLp,ReE_TwrNumer TwrNumer,ReE_TwrTyp TwrTyp, Twr_Kod, Twr_Nazwa, cast(ReE_Ilosc as decimal(15,4)) TwrIlosc,ReN_GIDTyp GidTyp,ReN_GIDFirma GidFirma,ReN_GIDNumer GidNumer,
+	ReE_GIDLp GidLp,ReN_GIDTyp GidTypOjciec,ReN_GIDFirma GidFirmaOjciec,ReN_GIDNumer GidNumerOjciec,ReE_GIDLp GidLpOjciec,
+	0, 1 AS Poziom,ReE_Archiwalny AS bArchiwalny
+	FROM CDN.RecElem
+	JOIN CDN.RecNag ON ReE_GIDNumer = ReN_GIDNumer AND ReE_GIDTyp = ReN_GIDTyp
+	JOIN CDN.TwrKarty ON Twr_GIDNumer = ReE_TwrNumer AND Twr_GIDTyp = ReE_TwrTyp
+	WHERE ReE_GIDNumer = @RenNumer AND ReN_TypKompletacji = @TypKompletacji 
+	AND ((ReE_TypPozycji IN(1,2) AND @TypPozycji IN(1,2)) OR (@TypPozycji NOT IN(1,2) AND @TypPozycji = ReE_TypPozycji)) AND ReE_Archiwalny IN(0, @PokazArchiwalne)
+
+	WHILE @@ROWCOUNT &gt; 0
+	BEGIN
+		SELECT @MaxId =  MAX(ID) FROM @RecElem
+		SET @Poziom = @Poziom + 1
+		INSERT INTO @RecElem
+		SELECT DISTINCT ROW_NUMBER() OVER (ORDER BY Poziom,GidNumerOjciec,GidLpOjciec, TwrLp DESC) + @MaxId,ReE_GidLp as TwrLp,ReE_TwrNumer, ReE_TwrTyp, Twr_Kod,Twr_Nazwa,isnull(try_cast((CASE WHEN ReE_StalaIlosc = 1 THEN 1 ELSE Skladniki.TwrIlosc END * ReE_Ilosc)/CASE WHEN ReE_StalaIlosc = 1 OR ReN_Ilosc = 0 THEN 1 ELSE
+		ReN_Ilosc END as decimal(15,4)),0),ReN_GIDTyp,
+		ReN_GIDFirma,ReN_GIDNumer,ReE_GIDLp,Skladniki.GidTyp,Skladniki.GidFirma,Skladniki.GidNumer,Skladniki.GidLp, Skladniki.Id, Skladniki.Poziom + 1 AS Poziom,ReE_Archiwalny
+		FROM @RecElem Skladniki
+		JOIN CDN.RecNag ON Skladniki.TwrNumer =ReN_TwrNumer AND Skladniki.TwrTyp = ReN_TwrTyp
+		JOIN CDN.RecElem ON ReN_GIDTyp = ReE_GIDTyp AND ReN_GIDNumer = ReE_GIDNumer
+		JOIN CDN.TwrKarty ON Twr_GIDNumer = ReE_TwrNumer AND Twr_GIDTyp = ReE_TwrTyp
+		WHERE Skladniki.Poziom = @Poziom AND ReN_Domyslna = 1 AND ReN_TypKompletacji = @TypKompletacji AND Skladniki.Poziom &lt; 30 AND ((ReE_TypPozycji IN(1,2,3) AND @TypPozycji IN(1,2)) OR (@TypPozycji NOT IN(1,2) AND @TypPozycji = ReE_TypPozycji))
+		AND ReE_Archiwalny IN(0, @PokazArchiwalne) AND NOT EXISTS(SELECT 1 FROM @RecElem Pierw WHERE Pierw.GidTyp = ReN_GIDTyp AND PIERW.GidNumer = ReN_GIDNumer AND Pierw.GIDLp = ReE_GIDLp
+		AND Pierw.GidTypOjciec = Skladniki.GidTyp AND Pierw.GidNumerOjciec = Skladniki.GidNumer AND Pierw.GidLpOjciec = Skladniki.GIDLp)
+	END
+         
+    RETURN
+ END 
+ --&lt;
+GO
+
+GRANT SELECT ON CDN.PobierzSkladnikiReceptury TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

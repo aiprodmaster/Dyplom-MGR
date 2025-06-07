@@ -1,0 +1,149 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Usuwanie procedury POS_EksportKodyKreskowe"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Usuwanie procedury POS_EksportKodyKreskowe */</I><BR>
+if exists (select name from sysobjects where name = 'POS_EksportKodyKreskowe' and type = 'P')
+drop procedure CDN.POS_EksportKodyKreskowe;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury POS_EksportKodyKreskowe"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury POS_EksportKodyKreskowe */</I><BR>
+CREATE PROCEDURE [CDN].[POS_EksportKodyKreskowe]
+	@rowVersion bigint,
+	@PointOfSaleId int
+AS
+BEGIN
+SET NOCOUNT ON;	
+	
+    declare @kody TABLE(
+		Id int,
+		LotId int,
+		ProductUnitId int,
+		Code nvarchar(41),
+		Type int,
+		TwK_CzasModyfikacji int
+	)
+
+	declare @TwrNumery table(
+		TwrGidNumer int,
+		GidFirma int,
+		TwrBylWyslany int,
+		TwrTsDodaniaStanowiska int
+	)
+	DECLARE @oddzialy TABLE(CentrumId int, PointOfSaleId int, GidFirma int, BylWyslany int, TsDodaniaStanowiska int)
+	INSERT INTO @oddzialy select PckPicoID, PSaID, frs_GidFirma, oddzialBylWyslany, PSaDataDodania from cdn.POS_OddzialyDoEksportu(@PointOfSaleId, @rowVersion)
+	join CDN.FrmStruktura on PcKCentrumID = FRS_ID
+	
+	declare @Vininova int = 1367553
+	declare @indexfood  int = 1367809
+
+	insert into @TwrNumery select TwrGidNumer, GidFirma, max(BylWyslany), max(TsDodaniaStanowiska) from @oddzialy cross apply CDN.POS_TwrDoEksportu(PointOfSaleId,0) group by TwrGidNumer, GidFirma
+
+		INSERT INTO @kody
+			select distinct
+				case when max(Twk_Jm) = max(Twr_Jm) and max(Twr_Ean) &lt;&gt; max(TwK_Kod) then TwK_Id else -MIN(TPa_Id) end as [@Id],
+				MIN(TPa_Id) as [@LotId],
+				COALESCE(max(twj1.twj_Id),(select twj2.twj_Id from CDN.TwrJm twj2 where twj2.twj_JmZ=isnull(max(TwK_Jm),max(twr_jm)) AND twj2.twj_twrnumer=TPa_TwrNumer),-TPa_TwrNumer) as [@ProductUnitId],
+				isnull(max(TwK_Kod),TPa_Ean) as [@Code],
+				CASE when max(TwK_TypKodu) is null then 3 when max(TwK_TypKodu)=0 then 1 when max(TwK_TypKodu)=1 then 2 when max(TwK_TypKodu)=2 then 4 else 3 end as [@Type],
+				CASE when @PointOfSaleId is null and max(TwrBylWyslany) = 0 and max(TwrTsDodaniaStanowiska) &gt; isnull(max(TwK_CzasModyfikacji),0)  and  max(TwrTsDodaniaStanowiska) &gt; ISNULL(max(Twr_LastModL),0) then max(TwrTsDodaniaStanowiska) else
+				isnull(max(case when isnull(TwK_CzasModyfikacji,0) &gt; isnull(Twr_LastModL,0) then TwK_CzasModyfikacji else Twr_LastModL end),0) end
+			from cdn.TwrPartie 
+			join @TwrNumery ON TwrGidNumer = TPa_TwrNumer
+			join cdn.TwrKarty on Twr_GIDNumer = TwrGidNumer	
+			left join CDN.TwrJm twj1 on twj1.TwJ_TwrNumer = Twr_GIDNumer AND twj1.TwJ_TwrLp=Twr_JmDomyslna AND twj1.TwJ_TwrFirma = 271361 --mrówka
+			left join cdn.TwrKody on (case when Twk_Rodzaj=0 AND TPa_Ean = '' then twr_ean else tpa_ean end = TwK_Kod or Twk_Jm = Twr_Jm) and TwK_TwrNumer = TPa_TwrNumer
+			where (case when TwK_CzasModyfikacji &gt; Twr_LastModL then TwK_CzasModyfikacji else Twr_LastModL end &gt; @rowVersion OR @rowVersion=0 OR (@PointOfSaleId is null and TwrBylWyslany = 0)) and GidFirma in (@Vininova,@indexfood)
+			group by TPa_TwrNumer,TPa_DataW,TPa_Cecha,TPa_Ean,TpA_CCKNumer,TwK_Id
+	
+		INSERT INTO @kody
+			select distinct
+				case when max(Twk_Jm) = max(Twr_Jm) and max(Twr_Ean) &lt;&gt; max(TwK_Kod) then TwK_Id else -MIN(TPa_Id) end as [@Id],
+				MIN(TPa_Id) as [@LotId],
+				COALESCE(max(twj1.twj_Id),(select twj2.twj_Id from CDN.TwrJm twj2 where twj2.twj_JmZ=isnull(max(TwK_Jm),max(twr_jm)) AND twj2.twj_twrnumer=TPa_TwrNumer),-TPa_TwrNumer) as [@ProductUnitId],
+				isnull(max(TwK_Kod),TPa_Ean) as [@Code],
+				CASE when max(TwK_TypKodu) is null then 3 when max(TwK_TypKodu)=0 then 1 when max(TwK_TypKodu)=1 then 2 when max(TwK_TypKodu)=2 then 4 else 3 end as [@Type],
+				CASE when @PointOfSaleId is null and max(TwrBylWyslany) = 0 and max(TwrTsDodaniaStanowiska) &gt; isnull(max(TwK_CzasModyfikacji),0)  and  max(TwrTsDodaniaStanowiska) &gt; ISNULL(max(Twr_LastModL),0) then max(TwrTsDodaniaStanowiska) else
+				isnull(max(case when isnull(TwK_CzasModyfikacji,0) &gt; isnull(Twr_LastModL,0) then TwK_CzasModyfikacji else Twr_LastModL end),0) end
+			from cdn.TwrPartie 
+			join @TwrNumery ON TwrGidNumer = TPa_TwrNumer
+			join cdn.TwrKarty on Twr_GIDNumer = TwrGIDNumer
+			left join CDN.TwrJm twj1 on twj1.TwJ_TwrNumer = Twr_GIDNumer AND twj1.TwJ_TwrLp=Twr_JmDomyslna AND twj1.TwJ_TwrFirma = 271361 --mrówka
+			left join cdn.TwrKody on Twk_Rodzaj=0 AND ((case when TPa_Ean = '' and TPa_Cecha = '' and TPa_DataW = 0 and TPa_DstNumer = 0 then twr_ean else tpa_ean end = TwK_Kod) OR Twk_Jm = Twr_Jm) and TwK_TwrNumer = TPa_TwrNumer
+			where (case when TwK_CzasModyfikacji &gt; Twr_LastModL then TwK_CzasModyfikacji else Twr_LastModL end &gt; @rowVersion OR @rowVersion=0 OR (@PointOfSaleId is null and TwrBylWyslany = 0)) and GidFirma not in (@Vininova,@indexfood)
+			group by TPa_TwrNumer,TPa_DataW,TPa_Cecha,TPa_Ean,TpA_CCKNumer,TwK_Id
+	
+			
+
+			INSERT INTO @kody
+			select distinct
+				Twk_Id as [@Id],
+				-TwrGidnumer as [@LotId],
+				COALESCE((select twj2.twj_Id from CDN.TwrJm twj2 where twj2.twj_JmZ=isnull(max(TwK_Jm),max(twr_jm)) and twj2.twj_twrnumer = TwrGidNumer),-TwrGidnumer) as [@ProductUnitId],
+				(TwK_Kod) as [@Code],
+				 CASE when TwK_TypKodu=0 then 1 when TwK_TypKodu=1 then 2  when TwK_TypKodu=2 then 4 else 3 end as [@Type],
+				 isnull(max(case when isnull(TwK_CzasModyfikacji,0) &gt; isnull(Twr_LastModL,0) then TwK_CzasModyfikacji else Twr_LastModL end),0)
+			from @oddzialy
+			cross apply CDN.POS_TwrDoEksportu(PointOfSaleId,0)
+			join cdn.TwrKarty on Twr_GIDNumer = TwrGidNumer	
+			join cdn.TwrKody on TwK_TwrNumer = TwrGidNumer
+			where twr_typ = 4 AND Twk_Rodzaj=0
+			group by TwrGidNumer,TwK_Kod,Twk_Id,TwK_TypKodu
+			
+		INSERT INTO @kody
+		select distinct
+			Twk_id,
+			TPa_Id,
+			TwJ_Id,
+			TwK_Kod,
+			CASE when TwK_TypKodu=0 then 1 when TwK_TypKodu=1 then 2  when TwK_TypKodu=2 then 4 else 3 end,
+			TwK_CzasModyfikacji
+		from CDN.TwrJm
+		join @TwrNumery on TwrGidNumer = TwJ_TwrNumer
+		join CDN.TwrKody on TwK_Jm = TwJ_JmZ and TwK_TwrNumer = TwJ_TwrNumer
+		join CDN.TwrPartie on  TPa_Ean = '' and TPa_Cecha = '' and TPa_DataW = 0 and TPa_DstNumer = 0 and TPa_TwrNumer = TwrGidNumer and TPa_CCKnumer = 0
+		where Twk_Rodzaj=0
+
+	declare @LastMod bigint = (select max(TwK_CzasModyfikacji) from @kody)
+
+	SELECT @LastMod AS [@RowVersion]
+		,(		
+			select DISTINCT 
+				Id as [@Id],
+				LotId as [@LotId],
+				ProductUnitId as [@ProductUnitId],
+				Code as [@Code],
+				Type as [@Type]
+				from @kody
+		for xml path('Barcode'), type)
+	for xml path('Barcodes')
+	SET NOCOUNT OFF;	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury POS_EksportKodyKreskowe"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury POS_EksportKodyKreskowe */</I><BR>
+GRANT EXECUTE ON CDN.POS_EksportKodyKreskowe TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

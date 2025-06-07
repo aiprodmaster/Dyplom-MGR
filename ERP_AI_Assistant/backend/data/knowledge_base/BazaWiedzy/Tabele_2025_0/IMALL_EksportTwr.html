@@ -1,0 +1,565 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="IMALL_EksportTwr"></A><PRE>
+          <FONT SIZE="2"><I>/* IMALL_EksportTwr */</I><BR>
+CREATE PROCEDURE CDN.IMALL_EksportTwr
+  @ID INT      -- ID e-sklepu
+ ,@TypExp INT  -- Typ eksportu cennika (0 - różnicowy, 1 - pełny)
+ ,@TwrID INT OUTPUT	-- Gidnumer towarow, które zostały jako ostatnie wyeksportowane do e-sklepu w poprzedniej paczce
+					-- Jeżeli @TwrID = -1 to w OUTPUT zwracany jest Twr_Gidnumer towarów wyeksportowanych jako ostatnie w poprzedniej paczce
+
+AS
+SET NOCOUNT ON
+
+CREATE TABLE #tmpRecordSet(
+           /*   Towary */  TwrGIDNumer INT, Symbol VARCHAR(50) COLLATE Polish_CI_AS, TwrJm VARCHAR(8) COLLATE Polish_CI_AS, TwrJMCalkowita SMALLINT, ProducentID INT, MarkaID INT, OkresGwarancji INT, WagaBrutto DECIMAL(15,3), KGO DECIMAL(15,2), iGaleria24GrupaID INT, PodlegaRabatowaniu INT, [Status] SMALLINT, Dostepnosc SMALLINT, ZdjecieID INT, EAN VARCHAR(40) COLLATE Polish_CI_AS,Flagi INT
+           /*    Język */  ,TwrKod VARCHAR(40) COLLATE Polish_CI_AS,TwrNazwa VARCHAR(255) COLLATE Polish_CI_AS, TwrNazwa1 VARCHAR(255) COLLATE Polish_CI_AS, TwrOpis VARCHAR(MAX) COLLATE Polish_CI_AS, TwrOpisKrotki VARCHAR(500) COLLATE Polish_CI_AS, TwrSlowaKluczowe VARCHAR(500) COLLATE Polish_CI_AS, TwrMetaOpis VARCHAR(320) COLLATE Polish_CI_AS, TwrTytulStrony VARCHAR(100) COLLATE Polish_CI_AS
+           /*     Ceny */  ,TWCID INT, TwCWartosc DECIMAL(18,2), TwCWartoscBrutto DECIMAL(18,2), TwCPodatek DECIMAL(5,2)
+           /* Atrybuty */  ,AtrGIDNumer INT, AtrID INT, AtrNazwa VARCHAR(256) COLLATE Polish_CI_AS, AtrWartosc VARCHAR(512) COLLATE Polish_CI_AS, AtrFormat SMALLINT, AtrLp INT, AtrTyp SMALLINT
+           /* Atrybuty P.*/,AtrPGIDNumer INT, AtrPID INT, AtrPIDWartosc INT, AtrPWartosc VARCHAR(200) COLLATE Polish_CI_AS
+		   /* Zdjęcia d.*/ ,TwrZGIDNumer INT, TwrZZdjecieID INT,DABRozszerzenie VARCHAR(5),DABID INT,DABOPIS NVARCHAR(1025),DABKOD NVARCHAR(99)
+                          )
+
+IF NOT EXISTS(select * from CDN.PicoKonfig where PcK_PicoID = @ID)
+BEGIN
+	select @ID = PcK_PicoID from CDN.PicoKonfig where PcK_iMallID = @ID
+END                          
+                          
+DECLARE @Last_twrID int
+SELECT @Last_twrID=PcK_Blokady FROM CDN.PicoKonfig WHERE PcK_PicoID = @ID
+
+IF @TwrID = -1
+BEGIN
+	SET @TwrID = @Last_twrID
+	RETURN
+END       
+
+CREATE TABLE #tmpGidnumerSet(TwrGidnumer INT);
+
+INSERT INTO #tmpGidnumerSet
+SELECT DISTINCT TOP 5000 -- ustalenie wielkoci paczki z danymi, po zmianie uaktualnic wartosc na koncu procedury w UPDATE CDN.PicoKonfig...
+Twr_GIDNumer
+FROM CDN.TwrKarty
+JOIN CDN.TwrAplikacje ON Twr_GIDNumer = TAP_ObiNumer and Twr_GIDTyp = TAP_ObiTyp
+LEFT OUTER JOIN CDN.TwrAplikacjeOpisy ON Twr_GIDNumer = TPO_ObiNumer and Twr_GIDTyp = TPO_ObiTyp and TPO_JezykId = 0
+join CDN.KatGrupyTwr ON TAP_GrupaiMall= KGT_Id
+JOIN CDN.TwrCeny ON Twr_GIDNumer = TwC_TwrNumer
+JOIN CDN.PicoKonfig ON Pck_PicoId = @ID
+LEFT OUTER JOIN CDN.Tlumaczenia AS N ON N.TLM_Numer = Twr_GIDNumer AND N.TLM_Typ = Twr_GIDTyp AND N.TLM_Pole = 2
+LEFT OUTER JOIN CDN.Slowniki SlwKGO ON SlwKGO.SLW_ID = Twr_StawkaKGO
+LEFT OUTER JOIN CDN.Nazwy AS NJM ON NJM.NAZ_GIDTyp = 144 AND NJM.Naz_Nazwa = Twr_Jm
+LEFT OUTER JOIN CDN.Tlumaczenia AS JM ON JM.TLM_Typ = NJM.NAZ_GIDTyp AND JM.TLM_Numer = NJM.NAZ_GIDLp AND JM.TLM_Pole = 2 AND JM.TLM_Jezyk = N.TLM_Jezyk
+LEFT OUTER JOIN CDN.PicoLog ON PcL_PcKID = Pck_PicoId AND PcL_ObiTyp = Twr_GIDTyp AND PcL_ObiNumer = Twr_GIDNumer
+LEFT OUTER JOIN CDN.TwrOpisy AS O ON Twr_GIDNumer = O.TwO_TwrNumer AND O.TwO_Jezyk = 0
+LEFT OUTER JOIN CDN.TwrOpisy AS OJ ON Twr_GIDNumer = OJ.TwO_TwrNumer AND OJ.TwO_Jezyk = N.TLM_Jezyk
+LEFT OUTER JOIN CDN.KntKarty KntProd ON Twr_PrdNumer = KntProd.Knt_GIDNumer AND Twr_PrdTyp = KntProd.Knt_GIDTyp
+JOIN CDN.TwrGrupyDom on Twr_GIDTyp = TGD_GIDTyp and Twr_GIDNumer = TGD_GIDNumer
+LEFT OUTER JOIN
+     (  
+		SELECT Atr_ObiNumer AS TwrGIDNumer
+			 ,Atr_ObiTyp AS TwrGIDTyp
+			 ,Atr_Id AS ID
+			 ,AtK_Nazwa AS Nazwa
+			 ,Atr_Wartosc AS Wartosc
+			 ,CASE WHEN AtK_Format = '@d17'
+					THEN 4 ELSE  CASE WHEN AtK_Typ IN (1,2) THEN 1
+									  WHEN AtK_Typ IN (3,4) THEN AtK_Typ - 1
+									  WHEN AtK_Typ = 8 THEN 5
+									  ELSE -AtK_Typ
+								  END
+			END AS Format
+			,CASE when AtK_Typ=4 then 1 else Atr_Id end AS Lp
+			,1 AS Typ
+			FROM CDN.Atrybuty
+			JOIN CDN.AtrybutyKlasy ON AtK_ID = Atr_AtkId
+			LEFT OUTER JOIN CDN.Tlumaczenia AS N ON N.TLM_Typ = 14416 AND N.TLM_Numer = AtK_Id AND N.TLM_Pole = 2
+			LEFT OUTER JOIN CDN.AtrybutyWartosci ON AtW_AtKId = AtK_Id AND Atr_Wartosc = AtW_Wartosc
+			LEFT OUTER JOIN CDN.Tlumaczenia AS W ON W.TLM_Typ = 14417 AND W.TLM_Numer = AtW_Id AND W.TLM_Pole = 2 AND W.TLM_Jezyk = N.TLM_Jezyk
+			LEFT OUTER JOIN CDN.Slowniki ON SLW_ID = N.TLM_Jezyk
+			WHERE AtK_iMall = 2 AND AtK_Wielowart = 0 AND AtK_Typ &lt;&gt; 8
+
+        UNION ALL
+
+        SELECT AtH_ObiNumer AS TwrGIDNumer
+			,AtH_ObiTyp AS TwrGIDTyp
+			,AtH_Id AS ID
+			,AtK_Nazwa AS Nazwa
+            ,AtH_Wartosc AS Wartosc			
+			,CASE WHEN AtK_Format = '@d17'
+				THEN 4 ELSE  CASE WHEN AtK_Typ IN (1,2) THEN 1
+								  WHEN AtK_Typ IN (3,4) THEN AtK_Typ - 1
+								  WHEN AtK_Typ = 8 THEN 5
+								  ELSE -AtK_Typ
+							  END
+			END AS Format
+			,CASE when AtK_Typ=4 then 1 else AtH_Id end AS Lp
+			,1 AS Typ
+            FROM CDN.AtrybutyHist
+            JOIN CDN.AtrybutyKlasy ON AtK_ID = AtH_AtkId
+            LEFT OUTER JOIN CDN.Tlumaczenia AS N ON N.TLM_Typ = 14416 AND N.TLM_Numer = AtK_Id AND N.TLM_Pole = 2
+            LEFT OUTER JOIN CDN.Slowniki ON SLW_ID = N.TLM_Jezyk
+            WHERE AtK_iMall = 2 AND AtK_Wielowart = 1 AND AtK_Typ &lt;&gt; 8
+		
+         ) Atr ON Twr_GIDNumer = Atr.TwrGIDNumer AND Twr_GIDTyp = Atr.TwrGIDTyp
+LEFT OUTER JOIN 
+	(SELECT MIN(DAB_ID) AS MIN_ID, Twr_GIDNumer AS TwrGIDNumer
+		FROM CDN.DaneBinarne
+		JOIN (
+			SELECT DAO_DABId AS DABId, DAO_ObiTyp AS ObiTyp, DAO_ObiNumer AS ObiNumer, DAO_iMall AS iMall FROM CDN.DaneObiekty
+		) DAOAtr ON DAOAtr.DABId = DAB_ID
+		JOIN CDN.TwrKarty Twr ON Twr.Twr_GIDNumer = DAOAtr.ObiNumer AND Twr.Twr_GIDTyp = DAOAtr.ObiTyp AND Twr_GIDNumer = Twr.Twr_GIDNumer
+		JOIN CDN.TwrAplikacje ON TAP_ObiTyp = Twr_GIDTyp AND TAP_ObiNumer = Twr_GIDNumer
+		WHERE DAOAtr.iMall = 1 AND Twr_Archiwalny = 0 and TAP_iMall = 1
+		AND Twr_GIDNumer &gt; 0 --AND DAB_Rozszerzenie IN ('PNG', 'JPG')
+		group by Twr_GIDNumer) DAB ON Twr_GIDNumer = DAB.TwrGIDNumer
+LEFT OUTER JOIN
+	(SELECT Twr_GIDNumer AS GIDNumer
+	, AtK_OddZrdID AS ID
+	, isnull(Atw_OddZrdID,0) AS IDWartosc
+	, Atr_Wartosc AS Wartosc
+	FROM CDN.TwrKarty ATRP
+	join CDN.TwrAplikacje ON Twr_GIDNumer = TAP_ObiNumer and Twr_GIDTyp = TAP_ObiTyp
+	join CDN.KatGrupyTwr ON TAP_GrupaiMall= KGT_Id
+	JOIN CDN.PicoKonfig ON Pck_PicoId = @ID
+	JOIN CDN.Atrybuty ON Atr_ObiTyp = Twr_GIDTyp AND Atr_ObiNumer = Twr_GIDNumer
+	JOIN CDN.AtrybutyKlasy ON AtK_ID = Atr_AtkId
+	LEFT OUTER JOIN CDN.AtrybutyWartosci ON AtW_AtKId = Atr_AtkId AND AtW_Wartosc = Atr_Wartosc
+	LEFT OUTER JOIN CDN.PicoLog ON PcL_PcKID = Pck_PicoId AND PcL_ObiTyp = Twr_GIDTyp AND PcL_ObiNumer = Twr_GIDNumer
+	WHERE Twr_GIDNumer &gt; 0 AND TAP_iMall = 1 AND Twr_Archiwalny = 0
+	AND ISNULL(PcL_TStamp,PcK_TSSynchrTwrPtw + 1) &gt; PcK_TSSynchrTwrPtw
+	AND AtK_iMall = 1 AND AtK_Typ &lt;&gt; 8
+	) AtrP ON AtrP.GIDNumer = Twr_GIDNumer
+LEFT OUTER JOIN
+	(SELECT DAO_ZalID AS ZALID, Twr_GIDNumer AS TwrGIDNumer,DAB_Rozszerzenie,DAB_ID AS DABID,SUBSTRING(DAB_Kod,1,99) AS DABKOD, SUBSTRING(DAB_Opis,1,1025) AS DABOPIS
+		FROM CDN.DaneBinarne
+		JOIN (
+			SELECT DAO_DABId AS DABId,DAO_ZalID, DAO_ObiTyp AS ObiTyp, DAO_ObiNumer AS ObiNumer, DAO_iMall AS iMall FROM CDN.DaneObiekty
+		) DAOAtr ON DAOAtr.DABId = DAB_ID
+		JOIN CDN.TwrKarty Twr ON Twr.Twr_GIDNumer = DAOAtr.ObiNumer AND Twr.Twr_GIDTyp = DAOAtr.ObiTyp AND Twr_GIDNumer = Twr.Twr_GIDNumer
+		JOIN CDN.TwrAplikacje ON TAP_ObiTyp = Twr_GIDTyp AND TAP_ObiNumer = Twr_GIDNumer
+		WHERE DAOAtr.iMall = 1 AND Twr_Archiwalny = 0 and TAP_iMall = 1
+		AND Twr_GIDNumer &gt; 0 --AND DAB_Rozszerzenie IN ('PNG', 'JPG')
+		) TwrZ ON Twr_GIDNumer = TwrZ.TwrGIDNumer --AND DAB.MIN_ID = TwrZ.ZALID
+WHERE Twr_GIDNumer &gt; @Last_twrID -- Potrzebne do ciecia na paczki
+ANd TwC_TwrLp IN (PcK_NrCeny, PcK_NrCenyDomyslnej) and TwC_TwrLp&lt;&gt;0 AND Twr_GIDNumer &gt; 0 AND TAP_iMall = 1 AND Twr_Archiwalny = 0 AND KGT_IdM &lt;&gt; 0 AND TwC_Waluta = 'PLN'
+AND ((CASE WHEN Twr_LastModL &gt; TwC_CzasModyfikacji THEN Twr_LastModL ELSE TwC_CzasModyfikacji END) &gt; CASE WHEN @TypExp=0 THEN PcK_TSSynchrTwrPtw ELSE 0 END) --OR ISNULL(PcL_TStamp,PcK_TSSynchrTwrPtw + 1) &gt; PcK_TSSynchrTwrPtw
+AND EXISTS(SELECT TwL_GrONumer FROM CDN.TwrLinki WHERE Twr_GIDTyp = TwL_GIDTyp AND Twr_GIDNumer = TwL_GIDNumer AND TwL_GrONumer = PcK_TwGNumer )
+
+
+
+INSERT INTO #tmpRecordSet
+SELECT  -- ustalenie wielkoci paczki z danymi, po zmianie uaktualnic wartosc na koncu procedury w UPDATE CDN.PicoKonfig...
+         Twr_GIDNumer, '' AS Symbol, Twr_Jm, Twr_JMCalkowita, isnull(KntProd.Knt_GIDNumer,0) AS ProducentID, Twr_MarkaId AS MarkaID, Twr_OkresGwarancji, Twr_WagaBrutto, SlwKGO.SLW_WartoscN1 AS KGO, KGT_IdM, 0 AS Twr_PodlegaRabatowaniu, TAP_Status AS twr_status, TAP_Dostepnosc-1 AS Twr_Dostepnosc,DAB.MIN_ID AS ZdjecieID, Twr_Ean,TAP_Flagi
+		 ,Twr_Kod,Twr_Nazwa, Twr_Nazwa1, O.TwO_Opis, SUBSTRING(TPO_OpisKrotki,1,500), TPO_SlowaKluczowe, TPO_MetaOpis, TPO_TytulStrony
+         ,CASE WHEN TwC_TwrLp = PcK_NrCeny THEN 1 ELSE 2 END, CONVERT(DECIMAL(18,2),ROUND(CDN.CenaNetto(TwC_Wartosc,Twc_TwrLp,Twr_StawkaPodSpr),2)) As TwCWartoscNetto, CONVERT(DECIMAL(15,2),ROUND(CDN.CenaBrutto(TwC_Wartosc,Twc_TwrLp,Twr_StawkaPodSpr),2)) As TwCWartoscBrutto, Twr_StawkaPodSpr AS TwC_Podatek
+         ,Atr.TwrGIDNumer, Atr.ID, Atr.Nazwa, Atr.Wartosc, Atr.Format, Atr.Lp, Atr.Typ
+         ,AtrP.GIDNumer, AtrP.ID, AtrP.IDWartosc, AtrP.Wartosc
+		 ,TwrZ.TwrGIDNumer, TwrZ.ZALID,Twrz.DAB_Rozszerzenie,Twrz.DABID,Twrz.DABOPIS,Twrz.DABKOD
+FROM CDN.TwrKarty
+JOIN CDN.TwrAplikacje ON Twr_GIDNumer = TAP_ObiNumer and Twr_GIDTyp = TAP_ObiTyp
+LEFT OUTER JOIN CDN.TwrAplikacjeOpisy ON Twr_GIDNumer = TPO_ObiNumer and Twr_GIDTyp = TPO_ObiTyp and TPO_JezykId = 0
+join CDN.KatGrupyTwr ON TAP_GrupaiMall= KGT_Id
+JOIN CDN.TwrCeny ON Twr_GIDNumer = TwC_TwrNumer
+JOIN CDN.PicoKonfig ON Pck_PicoId = @ID
+LEFT OUTER JOIN CDN.Tlumaczenia AS N ON N.TLM_Numer = Twr_GIDNumer AND N.TLM_Typ = Twr_GIDTyp AND N.TLM_Pole = 2
+LEFT OUTER JOIN CDN.Slowniki SlwKGO ON SlwKGO.SLW_ID = Twr_StawkaKGO
+LEFT OUTER JOIN CDN.Nazwy AS NJM ON NJM.NAZ_GIDTyp = 144 AND NJM.Naz_Nazwa = Twr_Jm
+LEFT OUTER JOIN CDN.Tlumaczenia AS JM ON JM.TLM_Typ = NJM.NAZ_GIDTyp AND JM.TLM_Numer = NJM.NAZ_GIDLp AND JM.TLM_Pole = 2 AND JM.TLM_Jezyk = N.TLM_Jezyk
+LEFT OUTER JOIN CDN.PicoLog ON PcL_PcKID = Pck_PicoId AND PcL_ObiTyp = Twr_GIDTyp AND PcL_ObiNumer = Twr_GIDNumer
+LEFT OUTER JOIN CDN.TwrOpisy AS O ON Twr_GIDNumer = O.TwO_TwrNumer AND O.TwO_Jezyk = 0
+LEFT OUTER JOIN CDN.TwrOpisy AS OJ ON Twr_GIDNumer = OJ.TwO_TwrNumer AND OJ.TwO_Jezyk = N.TLM_Jezyk
+LEFT OUTER JOIN CDN.KntKarty KntProd ON Twr_PrdNumer = KntProd.Knt_GIDNumer AND Twr_PrdTyp = KntProd.Knt_GIDTyp
+JOIN CDN.TwrGrupyDom on Twr_GIDTyp = TGD_GIDTyp and Twr_GIDNumer = TGD_GIDNumer
+LEFT OUTER JOIN
+     (  
+		SELECT Atr_ObiNumer AS TwrGIDNumer
+			 ,Atr_ObiTyp AS TwrGIDTyp
+			 ,Atr_Id AS ID
+			 ,AtK_Nazwa AS Nazwa
+			 ,Atr_Wartosc AS Wartosc
+			 ,CASE WHEN AtK_Format = '@d17'
+					THEN 4 ELSE  CASE WHEN AtK_Typ IN (1,2) THEN 1
+									  WHEN AtK_Typ IN (3,4) THEN AtK_Typ - 1
+									  WHEN AtK_Typ = 8 THEN 5
+									  ELSE -AtK_Typ
+								  END
+			END AS Format
+			,CASE when AtK_Typ=4 then 1 else Atr_Id end AS Lp
+			,1 AS Typ
+			FROM CDN.Atrybuty
+			JOIN CDN.AtrybutyKlasy ON AtK_ID = Atr_AtkId
+			LEFT OUTER JOIN CDN.Tlumaczenia AS N ON N.TLM_Typ = 14416 AND N.TLM_Numer = AtK_Id AND N.TLM_Pole = 2
+			LEFT OUTER JOIN CDN.AtrybutyWartosci ON AtW_AtKId = AtK_Id AND Atr_Wartosc = AtW_Wartosc
+			LEFT OUTER JOIN CDN.Tlumaczenia AS W ON W.TLM_Typ = 14417 AND W.TLM_Numer = AtW_Id AND W.TLM_Pole = 2 AND W.TLM_Jezyk = N.TLM_Jezyk
+			LEFT OUTER JOIN CDN.Slowniki ON SLW_ID = N.TLM_Jezyk
+			WHERE AtK_iMall = 2 AND AtK_Wielowart = 0 AND AtK_Typ &lt;&gt; 8
+
+        UNION ALL
+
+        SELECT AtH_ObiNumer AS TwrGIDNumer
+			,AtH_ObiTyp AS TwrGIDTyp
+			,AtH_Id AS ID
+			,AtK_Nazwa AS Nazwa
+            ,AtH_Wartosc AS Wartosc			
+			,CASE WHEN AtK_Format = '@d17'
+				THEN 4 ELSE  CASE WHEN AtK_Typ IN (1,2) THEN 1
+								  WHEN AtK_Typ IN (3,4) THEN AtK_Typ - 1
+								  WHEN AtK_Typ = 8 THEN 5
+								  ELSE -AtK_Typ
+							  END
+			END AS Format
+			,CASE when AtK_Typ=4 then 1 else AtH_Id end AS Lp
+			,1 AS Typ
+            FROM CDN.AtrybutyHist
+            JOIN CDN.AtrybutyKlasy ON AtK_ID = AtH_AtkId
+            LEFT OUTER JOIN CDN.Tlumaczenia AS N ON N.TLM_Typ = 14416 AND N.TLM_Numer = AtK_Id AND N.TLM_Pole = 2
+            LEFT OUTER JOIN CDN.Slowniki ON SLW_ID = N.TLM_Jezyk
+            WHERE AtK_iMall = 2 AND AtK_Wielowart = 1 AND AtK_Typ &lt;&gt; 8
+		
+         ) Atr ON Twr_GIDNumer = Atr.TwrGIDNumer AND Twr_GIDTyp = Atr.TwrGIDTyp
+LEFT OUTER JOIN 
+	(SELECT MIN(DAB_ID) AS MIN_ID, Twr_GIDNumer AS TwrGIDNumer
+		FROM CDN.DaneBinarne
+		JOIN (
+			SELECT DAO_DABId AS DABId, DAO_ObiTyp AS ObiTyp, DAO_ObiNumer AS ObiNumer, DAO_iMall AS iMall FROM CDN.DaneObiekty
+		) DAOAtr ON DAOAtr.DABId = DAB_ID
+		JOIN CDN.TwrKarty Twr ON Twr.Twr_GIDNumer = DAOAtr.ObiNumer AND Twr.Twr_GIDTyp = DAOAtr.ObiTyp AND Twr_GIDNumer = Twr.Twr_GIDNumer
+		JOIN CDN.TwrAplikacje ON TAP_ObiTyp = Twr_GIDTyp AND TAP_ObiNumer = Twr_GIDNumer
+		WHERE DAOAtr.iMall = 1 AND Twr_Archiwalny = 0 and TAP_iMall = 1
+		AND Twr_GIDNumer &gt; 0 --AND DAB_Rozszerzenie IN ('PNG', 'JPG')
+		group by Twr_GIDNumer) DAB ON Twr_GIDNumer = DAB.TwrGIDNumer
+LEFT OUTER JOIN
+	(SELECT Twr_GIDNumer AS GIDNumer
+	, AtK_OddZrdID AS ID
+	, isnull(Atw_OddZrdID,0) AS IDWartosc
+	, Atr_Wartosc AS Wartosc
+	FROM CDN.TwrKarty ATRP
+	join CDN.TwrAplikacje ON Twr_GIDNumer = TAP_ObiNumer and Twr_GIDTyp = TAP_ObiTyp
+	join CDN.KatGrupyTwr ON TAP_GrupaiMall= KGT_Id
+	JOIN CDN.PicoKonfig ON Pck_PicoId = @ID
+	JOIN CDN.Atrybuty ON Atr_ObiTyp = Twr_GIDTyp AND Atr_ObiNumer = Twr_GIDNumer
+	JOIN CDN.AtrybutyKlasy ON AtK_ID = Atr_AtkId
+	LEFT OUTER JOIN CDN.AtrybutyWartosci ON AtW_AtKId = Atr_AtkId AND AtW_Wartosc = Atr_Wartosc
+	LEFT OUTER JOIN CDN.PicoLog ON PcL_PcKID = Pck_PicoId AND PcL_ObiTyp = Twr_GIDTyp AND PcL_ObiNumer = Twr_GIDNumer
+	WHERE Twr_GIDNumer &gt; 0 AND TAP_iMall = 1 AND Twr_Archiwalny = 0
+	AND ISNULL(PcL_TStamp,PcK_TSSynchrTwrPtw + 1) &gt; PcK_TSSynchrTwrPtw
+	AND AtK_iMall = 1 AND AtK_Typ &lt;&gt; 8
+	) AtrP ON AtrP.GIDNumer = Twr_GIDNumer
+LEFT OUTER JOIN
+	(SELECT DAO_ZalID AS ZALID, Twr_GIDNumer AS TwrGIDNumer,DAB_Rozszerzenie,DAB_ID AS DABID,SUBSTRING(DAB_Kod,1,99) AS DABKOD, SUBSTRING(DAB_Opis,1,1025) AS DABOPIS
+		FROM CDN.DaneBinarne
+		JOIN (
+			SELECT DAO_DABId AS DABId,DAO_ZalID, DAO_ObiTyp AS ObiTyp, DAO_ObiNumer AS ObiNumer, DAO_iMall AS iMall FROM CDN.DaneObiekty
+		) DAOAtr ON DAOAtr.DABId = DAB_ID
+		JOIN CDN.TwrKarty Twr ON Twr.Twr_GIDNumer = DAOAtr.ObiNumer AND Twr.Twr_GIDTyp = DAOAtr.ObiTyp AND Twr_GIDNumer = Twr.Twr_GIDNumer
+		JOIN CDN.TwrAplikacje ON TAP_ObiTyp = Twr_GIDTyp AND TAP_ObiNumer = Twr_GIDNumer
+		WHERE DAOAtr.iMall = 1 AND Twr_Archiwalny = 0 and TAP_iMall = 1
+		AND Twr_GIDNumer &gt; 0 --AND DAB_Rozszerzenie IN ('PNG', 'JPG')
+		) TwrZ ON Twr_GIDNumer = TwrZ.TwrGIDNumer --AND DAB.MIN_ID = TwrZ.ZALID
+WHERE Twr_GIDNumer &gt; @Last_twrID -- Potrzebne do ciecia na paczki
+ANd TwC_TwrLp IN (PcK_NrCeny, PcK_NrCenyDomyslnej) and TwC_TwrLp&lt;&gt;0 AND Twr_GIDNumer &gt; 0 AND TAP_iMall = 1 AND Twr_Archiwalny = 0 AND KGT_IdM &lt;&gt; 0 AND TwC_Waluta = 'PLN'
+AND ((CASE WHEN Twr_LastModL &gt; TwC_CzasModyfikacji THEN Twr_LastModL ELSE TwC_CzasModyfikacji END) &gt; CASE WHEN @TypExp=0 THEN PcK_TSSynchrTwrPtw ELSE 0 END) --OR ISNULL(PcL_TStamp,PcK_TSSynchrTwrPtw + 1) &gt; PcK_TSSynchrTwrPtw
+AND EXISTS(SELECT TwL_GrONumer FROM CDN.TwrLinki WHERE Twr_GIDTyp = TwL_GIDTyp AND Twr_GIDNumer = TwL_GIDNumer AND TwL_GrONumer = PcK_TwGNumer )
+AND twr_gidnumer IN(SELECT * FROM #tmpGidnumerSet)
+
+
+SELECT DISTINCT  1 AS Tag, NULL AS Parent  /* Towary  &lt;TWR&gt; */
+                                ,TwrGIDNumer AS [TWR!1!GIDNumer], Symbol AS [TWR!1!Symbol], TwrJm AS [TWR!1!JM], TwrJMCalkowita AS [TWR!1!JMCalkowite], ProducentID AS [TWR!1!ProducentID], MarkaID AS [TWR!1!MarkaID], OkresGwarancji AS [TWR!1!OkresGwarancji]
+                                , WagaBrutto AS [TWR!1!WagaBrutto], KGO AS [TWR!1!Kgo], iGaleria24GrupaID AS [TWR!1!iGaleria24Grupa], PodlegaRabatowaniu AS [TWR!1!CzyRabat], [Status] AS [TWR!1!Status], Dostepnosc AS [TWR!1!Dostepnosc], ZdjecieID AS [TWR!1!ZdjecieID]
+                                , EAN AS [TWR!1!EAN], Flagi AS [TWR!1!Flagi]
+        ,NULL AS [TWRJI!2]
+                ,NULL AS [TWRJ!3!GIDNumer], NULL AS [TWRJ!3!Kod], NULL AS [TWRJ!3!Nazwa],NULL AS [TWRJ!3!Nazwa1], NULL AS [TWRJ!3!Opis], NULL AS [TWRJ!3!OpisKrotki], NULL AS [TWRJ!3!PSKluczowe], NULL AS [TWRJ!3!POpis], NULL AS [TWRJ!3!PSTitle], NULL AS [TWRJ!3!JM]
+        ,NULL AS [TWCI!4]
+                ,NULL AS [TWC!5!GIDNumer], NULL AS [TWC!5!ID], NULL AS [TWC!5!Wartosc], NULL AS [TWC!5!WartoscBrutto], NULL AS [TWC!5!Podatek]
+        ,NULL AS [ATRI!6]
+                ,NULL AS [ATR!7!GIDNumer], NULL AS [ATR!7!ID], NULL AS [ATR!7!Nazwa], NULL AS [ATR!7!Wartosc], NULL AS [ATR!7!Format], NULL AS [ATR!7!Lp], NULL AS [ATR!7!Typ]
+        ,NULL AS [ATRPI!8]
+                ,NULL AS [ATRP!9!GIDNumer], NULL AS [ATRP!9!ID], NULL AS [ATRP!9!IDWartosc], NULL AS [ATRP!9!Wartosc]
+		,NULL AS [ZALI!10]
+				,NULL AS [ZAL!11!ID] ,NULL AS [ZAL!11!GIDNumer] ,NULL AS [ZAL!11!Typ],NULL AS [ZAL!11!Lp]
+		,NULL AS [ZALIJ!12]
+		,NULL AS [ZAJ!13]
+				,NULL AS [ZAJ!13!ID], NULL AS [ZAJ!13!JezykID], NULL AS [ZAJ!13!DabID], NULL AS [ZAJ!13!TagLink], NULL AS [ZAJ!13!TagAlt],NULL AS [ZAJ!13!TagRel],NULL AS [ZAJ!13!TagTitle]
+FROM  #tmpRecordSet
+
+UNION ALL
+
+SELECT DISTINCT  2 AS Tag, 1 AS Parent       /* Ceny &lt;TWJI&gt; */
+        ,TwrGIDNumer, NULL, NULL, NULL, NULL, NULL, NULL
+				, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+				, NULL,NULL
+        ,NULL
+                , NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+        ,NULL
+                , NULL, NULL, NULL, NULL, NULL 
+        ,NULL
+                , NULL, NULL, NULL, NULL, NULL, NULL, NULL
+        ,NULL
+				, NULL, NULL, NULL, NULL
+		,NULL
+				, NULL, NULL ,NULL AS [ZAL!11!Typ],NULL AS [ZAL!11!Lp]
+		,NULL AS [ZALIJ!12]
+		,NULL AS [ZAJ!13]
+				,NULL AS [ZAJ!13!ID], NULL AS [ZAJ!13!JezykID], NULL AS [ZAJ!13!DabID], NULL AS [ZAJ!13!TagLink], NULL AS [ZAJ!13!TagAlt],NULL AS [ZAJ!13!TagRel],NULL AS [ZAJ!13!TagTitle]
+FROM  #tmpRecordSet
+
+UNION ALL
+
+SELECT DISTINCT  3 AS Tag, 2 AS Parent       /* Ceny &lt;TWRJ&gt; polski */
+		,TwrGIDNumer, NULL, NULL, NULL, NULL, NULL, NULL
+				, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+				, NULL,NULL
+        ,NULL
+                , TwrGIDNumer,TwrKod, TwrNazwa, TwrNazwa1, TwrOpis, TwrOpisKrotki, TwrSlowaKluczowe, TwrMetaOpis, TwrTytulStrony, TwrJm
+        ,NULL
+                , NULL, NULL, NULL, NULL, NULL 
+        ,NULL
+                , NULL, NULL, NULL, NULL, NULL, NULL, NULL
+        ,NULL
+				, NULL, NULL, NULL, NULL
+		,NULL
+				, NULL, NULL ,NULL AS [ZAL!11!Typ],NULL AS [ZAL!11!Lp]
+		,NULL AS [ZALIJ!12]
+		,NULL AS [ZAJ!13]
+				,NULL AS [ZAJ!13!ID], NULL AS [ZAJ!13!JezykID], NULL AS [ZAJ!13!DabID], NULL AS [ZAJ!13!TagLink], NULL AS [ZAJ!13!TagAlt],NULL AS [ZAJ!13!TagRel],NULL AS [ZAJ!13!TagTitle]
+FROM  #tmpRecordSet
+
+UNION ALL
+
+SELECT DISTINCT  4 AS Tag, 1 AS Parent       /* Ceny &lt;TWCI&gt; */
+		,TwrGIDNumer, NULL, NULL, NULL, NULL, NULL, NULL
+				, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+				, NULL,NULL
+        ,NULL
+                , NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+        ,NULL
+                , NULL, NULL, NULL, NULL, NULL 
+        ,NULL
+                , NULL, NULL, NULL, NULL, NULL, NULL, NULL
+        ,NULL
+				, NULL, NULL, NULL, NULL
+		,NULL
+				, NULL, NULL ,NULL AS [ZAL!11!Typ],NULL AS [ZAL!11!Lp]
+		,NULL AS [ZALIJ!12]
+		,NULL AS [ZAJ!13]
+				,NULL AS [ZAJ!13!ID], NULL AS [ZAJ!13!JezykID], NULL AS [ZAJ!13!DabID], NULL AS [ZAJ!13!TagLink], NULL AS [ZAJ!13!TagAlt],NULL AS [ZAJ!13!TagRel],NULL AS [ZAJ!13!TagTitle]
+FROM  #tmpRecordSet
+
+UNION ALL
+
+SELECT DISTINCT  5 AS Tag, 4 AS Parent    /* Ceny &lt;TWC&gt; */
+		,TwrGIDNumer, NULL, NULL, NULL, NULL, NULL, NULL
+				, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+				, NULL,NULL
+        ,NULL
+                , NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+         ,NULL
+                , TwrGIDNumer, TWCID , TwCWartosc, TwCWartoscBrutto, TwCPodatek
+        ,NULL
+                , NULL, NULL, NULL, NULL, NULL, NULL, NULL
+        ,NULL
+				, NULL, NULL, NULL, NULL
+		,NULL
+				, NULL, NULL ,NULL AS [ZAL!11!Typ],NULL AS [ZAL!11!Lp]
+		,NULL AS [ZALIJ!12]
+		,NULL AS [ZAJ!13]
+				,NULL AS [ZAJ!13!ID], NULL AS [ZAJ!13!JezykID], NULL AS [ZAJ!13!DabID], NULL AS [ZAJ!13!TagLink], NULL AS [ZAJ!13!TagAlt],NULL AS [ZAJ!13!TagRel],NULL AS [ZAJ!13!TagTitle]
+FROM  #tmpRecordSet
+
+UNION ALL
+
+SELECT DISTINCT   6 AS Tag, 1 AS Parent  /* Atrybuty &lt;ATRI&gt; */
+		,TwrGIDNumer, NULL, NULL, NULL, NULL, NULL, NULL
+				, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+				, NULL,NULL
+        ,NULL
+                , NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+        ,NULL
+                , NULL, NULL, NULL, NULL, NULL 
+        ,NULL
+                , NULL, NULL, NULL, NULL, NULL, NULL, NULL
+        ,NULL
+				, NULL, NULL, NULL, NULL
+		,NULL
+				, NULL, NULL ,NULL AS [ZAL!11!Typ],NULL AS [ZAL!11!Lp]
+		,NULL AS [ZALIJ!12]
+		,NULL AS [ZAJ!13]
+				,NULL AS [ZAJ!13!ID], NULL AS [ZAJ!13!JezykID], NULL AS [ZAJ!13!DabID], NULL AS [ZAJ!13!TagLink], NULL AS [ZAJ!13!TagAlt],NULL AS [ZAJ!13!TagRel],NULL AS [ZAJ!13!TagTitle]
+FROM  #tmpRecordSet
+
+UNION ALL
+
+SELECT DISTINCT  7 AS Tag, 6 AS Parent /* Atrybuty &lt;ATR&gt;  polski*/
+		,TwrGIDNumer, NULL, NULL, NULL, NULL, NULL, NULL
+				, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+				, NULL,NULL
+        ,NULL
+                , NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+        ,NULL
+                , NULL, NULL, NULL, NULL, NULL
+        ,NULL
+        ,AtrGIDNumer, AtrID, AtrNazwa, AtrWartosc, AtrFormat, AtrLp, AtrTyp
+        ,NULL
+				, NULL, NULL, NULL, NULL
+		,NULL
+				, NULL, NULL ,NULL AS [ZAL!11!Typ],NULL AS [ZAL!11!Lp]
+		,NULL AS [ZALIJ!12]
+		,NULL AS [ZAJ!13]
+				,NULL AS [ZAJ!13!ID], NULL AS [ZAJ!13!JezykID], NULL AS [ZAJ!13!DabID], NULL AS [ZAJ!13!TagLink], NULL AS [ZAJ!13!TagAlt],NULL AS [ZAJ!13!TagRel],NULL AS [ZAJ!13!TagTitle]
+FROM  #tmpRecordSet WHERE AtrId IS NOT NULL
+
+UNION ALL
+
+SELECT DISTINCT  8 AS Tag, 1 AS Parent       /* &lt;ATRPI&gt; */
+        ,TwrGIDNumer, NULL, NULL, NULL, NULL, NULL, NULL
+				, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+				, NULL,NULL
+        ,NULL
+                , NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+        ,NULL
+                , NULL, NULL, NULL, NULL, NULL 
+        ,NULL
+                , NULL, NULL, NULL, NULL, NULL, NULL, NULL
+        ,NULL
+				, NULL, NULL, NULL, NULL
+		,NULL
+				, NULL, NULL ,NULL AS [ZAL!11!Typ],NULL AS [ZAL!11!Lp]
+		,NULL AS [ZALIJ!12]
+		,NULL AS [ZAJ!13]
+				,NULL AS [ZAJ!13!ID], NULL AS [ZAJ!13!JezykID], NULL AS [ZAJ!13!DabID], NULL AS [ZAJ!13!TagLink], NULL AS [ZAJ!13!TagAlt],NULL AS [ZAJ!13!TagRel],NULL AS [ZAJ!13!TagTitle]
+FROM  #tmpRecordSet
+
+UNION ALL
+
+SELECT DISTINCT  9 AS Tag, 8 AS Parent       /* &lt;ATRP&gt; */
+        ,TwrGIDNumer, NULL, NULL, NULL, NULL, NULL, NULL
+				, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+				, NULL,NULL
+        ,NULL
+                , NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+        ,NULL
+                , NULL, NULL, NULL, NULL, NULL 
+        ,NULL
+                , NULL, NULL, NULL, NULL, NULL, NULL, NULL
+        ,NULL
+				,AtrPGIDNumer, AtrPID, AtrPIDWartosc, AtrPWartosc
+		,NULL
+				, NULL, NULL ,NULL AS [ZAL!11!Typ],NULL AS [ZAL!11!Lp]
+		,NULL AS [ZALIJ!12]
+		,NULL AS [ZAJ!13]
+				,NULL AS [ZAJ!13!ID], NULL AS [ZAJ!13!JezykID], NULL AS [ZAJ!13!DabID], NULL AS [ZAJ!13!TagLink], NULL AS [ZAJ!13!TagAlt],NULL AS [ZAJ!13!TagRel],NULL AS [ZAJ!13!TagTitle]
+FROM  #tmpRecordSet
+
+UNION ALL
+SELECT DISTINCT   10 AS Tag, 1 AS Parent  /* Atrybuty &lt;ZALI&gt; */
+		,TwrGIDNumer, NULL, NULL, NULL, NULL, NULL, NULL
+				, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+				, NULL,NULL
+        ,NULL
+                , NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+        ,NULL
+                , NULL, NULL, NULL, NULL, NULL 
+        ,NULL
+                , NULL, NULL, NULL, NULL, NULL, NULL, NULL
+        ,NULL
+				, NULL, NULL, NULL, NULL
+		,NULL
+				, NULL, NULL ,NULL AS [ZAL!11!Typ],NULL AS [ZAL!11!Lp]
+		,NULL AS [ZALIJ!12]
+		,NULL AS [ZAJ!13]
+				,NULL AS [ZAJ!13!ID], NULL AS [ZAJ!13!JezykID], NULL AS [ZAJ!13!DabID], NULL AS [ZAJ!13!TagLink], NULL AS [ZAJ!13!TagAlt],NULL AS [ZAJ!13!TagRel],NULL AS [ZAJ!13!TagTitle]
+FROM  #tmpRecordSet
+
+UNION ALL
+
+SELECT DISTINCT  11 AS Tag, 10 AS Parent       /* &lt;ZAL&gt; */
+        ,TwrGIDNumer, NULL, NULL, NULL, NULL, NULL, NULL
+				, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+				, NULL,NULL
+        ,NULL
+                , NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,NULL
+        ,NULL
+                , NULL, NULL, NULL, NULL, NULL 
+        ,NULL
+                , NULL, NULL, NULL, NULL, NULL, NULL, NULL
+        ,NULL
+				, NULL, NULL, NULL, NULL
+		,NULL
+				,TwrZZdjecieID,TwrZGIDNumer,CDN.ESKLEP_TypZalacznika(DABRozszerzenie,CASE WHEN TwrZZdjecieID = ZdjecieID THEN 1 ELSE 0 END),1
+		,NULL AS [ZALIJ!12]
+		,NULL AS [ZAJ!13]
+				,NULL AS [ZAJ!13!ID], NULL AS [ZAJ!13!JezykID], NULL AS [ZAJ!13!DabID], NULL AS [ZAJ!13!TagLink], NULL AS [ZAJ!13!TagAlt],NULL AS [ZAJ!13!TagRel],NULL AS [ZAJ!13!TagTitle]
+FROM  #tmpRecordSet WHERE TwrZZdjecieID IS NOT NULL
+UNION ALL
+SELECT distinct 12 AS TAG, 11 AS Parent /* ZALIJ */
+        ,TwrGIDNumer, NULL, NULL, NULL, NULL, NULL, NULL
+				, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+				, NULL,NULL
+        ,NULL
+                , NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,NULL
+        ,NULL
+                , NULL, NULL, NULL, NULL, NULL 
+        ,NULL
+                , NULL, NULL, NULL, NULL, NULL, NULL, NULL
+        ,NULL
+				, NULL, NULL, NULL, NULL
+		,NULL
+				,TwrZZdjecieID,TwrZGIDNumer,CDN.ESKLEP_TypZalacznika(DABRozszerzenie,CASE WHEN TwrZZdjecieID = ZdjecieID THEN 1 ELSE 0 END),1
+		,NULL AS [ZALIJ!12]
+		,NULL AS [ZAJ!13]
+				,TwrZZdjecieID AS [ZAJ!13!ID], NULL AS [ZAJ!13!JezykID], NULL AS [ZAJ!13!DabID], NULL AS [ZAJ!13!TagLink], NULL AS [ZAJ!13!TagAlt],NULL AS [ZAJ!13!TagRel],NULL AS [ZAJ!13!TagTitle]
+FROM  #tmpRecordSet WHERE TwrZZdjecieID IS NOT NULL
+UNION ALL
+SELECT distinct 13 AS TAG, 12 AS Parent /* ZALIJ */
+        ,TwrGIDNumer, NULL, NULL, NULL, NULL, NULL, NULL
+				, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+				, NULL,NULL
+        ,NULL
+                , NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,NULL
+        ,NULL
+                , NULL, NULL, NULL, NULL, NULL 
+        ,NULL
+                , NULL, NULL, NULL, NULL, NULL, NULL, NULL
+        ,NULL
+				, NULL, NULL, NULL, NULL
+		,NULL
+				,TwrZZdjecieID,TwrZGIDNumer,CDN.ESKLEP_TypZalacznika(DABRozszerzenie,CASE WHEN TwrZZdjecieID = ZdjecieID THEN 1 ELSE 0 END),1
+		,NULL AS [ZALIJ!12]
+		,NULL AS [ZAJ!13]
+				,TwrZZdjecieID AS [ZAJ!13!ID], 1 AS [ZAJ!13!JezykID], DABID AS [ZAJ!13!DabID], '' AS [ZAJ!13!TagLink], DABKOD AS [ZAJ!13!TagAlt],0 AS [ZAJ!13!TagRel],DABOPIS AS [ZAJ!13!TagTitle]
+FROM  #tmpRecordSet WHERE TwrZZdjecieID IS NOT NULL
+
+ORDER BY [TWR!1!GIDNumer],1,[TWC!5!ID], [ATR!7!ID], [ATR!7!Lp] --, [ATR!7!Typ]
+FOR XML EXPLICIT,  BINARY BASE64
+
+UPDATE CDN.TwrKarty SET Twr_Oddzialowy = (Twr_Oddzialowy&amp;1) + 2
+WHERE Twr_Oddzialowy &amp; 2 = 0 AND Twr_GIDNumer IN (SELECT DISTINCT TwrGIDNumer FROM  #tmpRecordSet )
+
+INSERT INTO CDN.PicoLog (PcL_PcKID, PcL_ObiTyp, PcL_ObiNumer, PcL_ObiektID, PcL_Komentarz, PcL_Info, PcL_TStamp)
+                        SELECT @ID, 16, Twr_GIDNumer, 1, 'Towar - '+ Twr_Kod, '', DATEDIFF(s,CONVERT(DATETIME,'19900101',121),GETDATE())
+                        FROM CDN.TwrKarty
+                        LEFT OUTER JOIN CDN.PicoLog ON PcL_PcKID = @ID AND PcL_ObiTyp = Twr_GIDTyp AND PcL_ObiNumer = Twr_GIDNumer
+                        WHERE Twr_GIDNumer IN (SELECT DISTINCT TwrGIDNumer FROM  #tmpRecordSet ) AND PcL_ID IS NULL
+
+SELECT @Last_twrID = MAX(TwrGIDNumer) FROM #tmpGidnumerSet
+UPDATE CDN.PicoKonfig SET PcK_Blokady = (CASE WHEN (SELECT count(*) FROM #tmpGidnumerSet) = 5000 THEN @Last_twrID ELSE 0 END) WHERE PcK_PicoID = @ID
+
+DROP TABLE #tmpRecordSet
+DROP TABLE #tmpGidnumerSet
+SET NOCOUNT OFF
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,297 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="DokStanTowaruDoSprzedazy"></A><PRE>
+          <FONT SIZE="2"><I>/* DokStanTowaruDoSprzedazy */</I><BR>
+CREATE FUNCTION CDN.DokStanTowaruDoSprzedazy (
+	@p_gt SMALLINT,
+	@p_gf INTEGER,
+	@p_gn INTEGER,
+	@p_typilosci SMALLINT,
+	@p_biezacadata INTEGER,
+	@p_RezDst INTEGER,
+	@p_FrsId INTEGER,
+	@p_FrsIdW INTEGER,
+	@p_TypDok SMALLINT,
+	@p_ZrdTyp SMALLINT,
+	@p_ZrdNumer INTEGER,
+	@p_FrsIDZrd INTEGER,
+	@p_TypDokZrd SMALLINT
+	)
+	-- Funkcja zwraca sume stanow danego towaru i jego cenę oraz wartosc stanu
+	--
+	-- Format wyniku:
+	-- ilosctowaru jaka mozna sprzedac
+	--
+	-- Wersja 1.05   30.08.2000
+	--
+	-- wersja 3.10    18.03.2003 KK
+	--        dodana obsluga definicji dokumentow
+	--
+	-- wersja 4.0
+	--               29.09.2004 KK - nowy  parametr @p_RezDst
+	--
+	-- KK 2004.10.26 - dodany parametr, którym rozróżniamy czy obliczona ilość dotyczy ilości magazynowej czy do sprzedaży
+	-- Parametry:
+	-- @p_gt         GIDTyp towaru
+	-- @p_gf         GIDFirma towaru
+	-- @p_gn         GIDNumer towaru
+	-- @p_typilosci  rodzaj zwracaj ilości 0 - ilość do sprzedaży,
+	--                                                                         1 - ilość magazynowa
+	--                                                                         2 - ilość dostępna do sprzedaży
+	--                                                                         3 - ilość dostępna magazynowa
+	-- @p_biezacadata - biezaca data systemowa koncowki - jezeli data waznosci jest od niej &gt;= --                  rezerwacja jest brana pod uwage
+	-- @p_RezDst     Sposób uwzględniania rezerwacji z zasobami
+	--               0 - uwzględniaj wszystkie rezerwacje (działanie domyślne)
+	--               1 - uwzgędniaj tylko rezerwacje z zasobami
+	--               2 - uwzględniaj tylko rezerwacje bez zasobów
+	--
+	-- poniższe parametrydotyczą magazynów wszystkich
+	-- @lFrSID   -  identfikator miejsca w strukturze firmy ( gdy 0 - warunek na magazyny
+	--              w węźle pomijany)
+	-- @lFrSIDW   - identfikator miejsca w strukturze firmy właściciela dokumentu( gdy 0 - warunek na magazyny
+	--              w węźle pomijany
+	-- @lTypDok  -  typ dokumentu (gdy 0 - warunek pomijany)
+	--    w przypadku gdy oba parametry zerowe to zwracana lista magazynów z CDN.Magazyny
+RETURNS VARCHAR(128)
+AS
+BEGIN
+	-- rozroznienie obiektow, ktore nie maja stanow
+	DECLARE @iloscSpr DECIMAL(28, 4);
+	DECLARE @iloscRez DECIMAL(28, 4);
+	DECLARE @iloscDst DECIMAL(28, 4);
+	--DECLARE @iloscZablokowanaZwmSpr DECIMAL(28, 4);
+	DECLARE @retval VARCHAR(128);
+		SELECT @IloscSpr = SUM(DostepneZasoby.Ile) FROM (
+		SELECT (
+				CASE 
+					WHEN isnull(isnull((
+									SELECT SUM(CASE 
+												WHEN @p_TypIlosci = 0
+													THEN twz_ilspr
+												WHEN @p_TypIlosci = 1
+													THEN twz_ilMag
+												WHEN @p_TypIlosci = 2
+													THEN (
+															CASE 
+																WHEN twz_ilspr &lt; TWZ_Ilosc
+																	THEN Twz_IlSpr
+																ELSE Twz_Ilosc
+																END
+															)
+												WHEN @p_TypIlosci = 3
+													THEN (
+															CASE 
+																WHEN twz_ilMag &lt; TWZ_Ilosc
+																	THEN Twz_IlMag
+																ELSE Twz_Ilosc
+																END
+															)
+												ELSE Twz_IlSpr
+												END)
+									FROM cdn.twrzasoby
+									WHERE TwZ_TwrTyp = @p_gt
+										AND TwZ_TwrFirma = @p_gf
+										AND TwZ_TwrNumer = @p_gn
+										AND TwZ_MagTyp = 208
+										AND TwZ_MagFirma = @p_gf
+										AND TwZ_MagNumer = Mag_GIDNumer
+									GROUP BY twz_magnumer
+									), 0) - isnull((
+									SELECT SUM(CASE 
+												WHEN (@p_typilosci = 0 /*or @p_TypIlosci=2 TID:75651*/)
+													THEN Rez_Ilosc - Rez_Zrealizowano
+												ELSE Rez_Ilosc - Rez_Zrealizowano - Rez_IloscMag
+												END)
+									FROM cdn.rezerwacje
+									WHERE rez_gidtyp = 2576
+										AND Rez_twrtyp = @p_gt
+										AND Rez_twrfirma = @p_gf
+										AND Rez_twrnumer = @p_gn
+										AND Rez_MagTyp = 208
+										AND Rez_MagFirma = @p_gf
+										AND Rez_MagNumer = Mag_Gidnumer
+										AND Rez_DataWaznosci &gt;= @p_biezacadata
+										AND (
+											CASE 
+												WHEN Rez_DstNumer &lt;&gt; 0
+													THEN 1
+												WHEN Rez_DstNumer = 0
+													AND Rez_DataAktywacji &lt;= @p_biezacadata
+													THEN 1
+												ELSE 0
+												END
+											) = 1
+										AND Rez_aktywna = 1
+										AND Rez_Typ = 1
+										AND Rez_Ilosc &lt;&gt; 0
+										AND (
+											CASE 
+												WHEN @p_RezDst = 0
+													THEN 1
+												WHEN @p_RezDst = 1
+													AND Rez_DstNumer &lt;&gt; 0
+													THEN 1
+												WHEN @p_RezDst = 2
+													AND Rez_DstNumer = 0
+													THEN 1
+												ELSE 0
+												END
+											) = 1
+									GROUP BY Rez_MagNumer
+									), 0), 0) &lt;= 0
+						THEN 0
+					ELSE isnull(isnull((
+									SELECT SUM(CASE 
+												WHEN @p_TypIlosci = 0
+													THEN twz_ilspr
+												WHEN @p_TypIlosci = 1
+													THEN twz_ilMag
+												WHEN @p_TypIlosci = 2
+													THEN (
+															CASE 
+																WHEN twz_ilspr &lt; TWZ_Ilosc
+																	THEN Twz_IlSpr
+																ELSE Twz_Ilosc
+																END
+															)
+												WHEN @p_TypIlosci = 3
+													THEN (
+															CASE 
+																WHEN twz_ilMag &lt; TWZ_Ilosc
+																	THEN Twz_IlMag
+																ELSE Twz_Ilosc
+																END
+															)
+												ELSE Twz_IlSpr
+												END)
+									FROM cdn.twrzasoby
+									WHERE TwZ_TwrTyp = @p_gt
+										AND TwZ_TwrFirma = @p_gf
+										AND TwZ_TwrNumer = @p_gn
+										AND TwZ_MagTyp = 208
+										AND TwZ_MagFirma = @p_gf
+										AND TwZ_MagNumer = Mag_GIDNumer
+									GROUP BY TwZ_MagNumer
+									), 0) - isnull((
+									SELECT SUM(CASE 
+												WHEN (@p_typilosci = 0 /*or @p_typilosci=2  TID:75651*/)
+													THEN Rez_Ilosc - Rez_Zrealizowano
+												ELSE Rez_Ilosc - Rez_zrealizowano - Rez_IloscMag
+												END)
+									FROM cdn.rezerwacje
+									WHERE rez_gidtyp = 2576
+										AND Rez_twrtyp = @p_gt
+										AND Rez_twrfirma = @p_gf
+										AND Rez_twrnumer = @p_gn
+										AND Rez_MagTyp = 208
+										AND Rez_MagFirma = @p_gf
+										AND Rez_MagNumer = Mag_Gidnumer
+										AND Rez_DataWaznosci &gt;= @p_biezacadata
+										AND (
+											CASE 
+												WHEN Rez_DstNumer &lt;&gt; 0
+													THEN 1
+												WHEN Rez_DstNumer = 0
+													AND Rez_DataAktywacji &lt;= @p_biezacadata
+													THEN 1
+												ELSE 0
+												END
+											) = 1
+										AND Rez_aktywna = 1
+										AND Rez_Typ = 1
+										AND Rez_Ilosc &lt;&gt; 0
+										AND (
+											CASE 
+												WHEN @p_RezDst = 0
+													THEN 1
+												WHEN @p_RezDst = 1
+													AND Rez_DstNumer &lt;&gt; 0
+													THEN 1
+												WHEN @p_RezDst = 2
+													AND Rez_DstNumer = 0
+													THEN 1
+												ELSE 0
+												END
+											) = 1
+									GROUP BY Rez_MagNumer
+									), 0), 0)
+					END
+				) AS Ile
+		FROM cdn.DokDostepneMagazyny(@p_FrSID, @p_FrSIDW, @p_typDok, @p_ZrdTyp, @p_ZrdNumer, @p_FrsIDZrd, @p_TypDokZrd)
+		GROUP BY mag_gidnumer,
+			mag_kod
+		) AS DostepneZasoby
+		
+
+	--SELECT @iloscZablokowanaZwmSpr = isnull(sum(AMaS_Ilosc) - sum(MaS_Ilosc), 0)
+	--FROM cdn.MagElem
+	--JOIN cdn.MagSElem ON MaS_GIDNumer = MaE_GIDNumer
+	--	AND MaS_GIDLp = MaE_GIDLp
+	--JOIN cdn.MagSElemArc ON AMaS_GIDNumer = MaS_GIDNumer
+	--	AND AMaS_GIDLp = MaS_GIDLp
+	--WHERE MaE_GIDTyp = 1605 /*Typ_ZWM*/
+	--	AND MaE_Status &lt; 4 /*e_wms_lZamkniety*/
+	--	AND MaE_TwrNumer = @p_gn
+
+	--SET @iloscSpr = @iloscSpr - @iloscZablokowanaZwmSpr
+
+	--        set @IloscRez = (select sum(Rez_Ilosc-Rez_Zrealizowano) from cdn.Rezerwacje
+	--         where
+	--              rez_gidtyp=2576
+	--                and Rez_twrtyp=@p_gt and Rez_twrfirma=@p_gf
+	--               and Rez_twrnumer=@p_gn
+	--               and Rez_MagTyp=208 and Rez_MagFirma=@p_gf
+	--               and Rez_MagNumer= 0
+	--             and Rez_DataWaznosci&gt;=@p_biezacadata -- data waznosci &gt; dzis
+	--             and Rez_DataAktywacji&lt;=@p_biezacadata -- dataaktywacji &lt; DZIS
+	--            and Rez_aktywna=1
+	--          and Rez_Typ = 1
+	--             and Rez_Ilosc&lt;&gt;0  -- aby nie brac anulowanych zamowien
+	--           and exists ( select *
+	--                         from cdn.Rezmagazyny, CDN.DokDostepneMagazyny(@p_FrSID,@p_FrSIDW,@p_TypDok, @p_ZrdTyp, @p_ZrdNumer,@p_FrsIDZrd, @p_TypDokZrd)
+	--                              where   ReZ_GIDNumer = ReM_RezNumer
+	--                                      and ReM_RezTyp=Rez_GIDTyp
+	--                                      and ReM_MagNumer = Mag_GIDNumer
+	--                       )
+	--              );
+	--
+	IF (@p_RezDst = 0)
+		SET @IloscRez = CDN.DokStanRezerwacjiWszystkich(@p_gT, @p_gF, @p_gN, @p_biezacadata, @p_FrsId, @p_FrsIdW, @p_TypDok, @p_ZrdTyp, @p_ZrdNumer, @p_FrsIDZrd, @p_TypDokZrd, 0, 0, @IloscSpr, 5, CASE 
+					WHEN @p_typilosci = 0
+						OR @p_typilosci = 2
+						THEN 0
+					ELSE 1
+					END, 0)
+	SET @iloscRez = IsNull(@iloscRez, 0);
+
+	IF (@iloscSpr - @iloscRez) &lt; 0
+	BEGIN
+		SET @iloscDst = 0;
+	END
+	ELSE
+	BEGIN
+		SET @iloscDst = @iloscSpr - @iloscRez;
+
+		IF @iloscDst &lt; 0
+			SET @iloscDst = 0;
+	END;
+
+	SET @retval = cast(@iloscSpr AS VARCHAR(28)) + ':' + cast(@iloscDst AS VARCHAR(28)) + ':' + cast(@iloscRez AS VARCHAR(28));
+
+	RETURN @retval;
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

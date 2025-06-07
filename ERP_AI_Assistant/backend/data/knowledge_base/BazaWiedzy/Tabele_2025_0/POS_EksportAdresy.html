@@ -1,0 +1,209 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[POS_EksportAdresy]"></A><PRE>
+          <FONT SIZE="2"><I>/* [POS_EksportAdresy] */</I><BR>
+CREATE PROCEDURE [CDN].[POS_EksportAdresy]
+	@rowVersion bigint,
+	@PointOfSaleId int
+AS
+BEGIN
+SET NOCOUNT ON;	
+	
+	
+
+	select distinct KntGidNumer,KntLp,KntKraj,KntWaNCzasModyfikacji,KntLastMod, max(oddzialBylWyslany) as KntBylWyslany into #customerIds
+	from cdn.POS_OddzialyDoEksportu(@PointOfSaleId, @rowVersion) cross apply cdn.POS_KntDoeksportu(PsaId,0)
+	group by KntGidNumer,KntLp,KntKraj,KntWaNCzasModyfikacji,KntLastMod
+		
+	declare @LastMod bigint = isnull((select case when max(PSaDataDodania) &gt; max(Frm_CzasModyfikacji) and @PointOfSaleId is null and max(oddzialBylWyslany) = 0 then max(PSaDataDodania) else max(Frm_CzasModyfikacji) end
+	from cdn.POS_OddzialyDoEksportu(@PointOfSaleId, @rowVersion)
+	join cdn.FrmStruktura on FRS_ID = PckCentrumID
+	join cdn.Firma on Frm_GidNumer = FRS_FrmNumer
+	),@rowVersion)
+
+    declare @LastMod2 bigint = isnull((select case when max(KntWaNCzasModyfikacji) &gt; max(KnA_LastModL) THEN max(KntWaNCzasModyfikacji) else  max(KnA_LastModL) end 
+	FROM #customerIds
+	JOIN CDN.KntAdresy ON KnA_KntNumer = KntGidNumer),@rowVersion)
+
+	declare @LastMod3 bigint = isnull((select case when max(KntWaNCzasModyfikacji) &gt; max(KnS_CzasModyfikacji) THEN max(KntWaNCzasModyfikacji) else  max(KnS_CzasModyfikacji) end
+	FROM #customerIds
+	JOIN CDN.KntOsoby ON KnS_KntNumer = KntGidNumer
+	where KnS_CzasModyfikacji &gt; @rowVersion),@rowVersion)
+
+	select @LastMod = case when @LastMod &gt; @LastMod2 then @LastMod else @LastMod2 end
+	select @LastMod = case when @LastMod3 &gt; @LastMod then @LastMod3 else @LastMod end
+
+	declare @AdresyFirma table(ObjGuid nvarchar(41),ObjectTypeId int,ObjectId int,AddressTypeId int,IsDefault varchar(5), Data XML)
+	create table #AdresyKontrahenci(ObjGuid nvarchar(41),ObjectTypeId int,ObjectGUID nvarchar(41),AddressTypeId int,IsDefault varchar(5), Data XML)
+	create clustered index AdresyKontrahenciPrimary on #AdresyKontrahenci (ObjGuid)
+	declare @AdresyOsobyKontaktowe table(ObjGuid nvarchar(41),ObjectTypeId int,ObjectGUID nvarchar(41),AddressTypeId int,IsDefault varchar(5), Data XML)
+
+	insert into @AdresyFirma 
+	 select * from (
+			select 
+			Frm_GUID as [@GUID],
+			5 as [@ObjectTypeId], --pieczątka
+			0 as [@ObjectId],
+			0 as [@Type], --general address
+			'true' as [@IsDefault],
+			(
+				select distinct
+				Frm_GUIDdane as [@GUID],
+				RTRIM(Frm_Ulica) as [@Street],
+				'' as [@BuildingNumber], --Nie ma u nas takiego pola
+				'' as [@ApartmentNumber], --Nie ma u nas takiego pola
+				RTRIM(case when frm_kodp='00-000' then '' else frm_kodp end) as [@ZipCode],
+				RTRIM(frm_miasto) as [@City],
+				--as [@ProvinceId] --Nie ma u nas takiego pola. TRZEBA DODAĆ
+				KPC_Id as [@CountryId],
+				RTRIM(frm_Powiat) as [@County],
+				RTRIM(frm_Gmina) as [@Commune],
+				--as [@PostOffice] --Nie ma u nas takiego pola
+				DATEADD(second,Frm_CzasModyfikacji,convert(datetime,'01-01-1990',105)) as [@ModificationDate] ,
+				'true' as [@IsActive],
+				--as [@AdditionalData] --Nie ma u nas takiego pola
+				--as [@AdditionalData2] --Nie ma u nas takiego pola
+				RTRIM(RTRIM(Frm_Nazwa1)+' '+RTRIM(Frm_Nazwa2)+' '+RTRIM(Frm_Nazwa3)+' '+RTRIM(Frm_Nazwa4)) as [@LocalName],
+				RTRIM(Frm_Opis) as [@Description]				
+				for xml path('Data'), type
+			) Address
+			from cdn.Firma
+				--cdn.PicoStanowiska
+				--join cdn.PicoKonfig on PSa_PcKID = PcK_PicoID
+				--join cdn.FrmStruktura on FRS_ID = PcK_CentrumID
+				--join cdn.Firma on Frm_GidNumer = FRS_FrmNumer
+				join cdn.KrajeCelne on (case when Frm_Kraj = '' OR Frm_Kraj is null then 'PL' else Frm_Kraj end) = KPC_Kod
+				--where PSa_ID = @PointOfSaleId --and (Frm_CzasModyfikacji &gt; @rowVersion OR @rowVersion=0)
+			) as aa
+
+
+	insert into #AdresyKontrahenci
+    select * from(
+			SELECT 
+			k1.kna_GUID as [@GUID],
+			1 as [@ObjectTypeId], --Adres dostawy
+			KNT_GUID as [@ObjectGUID],
+			isnull(case when k1.kna_TypPOS &lt;&gt; 0 then k1.kna_TypPOS else 
+				case 
+					when k1.kna_Wysylkowy = 1 then 1 
+					when k1.kna_AdresBank = 1 then 4 
+					when exists(select * from CDN.ObiektyDomyslne where obd_domtyp = k1.kna_gidtyp and obd_domnumer = max(k1.kna_gidnumer) and obd_kontekstdomyslnego=1) then 5 
+					when k1.kna_Gidtyp = 869 then 2 
+					when k1.kna_Gidtyp = 864 then 0 
+					end 
+				end,0) as [@Type],
+			case when Knt_KnANumer=k1.kna_GIDNumer then 'true' else 'false' end as [@IsDefault],
+			(
+			 select distinct
+				k1.kna_GUIDdane as [@GUID],
+				RTRIM(max(k1.kna_Ulica)) as [@Street],
+				'' as [@BuildingNumber], --Nie ma u nas takiego pola
+				'' as [@ApartmentNumber], --Nie ma u nas takiego pola
+				RTRIM(case when max(k1.kna_KodP) in ('00-000','00000') then '' else max(k1.kna_KodP) end) as [@ZipCode],
+				RTRIM(max(k1.kna_Miasto)) as [@City],
+				--as [@ProvinceId] --Nie ma u nas takiego pola.
+				max(KpC_Id) as [@CountryId],
+				RTRIM(max(k1.kna_Powiat)) as [@County],
+				RTRIM(max(k1.kna_Gmina)) as [@Commune],
+				--as [@PostOffice] --Nie ma u nas takiego pola
+				DATEADD(second,max(k1.kna_LastModL),convert(datetime,'01-01-1990',105)) as [@ModificationDate] ,				
+				case when k1.KnA_GIDNumer = (select MAX(k2.KnA_GIDNumer) from CDN.KntAdresy k2 where k2.KnA_GUID = k1.KnA_GUID) AND k1.kna_DataArc = 0 THEN  'true' else 'false' end as [@IsActive],
+				--as [@AdditionalData] --Nie ma u nas takiego pola
+				--as [@AdditionalData2] --Nie ma u nas takiego pola
+				RTRIM(RTRIM(max(k1.kna_Nazwa1))+' '+RTRIM(max(k1.kna_Nazwa2))+' '+RTRIM(max(k1.kna_Nazwa3))) as [@LocalName],
+				RTRIM(max(k1.kna_Opis)) as [@Description]
+			 for xml path('Data'), type
+			) Address
+		FROM #customerIds
+		JOIN cdn.KntKarty on Knt_GIDNumer =  KntGidNumer
+		JOIN CDN.KntAdresy k1 ON k1.kna_KntNumer = Knt_GIDNumer
+		JOIN cdn.KrajeCelne on KPC_Kod = case when k1.kna_Kraj &lt;&gt; '' then k1.kna_Kraj else 'PL' end
+		where ((SELECT MAX(rw) FROM (VALUES (KntLastMod),(KntWaNCzasModyfikacji),(k1.kna_LastModL),(Knt_LastModL)) AS rws(rw)) &gt; @rowVersion OR @rowVersion=0 or (@PointOfSaleId is null and KntBylWyslany = 0)) 
+			AND k1.kna_GUID is not null and k1.kna_GUID  &lt;&gt; '' AND k1.kna_GUIDdane is not null and k1.kna_GUIDdane &lt;&gt; ''
+			and k1.kna_gidnumer = (select MAX(k2.kna_gidnumer) from cdn.kntadresy k2 where k2.KnA_GUIDdane = k1.KnA_GUIDdane)
+		GROUP BY k1.kna_GUID,k1.kna_GIDNumer,Knt_GIDNumer,KNT_GUID,k1.kna_guiddane,Knt_KnANumer,k1.kna_DataArc,k1.kna_TypPOS,k1.KnA_Wysylkowy,k1.KnA_AdresBank,k1.kna_gidtyp
+		)as aa
+		
+
+		insert into @AdresyOsobyKontaktowe
+		select * from(
+			select kns_GUID as [@GUID],
+				10 as [@ObjectTypeId], --osoba kontaktowa
+				kns_GUID as [@ObjectGUID],
+				0 as [@Type], --general address
+				'true' as [@IsDefault],
+				(
+				 select distinct
+					kns_GUID as [@GUID], --Nie ma u nas takiego pola. TRZEBA DODAĆ
+					'' as [@Street],
+					'' as [@BuildingNumber], --Nie ma u nas takiego pola
+					'' as [@ApartmentNumber], --Nie ma u nas takiego pola
+					'' as [@ZipCode],
+					'' as [@City],
+					--as [@ProvinceId] --Nie ma u nas takiego pola. TRZEBA DODAĆ
+					max(KpC_Id) as [@CountryId],
+					'' as [@County],
+					'' as [@Commune],
+					--as [@PostOffice] --Nie ma u nas takiego pola
+					DATEADD(second,max(KnS_CzasModyfikacji),convert(datetime,'01-01-1990',105)) as [@ModificationDate] ,
+					case when KnS_Archiwalny &lt;&gt; 0 then 'false' else 'true' end as [@IsActive],
+					--as [@AdditionalData] --Nie ma u nas takiego pola
+					--as [@AdditionalData2] --Nie ma u nas takiego pola
+					RTRIM(KnS_Nazwa) as [@LocalName],
+					'' as [@Description]
+				 for xml path('Data'), type
+				) Address
+			FROM #customerIds
+			JOIN CDN.KntOsoby ON KnS_KntNumer = KntGidNumer
+			join cdn.KrajeCelne on KntKraj = KPC_Kod
+			where (((SELECT MAX(rw) FROM (VALUES (KntLastMod),(KntWaNCzasModyfikacji),(KnS_CzasModyfikacji)) AS rws(rw)) &gt; @rowVersion) or (@PointOfSaleId is null and KntBylWyslany = 0))
+				and kns_GUID is not null and kns_GUID &lt;&gt; ''
+			GROUP BY kns_GUID,KnS_Archiwalny,KnS_Nazwa
+		)as ba
+	SELECT @LastMod AS [@RowVersion]
+		,(		
+			select ObjGuid as[@GUID], ObjectTypeId as [@ObjectTypeId],ObjectId as [@ObjectId],AddressTypeId as [@Type], IsDefault as [@IsDefault],Data  from @AdresyFirma
+			for xml path('Address'), type
+		)
+		,(
+			select ak.ObjGuid as[@GUID], ak.ObjectTypeId as [@ObjectTypeId],ak.ObjectGUID as [@ObjectGUID],ak.AddressTypeId as [@Type], max(ak.IsDefault) as [@IsDefault],
+				cast((
+				SELECT XmlData as [*]
+				FROM
+					(
+					SELECT
+					   a.data AS [*]
+					FROM
+						#AdresyKontrahenci a
+					where a.ObjGuid=ak.ObjGuid
+					FOR XML PATH(''), TYPE
+					) as DATA(XmlData)
+				FOR XML PATH('Data')
+			   )as xml)  from #AdresyKontrahenci ak
+			   group by ObjGuid,ObjectTypeId,ObjectGUID,AddressTypeId
+			   order by ObjGuid
+			for xml path('Address'), type
+		)
+		,(
+			select ObjGuid as[@GUID], ObjectTypeId as [@ObjectTypeId],ObjectGUID as [@ObjectGUID],AddressTypeId as [@Type], IsDefault as [@IsDefault],Data  from @AdresyOsobyKontaktowe
+			for xml path('Address'), type
+		)
+	for xml path('Addresses')
+
+	SET NOCOUNT OFF;	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

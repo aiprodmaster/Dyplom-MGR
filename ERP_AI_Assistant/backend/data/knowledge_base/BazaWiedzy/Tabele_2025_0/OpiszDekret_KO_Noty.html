@@ -1,0 +1,839 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[OpiszDekret_KONoty]"></A><PRE>
+          <FONT SIZE="2"><I>/* [OpiszDekret_KONoty] */</I><BR>
+CREATE PROCEDURE [CDN].[OpiszDekret_KONoty] @DT_GidNumer INT
+AS
+    --ZMIANY
+    --01.04.2021 Klaudia Ciochoń	2020.1		Poprawienie obsługi zaciągania opisów analitycznych
+    -- Jeśli jest opis na nocie memoriałowej to na dekret wynikowy w pierwszej kolejności jest brany opis z noty
+    -- Jeśli nie ma opisu na nocie to zaciągany jest opis z Księgowania okresowego
+
+    BEGIN
+
+        --      Procedura CDN.OpiszDekret_KONoty, wersja 1.0
+
+        SET NOCOUNT ON;
+        DECLARE @return_val INT;
+        DECLARE @dziennik VARCHAR(100);
+        DECLARE @waluta_sys VARCHAR(10);
+        DECLARE @typ INT;
+        DECLARE @numer INT;
+        DECLARE @pozycja INT;
+        DECLARE @wartosc DECIMAL(15, 2);
+        DECLARE @UNMnumer INT;
+        BEGIN TRANSACTION;
+
+        -- Inicjalizacja zmiennych
+        SET @waluta_sys =
+        (
+            SELECT KON_Wartosc
+            FROM CDN.Konfig
+            WHERE KON_Numer = 211
+        );
+        SET @UNMnumer =
+        (
+            SELECT TOP 1 ZRO_TrnNumer
+            FROM CDN.Zrodla
+            WHERE ZRO_DtNumer = @DT_GidNumer
+                  AND ZRO_TRNTyp = 4145
+        );
+
+        -- Inicjalizacja nagłówka
+        DELETE FROM CDN.OpisWymNag
+        WHERE OWN_GidTyp = 4145
+              AND OWN_GidNumer = @UNMnumer;
+        DELETE FROM CDN.OpisWymElem
+        WHERE OWE_GidTyp = 4145
+              AND OWE_GidNumer = @UNMnumer;
+        DELETE FROM CDN.OpisWymSElem
+        WHERE OWS_GidTyp = 4145
+              AND OWS_GidNumer = @UNMnumer;
+        IF @@ERROR &lt;&gt; 0
+           AND @@TRANCOUNT &gt; 0
+            BEGIN
+                ROLLBACK;
+                RAISERROR('Wystąpił błąd podczas usuwania nagłówka opisu analitycznego. %d', 16, 1, @UNMnumer);
+        END;
+        INSERT INTO [CDN].[OpisWymNag]
+        ([OWN_GIDTyp], 
+         [OWN_GIDFirma], 
+         [OWN_GIDNumer], 
+         [OWN_GIDLp], 
+         [OWN_Opis], 
+         [OWN_Zatwierdzono], 
+         [OWN_TStampAkt], 
+         [OWN_OpeTypA], 
+         [OWN_OpeFirmaA], 
+         [OWN_OpeNumerA], 
+         [OWN_OpeLpA], 
+         [OWN_TStampZatw], 
+         [OWN_OpeTypZ], 
+         [OWN_OpeFirmaZ], 
+         [OWN_OpeNumerZ], 
+         [OWN_OpeLpZ], 
+         [OWN_Kategoria], 
+         [OWN_DataControllingowa], 
+         [OWN_DataKsiegowania], 
+         [OWN_IloscElementow]
+        )
+               SELECT MEN_GidTyp, 
+                      MEN_GidFirma, 
+                      MEN_GidNumer, 
+                      0, 
+                      'Przeniesienie opisu ze źródła', 
+                      0, 
+                      0, 
+                      128, 
+                      MEN_GidFirma, 
+                      1, 
+                      0, 
+                      0, 
+                      0, 
+                      0, 
+                      0, 
+                      0, 
+                      6, 
+                      1, 
+                      0, 
+                      -1
+               FROM CDN.MemNag
+               WHERE Men_GidTyp = 4145
+                     AND MEN_GIDNumer = @UNMnumer
+                     AND MEN_GidLp = 0;
+        IF @@ERROR &lt;&gt; 0
+           AND @@TRANCOUNT &gt; 0
+            BEGIN
+                ROLLBACK;
+                RAISERROR('Wystąpił błąd podczas dodawania nagłówka opisu analitycznego. %d', 16, 1, @UNMnumer);
+        END;
+
+        -- Inicjalizacja tabeli pomocniczej ##Wymiary i ##OpisWymSElem
+        IF EXISTS
+        (
+            SELECT *
+            FROM tempdb..sysobjects
+            WHERE id = OBJECT_ID('tempdb..##Wymiary_Init')
+                  AND type = 'U'
+        )
+            DROP TABLE ##Wymiary_Init;
+        IF EXISTS
+        (
+            SELECT *
+            FROM tempdb..sysobjects
+            WHERE id = OBJECT_ID('tempdb..##Wymiary')
+                  AND type = 'U'
+        )
+            DROP TABLE ##Wymiary;
+        CREATE TABLE ##Wymiary_Init
+        (WMR_ID         INT, 
+         WMR_TypWymiaru INT, 
+         WMR_RootID     INT
+        );
+        INSERT INTO ##Wymiary_Init
+        (WMR_ID, 
+         WMR_TypWymiaru, 
+         WMR_RootID
+        )
+               SELECT WMR_ID, 
+                      0, 
+                      WMR_RootID
+               FROM CDN.Wymiary
+               WHERE WMR_Kategoria = 0;
+        INSERT INTO ##Wymiary_Init
+        (WMR_ID, 
+         WMR_TypWymiaru, 
+         WMR_RootID
+        )
+               SELECT FRS_ID, 
+                      1, 
+                      FRS_ID
+               FROM CDN.FrmStruktura;
+        INSERT INTO ##Wymiary_Init
+        (WMR_ID, 
+         WMR_TypWymiaru, 
+         WMR_RootID
+        )
+               SELECT SLW_ID, 
+                      2, 
+                      SLW_ID
+               FROM CDN.Slowniki;
+        INSERT INTO ##Wymiary_Init
+        (WMR_ID, 
+         WMR_TypWymiaru, 
+         WMR_RootID
+        )
+               SELECT KNT_GidNumer, 
+                      3, 
+                      KNT_GidNumer
+               FROM CDN.KntKarty;
+        INSERT INTO ##Wymiary_Init
+        (WMR_ID, 
+         WMR_TypWymiaru, 
+         WMR_RootID
+        )
+               SELECT WMR_ID, 
+                      4, 
+                      WMR_RootID
+               FROM CDN.Wymiary
+               WHERE WMR_Kategoria &lt;&gt; 0;
+        INSERT INTO ##Wymiary_Init
+        (WMR_ID, 
+         WMR_TypWymiaru, 
+         WMR_RootID
+        )
+               SELECT PRJ_ID, 
+                      5, 
+                      PRJ_ID
+               FROM CDN.PrjStruktura;
+        SELECT *
+        INTO ##Wymiary
+        FROM ##Wymiary_Init
+             JOIN
+        (
+            SELECT DISTINCT 
+                   OWS_WMRID, 
+                   OWS_TypWymiaru
+            FROM CDN.OpisWymsElem
+            WHERE OWS_GidNumer = @DT_GidNumer
+                  AND OWS_Gidtyp = 432
+        ) AS ows ON(WMR_ID = ows.OWS_WMRID
+                    AND WMR_TypWymiaru = ows.OWS_TypWymiaru);
+        IF EXISTS
+        (
+            SELECT *
+            FROM tempdb..sysobjects
+            WHERE id = OBJECT_ID('tempdb..##OpisWymSElem_Init')
+                  AND type = 'U'
+        )
+            DROP TABLE ##OpisWymSElem_Init;
+        IF EXISTS
+        (
+            SELECT *
+            FROM tempdb..sysobjects
+            WHERE id = OBJECT_ID('tempdb..##OpisWymSElem')
+                  AND type = 'U'
+        )
+            DROP TABLE ##OpisWymSElem;
+        SELECT ows.OWS_GidLp AS OWS_GidLp, 
+               ows.OWS_WmrID AS OWS_WmrID, 
+               ows.OWS_Element AS OWS_Element, 
+               ows.OWS_TypWymiaru AS OWS_TypWymiaru,
+               CASE
+                   WHEN ows.OWS_TypWymiaru = 0
+                   THEN wmr.WMR_RootID
+                   WHEN ows.OWS_TypWymiaru = 1
+                   THEN frm.FRS_ID
+                   WHEN ows.OWS_TypWymiaru = 2
+                   THEN slw.SLW_ID
+                   WHEN ows.OWS_TypWymiaru = 3
+                   THEN knt.KNT_GidNumer
+                   WHEN ows.OWS_TypWymiaru = 4
+                   THEN wmr.WMR_RootID
+                   WHEN ows.OWS_TypWymiaru = 5
+                   THEN prj.PRJ_ID
+               END AS OWS_WmrRootID
+
+        --                                                      ,root_cnt.OWS_WmrRootIDCnt AS OWS_WmrRootIDCnt
+        --                                                      ,cnt.OWS_WmrIDsInRootCnt AS OWS_WmrIDsInRootCnt
+        --                                                      ,CASE WHEN cnt.OWS_WmrIDsInRootCnt = 1 THEN 1 ELSE 0 END AS OWS_IsSingleWmrIDInRoot
+        INTO ##OpisWymSElem_Init
+        FROM CDN.OpisWymsElem AS ows
+             LEFT OUTER JOIN CDN.Wymiary AS wmr ON(ows.OWS_WmrID = wmr.WMR_ID
+                                                   AND (ows.OWS_TypWymiaru = 0
+                                                        OR ows.OWS_TypWymiaru = 4))
+             LEFT OUTER JOIN CDN.FrmStruktura frm ON(ows.OWS_WmrID = frm.FRS_ID
+                                                     AND ows.OWS_TypWymiaru = 1)
+             LEFT OUTER JOIN CDN.Slowniki slw ON(ows.OWS_WmrID = slw.SLW_ID
+                                                 AND ows.OWS_TypWymiaru = 2)
+             LEFT OUTER JOIN CDN.KntKarty knt ON(ows.OWS_WmrID = knt.KNT_GidNumer
+                                                 AND ows.OWS_TypWymiaru = 3)
+             LEFT OUTER JOIN CDN.PrjStruktura prj ON(ows.OWS_WmrID = prj.PRJ_ID
+                                                     AND ows.OWS_TypWymiaru = 5)
+        WHERE ows.OWS_GidTyp = 432
+              AND ows.OWS_GidNumer = @DT_GidNumer;
+        SELECT ows.*
+        INTO ##OpisWymSElem
+        FROM ##OpisWymSElem_Init ows
+             JOIN
+        (
+            SELECT WMR_RootID, 
+                   COUNT(1) AS OWS_WmrRootIDCnt
+            FROM CDN.OpisWymsElem ows_in1
+                 JOIN ##Wymiary ON(WMR_ID = ows_in1.OWS_WmrID
+                                   AND WMR_TypWymiaru = ows_in1.OWS_TypWymiaru)
+            WHERE ows_in1.OWS_GidTyp = 432
+                  AND ows_in1.OWS_GidNumer = @DT_GidNumer
+            GROUP BY WMR_RootID
+        ) AS root_cnt ON(OWS_WmrRootID = root_cnt.WMR_RootID)
+             JOIN
+        (
+            SELECT WMR_RootID, 
+                   ows_in2.OWS_WmrID, 
+                   COUNT(1) AS OWS_WmrIDsInRootCnt
+            FROM CDN.OpisWymsElem ows_in2
+                 JOIN ##Wymiary ON(WMR_ID = ows_in2.OWS_WmrID
+                                   AND WMR_TypWymiaru = ows_in2.OWS_TypWymiaru)
+            WHERE ows_in2.OWS_GidTyp = 432
+                  AND ows_in2.OWS_GidNumer = @DT_GidNumer
+            GROUP BY WMR_RootID, 
+                     ows_in2.OWS_WmrID
+        ) AS cnt ON(OWS_WmrRootID = cnt.WMR_RootID
+                    AND ows.OWS_WmrID = cnt.OWS_WmrID)
+        ORDER BY ows.OWS_GidLp;
+        IF @@ERROR &lt;&gt; 0
+           AND @@TRANCOUNT &gt; 0
+            BEGIN
+                ROLLBACK;
+                RAISERROR('Wystąpił błąd podczas inicjalizacji tabeli pomocniczej ##OpisWymSElem. %d', 16, 1, @DT_GidNumer);
+        END;
+
+        -- Inicjalizacja tabeli pomocniczej ##OpisWymElem
+        IF EXISTS
+        (
+            SELECT *
+            FROM tempdb..sysobjects
+            WHERE id = OBJECT_ID('tempdb..##OpisWymElem')
+                  AND type = 'U'
+        )
+            DROP TABLE ##OpisWymElem;
+        DECLARE @seed INT;
+        SET @seed =
+        (
+            SELECT ISNULL(MAX(OWE_GidLp), 0) + 1
+            FROM CDN.OpisWymElem
+            WHERE OWE_GidTyp = 4145
+                  AND OWE_GidNumer = @UNMnumer
+        );
+        DECLARE @sql NVARCHAR(4000);
+        SET @sql = N'
+                                        CREATE TABLE [##OpisWymElem](
+                                                        [OWE_GIDTyp] [smallint] NOT NULL,
+                                                        [OWE_GIDFirma] [int] NULL,
+                                                        [OWE_GIDNumer] [int] NOT NULL,
+                                                        [OWE_GIDLp] [int] IDENTITY(' + CAST(@seed AS NVARCHAR) + ', 1) NOT NULL,
+                                                        [OWE_Pozycja] [smallint] NULL,
+                                                        [OWE_Wartosc] [decimal](15, 2) NULL,
+                                                        [OWE_Procent] [decimal](7, 4) NULL,
+                                                        [OWE_Kierunek] [smallint] NULL,
+                                                        [OWE_Typ] [smallint] NULL,
+                                                        [OWE_Analityczny] [bit] NOT NULL,
+                                                        [OWE_ZPZTrnTyp] [int],
+                                                        [OWE_ZPZTrnNumer] [int],
+                                                        [OWE_ZPZTrnLp] [int],
+                                                        [OWE_OWSWmrID] [int],
+                                                        [OWE_OWSElement] varchar(30),
+                                                        [OWE_OWSTypWymiaru] [int],
+                                                        [OWE_OWSWmrRootID] [int],
+                                                        [OWE_OWSWmrRootIDCnt] [int],
+                                                        [OWE_OWSWmrIDsInRootCnt] [int],
+                                                        [OWE_OWSIsSingleWmrIDInRoot] [bit],
+                                                        [OWE_SumaDt] [decimal](15, 2) NULL,
+                                                        [OWE_WartoscDt] [decimal](15, 2) NULL,
+                                                        [OWE_ProcentDt] [decimal](7, 4) NULL,
+                                                        [OWE_GidLpDt] [int],
+                                                        [OWE_Wyrazenie] bit NOT NULL DEFAULT(0),
+                                                        [OWE_KontoDefinicja] varchar(1024) NULL
+
+                                                        CONSTRAINT [OWE_Primary] PRIMARY KEY ([OWE_GIDTyp] ASC, [OWE_GIDNumer] ASC, [OWE_GIDLp] ASC)
+                                        )';
+        EXEC sp_executesql 
+             @sql;
+        IF @@ERROR &lt;&gt; 0
+           AND @@TRANCOUNT &gt; 0
+            BEGIN
+                ROLLBACK;
+                RAISERROR('Wystąpił błąd podczas inicjalizacji tabeli pomocniczej ##OpisWymElem. %d', 16, 1, @UNMnumer);
+        END;
+        INSERT INTO [##OpisWymElem]
+        ([OWE_GIDTyp], 
+         [OWE_GIDFirma], 
+         [OWE_GIDNumer], 
+         [OWE_Pozycja], 
+         [OWE_Wartosc], 
+         [OWE_Procent], 
+         [OWE_Kierunek], 
+         [OWE_Typ], 
+         [OWE_Analityczny], 
+         [OWE_ZPZTrnTyp], 
+         [OWE_ZPZTrnNumer], 
+         [OWE_ZPZTrnLp], 
+         [OWE_OWSWmrID], 
+         [OWE_OWSElement], 
+         [OWE_OWSTypWymiaru], 
+         [OWE_OWSWmrRootID], 
+         [OWE_SumaDt], 
+         [OWE_WartoscDt], 
+         [OWE_ProcentDt], 
+         [OWE_GidLpDt], 
+         [OWE_Wyrazenie], 
+         [OWE_KontoDefinicja]
+        )
+               SELECT MEE_GIDTyp AS OWE_GIDTyp, 
+                      MEE_GIDFirma AS OWE_GIDFirma, 
+                      MEE_GIDNumer AS OWE_GIDNumer, 
+                      MEE_GIDLp AS OWE_Pozycja, 
+                      OWE_Procent / 100 * MEE_Kwota, --OWE_Wartosc 
+                      OWE_Procent,
+                      OWE_Kierunek, 
+                      0 AS OWE_Typ, 
+                      1 AS OWE_Analityczny, 
+                      4145 AS OWE_ZPZTrnTyp, 
+                      @UNMnumer AS OWE_ZPZTrnNumer, 
+                      OWE_GidLP AS OWE_ZPZTrnLp, 
+                      ows.OWS_WmrID AS OWE_OWSWmrID, 
+                      ows.OWS_Element AS OWE_OWSElement, 
+                      ows.OWS_TypWymiaru AS OWE_OWSTypWymiaru, 
+                      ows.OWS_WmrRootID AS OWE_OWSWmrRootID, 
+                      OWE_Wartosc AS OWE_SumaDt, 
+                      OWE_Wartosc AS OWE_WartoscDt, 
+                      100.0 AS OWE_ProcentDt, 
+                      0 AS OWE_GidLpDt, 
+                      0 AS OWE_Wyrazenie, 
+                      DT_Konto AS OWE_KontoDefinicja
+               FROM CDN.OpisWymElem
+                    JOIN [CDN].[MemElem] ON MEE_GIDTyp = 4145
+                                            AND MEE_GIDNumer = @UNMnumer
+                                            AND OWE_Pozycja = MEE_GIDLp
+											AND (MEE_Typ = 3 OR OWE_Kierunek = CASE
+												  WHEN MEE_Typ = 1
+												  THEN-1
+												  ELSE 1
+											  END )
+                    JOIN CDN.Dekrety ON( DT_GidNumer = @DT_GidNumer
+                                        AND OWE_Pozycja = DT_GidLp
+                                        
+                                        AND DT_Waluta = @waluta_sys
+                                        AND DT_Znak = (CASE
+                                                           WHEN OWE_Kierunek = -1
+                                                           THEN 2
+                                                           ELSE 1
+                                                       END))
+                    JOIN ##OpisWymSElem ows ON(OWE_GidLp = ows.OWS_GidLp)
+               WHERE  OWE_GidTyp = 432
+                     AND OWE_GidNumer = @DT_GidNumer
+        IF @@ERROR &lt;&gt; 0
+           AND @@TRANCOUNT &gt; 0
+            BEGIN
+                ROLLBACK;
+                RAISERROR('Wystąpił błąd podczas przenoszenia opisów z dokumentu źródłowego do ##OpisWymEle. %d', 16, 1, @UNMnumer);
+        END;
+        UPDATE owe
+          SET 
+              owe.OWE_GidLpDt = GidLp.GidLP
+        FROM ##OpisWymElem owe
+             JOIN
+        (
+            SELECT OWE_Pozycja, 
+                   OWE_Kierunek, 
+                   OWE_ZPZTrnLp, 
+                   ROW_NUMBER() OVER(
+                   ORDER BY OWE_Pozycja, 
+                            OWE_Kierunek) AS GidLP
+            FROM ##OpisWymElem
+            GROUP BY OWE_Pozycja, 
+                     OWE_Kierunek, 
+                     OWE_ZPZTrnLp
+        ) AS GidLp ON GidLp.OWE_Pozycja = owe.OWE_Pozycja
+                      AND GidLp.OWE_ZPZTrnLp = owe.OWE_ZPZTrnLp
+                      AND GidLp.OWE_Kierunek = owe.OWE_Kierunek;
+
+        -- Tworzenie pozycji opisu analitycznego dekretu
+
+        INSERT INTO [CDN].[OpisWymElem]
+               SELECT DISTINCT 
+                      OWE_GidTyp, 
+                      OWE_GidFirma, 
+                      OWE_GIDNumer, 
+                      OWE_GidLpDt AS OWE_GIDLp, --OWE_GidLpDt 
+                      OWE_Pozycja, 
+                      OWE_Wartosc AS OWE_Wartosc, 
+                      OWE_Procent AS OWE_Procent, 
+                      OWE_Kierunek, 
+                      OWE_Typ
+               FROM ##OpisWymElem;
+        IF @@ERROR &lt;&gt; 0
+           AND @@TRANCOUNT &gt; 0
+            BEGIN
+                ROLLBACK;
+                RAISERROR('Wystąpił błąd podczas tworzenia pozycji opisu analitycznego dekretu. %d', 16, 1, @UNMnumer);
+        END;
+
+        --Kontrola zaokraglen
+        DECLARE d CURSOR FAST_FORWARD
+        FOR SELECT e.*
+            FROM
+            (
+                SELECT OWE_GIDTyp, 
+                       OWE_GIDNumer, 
+                       OWE_Pozycja, 
+                       MAX(OWE_Wartosc) AS OWE_Wartosc
+                FROM
+                (
+                    SELECT CASE
+                               WHEN RIGHT(CONVERT(VARCHAR, (CONVERT(DECIMAL(17, 0), ROUND(Owe_Procent / 100 * suma, 3) * 1000))), 1) = '5'
+                               THEN 1
+                               ELSE 0
+                           END AS Korekta, 
+                           *
+                    FROM cdn.opiswymelem owe
+                         JOIN
+                    (
+                        SELECT MEE_GIDTyp, 
+                               MEE_GIDNumer, 
+                               MEE_Typ, 
+                               SUM(MEE_Kwota) AS suma
+                        FROM [CDN].[MemElem]
+                        GROUP BY MEE_GIDTyp, 
+                                 MEE_GIDNumer, 
+                                 MEE_Typ
+                    ) AS sumaNot ON owe_gidnumer = MEE_GIDNumer
+                                    AND owe_gidtyp = MEE_GIDTyp
+                                    AND MEE_Typ = (CASE
+                                                       WHEN OWE_Kierunek = -1
+                                                       THEN 1
+                                                       ELSE 2
+                                                   END)
+                    WHERE owe_gidnumer = @UNMnumer
+                          AND owe_GidTyp = 4145
+                ) AS t
+                WHERE t.Korekta = 1
+                GROUP BY OWE_GIDTyp, 
+                         OWE_GIDNumer, 
+                         OWE_Pozycja
+            ) e
+            JOIN
+            (
+                SELECT OWE_GIDTyp, 
+                       OWE_GIDNumer, 
+                       OWE_Pozycja, 
+                       MAX(OWE_Wartosc) AS OWE_Wartosc
+                FROM ##OpisWymElem
+                GROUP BY OWE_GIDTyp, 
+                         OWE_GIDNumer, 
+                         OWE_Pozycja
+            ) AS owe ON e.OWE_GIDTyp = owe.OWE_GidTyp
+                        AND e.OWE_GIDNumer = owe.OWE_GIDNumer
+                        AND e.OWE_Pozycja = owe.OWE_Pozycja
+                        AND e.OWE_Wartosc = owe.OWE_Wartosc;
+        OPEN d;
+        FETCH NEXT FROM d INTO @typ, @numer, @pozycja, @wartosc;
+        WHILE @@FETCH_STATUS = 0
+            BEGIN
+                UPDATE s
+                  SET 
+                      s.OWE_Wartosc = s.OWE_Wartosc - 0.01
+                FROM cdn.opiswymelem s
+                WHERE OWE_GIDTyp = @typ
+                      AND OWE_GIDNumer = @numer
+                      AND OWE_Pozycja = @pozycja
+                      AND OWE_Wartosc = @wartosc;
+                FETCH NEXT FROM d INTO @typ, @numer, @pozycja, @wartosc;
+            END;
+        CLOSE d;
+        DEALLOCATE d;
+
+        -- Tworzenie subpozycji opisu analitycznego dekretu
+        INSERT INTO [CDN].[OpisWymSElem]
+        ([OWS_GIDTyp], 
+         [OWS_GIDFirma], 
+         [OWS_GIDNumer], 
+         [OWS_GIDLp], 
+         [OWS_WMRID], 
+         [OWS_Element], 
+         [OWS_TypWymiaru]
+        )
+               SELECT DISTINCT 
+                      OWE_GIDTyp, 
+                      OWE_GIDFirma, 
+                      OWE_GIDNumer, 
+                      OWE_GidLpDt AS OWS_GIDLp, --OWE_GidLpDt 
+                      ows.OWS_WmrID AS OWS_WMRID, 
+                      ows.OWS_Element AS OWS_Element, 
+                      ows.OWS_TypWymiaru AS OWS_TypWymiaru
+               FROM ##OpisWymElem
+                    JOIN ##OpisWymSElem ows ON(OWE_ZPZTrnLp = ows.OWS_GidLp);
+
+        --WHERE OWE_Wyrazenie = 1 OR (OWE_Wyrazenie = 0 AND OWE_KontoDefinicja LIKE '%@%')
+
+        IF @@ERROR &lt;&gt; 0
+           AND @@TRANCOUNT &gt; 0
+            BEGIN
+                ROLLBACK;
+                RAISERROR('Wystąpił błąd podczas tworzenia subpozycji opisu analitycznego dekretu. %d', 16, 1, @UNMnumer);
+        END;
+        SET @seed =
+        (
+            SELECT ISNULL(MAX(OWE_GidLpDt) + 1, 1)
+            FROM ##OpisWymElem
+        );
+
+        -- Inicjalizacja tabeli pomocniczej ##OpisWymElem
+        IF EXISTS
+        (
+            SELECT *
+            FROM tempdb..sysobjects
+            WHERE id = OBJECT_ID('tempdb..##OpisWymElem')
+                  AND type = 'U'
+        )
+            DROP TABLE ##OpisWymElem;
+        SET @sql = N'
+                                        CREATE TABLE [##OpisWymElem](
+                                                        [OWE_GIDTyp] [smallint] NOT NULL,
+                                                        [OWE_GIDFirma] [int] NULL,
+                                                        [OWE_GIDNumer] [int] NOT NULL,
+                                                        [OWE_GIDLp] [int] IDENTITY(' + CAST(@seed AS NVARCHAR) + ', 1) NOT NULL,
+                                                        [OWE_Pozycja] [smallint] NULL,
+                                                        [OWE_Wartosc] [decimal](15, 2) NULL,
+                                                        [OWE_Procent] [decimal](7, 4) NULL,
+                                                        [OWE_Kierunek] [smallint] NULL,
+                                                        [OWE_Typ] [smallint] NULL,
+                                                        [OWE_Analityczny] [bit] NOT NULL,
+                                                        [OWE_ZPZTrnTyp] [int],
+                                                        [OWE_ZPZTrnNumer] [int],
+                                                        [OWE_ZPZTrnLp] [int],
+                                                        [OWE_OWSWmrID] [int],
+                                                        [OWE_OWSElement] varchar(30),
+                                                        [OWE_OWSTypWymiaru] [int],
+                                                        [OWE_OWSWmrRootID] [int],
+                                                        [OWE_OWSWmrRootIDCnt] [int],
+                                                        [OWE_OWSWmrIDsInRootCnt] [int],
+                                                        [OWE_OWSIsSingleWmrIDInRoot] [bit],
+                                                        [OWE_SumaDt] [decimal](15, 2) NULL,
+                                                        [OWE_WartoscDt] [decimal](15, 2) NULL,
+                                                        [OWE_ProcentDt] [decimal](7, 4) NULL,
+                                                        [OWE_GidLpDt] [int],
+                                                        [OWE_Wyrazenie] bit NOT NULL DEFAULT(0),
+                                                        [OWE_KontoDefinicja] varchar(1024) NULL
+
+                                                        CONSTRAINT [OWE_Primary] PRIMARY KEY ([OWE_GIDTyp] ASC, [OWE_GIDNumer] ASC, [OWE_GIDLp] ASC)
+                                        )';
+        EXEC sp_executesql 
+             @sql;
+        IF @@ERROR &lt;&gt; 0
+           AND @@TRANCOUNT &gt; 0
+            BEGIN
+                ROLLBACK;
+                RAISERROR('Wystąpił błąd podczas inicjalizacji tabeli pomocniczej ##OpisWymElem. %d', 16, 1, @UNMnumer);
+        END;
+
+        --Tworzenie pozycji opisu analitycznego dekretu (nieanalityczne)
+        INSERT INTO [##OpisWymElem]
+        ([OWE_GIDTyp], 
+         [OWE_GIDFirma], 
+         [OWE_GIDNumer],
+         --,[OWE_GIDLP] 
+         [OWE_Pozycja], 
+         [OWE_Wartosc], 
+         [OWE_Procent], 
+         [OWE_Kierunek], 
+         [OWE_Typ], 
+         [OWE_Analityczny], 
+         [OWE_GidLpDt]
+        )
+               SELECT MEE_GIDTyp AS OWE_GIDTyp, 
+                      MEE_GIDFirma AS OWE_GIDFirma, 
+                      MEE_GIDNumer AS OWE_GIDNumer, 
+                      --,OWE_GIDLP 
+                      0 AS OWE_Pozycja, 
+                      OWE_Procent / 100 * MEE_Kwota AS OWE_Wartosc, 
+                      OWE_Procent AS OWE_Procent,
+					  OWE_Kierunek, 
+                      0 AS OWE_Typ, 
+                      0 AS OWE_Analityczny, 
+                      OWE_GIDLP
+               FROM cdn.OpisWymElem
+                    LEFT OUTER JOIN
+               (
+                   SELECT MEE_GIDTyp, 
+					MEE_GIDNumer, 
+					MEE_GIDFirma, 
+					OWEKierunek ,
+					SUM(MEE_Kwota) AS MEE_Kwota
+					FROM [CDN].[MemElem]
+					LEFT JOIN 
+					(SELECT 1 AS meetyp, -1 AS OWEKierunek
+					UNION ALL
+					SELECT 2 AS meetyp, 1 AS OWEKierunek
+					UNION ALL
+					SELECT 3 AS meetyp, -1 AS OWEKierunek
+					UNION ALL
+					SELECT 3 AS meetyp, 1 AS OWEKierunek
+					) typ ON typ.meetyp =  mee_typ
+
+					GROUP BY MEE_GIDTyp, 
+					MEE_GIDNumer, 
+					MEE_GIDFirma,
+					OWEKierunek
+
+               ) AS sumaNot ON @UNMnumer = MEE_GIDNumer
+							AND  MEE_GIDTyp = 4145
+			   				AND OWEKierunek=OWE_Kierunek 
+                    LEFT OUTER JOIN
+               (
+                   SELECT DT_GidNumer, 
+                          DT_GidFirma, 
+                          DT_GidTyp, 
+                          DT_Znak, 
+                          SUM(DT_Kwota) AS DT_Kwota
+                   FROM CDN.Dekrety
+                   WHERE DT_Gidnumer = @DT_GidNumer
+                         AND DT_GIDTyp = 432
+                   GROUP BY DT_GidNumer, 
+                            DT_GidFirma, 
+                            DT_GidTyp, 
+                            DT_Znak
+               ) AS DT ON DT.DT_Gidnumer = OWE_GidNumer
+                          AND DT.DT_ZNak = (CASE
+                                                WHEN OWE_Kierunek = -1
+                                                THEN 2
+                                                ELSE 1
+                                            END)
+               WHERE OWE_GidNumer = @DT_GidNumer
+			   AND OWE_GIDTyp = DT_GIDTyp
+                     AND OWE_Pozycja = 0;
+        INSERT INTO [CDN].[OpisWymElem]
+               SELECT [OWE_GIDTyp], 
+                      [OWE_GIDFirma], 
+                      [OWE_GIDNumer], 
+                      [OWE_GIDLp], 
+                      [OWE_Pozycja], 
+                      [OWE_Wartosc], 
+                      [OWE_Procent], 
+                      [OWE_Kierunek], 
+                      [OWE_Typ]
+               FROM ##OpisWymElem;
+        INSERT INTO [CDN].[OpisWymSElem]
+        ([OWS_GIDTyp], 
+         [OWS_GIDFirma], 
+         [OWS_GIDNumer], 
+         [OWS_GIDLp], 
+         [OWS_WMRID], 
+         [OWS_Element], 
+         [OWS_TypWymiaru]
+        )
+               SELECT DISTINCT 
+                      OWE_GIDTyp, 
+                      OWE_GIDFirma, 
+                      OWE_GIDNumer, 
+                      OWE_GidLp AS OWS_GIDLp, 
+                      ows.OWS_WmrID AS OWS_WMRID, 
+                      ows.OWS_Element AS OWS_Element, 
+                      ows.OWS_TypWymiaru AS OWS_TypWymiaru
+               FROM ##OpisWymElem
+                    JOIN ##OpisWymSElem ows ON(OWE_GidLpDt = ows.OWS_GidLp);
+        IF @@ERROR &lt;&gt; 0
+           AND @@TRANCOUNT &gt; 0
+            BEGIN
+                ROLLBACK;
+                RAISERROR('Wystąpił błąd podczas tworzenie pozycji opisu analitycznego dekretu (nieanalityczne). %d', 16, 1, @UNMnumer);
+        END;
+        --Kontrola zaokraglen
+        DECLARE d CURSOR FAST_FORWARD
+        FOR 
+        SELECT e.*
+        FROM
+        (
+            SELECT OWE_GIDTyp, 
+                   OWE_GIDNumer, 
+                   OWE_Pozycja, 
+                   MAX(OWE_Wartosc) AS OWE_Wartosc
+            FROM
+            (
+                SELECT CASE
+                           WHEN RIGHT(CONVERT(VARCHAR, (CONVERT(DECIMAL(17, 0), ROUND(Owe_Procent / 100 * suma, 3) * 1000))), 1) = '5'
+                           THEN 1
+                           ELSE 0
+                       END AS Korekta, 
+                       *
+                FROM cdn.opiswymelem owe
+                     JOIN
+                (
+                    SELECT MEE_GIDTyp, 
+                           MEE_GIDNumer, 
+                           MEE_Typ, 
+                           SUM(MEE_Kwota) AS suma
+                    FROM [CDN].[MemElem]
+                    GROUP BY MEE_GIDTyp, 
+                             MEE_GIDNumer, 
+                             MEE_Typ
+                ) AS sumaNot ON owe_gidnumer = MEE_GIDNumer
+                                AND owe_gidtyp = MEE_GIDTyp
+								AND (MEE_Typ = 3 OR OWE_Kierunek = CASE
+									WHEN MEE_Typ = 1
+									THEN-1
+									ELSE 1
+								END )
+                WHERE owe_gidnumer = @UNMnumer
+                      AND owe_GidTyp = 4145
+            ) AS t
+            WHERE t.Korekta = 1
+            GROUP BY OWE_GIDTyp, 
+                     OWE_GIDNumer, 
+                     OWE_Pozycja
+        ) e
+        JOIN
+        (
+            SELECT OWE_GIDTyp, 
+                   OWE_GIDNumer, 
+                   OWE_Pozycja, 
+                   MAX(OWE_Wartosc) AS OWE_Wartosc
+            FROM ##OpisWymElem
+            GROUP BY OWE_GIDTyp, 
+                     OWE_GIDNumer, 
+                     OWE_Pozycja
+        ) AS owe ON e.OWE_GIDTyp = owe.OWE_GidTyp
+                    AND e.OWE_GIDNumer = owe.OWE_GIDNumer
+                    AND e.OWE_Pozycja = owe.OWE_Pozycja
+                    AND e.OWE_Wartosc = owe.OWE_Wartosc;
+        OPEN d;
+        FETCH NEXT FROM d INTO @typ, @numer, @pozycja, @wartosc;
+        WHILE @@FETCH_STATUS = 0
+            BEGIN
+                UPDATE s
+                  SET 
+                      s.OWE_Wartosc = s.OWE_Wartosc - 0.01
+                FROM cdn.opiswymelem s
+                WHERE OWE_GIDTyp = @typ
+                      AND OWE_GIDNumer = @numer
+                      AND OWE_Pozycja = @pozycja
+                      AND OWE_Wartosc = @wartosc;
+                FETCH NEXT FROM d INTO @typ, @numer, @pozycja, @wartosc;
+            END;
+        CLOSE d;
+        DEALLOCATE d;
+
+        -- Sprzatanie
+        IF EXISTS
+        (
+            SELECT *
+            FROM tempdb..sysobjects
+            WHERE id = OBJECT_ID('tempdb..##OpisWymSElem')
+                  AND type = 'U'
+        )
+            DROP TABLE ##OpisWymSElem;
+        IF EXISTS
+        (
+            SELECT *
+            FROM tempdb..sysobjects
+            WHERE id = OBJECT_ID('tempdb..##OpisWymElem')
+                  AND type = 'U'
+        )
+            DROP TABLE ##OpisWymElem;
+        COMMIT TRANSACTION;
+    END;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

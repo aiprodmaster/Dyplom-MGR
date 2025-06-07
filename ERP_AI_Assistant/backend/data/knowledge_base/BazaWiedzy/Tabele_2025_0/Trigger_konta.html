@@ -1,0 +1,718 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Usuwanie wyzwalacza Konta_InsertUpdate"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Usuwanie wyzwalacza Konta_InsertUpdate */</I><BR>
+if exists (select * from sysobjects where name = 'Konta_InsertUpdate' and xtype = 'TR')
+  drop trigger CDN.Konta_InsertUpdate;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie wyzwalacza Konta_InsertUpdate"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie wyzwalacza Konta_InsertUpdate */</I><BR>
+create trigger cdn.Konta_InsertUpdate
+on cdn.Konta
+for insert, update
+as
+begin
+
+declare @RCount int
+declare @Err int
+declare @Poziom smallint
+set @Poziom = 0
+
+
+
+	--inicjuj cdn.KontaNastLinki
+	insert into cdn.KontaNastLinki
+	select i.KKS_GIDNumer, i.KKS_OkresID, i.KKS_GIDNumer
+	from inserted i left join deleted d on i.KKS_GIDNumer = d.KKS_GIDNumer
+	where d.KKS_GIDNumer is null
+
+
+	if @@Error &lt;&gt; 0 
+	begin
+		Rollback tran
+		raiserror('Błąd dodawania rekordu w tabeli cdn.KontaNastLinki',16,1)
+		return
+	end
+
+
+
+	--inicjuj cdn.KontaLinki
+	insert into cdn.KontaLinki (KKL_SynNumer, KKL_Analityka, KKL_KKSNumer)--, KKL_Me)
+	select i.KKS_GIDNumer, i.KKS_Analityka, i.KKS_GIDNumer--,1
+	from inserted i left join deleted d on i.KKS_GIDNumer = d.KKS_GIDNumer
+	where d.KKS_GIDNumer is null
+
+
+	if @@Error &lt;&gt; 0 
+	begin
+		Rollback tran
+		raiserror('Błąd dodawania rekordu w tabeli cdn.KontaNastLinki',16,1)
+		return
+	end
+
+
+
+	if update(KKS_SynNumer)
+	begin
+		if exists(select KKS_GIDNumer from inserted where KKS_GIDNumer = KKS_SynNumer)
+		begin --wskazuje na samego siebie
+			ROLLBACK TRAN
+			raiserror('Kontem nadrzędnym nie może być konto bieżące',16,1)		
+			return	
+		end
+		else
+		begin
+			declare @KontaPodrzedne table (GIDNumer int, PodrzNumer int, Poziom smallint)
+
+			--sprawdz czy nie wskazuje na podrzedne
+			set @Poziom = 0
+
+
+			insert into @KontaPodrzedne
+			select a.KKS_GIDNumer, b.KKS_GIDNumer, @Poziom
+			from inserted a
+				join cdn.Konta b
+					on a.KKS_GIDNumer = b.KKS_SynNumer
+
+
+			select @Err = @@Error, @RCount = @@ROWCOUNT
+			if @Err &lt;&gt; 0 
+			begin
+				ROLLBACK TRAN
+				raiserror('Błąd dostępu do tabeli cdn.Konta (%d)',16,1, @Err)		
+				return	
+			end				
+
+
+			while (@RCount &gt; 0)
+			begin
+				set @Poziom = @Poziom + 1
+
+				insert into @KontaPodrzedne
+				select a.GIDNumer, b.KKS_GIDNumer, @Poziom
+				from @KontaPodrzedne a
+					join cdn.Konta b
+						on a.PodrzNumer = b.KKS_SynNumer
+				where b.KKS_GIDNumer &lt;&gt; a.GIDNumer and a.Poziom = @Poziom - 1
+
+
+				select @Err = @@Error, @RCount = @@ROWCOUNT
+
+				if @Err &lt;&gt; 0 
+				begin
+					ROLLBACK TRAN
+					raiserror('Błąd dostępu do tabeli cdn.Konta (%d)',16,1, @Err)		
+					return	
+				end				
+			end
+
+			
+
+			if exists(select KKS_Analityka 
+				from inserted a
+					join @KontaPodrzedne b
+						on a.KKS_GIDNumer = b.GIDNumer and a.KKS_SynNumer = b.PodrzNumer)
+			begin
+				ROLLBACK TRAN
+				raiserror('Wskazane konto jako nadrzędne jest kontem podrzędnym do bieżącego',16,1)		
+				return	
+			end			
+		end
+
+
+
+	end
+
+
+
+
+	if update (KKS_SubKonto) or update(KKS_SynNumer) --or update(KKS_NastKonto)-- or 1=1
+	begin
+		update a set
+			a.KKS_Konto = case when isnull(b.KKS_Konto,'') = '' then  
+						case when c.KKS_SynNumer = 0 then
+							c.KKS_SubKonto
+						else
+							'&lt;Unknown ' + convert(varchar, c.KKS_GIDNumer) + '&gt;'
+						end
+					else
+						left((b.KKS_Konto + '-' + c.KKS_SubKonto),50)
+					end,
+			a.KKS_Poziom = case when b.KKS_Poziom is null then
+								0
+							else
+								b.KKS_Poziom + 1
+							end,
+			a.KKS_KontoOrd = case when isnull(b.KKS_KontoOrd,'') = '' then
+						case when c.KKS_SynNumer = 0 then
+							replace(c.KKS_SubKonto,'-','.')
+						else
+							''
+						end						
+					else
+						left((b.KKS_KontoOrd + ' ' + replace(c.KKS_SubKonto,'-','.')),50)
+					end,		
+			a.KKS_NastKonto = case when isnull(c.KKS_NastKonto,'') = '' then 
+						case when isnull(b.KKS_SubKonto,'') = '' then
+							case when c.KKS_SynNumer = 0 then
+								replace(c.KKS_SubKonto,'-','--')
+							else
+								''
+							end						
+						else
+							left((b.KKS_NastKonto + '-' + replace(c.KKS_SubKonto,'-','--')), 70)
+						end
+					else --wypelniony recznie
+						c.KKS_NastKonto
+					end
+		from cdn.Konta a
+			join inserted c
+				on a.KKS_GIDNumer = c.KKS_GIDNumer and a.KKS_OkresID = c.KKS_OkresID
+			left join cdn.Konta b
+				on c.KKS_SynNumer = b.KKS_GIDNumer
+					and c.KKS_OkresID = b.KKS_OkresID
+
+
+		if @@Error &lt;&gt; 0 
+		begin
+			Rollback tran
+			raiserror('Błąd aktualizacji kolumny KKS_KontoOrd',16,1)
+			return
+		end
+
+		
+	end
+
+
+	if update(KKS_KZKonto)
+	begin
+		if exists(
+			select a.KKS_GIDNumer
+			from inserted a
+				left join cdn.Konta b
+					on a.KKS_KZKonto = b.KKS_Konto and a.KKS_OkresID = b.KKS_OkresID
+			where isnull(a.KKS_KZKonto,'') &lt;&gt; '' and b.KKS_Konto is null)
+		begin
+			Rollback tran
+			raiserror('Konto związane nie istnieje w danym okresie',16,1)
+			return
+		end
+	end
+
+
+
+
+	if update(KKS_SynNumer)
+	begin
+		update b set				
+			b.KKS_Analityka = case when exists(select c.KKS_GIDNumer 
+							from cdn.Konta c 
+							where c.KKS_SynNumer = b.KKS_GIDNumer
+								and c.KKS_GIDNumer &lt;&gt; a.KKS_GIDNumer) then
+						0
+					else
+						1
+					end
+		from cdn.Konta b 
+			join deleted a 
+				on a.KKS_SynNumer = b.KKS_GIDNumer 
+
+		if @@Error &lt;&gt; 0 
+		begin
+			Rollback tran
+			raiserror('Błąd aktualizacji kolumny KKS_Analityka',16,1)
+			return
+		end
+
+
+
+
+		update b set				
+			b.KKS_Analityka = 0
+		from cdn.Konta b
+			join inserted a 
+				on a.KKS_SynNumer = b.KKS_GIDNumer
+
+		if @@Error &lt;&gt; 0 
+		begin
+			Rollback tran
+			raiserror('Błąd aktualizacji kolumny KKS_Analityka',16,1)
+			return
+		end
+
+
+		update a set
+			a.KKS_Analityka = case when b.KKS_GIDNumer is null then 1 else 0 end
+		from cdn.Konta a
+			join inserted c
+				on a.KKS_GIDNumer = c.KKS_GIDNumer
+			left join cdn.Konta b
+				on a.KKS_GIDNumer = b.KKS_SynNumer
+
+
+		if @@Error &lt;&gt; 0 
+		begin
+			Rollback tran
+			raiserror('Błąd aktualizacji kolumny KKS_Analityka',16,1)
+			return
+		end
+	
+
+
+		--cdn.KontaLinki
+		delete from d
+		from deleted b
+			join cdn.KontaLinki a --nadrzedne z ktorych powinny zostac usuniete
+				on b.KKS_SynNumer = a.KKL_KKSNumer			
+			join cdn.KontaLinki c --zestaw podrzednych , ktore powinny zostac usuniete z nadrzednych
+				on b.KKS_GIDNumer = c.KKL_SynNumer
+			join cdn.KontaLinki d
+				on a.KKL_SynNumer = d.KKL_SynNumer and d.KKL_KKSNumer = c.KKL_KKSNumer
+
+
+
+		if @@Error &lt;&gt; 0 
+		begin
+			Rollback tran
+			raiserror('Błąd aktualizacji tabeli cdn.KontaLinki',16,1)
+			return
+		end
+
+
+		insert into cdn.KontaLinki
+		select a.KKL_SynNumer, c.KKL_Analityka, c.KKL_KKSNumer--, 0
+		from inserted b
+			join cdn.KontaLinki a --nadrzedne 
+				on b.KKS_SynNumer = a.KKL_KKSNumer			
+			join cdn.KontaLinki c --zestaw podrzednych 
+				on b.KKS_GIDNumer = c.KKL_SynNumer
+
+
+		if @@Error &lt;&gt; 0 
+		begin
+			Rollback tran
+			raiserror('Błąd aktualizacji tabeli cdn.KontaLinki',16,1)
+			return
+		end
+	end
+
+
+	--sprawdz konto KK
+	if UPDATE(KKS_KKZDKKSNumer)
+	begin
+		if exists(select 1 
+				from inserted a
+					left join cdn.Konta b
+						on a.KKS_GIDNumer = a.KKS_KKZDKKSNumer and a.KKS_OkresID=b.KKS_OkresID
+				where a.KKS_KKZDKKSNumer &lt;&gt; 0 and a.KKS_TypKonta=7 and b.KKS_GIDNumer is null
+				)
+		begin
+			Rollback tran
+			raiserror('Nie istnieje w tym samym okresie wskazane konto korekty kosztów',16,1)
+			return
+		end
+	end
+
+
+	if update(KKS_NastNumer)
+	begin
+		----!!!!!!!!!!!!! dodaj kontrole nastepnika 
+
+		--skasuj tozsame nadrzedne
+		delete from a		
+		from deleted e			
+			join cdn.KontaNastLinki g --pozniejsze, ktore powinny byc zmienione
+				on e.KKS_NastNumer = g.KLI_PoprzNumer
+			join cdn.KontaNastLinki a --zestaw wczesniejszych dla pozniejszych
+				on g.KLI_NastNumer = a.KLI_NastNumer
+			join cdn.KontaNastLinki b --zestaw wczesniejszych, ktore powinny zostac usunuiete dla pozniejszcych
+				on e.KKS_GIDNumer = b.KLI_NastNumer --and b.KLI_NastNumer &lt;&gt; b.KLI_PoprzNumer
+				and a.KLI_PoprzNumer = b.KLI_PoprzNumer
+
+
+		if @@Error &lt;&gt; 0 
+		begin
+			Rollback tran
+			raiserror('Błąd aktualizacji tabeli cdn.KontaNastLinki (1)',16,1)
+			return
+		end
+
+
+		insert into cdn.KontaNastLinki
+		select h.KLI_NastNumer, g.KLI_PoprzOkresID, g.KLI_PoprzNumer
+		from inserted e
+			join cdn.Konta f
+				on e.KKS_NastNumer = f.KKS_GIDNumer
+			join cdn.KontaNastLinki h --pozniejsze dla konta podanego jako nastepnik
+				on e.KKS_NastNumer = h.KLI_PoprzNumer
+			join cdn.KontaNastLinki g --wczesniejsze dla danego konta
+				on e.KKS_GIDNumer = g.KLI_NastNumer
+
+		if @@Error &lt;&gt; 0 
+		begin
+			Rollback tran
+			raiserror('Błąd aktualizacji tabeli cdn.KontaNastLinki (2)',16,1)
+			return
+		end
+	end
+
+
+
+
+	-- inicjuj tabele stany dla nowego konta
+	insert into cdn.Stany(DTS_SPID, DTS_KKSNumer, DTS_RokMiesiac, 
+		DTS_ObrotyDebet, DTS_ObrotyDebetBuf, DTS_ObrotyCredit, DTS_ObrotyCreditBuf, 
+		DTS_ObrotyNarDebet, DTS_ObrotyNarDebetBuf, DTS_ObrotyNarCredit, DTS_ObrotyNarCreditBuf)
+	select 0, i.KKS_GIDNumer, OkM_Rok*100+OkM_Miesiac, 0, 0, 0, 0, 0, 0, 0, 0
+	from inserted i
+		left join deleted d
+			on i.KKS_GIDNumer = d.KKS_GIDNumer		
+		join cdn.OkresyMiesiace
+			on i.KKS_OkresID = OkM_OkrID
+	where d.KKS_GIDNumer is null
+
+
+
+
+
+	if update(KKS_Rozrachunkowe) or update(KKS_SaldoWgObr)-- or update(KKS_TypKonta)
+	begin --aktualizuj na podrzednych
+
+		create table #KontaPodrzedneAct (GIDNumer int, PodrzNumer int, Poziom smallint)
+		
+		
+		set @Poziom = 0
+
+
+		insert into #KontaPodrzedneAct
+		select a.KKS_GIDNumer, b.KKS_GIDNumer, @Poziom
+		from inserted a
+			join cdn.Konta b
+				on a.KKS_GIDNumer = b.KKS_SynNumer
+		where a.KKS_SynNumer = 0 --tylko dla syntetyk aktualizuj podrzedne
+			and a.KKS_AktualizujPodrz = 1
+
+
+
+		select @Err = @@Error, @RCount = @@ROWCOUNT
+			
+		if @RCount = 0
+		begin
+			drop table #KontaPodrzedneAct
+			goto lNext1
+		end
+
+
+		if @Err &lt;&gt; 0 
+		begin
+			drop table #KontaPodrzedneAct
+			ROLLBACK TRAN
+			raiserror('Błąd dostępu do tabeli cdn.Konta (%d)',16,1, @Err)		
+			return	
+		end				
+
+
+		while (@RCount &gt; 0)
+		begin
+			set @Poziom = @Poziom + 1
+
+			insert into #KontaPodrzedneAct
+			select a.GIDNumer, b.KKS_GIDNumer, @Poziom
+			from #KontaPodrzedneAct a
+				join cdn.Konta b
+					on a.PodrzNumer = b.KKS_SynNumer
+			where a.Poziom = @Poziom - 1
+
+
+			select @Err = @@Error, @RCount = @@ROWCOUNT
+
+			if @Err &lt;&gt; 0 
+			begin
+				drop table #KontaPodrzedneAct
+				ROLLBACK TRAN
+				raiserror('Błąd dostępu do tabeli cdn.Konta (%d)',16,1, @Err)		
+				return	
+			end				
+		end
+
+
+
+		update c set
+			c.KKS_Rozrachunkowe = a.KKS_Rozrachunkowe,
+			c.KKS_SaldoWgObr = a.KKS_SaldoWgObr,
+			--c.KKS_TypKonta = a.KKS_TypKonta,
+			c.KKS_AktualizujPodrz = 0
+		from inserted a 
+			join #KontaPodrzedneAct b
+				on a.KKS_GIDNumer = b.GIDNumer
+			join cdn.Konta c
+				on b.PodrzNumer = c.KKS_GIDNumer
+		
+
+		select @Err = @@Error, @RCount = @@ROWCOUNT
+
+		if @Err &lt;&gt; 0 --or @RCount &lt;&gt; 0
+		begin
+			drop table #KontaPodrzedneAct
+			ROLLBACK TRAN
+			raiserror('Błąd dostępu do tabeli cdn.Konta (%d)',16,1, @Err)		
+			return	
+		end	
+
+		drop table #KontaPodrzedneAct			
+	end
+
+
+
+lNext1:
+	
+
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Usuwanie wyzwalacza Konta_KontoDelete"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Usuwanie wyzwalacza Konta_KontoDelete */</I><BR>
+if exists (select * from sysobjects where name = 'Konta_KontoDelete' and xtype = 'TR')
+  drop trigger CDN.Konta_KontoDelete;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie wyzwalacza Konta_KontoDelete"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie wyzwalacza Konta_KontoDelete */</I><BR>
+create trigger cdn.Konta_KontoDelete
+on cdn.Konta
+for delete
+as
+begin
+	--sprawdz czy jest analityką
+	if exists(select KKS_GIDNumer 
+		from deleted
+		where KKS_Analityka = 0)
+	begin
+		Rollback tran
+		raiserror('Nie można usunąć konta. Konto nie jest analityką',16,1)
+		return
+	end
+	
+
+
+	--sprawdz dekrety
+	if exists(select KKS_GIDNumer 
+		from deleted d 
+			join cdn.Dekrety dt
+				on d.KKS_GIDNumer = dt.DT_KKSNumer)
+	begin
+		Rollback tran
+		raiserror('Nie można usunąć konta. Na koncie zapisane są dekrety księgowe',16,1)
+		return
+	end
+
+
+
+	--sprawdz BO
+	if exists(select KKS_GIDNumer 
+		from deleted d 
+			join cdn.BilansOtwarciaElem boe
+				join cdn.BilansOtwarciaNag bon
+					on boe.BOE_GIDTyp = bon.BON_GIDTyp and boe.BOE_GIDNumer = bon.BON_GIDNumer
+				on d.KKS_Konto = boe.BOE_Konto and d.KKS_Rok*100+d.KKS_Miesiac = bon.BON_RokMiesiac
+		)
+	begin
+		Rollback tran
+		raiserror('Nie można usunąć konta. Na koncie zapisany jest bilans otwarcia',16,1)
+		return
+	end
+
+
+
+	--sprawdz konta walutowe
+	if exists(select a.KKS_Konto
+		from deleted a
+			join cdn.Konta b
+				on a.KKS_OkresID = b.KKS_OkresID and a.KKS_Konto = b.KKS_KZKonto)
+	begin
+		Rollback tran
+		raiserror('Nie można usunąć konta. Konto jest powiązane z kontem walutowym',16,1)
+		return
+	end
+
+
+	--sprawdz konto KK
+	if exists(select 1 
+			from deleted a
+				join cdn.Konta b
+					on a.KKS_GIDNumer = b.KKS_KKZDKKSNumer)
+	begin
+		Rollback tran
+		raiserror('Nie można usunąć konta. Konto jest kontem korekty kosztów powiązanym z kontami przychodowymi/kosztowymi',16,1)
+		return
+	end				
+
+	
+	--usun z KntKonta
+	delete from k
+	from cdn.KntKonta k
+		join deleted d
+			on k.KKT_KKSNumer = d.KKS_GIDNumer
+	if @@Error &lt;&gt; 0 
+	begin
+		Rollback tran
+		raiserror('Błąd aktualizacji tabeli cdn.KntKonta',16,1)
+		return
+	end
+
+
+
+	--usun ze stanow
+	delete from s
+	from cdn.Stany s
+		join deleted d
+			on s.DTS_KKSNumer = d.KKS_GIDNumer
+	if @@Error &lt;&gt; 0 
+	begin
+		Rollback tran
+		raiserror('Błąd aktualizacji tabeli cdn.Stany',16,1)
+		return
+	end
+
+
+
+	update b set				
+		b.KKS_Analityka = case when exists(select c.KKS_GIDNumer 
+						from cdn.Konta c 
+						where c.KKS_SynNumer = b.KKS_GIDNumer and c.KKS_OkresID = b.KKS_OkresID
+							and c.KKS_GIDNumer &lt;&gt; a.KKS_GIDNumer) then
+					0
+				else
+					1
+				end
+	from cdn.Konta b 
+		join deleted a 
+			on a.KKS_SynNumer = b.KKS_GIDNumer and b.KKS_OkresID = a.KKS_OkresID					
+
+	if @@Error &lt;&gt; 0 
+	begin
+		Rollback tran
+		raiserror('Błąd aktualizacji kolumny KKS_Analityka',16,1)
+		return
+	end
+
+
+
+
+	--skasuj z tabeli cdn.KontaNastLinki
+/*
+	delete from a		
+	from deleted e			
+		join cdn.KontaNastLinki g --pozniejsze, ktore powinny byc zmienione
+			on e.KKS_NastNumer = g.KLI_PoprzNumer
+		join cdn.KontaNastLinki a --zestaw wczesniejszych dla pozniejszych
+			on g.KLI_NastNumer = a.KLI_NastNumer
+		join cdn.KontaNastLinki b --zestaw wczesniejszych, ktore powinny zostac usunuiete dla pozniejszcych
+			on e.KKS_NastNumer = b.KLI_NastNumer and b.KLI_NastNumer &lt;&gt; b.KLI_PoprzNumer
+	where a.KLI_PoprzNumer = b.KLI_PoprzNumer
+*/
+
+
+	delete from a		
+	from deleted e			
+		join cdn.KontaNastLinki g --pozniejsze, ktore powinny byc zmienione
+			on e.KKS_GIDNumer = g.KLI_PoprzNumer
+		join cdn.KontaNastLinki a --zestaw wczesniejszych dla pozniejszych
+			on g.KLI_NastNumer = a.KLI_NastNumer
+		join cdn.KontaNastLinki b --zestaw wczesniejszych, ktore powinny zostac usunuiete dla pozniejszcych
+			on e.KKS_GIDNumer = b.KLI_NastNumer --and b.KLI_NastNumer &lt;&gt; b.KLI_PoprzNumer
+	where a.KLI_PoprzNumer = b.KLI_PoprzNumer
+
+	if @@Error &lt;&gt; 0 
+	begin
+		Rollback tran
+		raiserror('Błąd aktualizacji tabeli cdn.KontaNastLinki (1)',16,1)
+		return
+	end
+
+
+/*
+	delete from g	
+	from deleted e			
+		join cdn.KontaNastLinki g 
+			on e.KKS_GIDNumer = g.KLI_NastNumer
+
+	if @@Error &lt;&gt; 0 
+	begin
+		Rollback tran
+		raiserror('Błąd aktualizacji tabeli cdn.KontaNastLinki (2)',16,1)
+		return
+	end
+*/
+
+	
+	--zaktualizuj w poprzednim okresie
+	update a set
+		a.KKS_NastNumer = 0
+	from cdn.Konta a
+		join deleted b
+			on a.KKS_NastNumer = b.KKS_GIDNumer
+
+	if @@Error &lt;&gt; 0 
+	begin
+		Rollback tran
+		raiserror('Błąd aktualizacji w polu cdn.Konta.KKS_NastNumer',16,1)
+		return
+	end
+
+	
+	--usun z KontaLinki
+	delete from a
+	from cdn.KontaLinki a
+		join deleted
+			on a.KKL_SynNumer = KKS_GIDNumer
+
+	if @@Error &lt;&gt; 0 
+	begin
+		Rollback tran
+		raiserror('Błąd aktualizacji tabeli cdn.KontaLinki (1)',16,1)
+		return
+	end
+
+
+	delete from a
+	from cdn.KontaLinki a
+		join deleted
+			on a.KKL_KKSNumer = KKS_GIDNumer
+
+	if @@Error &lt;&gt; 0 
+	begin
+		Rollback tran
+		raiserror('Błąd aktualizacji tabeli cdn.KontaLinki (2)',16,1)
+		return
+	end
+
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,137 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="XLNowyWzorzecWizyt"></A><PRE>
+          <FONT SIZE="2"><I>/* XLNowyWzorzecWizyt */</I><BR>
+CREATE PROCEDURE CDN.XLNowyWzorzecWizyt
+(
+/* ==========================================================================================
+	SQL API: Procedura serwerowa do dodawania wzorca wizyty handlowej
+
+	Dla uproszczenia założono, że jeżeli w systemie zewnętrznym zostanie wystawiony wzorzec wizyty handlowej,
+	to w trakcie wystawiania jej przez API nie ma potrzeby kontrolowania uprawnień do obiektów, z których on korzysta
+	
+
+	Parametry wejściowe: 
+   ========================================================================================== */
+	@OpeNumer INT,					-- GidNumer operatora, który wykonuje tą operacje	
+	@Kod VARCHAR(20),				-- Kod wzorca wizyty 
+	@Nazwa VARCHAR(255),			-- Nazwa wzorca wizyty
+
+	@TypId INT=NULL,				-- Typ wzorca wizyty (wartość ze słownika kategorii)	
+	@DataWystawienia INT=NULL,		-- Data wystawienia						
+	@CzasRealizacji INT=NULL,		-- Czas Realizacji (w sekundach)  
+	@Archiwalny TINYINT=NULL,		-- Czy wzorzec archiwalny
+	@Opis VARCHAR(1024)=NULL,		-- Opis	
+	@URL VARCHAR(255)=NULL,			-- Adres URL
+	@RodzajeZDefinicji TINYINT=NULL,-- Rodzaje kontrahentów wg definicji Wizyty handlowej (0 - rodzaje kontrahentów mają być sprawdzane wg Wzorcu wizyty; 1 - rodzaje kontrahentów maja być sprawdzani na Definicji dokumentu WH. 
+	@CalyDzien TINYINT=NULL			-- Czy wizyta jest całodzienna (0 - nie, 1 - tak)
+
+/* ==========================================================================================
+	Return:
+	&gt;0 : Operacja zakończona sukcesem (zwrócono ID nowego wzorca wizyty)
+	-1 : Nie powiodło się dodawanie wpisu do tabeli CDN.CRMWzorceWizyt
+	-2 : Wystąpił błąd podczas dodawania wzorca wizyty handlowej. Podany operator nie występuje w bazie.
+	-3 : Wystąpił błąd podczas dodawania wzorca wizyty handlowej. Podany typ wzorca nie występuje w bazie bądź nie należy do odpowiedniego słownika.
+   ========================================================================================== */
+)
+AS
+BEGIN
+
+	DECLARE @TimeStamp INT
+	DECLARE @Typ_CWW SMALLINT
+	DECLARE @CWWId INT
+	SET @CWWId = 0
+	SET @Typ_CWW = 4181
+
+	SET @TimeStamp = DATEDIFF(s,'19900101',GETDATE())
+			
+  
+	INSERT INTO CDN.CRMWzorceWizyt
+           (CWW_Kod
+           ,CWW_Nazwa
+           ,CWW_CzasRealizacji
+           ,CWW_TypId
+           ,CWW_DataWystawienia
+           ,CWW_CzasModyfikacji
+           ,CWW_CzasModyfikacjiC
+           ,CWW_CzasArchiwizacji
+           ,CWW_OpeNumerW
+           ,CWW_OpeNumerM
+           ,CWW_OpeNumerA
+           ,CWW_URL
+           ,CWW_Opis
+           ,CWW_RodzajeZDefinicji
+           ,CWW_CalyDzien
+		   )		   	   
+	SELECT
+			@Kod--CWW_Kod
+			,@Nazwa--CWW_Nazwa
+			,case when IsNull(@CalyDzien,0)=0 then IsNull(@CzasRealizacji,0) else 0 end--CWW_CzasRealizacji
+			,CASE WHEN S.SLW_ID is not null and SS.SLS_Predefiniowany=96 
+				THEN S.SLW_ID
+				ELSE isnull((select SDomyslny.SLW_Id from cdn.Slowniki SDomyslny join cdn.SlownikiStruktura SSD on SDomyslny.SLW_SLSId=SSD.SLS_Id where SSD.SLS_Predefiniowany=96 and SDomyslny.SLW_Aktywny=1 and SDomyslny.SLW_Domyslny=1),0)
+				END--CWW_TypId
+			,IsNull(@DataWystawienia,@TimeStamp)--CWW_DataWystawienia
+		   ,@TimeStamp--CWW_CzasModyfikacji
+		   ,@TimeStamp--CWW_CzasModyfikacjiC
+		   ,case when IsNull(@Archiwalny,0)=0 then 0 else @TimeStamp end--CWW_CzasArchiwizacji
+		   ,@OpeNumer--CWW_OpeNumerW
+		   ,@OpeNumer--CWW_OpeNumerM
+		   ,case when IsNull(@Archiwalny,0)=0 then 0 else @OpeNumer end--CWW_OpeNumerA
+		   ,IsNull(@URL,'')--CWW_URL
+		   ,IsNull(@Opis,'')--CWW_Opis
+		   ,case when @RodzajeZDefinicji=0 then 0 else 1 end--CWW_RodzajeZDefinicji
+		   ,case when IsNull(@CalyDzien,0)=0 then 0 else 1 end--CWW_CalyDzien
+  		   
+	FROM CDN.OpeKarty	
+	LEFT OUTER JOIN CDN.Slowniki S ON S.SLW_ID=@TypId
+	LEFT OUTER JOIN CDN.SlownikiStruktura SS ON SS.SLS_Id=S.SLW_SLSId
+	WHERE Ope_GIDNumer=@OpeNumer
+			
+	IF @@ROWCOUNT=0 BEGIN
+
+		IF NOT EXISTS(SELECT * FROM CDN.OpeKarty WHERE Ope_GIDNumer=@OpeNumer) BEGIN
+			RAISERROR ('Wystąpił błąd podczas dodawania wzorca wizyty handlowej. Podany operator nie występuje w bazie.', 16, 1)
+			RETURN -2
+		END				
+
+		IF IsNull(@TypId,0)&lt;&gt;0 AND NOT EXISTS(SELECT * FROM CDN.Slowniki JOIN CDN.SlownikiStruktura ON SLS_Id=SLW_SLSId WHERE SLW_ID=@TypId AND SLS_Predefiniowany=96) BEGIN 
+			RAISERROR ('Wystąpił błąd podczas dodawania wzorca wizyty handlowej. Podany typ wzorca nie występuje w bazie bądź nie należy do odpowiedniego słownika.', 16, 1)
+			RETURN -3
+		END
+
+		-- inny powód błędu:						
+		RAISERROR ('Nie powiodło się dodawanie wpisu do tabeli CDN.CRMWzorceWizyt.', 16, 1)
+		RETURN -1
+	END
+	
+	--OK:
+	SET @CWWId = scope_identity()
+	
+	--Atrybuty automatyczne:
+	INSERT INTO CDN.Atrybuty(Atr_ObiTyp,Atr_ObiFirma,Atr_ObiNumer,Atr_ObiLp,Atr_ObiSubLp
+							,Atr_AtkId,Atr_Wartosc,Atr_AtrTyp,Atr_AtrFirma,Atr_AtrNumer,Atr_AtrLp,Atr_AtrSubLp,Atr_OptimaId)
+	SELECT @Typ_CWW,CDN.GIDFirma(),@CWWId,0,0,Atk_Id,'',0,0,0,0,0,0
+	FROM CDN.AtrybutyKlasy
+	JOIN CDN.AtrybutyObiekty ON AtO_AtKId=AtK_ID
+	WHERE AtK_Automat=1 AND AtO_GIDTyp=@Typ_CWW AND AtO_Element=0
+	
+	--OK:
+	RETURN @CWWId
+	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

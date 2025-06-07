@@ -1,0 +1,304 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[WypelnijTabeleDKDoDRA]"></A><PRE>
+          <FONT SIZE="2"><I>/* [WypelnijTabeleDKDoDRA] */</I><BR>
+CREATE PROCEDURE [CDN].[WypelnijTabeleDKDoDRA]  
+	 @DataOd DATETIME,
+	 @SourceName  VARCHAR(255),
+	 @SourceDatabase  VARCHAR(255),
+	 @SameServer TINYINT = 1
+AS
+BEGIN
+	SET NOCOUNT OFF
+	DECLARE @RM INT
+	DECLARE @R  VARCHAR(4)
+	DECLARE @M  VARCHAR(2)
+	SET @R = CAST(DATEPART(year ,@DataOd) as VARCHAR)
+	SET @M = CAST(DATEPART(month ,@DataOd)  as VARCHAR)
+	IF LEN(@M)&lt;2 SET @M='0'+@M
+	SET @RM = CAST(@R+@M as VARCHAR)
+	--
+	-- Lecę po tabeli deklstr (strony deklaracji)
+	-- Szukam kwot pracowników
+	-- Niestety trzeba parsować stringa gdyż jest to wierne odzwierciedlenie pliku KEDU
+	--
+	DECLARE @A04  VARCHAR(10)
+	DECLARE @A05  VARCHAR(10)
+	DECLARE @B04  VARCHAR(10)
+	DECLARE @B05  VARCHAR(10)
+	DECLARE @C01  VARCHAR(10)
+	DECLARE @C02  VARCHAR(10)
+	DECLARE @C03  VARCHAR(10)
+	DECLARE @D02  VARCHAR(10)
+	DECLARE @D05  VARCHAR(10)
+	DECLARE @E02  VARCHAR(10)
+	DECLARE @E03  VARCHAR(10)
+	DECLARE @E04  VARCHAR(10)
+	DECLARE @V02  VARCHAR(10)
+	DECLARE @V05  VARCHAR(11)
+	DECLARE @VI01  VARCHAR(10)
+	DECLARE @VI02  VARCHAR(11)
+	DECLARE @VII03  VARCHAR(10)
+	DECLARE @VII04  VARCHAR(11)
+	DECLARE @VIII01 VARCHAR(10)
+	DECLARE @VIII02 VARCHAR(10)
+	DECLARE @VIII03 VARCHAR(11)
+	DECLARE @nA04  DECIMAL(15,2)
+	DECLARE @nA05  DECIMAL(15,2)
+	DECLARE @nB04  DECIMAL(15,2)
+	DECLARE @nB05  DECIMAL(15,2)
+	DECLARE @nC01  DECIMAL(15,2)
+	DECLARE @nC02  DECIMAL(15,2)
+	DECLARE @nC03  DECIMAL(15,2)
+	DECLARE @nD02  DECIMAL(15,2)
+	DECLARE @nD05  DECIMAL(15,2)
+	DECLARE @nE02  DECIMAL(15,2)
+	DECLARE @nE03  DECIMAL(15,2)
+	DECLARE @nE04  DECIMAL(15,2)
+	DECLARE @nV02  DECIMAL(15,2)
+	DECLARE @nV05  DECIMAL(15,2)
+	DECLARE @nVI01  DECIMAL(15,2)
+	DECLARE @nVI02  DECIMAL(15,2)
+	DECLARE @nVII03  DECIMAL(15,2)
+	DECLARE @nVII04  DECIMAL(15,2)
+	DECLARE @nVIII01 DECIMAL(15,2)
+	DECLARE @nVIII02 DECIMAL(15,2)
+	DECLARE @nVIII03 DECIMAL(15,2)
+	DECLARE @nWYP1 DECIMAL(15,2)
+	DECLARE @nWYP2 DECIMAL(15,2)
+	DECLARE @nIX03 DECIMAL(15,2)
+	DECLARE @CELLSIZE INT
+	DECLARE @NEWLEN   INT
+	DECLARE @TEKST VARCHAR(4096)
+	DECLARE @FOUNDTAG INT
+	DECLARE @TMPIDX   INT
+	DECLARE @DKNID    INT
+	DECLARE @DKNRM    INT
+
+	SET  @CELLSIZE = 10
+	SET  @NEWLEN   = 2
+
+	DECLARE @sql NVARCHAR(4000)
+	DECLARE @params NVARCHAR(4000)
+	DECLARE @sqlFromJoinWHERE NVARCHAR(1500)
+
+	DECLARE @sqlFromJoinWhereWyplaty NVARCHAR(1500)
+	DECLARE @sqlDeklElem NVARCHAR(1500)
+
+	IF @SameServer = 1 
+	BEGIN
+		SET @sqlFromJoinWHERE = ' ['+@SourceName+'].['+@SourceDatabase +'].cdn.deklnag
+			join ['+@SourceName+'].['+@SourceDatabase +'].cdn.deklstr on dkn_dknid=dks_dknid
+			where dkn_typdeklar=120 and dkn_rokmiesiac &gt;= @RM and dkn_zablokowana=1 and dkn_wersja &lt; 4 '
+		SET @sqlFromJoinWhereWyplaty =' ['+@SourceName+'].['+@SourceDatabase +'].cdn.wyplaty
+                    join ['+@SourceName+'].['+@SourceDatabase +'].cdn.wypelementy on wpe_wplid = wpl_wplid
+                    where wpe_tyub = 12000 and wpl_rok = cast (@R as int) and wpl_miesiac=cast (@M as int) ' 
+		SET @sqlDeklElem = ' ['+@SourceName+'].['+@SourceDatabase +'].cdn.deklelem  '
+	END		
+	ELSE
+	BEGIN
+		SET @sqlFromJoinWHERE = ' ##DKDDoDRATemp where dkn_wersja &lt; 4 '  
+		SET @sqlFromJoinWhereWyplaty = ' ##WyplataDeklTemp ' 
+		SET @sqlDeklElem = ' ##DeklElemTemp  '
+
+	END
+
+    select @sql =
+    N'
+    DECLARE Tmp_DekKwoty CURSOR FAST_FORWARD READ_ONLY FOR
+        select dks_tekst, dks_dknid, dkn_rokmiesiac from ' +@sqlFromJoinWHERE+ '
+    OPEN Tmp_DekKwoty;
+    '
+    SELECT @params =N'@RM INT'
+	EXEC sp_executesql @sql, @params, @RM
+	--EXEC (@sql)
+
+	WHILE 1=1
+	BEGIN
+		 FETCH NEXT FROM Tmp_DekKwoty INTO @TEKST, @DKNID, @DKNRM
+
+		 IF @@FETCH_STATUS &lt;&gt; 0 
+			BREAK
+
+		 delete from [CDN].[##DtsTempOptimaDeklKwoty] where DKD_DkNId = @DKNID
+
+		 SET @FOUNDTAG = PATINDEX('%&lt;ZSDRAI&gt;%', @TEKST)
+		 SET @TMPIDX   = @FOUNDTAG
+		 IF @TMPIDX&gt;0
+		 BEGIN
+		   --Skaczę poza tagi &lt;ZSDRAI&gt;
+		   SET @TMPIDX = @TMPIDX + 10
+		   --Wyciągam Kwoty z ZSDRAI sekcja IV
+		   SET @C01 = SUBSTRING(@TEKST, @TMPIDX+2*@CELLSIZE+2*@NEWLEN, 10 )
+		   SET @C02 = SUBSTRING(@TEKST, @TMPIDX+5*@CELLSIZE+5*@NEWLEN, 10 )
+		   SET @C03 = SUBSTRING(@TEKST, @TMPIDX+8*@CELLSIZE+8*@NEWLEN, 10 )
+		   SET @A04 = SUBSTRING(@TEKST, @TMPIDX+9*@CELLSIZE+9*@NEWLEN, 10 )
+		   SET @A05 = SUBSTRING(@TEKST, @TMPIDX+12*@CELLSIZE+12*@NEWLEN, 10 )
+		   SET @B04 = SUBSTRING(@TEKST, @TMPIDX+10*@CELLSIZE+10*@NEWLEN, 10 )
+		   SET @B05 = SUBSTRING(@TEKST, @TMPIDX+13*@CELLSIZE+13*@NEWLEN, 10 )
+		   SET @D02 = SUBSTRING(@TEKST, @TMPIDX+21*@CELLSIZE+21*@NEWLEN, 10 )
+		   SET @D05 = SUBSTRING(@TEKST, @TMPIDX+26*@CELLSIZE+26*@NEWLEN, 10 )
+		   SET @E02 = SUBSTRING(@TEKST, @TMPIDX+22*@CELLSIZE+22*@NEWLEN, 10 )
+		   SET @E03 = SUBSTRING(@TEKST, @TMPIDX+24*@CELLSIZE+24*@NEWLEN, 10 )
+		   SET @E04 = SUBSTRING(@TEKST, @TMPIDX+27*@CELLSIZE+27*@NEWLEN, 10 )
+		 END
+		 --Skaczę do sekcji &lt;ZWDRA&gt;
+		 SET @FOUNDTAG = PATINDEX('%&lt;ZWDRA&gt;%', @TEKST)
+		 SET @TMPIDX   = @FOUNDTAG
+		 IF @TMPIDX&gt;0
+		 BEGIN
+			SET @TMPIDX = @TMPIDX + 9
+			SET @V02 = SUBSTRING(@TEKST, @TMPIDX+1*@CELLSIZE+1*@NEWLEN, 10 )
+			SET @V05 = SUBSTRING(@TEKST, @TMPIDX+4*@CELLSIZE+4*@NEWLEN, 11 )
+		 END
+		 --Skaczę do sekcji &lt;RIVDRA&gt;
+		 SET @FOUNDTAG = PATINDEX('%&lt;RIVDRA&gt;%', @TEKST)
+		 SET @TMPIDX   = @FOUNDTAG
+		 IF @TMPIDX&gt;0
+		 BEGIN
+			SET @TMPIDX = @TMPIDX + 10
+			SET @VI01 = SUBSTRING(@TEKST, @TMPIDX, 11 )
+			SET @VI02 = SUBSTRING(@TEKST, @TMPIDX+11+1*@NEWLEN, 11 )
+		 END
+		 --Skaczę do sekcji &lt;ZSDRA&gt;
+		 SET @FOUNDTAG = PATINDEX('%&lt;ZSDRA&gt;%', @TEKST)
+		 SET @TMPIDX   = @FOUNDTAG
+		 IF @TMPIDX&gt;0
+		 BEGIN
+			SET @TMPIDX = @TMPIDX + 9
+			SET @VII03 = SUBSTRING(@TEKST, @TMPIDX+2*@CELLSIZE+2*@NEWLEN, 10 )
+			SET @VII04 = SUBSTRING(@TEKST, @TMPIDX+3*@CELLSIZE+3*@NEWLEN, 11 )
+		 END
+		 --Skaczę do sekcji &lt;ZDRAV&gt;
+		 SET @FOUNDTAG = PATINDEX('%&lt;ZDRAV&gt;%', @TEKST)
+		 SET @TMPIDX   = @FOUNDTAG
+		 IF @TMPIDX&gt;0
+		 BEGIN
+			SET @TMPIDX = @TMPIDX + 9
+			SET @VIII01 = SUBSTRING(@TEKST, @TMPIDX, 10 )
+			SET @VIII02 = SUBSTRING(@TEKST, @TMPIDX+1*@CELLSIZE+1*@NEWLEN, 10 )
+			SET @VIII03 = SUBSTRING(@TEKST, @TMPIDX+2*@CELLSIZE+2*@NEWLEN, 11 )
+		 END
+		 --Obliczam brakujące kwoty, których nie da się wyciągnąć z deklaracji
+
+		SELECT @sql = 
+		N' 	
+		 SET @nWYP1 = (select isnull(sum(wpe_sklemerprac),0) from '+@sqlFromJoinWhereWyplaty+')
+		'	
+		SELECT @params =N'@R VARCHAR(4),
+						  @M VARCHAR(2),
+						  @nWYP1  DECIMAL(15,2) OUTPUT'
+		EXEC sp_executesql @sql, @params, @R, @M,@nWYP1 OUTPUT
+
+
+		SELECT @sql = 
+		N' 	
+		 SET @nWYP2 = (select isnull(sum(wpe_sklrentprac),0) from '+@sqlFromJoinWhereWyplaty+')
+		'	
+		SELECT @params =N'@R VARCHAR(4),
+						  @M VARCHAR(2),
+						  @nWYP2  DECIMAL(15,2) OUTPUT'
+
+		EXEC sp_executesql @sql, @params, @R, @M,@nWYP2 OUTPUT
+
+        SELECT @sql =
+        N'
+         SET @nIX03 = (select isnull((select dke_wartoscl from '+@sqlDeklElem+'  where dke_dknid = @DKNID and dke_numer = 25),0));
+        '
+        SELECT @params =N'@DKNID INT, @nIX03  DECIMAL(15,2) OUTPUT '
+
+        EXEC sp_executesql @sql, @params, @DKNID, @nIX03 OUTPUT
+
+		 --Konwertuję kwoty ze stringów
+		 exec CDN.ObliczKwotyDRA @C01, @nC01 output
+		 exec CDN.ObliczKwotyDRA @C02, @nC02 output
+		 exec CDN.ObliczKwotyDRA @C03, @nC03 output
+		 exec CDN.ObliczKwotyDRA @A04, @nA04 output
+		 exec CDN.ObliczKwotyDRA @A05, @nA05 output
+		 exec CDN.ObliczKwotyDRA @B04, @nB04 output
+		 exec CDN.ObliczKwotyDRA @B05, @nB05 output
+		 exec CDN.ObliczKwotyDRA @D02, @nD02 output
+		 exec CDN.ObliczKwotyDRA @D05, @nD05 output
+		 exec CDN.ObliczKwotyDRA @E02, @nE02 output
+		 exec CDN.ObliczKwotyDRA @E03, @nE03 output
+		 exec CDN.ObliczKwotyDRA @E04, @nE04 output
+		 exec CDN.ObliczKwotyDRA @V02, @nV02 output
+		 exec CDN.ObliczKwotyDRA @V05, @nV05 output
+		 exec CDN.ObliczKwotyDRA @VI01, @nVI01 output
+		 exec CDN.ObliczKwotyDRA @VI02, @nVI02 output
+		 exec CDN.ObliczKwotyDRA @VII03, @nVII03 output
+		 exec CDN.ObliczKwotyDRA @VII04, @nVII04 output
+		 exec CDN.ObliczKwotyDRA @VIII01, @nVIII01 output
+		 exec CDN.ObliczKwotyDRA @VIII02, @nVIII02 output
+		 exec CDN.ObliczKwotyDRA @VIII03, @nVIII03 output
+
+		 insert into [CDN].[##DtsTempOptimaDeklKwoty] (DKD_Numer, DKD_KwotaL, DKD_KwotaM,DKD_Nazwa, DKD_Opis,DKD_DKNID) values
+		 (1, @nC01, 1, 'Suma kwot składek na ubezpieczenia emerytalne i rentowe','Suma kwot składek na ubezpieczenia emerytalne i rentowe', @DKNID)
+		 insert into [CDN].[##DtsTempOptimaDeklKwoty] (DKD_Numer, DKD_KwotaL, DKD_KwotaM,DKD_Nazwa, DKD_Opis,DKD_DKNID) values
+		 (2, @nC02, 1, 'Suma kwot składek emerytalnych i rentowych - finansowane przez ubezpieczonych','Suma kwot składek emerytalnych i rentowych - finansowane przez ubezpieczonych', @DKNID)
+		 insert into [CDN].[##DtsTempOptimaDeklKwoty] (DKD_Numer, DKD_KwotaL, DKD_KwotaM,DKD_Nazwa, DKD_Opis,DKD_DKNID) values
+		 (3, @nC03, 1, 'Suma kwot składek emerytalnych i rentowych - finansowane przez budżet Państwa','Suma kwot składek emerytalnych i rentowych - finansowane przez budżet Państwa', @DKNID)
+		 insert into [CDN].[##DtsTempOptimaDeklKwoty] (DKD_Numer, DKD_KwotaL, DKD_KwotaM,DKD_Nazwa, DKD_Opis,DKD_DKNID) values
+		 (4, @nA04, 1, 'Kwota składki na ubezpieczenie emerytalne - finansowane przez budżet Państwa','Kwota składki na ubezpieczenie emerytalne - finansowane przez budżet Państwa', @DKNID)
+		 insert into [CDN].[##DtsTempOptimaDeklKwoty] (DKD_Numer, DKD_KwotaL, DKD_KwotaM,DKD_Nazwa, DKD_Opis,DKD_DKNID) values
+		 (5, @nA05, 1, 'Kwota składki na ubezpieczenie emerytalne - finansowane przez PFRON','Kwota składki na ubezpieczenie emerytalne - finansowane przez PFRON', @DKNID)
+		 insert into [CDN].[##DtsTempOptimaDeklKwoty] (DKD_Numer, DKD_KwotaL, DKD_KwotaM,DKD_Nazwa, DKD_Opis,DKD_DKNID) values
+		 (6, @nB04, 1, 'Kwota składki na ubezpieczenie rentowe - finansowane przez budżet Państwa','Kwota składki na ubezpieczenie rentowe - finansowane przez budżet Państwa', @DKNID)
+		 insert into [CDN].[##DtsTempOptimaDeklKwoty] (DKD_Numer, DKD_KwotaL, DKD_KwotaM,DKD_Nazwa, DKD_Opis,DKD_DKNID) values
+		 (7, @nB05, 1, 'Kwota składki na ubezpieczenie rentowe - finansowane przez PFRON','Kwota składki na ubezpieczenie rentowe - finansowane przez PFRON', @DKNID)
+		 insert into [CDN].[##DtsTempOptimaDeklKwoty] (DKD_Numer, DKD_KwotaL, DKD_KwotaM,DKD_Nazwa, DKD_Opis,DKD_DKNID) values
+		 (8, @nD02, 1, 'Kwota składki na ubezpieczenie chorobowe - finansowane przez ubezpieczonych','Kwota składki na ubezpieczenie chorobowe - finansowane przez ubezpieczonych', @DKNID)
+		 insert into [CDN].[##DtsTempOptimaDeklKwoty] (DKD_Numer, DKD_KwotaL, DKD_KwotaM,DKD_Nazwa, DKD_Opis,DKD_DKNID) values
+		 (9, @nD05, 1, 'Kwota składki na ubezpieczenie chorobowe - finansowane przez PFRON','Kwota składki na ubezpieczenie chorobowe - finansowane przez PFRON', @DKNID)
+		 insert into [CDN].[##DtsTempOptimaDeklKwoty] (DKD_Numer, DKD_KwotaL, DKD_KwotaM,DKD_Nazwa, DKD_Opis,DKD_DKNID) values
+		 (10, @nE02, 1, 'Kwota składki na ubezpieczenie wypadkowe - finansowane przez ubezpieczonych','Kwota składki na ubezpieczenie wypadkowe - finansowane przez ubezpieczonych', @DKNID)
+		 insert into [CDN].[##DtsTempOptimaDeklKwoty] (DKD_Numer, DKD_KwotaL, DKD_KwotaM,DKD_Nazwa, DKD_Opis,DKD_DKNID) values
+		 (11, @nE03, 1, 'Kwota składki na ubezpieczenie wypadkowe - finansowane przez płatnika', 'Kwota składki na ubezpieczenie wypadkowe - finansowane przez płatnika', @DKNID)
+		 insert into [CDN].[##DtsTempOptimaDeklKwoty] (DKD_Numer, DKD_KwotaL, DKD_KwotaM,DKD_Nazwa, DKD_Opis,DKD_DKNID) values
+		 (12, @nE04, 1, 'Kwota składki na ubezpieczenie wypadkowe - finansowane przez PFRON','Kwota składki na ubezpieczenie wypadkowe - finansowane przez PFRON', @DKNID)
+		 insert into [CDN].[##DtsTempOptimaDeklKwoty] (DKD_Numer, DKD_KwotaL, DKD_KwotaM,DKD_Nazwa, DKD_Opis,DKD_DKNID) values
+		 (13, @nV02, 1, 'Kwota wynagrodzenia należnego płatnikowi od wypłaconych świadczeń z ubezpieczenia chorobowego','Kwota wynagrodzenia należnego płatnikowi od wypłaconych świadczeń z ubezpieczenia chorobowego', @DKNID)
+		 insert into [CDN].[##DtsTempOptimaDeklKwoty] (DKD_Numer, DKD_KwotaL, DKD_KwotaM,DKD_Nazwa, DKD_Opis,DKD_DKNID) values
+		 (14, @nV05, 1, 'Łączna kwota świadczeń do potrącenia','Łączna kwota świadczeń do potrącenia', @DKNID)
+		 insert into [CDN].[##DtsTempOptimaDeklKwoty] (DKD_Numer, DKD_KwotaL, DKD_KwotaM,DKD_Nazwa, DKD_Opis,DKD_DKNID) values
+		 (15, @nVI01, 1, 'Kwota do zwrotu przez ZUS','Kwota do zwrotu przez ZUS', @DKNID)
+		 insert into [CDN].[##DtsTempOptimaDeklKwoty] (DKD_Numer, DKD_KwotaL, DKD_KwotaM,DKD_Nazwa, DKD_Opis,DKD_DKNID) values
+		 (16, @nVI02, 1, 'Kwota do zapłaty', 'Kwota do zapłaty',@DKNID)
+		 insert into [CDN].[##DtsTempOptimaDeklKwoty] (DKD_Numer, DKD_KwotaL, DKD_KwotaM,DKD_Nazwa, DKD_Opis,DKD_DKNID) values
+		 (17, @nVII03, 1, 'Kwota należnego wnagrodzenia dla płatnika','Kwota należnego wnagrodzenia dla płatnika', @DKNID)
+		 insert into [CDN].[##DtsTempOptimaDeklKwoty] (DKD_Numer, DKD_KwotaL, DKD_KwotaM,DKD_Nazwa, DKD_Opis,DKD_DKNID) values
+		 (18, @nVII04, 1, 'Kwota do zapłaty','Kwota do zapłaty', @DKNID)
+		 insert into [CDN].[##DtsTempOptimaDeklKwoty] (DKD_Numer, DKD_KwotaL, DKD_KwotaM,DKD_Nazwa, DKD_Opis,DKD_DKNID) values
+		 (19, @nVIII01, 1, 'Kwota należnych składek na FP','Kwota należnych składek na FP', @DKNID)
+		 insert into [CDN].[##DtsTempOptimaDeklKwoty] (DKD_Numer, DKD_KwotaL, DKD_KwotaM,DKD_Nazwa, DKD_Opis,DKD_DKNID) values
+		 (20, @nVIII02, 1, 'Kwota należnych składek na FGŚP','Kwota należnych składek na FGŚP', @DKNID)
+		 insert into [CDN].[##DtsTempOptimaDeklKwoty] (DKD_Numer, DKD_KwotaL, DKD_KwotaM,DKD_Nazwa, DKD_Opis,DKD_DKNID) values
+		 (21, @nVIII03, 1, 'Kwota do zapłaty','Kwota do zapłaty', @DKNID)
+		 insert into [CDN].[##DtsTempOptimaDeklKwoty] (DKD_Numer, DKD_KwotaL, DKD_KwotaM,DKD_Nazwa, DKD_Opis,DKD_DKNID) values
+		 (22, @nWYP1, 1, 'Składki emerytalne','Składki emerytalne', @DKNID)
+		 insert into [CDN].[##DtsTempOptimaDeklKwoty] (DKD_Numer, DKD_KwotaL, DKD_KwotaM,DKD_Nazwa, DKD_Opis,DKD_DKNID) values
+		 (23, @nWYP2, 1, 'Składki rentowe','Składki rentowe', @DKNID)
+         insert into [CDN].[##DtsTempOptimaDeklKwoty] (DKD_Numer, DKD_KwotaL, DKD_KwotaM,DKD_Nazwa, DKD_Opis,DKD_DKNID) values
+         (24, @nIX03, 1, 'Składka na FEP','Składka na FEP', @DKNID)
+	END
+	CLOSE Tmp_DekKwoty
+	DEALLOCATE Tmp_DekKwoty
+
+
+END
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

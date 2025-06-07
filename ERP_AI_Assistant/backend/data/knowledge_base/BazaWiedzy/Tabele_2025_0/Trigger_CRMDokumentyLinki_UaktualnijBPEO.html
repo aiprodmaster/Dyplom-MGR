@@ -1,0 +1,143 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="CRMDokumentyLinki_UaktualnijBPEO"></A><PRE>
+          <FONT SIZE="2"><I>/* CRMDokumentyLinki_UaktualnijBPEO */</I><BR>
+CREATE TRIGGER CDN.CRMDokumentyLinki_UaktualnijBPEO ON CDN.CRMDokumentyLinki 
+FOR DELETE,INSERT,UPDATE
+AS
+BEGIN
+	SET NOCOUNT ON;
+	DECLARE @Action as char(1);
+    SET @Action = (CASE WHEN EXISTS(SELECT * FROM INSERTED)
+                         AND EXISTS(SELECT * FROM DELETED)
+                        THEN 'U'  -- Set Action to Updated.
+                        WHEN EXISTS(SELECT * FROM INSERTED)
+                        THEN 'I'  -- Set Action to Insert.
+                        WHEN EXISTS(SELECT * FROM DELETED)
+                        THEN 'D'  -- Set Action to Deleted.
+                        ELSE NULL -- Skip. It may have been a "failed delete".   
+                    END)
+
+    IF @Action = 'D'
+	BEGIN
+		IF EXISTS(select * from deleted where CDL_CRMTyp=4596 AND CDL_Kierunek=3) -- Etap budzetu i opis analityczny
+		BEGIN
+			DECLARE kursorBPEO CURSOR FOR SELECT CDL_Kwota, CDL_CRMNumer, CDL_DokTyp, CDL_DokNumer, CDL_Typ FROM deleted where CDL_CRMTyp=4596 AND CDL_Kierunek=3;
+			DECLARE @KwotaDoOdjecia DECIMAL(15,2);
+			DECLARE @DataDokomentu INT;
+			DECLARE @BPE_Id INT;
+			DECLARE @DokTyp SMALLINT;
+			DECLARE @DokNumer INT;
+			DECLARE @Typ TINYINT; -- Typ powiazania
+			OPEN kursorBPEO;
+			FETCH NEXT FROM kursorBPEO INTO @KwotaDoOdjecia, @BPE_Id, @DokTyp, @DokNumer, @Typ;
+			WHILE @@FETCH_STATUS = 0
+			BEGIN
+				DECLARE @BPEO_ZaznaczonyCheck TINYINT;
+				SET @BPEO_ZaznaczonyCheck = (SELECT BPN_OpisAnalitycznyDaty from cdn.BudzetPrjNag join cdn.BudzetPrjElem on BPE_BPNId = BPN_Id WHERE BPE_Id = @BPE_Id )
+				IF @BPEO_ZaznaczonyCheck = 0  -- nic nie robimy
+				BEGIN
+					FETCH NEXT FROM kursorBPEO INTO @KwotaDoOdjecia, @BPE_Id, @DokTyp, @DokNumer, @Typ;
+					CONTINUE;
+				END
+		
+				-- Szukanie rodzaju powiazania
+				IF @DokTyp &lt;&gt; 960 AND @Typ=2  --Koszty Rzeczywiste
+				BEGIN
+					SET @DataDokomentu = (SELECT TrN_Data2 from TraNag WHERE TrN_GIDNumer = @DokNumer AND TrN_GIDTyp = @DokTyp)
+					UPDATE cdn.BudzetPrjElemOkresy
+					SET BPEO_KosztyRzeczywiste -= @KwotaDoOdjecia
+					WHERE  BPEO_BPEId = @BPE_Id AND @DataDokomentu BETWEEN BPEO_DataOd AND BPEO_DataDo;
+				END
+				ELSE IF @DokTyp &lt;&gt; 960 AND @Typ=1 --Przychody Rzeczywiste
+				BEGIN
+					SET @DataDokomentu = (SELECT TrN_Data2 from TraNag WHERE TrN_GIDNumer = @DokNumer AND TrN_GIDTyp = @DokTyp)
+					UPDATE cdn.BudzetPrjElemOkresy
+					SET BPEO_PrzychodyRzeczywiste -= @KwotaDoOdjecia
+					WHERE  BPEO_BPEId = @BPE_Id AND @DataDokomentu BETWEEN BPEO_DataOd AND BPEO_DataDo;
+				END
+				ELSE IF @DokTyp = 960 AND @Typ = 2 --Koszty Zamowien
+				BEGIN
+					SET @DataDokomentu = (SELECT ZaN_DataWystawienia from ZamNag WHERE ZaN_GIDNumer = @DokNumer AND ZaN_GIDTyp = @DokTyp)
+					SET @KwotaDoOdjecia -= (SELECT IsNull((SELECT IsNull(CDL_Kwota,0.00) FROM CDN.CRMDokumentyLinki JOIN CDN.TraNag on CDL_DokTyp=TrN_GIDTyp and CDL_DokNumer=TrN_GIDNumer WHERE CDL_CRMTyp=4596 AND CDL_CRMNumer=@BPE_Id AND CDL_DokTyp&lt;&gt;960 AND CDL_Typ=2 AND CDL_Kierunek=3 AND TrN_ZaNTyp=960 AND TrN_ZaNNumer = @DokNumer),0.00))
+					UPDATE cdn.BudzetPrjElemOkresy
+					SET BPEO_KosztyZamowien -= @KwotaDoOdjecia
+					WHERE  BPEO_BPEId = @BPE_Id AND @DataDokomentu BETWEEN BPEO_DataOd AND BPEO_DataDo;
+				END
+
+				FETCH NEXT FROM kursorBPEO INTO @KwotaDoOdjecia, @BPE_Id, @DokTyp, @DokNumer, @Typ;
+			END
+			CLOSE kursorBPEO;
+			DEALLOCATE kursorBPEO;
+		END
+	END
+	ELSE IF @Action = 'I'
+	BEGIN
+		IF EXISTS(select * from inserted where CDL_CRMTyp=4596 AND CDL_Kierunek=3) -- Etap budzetu i opis analityczny
+		BEGIN
+			DECLARE kursorBPEO CURSOR FOR SELECT CDL_Kwota, CDL_CRMNumer, CDL_DokTyp, CDL_DokNumer, CDL_Typ FROM inserted where CDL_CRMTyp=4596 AND CDL_Kierunek=3;
+			DECLARE @KwotaDoDodania DECIMAL(15,2);
+			DECLARE @I_DataDokomentu INT;
+			DECLARE @I_BPE_Id INT;
+			DECLARE @I_DokTyp SMALLINT;
+			DECLARE @I_DokNumer INT;
+			DECLARE @I_Typ TINYINT; -- Typ powiazania
+			OPEN kursorBPEO;
+			FETCH NEXT FROM kursorBPEO INTO @KwotaDoDodania, @I_BPE_Id, @I_DokTyp, @I_DokNumer, @I_Typ;
+			WHILE @@FETCH_STATUS = 0
+			BEGIN
+				DECLARE @I_BPEO_ZaznaczonyCheck TINYINT;
+				SET @I_BPEO_ZaznaczonyCheck = (SELECT BPN_OpisAnalitycznyDaty from cdn.BudzetPrjNag join cdn.BudzetPrjElem on BPE_BPNId = BPN_Id WHERE BPE_Id = @I_BPE_Id )
+				IF @I_BPEO_ZaznaczonyCheck = 0  -- nic nie robimy
+				BEGIN
+					FETCH NEXT FROM kursorBPEO INTO @KwotaDoDodania, @I_BPE_Id, @I_DokTyp, @I_DokNumer, @I_Typ;
+					CONTINUE;
+				END
+		
+				-- Szukanie rodzaju powiazania
+				IF @I_DokTyp &lt;&gt; 960 AND @I_Typ=2  --Koszty Rzeczywiste
+				BEGIN
+					SET @I_DataDokomentu = (SELECT TrN_Data2 from TraNag WHERE TrN_GIDNumer = @I_DokNumer AND TrN_GIDTyp = @I_DokTyp)
+					UPDATE cdn.BudzetPrjElemOkresy
+					SET BPEO_KosztyRzeczywiste += @KwotaDoDodania
+					WHERE  BPEO_BPEId = @I_BPE_Id AND @I_DataDokomentu BETWEEN BPEO_DataOd AND BPEO_DataDo;
+				END
+				ELSE IF @I_DokTyp &lt;&gt; 960 AND @I_Typ=1 --Przychody Rzeczywiste
+				BEGIN
+					SET @I_DataDokomentu = (SELECT TrN_Data2 from TraNag WHERE TrN_GIDNumer = @I_DokNumer AND TrN_GIDTyp = @I_DokTyp)
+					UPDATE cdn.BudzetPrjElemOkresy
+					SET BPEO_PrzychodyRzeczywiste += @KwotaDoDodania
+					WHERE  BPEO_BPEId = @I_BPE_Id AND @I_DataDokomentu BETWEEN BPEO_DataOd AND BPEO_DataDo;
+				END
+				ELSE IF @I_DokTyp = 960 AND @I_Typ = 2 --Koszty Zamowien
+				BEGIN
+					SET @I_DataDokomentu = (SELECT ZaN_DataWystawienia from ZamNag WHERE ZaN_GIDNumer = @I_DokNumer AND ZaN_GIDTyp = @I_DokTyp)
+					SET @KwotaDoDodania -= (SELECT IsNull((SELECT IsNull(CDL_Kwota,0.00) FROM CDN.CRMDokumentyLinki JOIN CDN.TraNag on CDL_DokTyp=TrN_GIDTyp and CDL_DokNumer=TrN_GIDNumer WHERE CDL_CRMTyp=4596 AND CDL_CRMNumer=@I_BPE_Id AND CDL_DokTyp&lt;&gt;960 AND CDL_Typ=2 AND CDL_Kierunek=3 AND TrN_ZaNTyp=960 AND TrN_ZaNNumer = @I_DokNumer),0.00))
+					UPDATE cdn.BudzetPrjElemOkresy
+					SET BPEO_KosztyZamowien += @KwotaDoDodania
+					WHERE  BPEO_BPEId = @I_BPE_Id AND @I_DataDokomentu BETWEEN BPEO_DataOd AND BPEO_DataDo;
+				END
+
+				FETCH NEXT FROM kursorBPEO INTO @KwotaDoDodania, @I_BPE_Id, @I_DokTyp, @I_DokNumer, @I_Typ;
+			END
+			CLOSE kursorBPEO;
+			DEALLOCATE kursorBPEO;
+		END
+	END
+	SET NOCOUNT OFF;
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

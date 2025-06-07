@@ -1,0 +1,56 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="ProdZlecElem_ObiektyDoPlanu"></A><PRE>
+          <FONT SIZE="2"><I>/* ProdZlecElem_ObiektyDoPlanu */</I><BR>
+CREATE TRIGGER CDN.ProdZlecElem_ObiektyDoPlanu
+  ON CDN.ProdZlecElem
+  FOR UPDATE, DELETE
+AS
+SET NOCOUNT ON
+	IF UPDATE(PZE_Technologia) OR (EXISTS(SELECT 1 FROM deleted))
+	BEGIN
+		DECLARE @Operacje TABLE(PTCId INT, PZLId INT,FunkcjaId INT, PZEId INT)
+
+		;with OperacjeZp
+		 AS
+		 (
+			SELECT PTC_Id PTCId, PTC_Ojciec OjciecId, 0 Poziom, PZE_Zlecenie PZLId, PFU_Id FunkcjaId, PTF_Wszystkie Wszystkie, d.PZE_Id PZEId
+			FROM deleted d
+			JOIN CDN.ProdTechnologiaCzynnosci ON PTC_Technologia = PZE_Technologia
+			join CDN.ProdTechnologiaFunkcje on PTF_TechnologiaCzynnosc=PTC_Id
+			inner join CDN.ProdFunkcje on PFU_Id=PTF_Funkcja
+			UNION ALL
+			SELECT PTC_Id, PTCId, Poziom, PZLId, FunkcjaId, Wszystkie, PZEId
+			FROM OperacjeZp
+			join CDN.ProdTechnologiaCzynnosci on PTC_Ojciec = PTCId AND Wszystkie &gt; 0
+		 )
+		 INSERT INTO @Operacje(PTCId, PZLId, FunkcjaId, PZEId)
+		 SELECT DISTINCT PTCId, PZLId, FunkcjaId, PZEId
+		 FROM OperacjeZp
+
+		MERGE CDN.ProdObiektyDoPlanu AS Target
+		USING (SELECT PTCId, FunkcjaId, d.PZE_Zlecenie
+		FROM deleted d
+		JOIN @Operacje on d.PZE_Id = PZEId
+		WHERE d.PZE_Technologia &gt; 0 AND NOT EXISTS(SELECT 1 FROM CDN.ProdZlecElem E WHERE E.PZE_Zlecenie = d.PZE_Zlecenie AND E.PZE_Technologia = d.PZE_Technologia AND E.PZE_Id &lt;&gt; d.PZE_Id)) AS Source
+		ON Target.POPL_PTCId = Source.PTCId AND Target.POPL_PZLId = Source.PZE_Zlecenie AND Target.POPL_PFUId = Source.FunkcjaId
+		WHEN MATCHED THEN
+		DELETE ;
+	END
+
+SET NOCOUNT OFF
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

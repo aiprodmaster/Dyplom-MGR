@@ -1,0 +1,134 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="KsiWycenaKWProponujX"></A><PRE>
+          <FONT SIZE="2"><I>/* KsiWycenaKWProponujX */</I><BR>
+CREATE PROCEDURE cdn.KsiWycenaKWProponujX (
+@Rejestr varchar(5),
+@Kolejnosc smallint,
+@UwzglPozniejsze tinyint,
+@KWKwota decimal(15,2) output,
+@CzasZapisu int,
+@KrpLp smallint,
+@WalutaSys varchar(3),
+@SesjaID int,
+@KAZGIDNumer int output,
+@KAZCzasZapisu int output,
+@KAZKrpLp smallint output
+)
+as
+begin
+set nocount on
+
+declare @KwotaWal decimal(15,2)
+declare @KAZ_PozostajeWycena decimal(15,2)
+declare @KAZ_GIDNumer int
+declare @KAZ_KursL decimal(15,10)
+declare @KAZ_KursM decimal(5)
+declare @KWPozostajeWycena decimal(15,2)
+declare @KAZ_Aktywny int
+declare @KAZ_CzasZapisu int
+declare @KAZ_KrpLp smallint
+
+create table #tmpKP (UwzglPozniejsze tinyint, KAZ_CzasZapisu int, KAZ_KrpLp smallint, KAZ_GIDNumer int, KAZ_KwotaWycena decimal(15,2), KAZ_KursL decimal(15,10), KAZ_KursM decimal(5), KAZ_Aktywny int)
+
+
+	if @Kolejnosc = 1 -- fifo
+		DECLARE	cursKP CURSOR STATIC 
+		FOR
+		select top 10 KAZ_CzasZapisu, KAZ_KrpLp, KAZ_GIDNumer, KAZ_PozostajeWycena, KAZ_KursL, KAZ_KursM, KAZ_Aktywny
+		from cdn.Zapisy
+		where KAZ_Seria = @Rejestr and KAZ_Wyceniony = 0 and KAZ_Znak = 2 and KAZ_Waluta &lt;&gt; @WalutaSys and KAZ_PozostajeWycena &lt;&gt; 0
+			and KAZ_KRPTyp = 800
+			and (KAZ_Aktywny = 0 or KAZ_Aktywny = @SesjaID)
+			and KAZ_Anulowany = 0
+			and (@UwzglPozniejsze = 0 and (KAZ_CzasZapisu &lt; @CzasZapisu or KAZ_CzasZapisu = @CzasZapisu and KAZ_KrpLp &lt; @KrpLp) or @UwzglPozniejsze &lt;&gt; 0)			
+			and (@KAZCzasZapisu = 0 or 
+					(@KAZCzasZapisu &lt;&gt; 0 and (KAZ_CzasZapisu &gt;= @KAZCzasZapisu and (KAZ_CzasZapisu &lt;&gt; @KAZCzasZapisu or KAZ_CzasZapisu = @KAZCzasZapisu and KAZ_KrpLp &gt; @KAZKrpLp ))))
+		order by KAZ_CzasZapisu, KAZ_KrpLp
+	else --lifo
+		DECLARE	cursKP CURSOR STATIC 
+		FOR
+		select top 10 KAZ_CzasZapisu, KAZ_KrpLp, KAZ_GIDNumer, KAZ_PozostajeWycena, KAZ_KursL, KAZ_KursM, KAZ_Aktywny
+		from cdn.Zapisy
+		where KAZ_Seria = @Rejestr and KAZ_Wyceniony = 0 and KAZ_Znak = 2 and KAZ_Waluta &lt;&gt; @WalutaSys and KAZ_PozostajeWycena &lt;&gt; 0
+			and KAZ_KRPTyp = 800
+			and (KAZ_Aktywny = 0 or KAZ_Aktywny = @SesjaID)
+			and KAZ_Anulowany = 0
+			and (@UwzglPozniejsze = 0 and (KAZ_CzasZapisu &lt; @CzasZapisu or KAZ_CzasZapisu = @CzasZapisu and KAZ_KrpLp &lt; @KrpLp) or @UwzglPozniejsze &lt;&gt; 0 and ((KAZ_CzasZapisu &gt; @CzasZapisu) or (KAZ_CzasZapisu = @CzasZapisu and KAZ_KrpLp &gt; @KrpLp)))
+			and (@KAZCzasZapisu = 0 or 
+					(@KAZCzasZapisu &lt;&gt; 0 and (KAZ_CzasZapisu &lt;= @KAZCzasZapisu and (KAZ_CzasZapisu &lt;&gt; @KAZCzasZapisu or KAZ_CzasZapisu = @KAZCzasZapisu and KAZ_KrpLp &lt; @KAZKrpLp ))))
+		order by KAZ_CzasZapisu desc, KAZ_KrpLp desc 
+
+
+	set @KWPozostajeWycena = abs(@KWKwota)
+
+	OPEN cursKP
+
+	FETCH NEXT FROM cursKP INTO
+		@KAZ_CzasZapisu, @KAZ_KrpLp, @KAZ_GIDNumer, @KAZ_PozostajeWycena, @KAZ_KursL, @KAZ_KursM, @KAZ_Aktywny 
+		
+
+	WHILE (@@fetch_status &lt;&gt; -1)
+	BEGIN
+		IF (@@fetch_status &lt;&gt; -2)
+		BEGIN
+			set @KAZ_PozostajeWycena = abs(@KAZ_PozostajeWycena)
+
+			if @KWPozostajeWycena &gt; @KAZ_PozostajeWycena
+			begin
+				set @KwotaWal = @KAZ_PozostajeWycena
+				set @KWPozostajeWycena = @KWPozostajeWycena - @KwotaWal			
+			end
+			else if @KWPozostajeWycena &lt; @KAZ_PozostajeWycena	
+			begin
+				set @KwotaWal = @KWPozostajeWycena
+				set @KWPozostajeWycena = 0		
+			end			
+			else 
+			begin
+				set @KwotaWal = @KWPozostajeWycena
+				set @KWPozostajeWycena = 0		
+			end					
+
+			insert into #tmpKP
+			select @UwzglPozniejsze, @KAZ_CzasZapisu, @KAZ_KrpLp, @KAZ_GIDNumer, @KwotaWal, @KAZ_KursL, @KAZ_KursM, @KAZ_Aktywny
+
+
+			if @KWPozostajeWycena = 0			
+				break
+
+			set @KAZCzasZapisu = @KAZ_CzasZapisu
+			set @KAZGIDNumer = @KAZ_GIDNumer
+			set @KAZKrpLp = @KAZ_KrpLp
+		END
+
+		FETCH NEXT FROM cursKP INTO
+			@KAZ_CzasZapisu, @KAZ_KrpLp, @KAZ_GIDNumer, @KAZ_PozostajeWycena, @KAZ_KursL, @KAZ_KursM, @KAZ_Aktywny
+	END
+
+
+	close cursKP
+	deallocate cursKP
+
+	select * from #tmpKP
+
+
+	set @KWKwota = sign(@KWKwota)*@KWPozostajeWycena
+
+set nocount off
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

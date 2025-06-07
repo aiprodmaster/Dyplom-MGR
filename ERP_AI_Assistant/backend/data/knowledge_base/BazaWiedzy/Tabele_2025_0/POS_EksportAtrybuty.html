@@ -1,0 +1,87 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[POS_EksportAtrybuty]"></A><PRE>
+          <FONT SIZE="2"><I>/* [POS_EksportAtrybuty] */</I><BR>
+CREATE PROCEDURE [CDN].[POS_EksportAtrybuty]
+	@rowVersion bigint,
+	@PointOfSaleId int
+AS
+BEGIN
+SET NOCOUNT ON;	
+
+	declare @Typ_AtrybutWartosc int = 14417
+	DECLARE @Atr TABLE(
+			[@GUID] varchar(36),
+			[@AttributeClassId] int,
+			[@ObjectTypeId] int,
+			[@ObjectGUID] varchar(36),
+			[@DirectoryValueId] int,
+			[@ListValueId] int,
+			[@Value] nvarchar(256),
+			[@ModificationDate] datetime,
+			RW INT)
+			
+	declare @Knt table(KntGIDNumer int, KntGUID nvarchar(40), KntWaNCzasModyfikacji int, KntBylWyslany int, KntPSaDataDodania int)
+	declare @Twr table(TwrGidNumer int, TwrBylWyslany int, TwrPSaDataDodania int)
+
+	insert into @Knt select KntGidNumer, kntGUID, max(KntWaNCzasModyfikacji), max(oddzialBylWyslany), max(PSaDataDodania) from cdn.POS_OddzialyDoEksportu(@PointOfSaleId, @rowVersion) cross apply cdn.POS_KntDoEksportu(PSaID,0) group by KntGidNumer, kntGUID
+	insert into @Twr select TwrGidNumer, max(oddzialBylWyslany), max(PSaDataDodania) from cdn.POS_OddzialyDoEksportu(@PointOfSaleId, @rowVersion) cross apply cdn.POS_TwrDoEksportu(PSaID,0) group by TwrGidNumer
+
+	INSERT INTO @Atr select distinct
+		case when AtK_Wielowart = 1 then AtH_GUID else Atr_GUID end as [@GUID],
+		AtK_ID as [@AttributeClassId],
+		case when TwrGidNumer is not null then 3 when KntGidNumer is not null then 1 else null end as [@ObjectTypeId], --Kontrahent
+		case when TwrGidNumer is not null then cast(TwrGidNumer as nvarchar) when KntGidNumer is not null then KntGUID else null end as [@ObjectGUID],
+		case when AtK_Typ &gt; 10 then 0 else null end as [@DirectoryValueId],
+		case when AtK_Typ &lt; 10 AND AtK_Typ=4 AND atk_format like '@s%' then case when AtK_Wielowart = 0 then (select atw_id from cdn.atrybutywartosci where AtW_AtKId=atk_id and AtW_Wartosc=Atr_Wartosc) when AtK_Wielowart = 1 then (select atw_id from cdn.atrybutywartosci where AtW_Wartosc = AtH_Wartosc and AtW_AtKId=atk_id) else null end end as [@ListValueId],		
+				
+		case when AtK_Typ = 1 AND Atr_Wartosc= 'TAK' then 'true' 
+				when AtK_Typ = 1 and Atr_Wartosc=  'NIE' then 'false'  
+				when atk_format like '@d%' then CONVERT(nvarchar,DateAdd(d,cast(Atr_Wartosc as int),convert(datetime,'28-12-1800',105)),101) when NOT(AtK_Typ &lt; 10 AND AtK_Typ=4 AND atk_format like '@s%') then RTRIM(Atr_Wartosc) else null end as [@Value],
+		DATEADD(second,AtR_LastMod,convert(datetime,'01-01-1990',105)) as [@ModificationDate],
+		case when @PointOfSaleId is null then (SELECT MAX(rw) FROM (VALUES (ISNULL(KntWaNCzasModyfikacji,0)),(Atr_LastMod),(ISNULL(TwrPSaDataDodania,0)),(ISNULL(KntPSaDataDodania,0))) AS rws(rw))
+			else case when ISNULL(KntWanCzasModyfikacji,0) &gt; Atr_LastMod then KntWaNCzasModyfikacji else Atr_LastMod end end
+	from cdn.Atrybuty
+	join cdn.AtrybutyKlasy on AtK_ID = Atr_AtkId
+	LEFT JOIN @Knt on 32 = Atr_ObiTyp AND KntGIDNumer = Atr_ObiNumer
+	LEFT JOIN @Twr on 16 = Atr_ObiTyp AND TwrGidNumer = Atr_ObiNumer AND Atr_ObiLp = 0
+	LEFT JOIN cdn.AtrybutyHist on Atr_Id = Ath_Id
+	where (KntGIDNumer is not null or TwrGidNumer is not null) AND
+	((AtK_Wielowart = 1 and AtH_GUID is not null and AtK_Typ &lt; 10 AND AtK_Typ=4 AND atk_format like '@s%' and ISNULL(AtH_Wartosc,'') &lt;&gt; '' and @PointOfSaleId is null) or AtK_Wielowart &lt;&gt; 1) AND
+	((case when isnull(KntWaNCzasModyfikacji,0) &gt; AtR_LastMod THEN KntWaNCzasModyfikacji else AtR_LastMod end) &gt; @RowVersion OR @RowVersion = 0 OR (@PointOfSaleId is null and (KntBylWyslany = 0 or TwrBylWyslany = 0)))
+	AND case when Atk_Format like '@d%' then 6 when AtK_Typ=1 then 4 when AtK_Typ=2 then 1 when AtK_Typ=3 then 2 when AtK_Typ=4 then 5 else 3 end not in (3)
+				
+	SELECT (select MAX(RW) from @Atr) AS [@RowVersion]
+		,(	
+			select 
+			[@GUID],
+			[@AttributeClassId],
+			[@ObjectTypeId],
+			case when [@ObjectTypeId] = 1 then [@ObjectGUID] else null end as [@ObjectGUID],
+			case when [@ObjectTypeId] = 3 then [@ObjectGUID] else null end as [@ObjectId],
+			[@DirectoryValueId],
+			[@ListValueId],
+			replace([@Value],char(0x001F),'') as [@Value],
+			[@ModificationDate] 
+			from @Atr for xml path('Attribute'), type)
+	for xml path('Attributes')
+	SET NOCOUNT OFF;	
+
+
+
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

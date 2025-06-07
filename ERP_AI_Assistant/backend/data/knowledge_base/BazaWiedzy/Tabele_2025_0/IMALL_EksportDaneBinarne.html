@@ -1,0 +1,94 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[IMALL_EksportDaneBinarne]"></A><PRE>
+          <FONT SIZE="2"><I>/* [IMALL_EksportDaneBinarne] */</I><BR>
+CREATE PROCEDURE [CDN].[IMALL_EksportDaneBinarne] 
+  @ID INT			-- ID e-sklepu
+ ,@TypExp INT		-- Typ eksportu danych binarnych (0 - różnicowy, 1 - pełny)
+ ,@DABID INT OUTPUT	-- ID danych binarnych, które zostały jako ostatnie wyeksportowane do e-sklepu w poprzedniej paczce
+					-- Jeżeli @DABID = -1 to w OUTPUT zwracany jest DAB_DABID danych binarnych wyeksportowanych jako ostatnie w poprzedniej paczce
+AS
+SET NOCOUNT ON
+
+IF NOT EXISTS(select * from CDN.PicoKonfig where PcK_PicoID = @ID)
+BEGIN
+	select @ID = PcK_PicoID from CDN.PicoKonfig where PcK_iMallID = @ID
+END
+
+IF @DABID = -1
+BEGIN
+	SELECT @DABID = PcK_Blokady FROM CDN.PicoKonfig WHERE PcK_PicoID = @ID
+	RETURN
+END
+
+DECLARE  @Rozmiar		BIGINT
+		,@RozmiarMax	INT	-- Maksymalny rozmiar danych binarnych eksportowanych w jednej paczce
+		,@Last_DABID	INT
+
+DECLARE @Table TABLE(DABID INT, DABRozmiar BIGINT)
+
+SELECT	 @Rozmiar = 0
+	    ,@RozmiarMax = 2097152 -- 2MB
+	  --,@RozmiarMax = 10485760 -- 10MB
+	  --,@RozmiarMax = 20971520 -- 20MB
+
+INSERT INTO @Table
+	SELECT DAB_ID, ISNULL(DATALENGTH(DAB_Dane),0) AS Rozmiar
+	FROM CDN.DaneBinarne
+	JOIN (
+		SELECT DAO_DABId AS DABId, DAO_ObiTyp AS ObiTyp, DAO_ObiNumer AS ObiNumer, DAO_iMall AS iMall FROM CDN.DaneObiekty
+		UNION ALL
+		SELECT Atr_AtrNumer AS DABId, Atr_ObiTyp AS ObiTyp, Atr_ObiNumer AS ObiNumer, 1 AS iMall FROM CDN.Atrybuty WHERE Atr_AtrTyp = 14400
+	) DAOAtr ON DAOAtr.DABId = DAB_ID
+	JOIN CDN.TwrKarty ON Twr_GIDNumer = DAOAtr.ObiNumer AND Twr_GIDTyp = DAOAtr.ObiTyp
+	JOIN CDN.TwrAplikacje ON TAP_ObiTyp = Twr_GIDTyp AND TAP_ObiNumer = Twr_GIDNumer
+	JOIN CDN.PicoKonfig ON Pck_PicoId = @ID
+	LEFT OUTER JOIN CDN.PicoLog ON PcL_PcKID = Pck_PicoId AND PcL_ObiTyp = Twr_GIDTyp AND PcL_ObiNumer = Twr_GIDNumer
+	WHERE DAOAtr.iMall = 1 AND Twr_Archiwalny = 0 and TAP_iMall = 1
+		AND DAB_ID &gt; @DABID AND DAB_Dane IS NOT NULL
+		AND Twr_GIDNumer &gt; 0 --AND DAB_Rozszerzenie IN ('PNG', 'JPG')
+		AND EXISTS(SELECT TwL_GrONumer FROM CDN.TwrLinki WHERE Twr_GIDTyp = TwL_GIDTyp AND Twr_GIDNumer = TwL_GIDNumer AND TwL_GrONumer = PcK_TwGNumer)
+		AND (DAB_CzasModyfikacji &gt; CASE WHEN @TypExp=0 THEN PcK_TSSynchrTwrPtw ELSE 0 END)
+	ORDER BY DAB_ID
+        
+DECLARE TableCurs CURSOR LOCAL FORWARD_ONLY FAST_FORWARD READ_ONLY
+     FOR SELECT DABID,DABRozmiar FROM @Table ORDER BY DABID
+DECLARE @crRozmiar		BIGINT	 	 
+DECLARE @crDABID		INT
+OPEN TableCurs
+FETCH NEXT FROM TableCurs INTO @crDABID,@crRozmiar; 
+SET @Rozmiar = @crRozmiar;
+WHILE @@FETCH_STATUS = 0
+BEGIN
+	UPDATE @Table SET DABRozmiar = @Rozmiar WHERE DABID = @crDABID
+	SET @Rozmiar = @Rozmiar + @crRozmiar;
+	FETCH NEXT FROM TableCurs INTO @crDABID,@crRozmiar; 
+END
+CLOSE TableCurs
+DEALLOCATE TableCurs
+
+SELECT @Last_DABID = MAX(DABID) FROM @Table WHERE DABRozmiar &lt;= @RozmiarMax
+UPDATE CDN.PicoKonfig SET PcK_Blokady = (CASE WHEN @Last_DABID &lt; (SELECT MAX(DABID) FROM @Table) THEN @Last_DABID ELSE 0 END) WHERE PcK_PicoID = @ID
+
+SET NOCOUNT OFF
+
+SELECT DAB_ID AS ID, DAB_Nazwa AS Nazwa, DAB_Rozszerzenie AS Rozszerzenie, DAB_Rozmiar AS Rozmiar, DAB_Dane AS Dane 
+FROM CDN.DaneBinarne AS DAB
+WHERE DAB_ID IN (SELECT DABID FROM @Table WHERE DABID &lt;= @Last_DABID)
+FOR XML AUTO,BINARY BASE64
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,154 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[ESKLEP_EksportDaneBinarne]"></A><PRE>
+          <FONT SIZE="2"><I>/* [ESKLEP_EksportDaneBinarne] */</I><BR>
+CREATE PROCEDURE [CDN].[ESKLEP_EksportDaneBinarne] 
+  @ID INT			-- ID e-sklepu
+ ,@TypExp INT		-- Typ eksportu danych binarnych (0 - różnicowy, 1 - pełny)
+ ,@DABID INT OUTPUT	-- ID danych binarnych, które zostały jako ostatnie wyeksportowane do e-sklepu w poprzedniej paczce
+					-- Jeżeli @DABID = -1 to w OUTPUT zwracany jest DAB_DABID danych binarnych wyeksportowanych jako ostatnie w poprzedniej paczce
+AS
+SET NOCOUNT ON
+
+IF @DABID = -1
+	BEGIN
+		SELECT @DABID = PcK_Blokady FROM CDN.PicoKonfig WHERE PcK_PicoID = @ID
+		RETURN
+	END
+
+DECLARE @Typ_GrT SMALLINT
+DECLARE @Typ_Twr SMALLINT
+SET @Typ_GrT = -16
+SET @Typ_Twr = 16
+
+DECLARE  @Rozmiar		BIGINT
+		,@RozmiarMax	INT	-- Maksymalny rozmiar danych binarnych eksportowanych w jednej paczce
+		,@Last_DABID	INT
+		,@PCKTGGNumer	INT
+
+DECLARE @Table TABLE(DABID INT NOT NULL PRIMARY KEY, DABRozmiar BIGINT)
+
+SELECT	 @Rozmiar = 0
+	    ,@RozmiarMax = 10485760 -- 10MB
+	  --,@RozmiarMax = 20971520 -- 20MB
+SELECT @PCKTGGNumer = TwG_GIDNumer FROM CDN.PicoKonfig (nolock) JOIN CDN.TwrGrupy (NOLOCK) ON TwG_SyncId = PcK_TwGNumer AND TwG_GIDTyp = -16 WHERE Pck_PicoId = @ID
+
+INSERT INTO @Table
+
+	SELECT DISTINCT DAB_ID, ISNULL(DATALENGTH(DAB_Dane),0)
+	FROM CDN.DaneBinarne
+	JOIN CDN.Atrybuty ON Atr_AtrTyp = 14400 AND Atr_AtrNumer = DAB_ID
+	JOIN CDN.AtrybutyKlasy ON AtK_ID = Atr_AtkId 
+	JOIN CDN.TwrKarty ON Twr_GIDNumer = Atr_ObiNumer AND Twr_GIDTyp = Atr_ObiTyp
+	JOIN CDN.PicoKonfig ON Pck_PicoId = @ID
+	LEFT OUTER JOIN CDN.PicoLog ON PcL_PcKID = Pck_PicoId AND PcL_ObiTyp = Twr_GIDTyp AND PcL_ObiNumer = Twr_GIDNumer
+	WHERE AtK_eSklep = 1 AND Twr_eSklep = 1 AND Twr_Archiwalny = 0 AND DAB_ID &gt; @DABID AND DAB_Dane IS NOT NULL
+		AND Twr_GIDNumer &gt; 0 AND EXISTS(SELECT TwL_GrONumer FROM CDN.TwrLinki WHERE Twr_GIDTyp = TwL_GIDTyp AND Twr_GIDNumer = TwL_GIDNumer AND TwL_GrONumer = @PCKTGGNumer )
+		AND (DAB_CzasModyfikacji &gt; CASE WHEN @TypExp=0 THEN PcK_TSSynchrTwrPtw ELSE 0 END OR ISNULL(PcK_TSSynchrTwrPtw, PcL_TStamp) &gt; PcK_TSSynchrTwrPtw )
+
+	UNION
+
+	SELECT DISTINCT DAB_ID, ISNULL(DATALENGTH(DAB_Dane),0)
+	FROM CDN.DaneBinarne
+	JOIN CDN.DaneObiekty ON DAO_DABId = DAB_ID
+	JOIN CDN.TwrKarty ON Twr_GIDNumer = DAO_ObiNumer AND Twr_GIDTyp = DAO_ObiTyp
+	JOIN CDN.PicoKonfig ON Pck_PicoId = @ID
+	LEFT OUTER JOIN CDN.PicoLog ON PcL_PcKID = Pck_PicoId AND PcL_ObiTyp = Twr_GIDTyp AND PcL_ObiNumer = Twr_GIDNumer
+	WHERE DAO_eSklep = 1 AND Twr_eSklep = 1 AND Twr_Archiwalny = 0 AND DAB_ID &gt; @DABID AND DAB_Dane IS NOT NULL
+        AND Twr_GIDNumer &gt; 0 AND EXISTS(SELECT TwL_GrONumer FROM CDN.TwrLinki WHERE Twr_GIDTyp = TwL_GIDTyp AND Twr_GIDNumer = TwL_GIDNumer AND TwL_GrONumer = @PCKTGGNumer )
+        AND (DAB_CzasModyfikacji &gt; CASE WHEN @TypExp=0 THEN PcK_TSSynchrBinPtw ELSE 0 END OR ISNULL(PcK_TSSynchrBinPtw, PcL_TStamp) &gt; PcK_TSSynchrBinPtw )
+
+	UNION
+
+ 	SELECT DISTINCT DAB_ID, ISNULL(DATALENGTH(DAB_Dane),0)
+	FROM CDN.DaneBinarne
+	JOIN CDN.AtrybutyHist ON AtH_AtrTyp = 14400 and AtH_AtrNumer = DAB_Id
+	JOIN CDN.AtrybutyKlasy ON AtK_ID = AtH_AtkId 
+	JOIN CDN.TwrKarty ON Twr_GIDNumer = AtH_ObiNumer AND Twr_GIDTyp = AtH_ObiTyp
+	JOIN CDN.PicoKonfig ON Pck_PicoId = @ID
+	LEFT OUTER JOIN CDN.PicoLog ON PcL_PcKID = Pck_PicoId AND PcL_ObiTyp = Twr_GIDTyp AND PcL_ObiNumer = Twr_GIDNumer
+	WHERE AtK_eSklep = 1 AND Twr_eSklep = 1 AND Twr_Archiwalny = 0 AND DAB_ID &gt; @DABID AND DAB_Dane IS NOT NULL
+		AND Twr_GIDNumer &gt; 0 AND EXISTS(SELECT TwL_GrONumer FROM CDN.TwrLinki WHERE Twr_GIDTyp = TwL_GIDTyp AND Twr_GIDNumer = TwL_GIDNumer AND TwL_GrONumer = @PCKTGGNumer )
+		AND (DAB_CzasModyfikacji &gt; CASE WHEN @TypExp=0 THEN PcK_TSSynchrTwrPtw ELSE 0 END OR ISNULL(PcK_TSSynchrTwrPtw, PcL_TStamp) &gt; PcK_TSSynchrTwrPtw )
+	
+	UNION
+
+	SELECT DISTINCT DAB_ID, ISNULL(DATALENGTH(DAB_Dane),0)
+	FROM CDN.DaneBinarne
+	JOIN CDN.DaneObiekty ON DAO_DABId = DAB_ID
+	JOIN CDN.TwrGrupy ON Twg_GIDNumer = DAO_ObiNumer AND Twg_GIDTyp = DAO_ObiTyp
+	JOIN CDN.PicoKonfig ON Pck_PicoId = @ID
+	LEFT OUTER JOIN CDN.PicoLog ON PcL_PcKID = Pck_PicoId AND PcL_ObiTyp = Twg_GIDTyp AND PcL_ObiNumer = Twg_GIDNumer
+	WHERE DAO_eSklep = 1 AND DAB_ID &gt; @DABID AND DAB_Dane IS NOT NULL
+        AND (DAB_CzasModyfikacji &gt; CASE WHEN @TypExp=0 THEN PcK_TSSynchrTwrPtw ELSE 0 END OR ISNULL(PcK_TSSynchrTwrPtw, PcL_TStamp) &gt; PcK_TSSynchrTwrPtw )
+		AND TwG_GIDTyp=@Typ_GrT AND (EXISTS(SELECT * FROM CDN.TwrGrupy WHERE TwG_GIDTyp = @Typ_GrT AND TwG_CzasModyfikacji &gt; PcK_TSSynchrGrupPtw) OR @TypExp=1)
+		AND (TwG_GIDNumer = @PCKTGGNumer OR TwG_GrONumer = @PCKTGGNumer OR EXISTS(SELECT * FROM CDN.TwrLinki WHERE TwL_GIDTyp = @Typ_GrT  AND TwL_GIDNumer = TwG_GrONumer AND TwL_GrONumer = @PCKTGGNumer) )          
+
+    UNION
+
+	SELECT DISTINCT DAB_ID, ISNULL(DATALENGTH(DAB_Dane),0)
+	FROM CDN.DaneBinarne
+	JOIN CDN.DaneObiekty ON DAO_DABId = DAB_Tlumaczenie
+	JOIN CDN.TwrKarty ON Twr_GIDNumer = DAO_ObiNumer AND Twr_GIDTyp = DAO_ObiTyp
+	JOIN CDN.PicoKonfig ON Pck_PicoId = @ID
+	LEFT OUTER JOIN CDN.PicoLog ON PcL_PcKID = Pck_PicoId AND PcL_ObiTyp = Twr_GIDTyp AND PcL_ObiNumer = Twr_GIDNumer
+	WHERE DAO_eSklep = 1 AND Twr_eSklep = 1 AND Twr_Archiwalny = 0 AND DAB_ID &gt; @DABID AND DAB_Dane IS NOT NULL
+        AND Twr_GIDNumer &gt; 0 AND EXISTS(SELECT TwL_GrONumer FROM CDN.TwrLinki WHERE Twr_GIDTyp = TwL_GIDTyp AND Twr_GIDNumer = TwL_GIDNumer AND TwL_GrONumer = @PCKTGGNumer )
+        AND (DAB_CzasModyfikacji &gt; CASE WHEN @TypExp=0 THEN PcK_TSSynchrTwrPtw ELSE 0 END OR ISNULL(PcK_TSSynchrTwrPtw, PcL_TStamp) &gt; PcK_TSSynchrTwrPtw )
+
+	UNION
+
+	--Kontrahenci - do wysyłki logotypu producenta
+    SELECT DISTINCT DAB_ID, ISNULL(DATALENGTH(DAB_Dane),0)
+    FROM CDN.DaneBinarne
+    JOIN CDN.DaneObiekty ON DAO_DABId = DAB_Tlumaczenie
+    JOIN CDN.KntKarty ON Knt_GIDNumer = DAO_ObiNumer AND Knt_GIDTyp= DAO_ObiTyp
+    JOIN CDN.PicoKonfig ON Pck_PicoId = @ID
+	JOIN CDN.FrsAplikacje FRAKnt ON FrA_ObiNumer = Knt_GIDNumer AND FrA_ObiTyp = 32 AND FrA_TypAplikacji = 2 AND FrA_NieWysylaj = 0 AND (FrA_FrsID = 0 OR FrA_FrsId = PcK_CentrumID)
+    LEFT OUTER JOIN CDN.PicoLog ON PcL_PcKID = Pck_PicoId AND PcL_ObiTyp = Knt_GIDTyp AND PcL_ObiNumer = Knt_GIDNumer
+    WHERE DAO_eSklep = 1 AND Knt_Archiwalny= 0 AND DAB_ID &gt; @DABID AND DAB_Dane IS NOT NULL
+    AND Knt_GIDNumer &gt; 0 AND EXISTS(SELECT KnL_GrONumer FROM CDN.KntLinki WHERE Knt_GIDTyp = KnL_GIDTyp AND Knt_GIDNumer = KnL_GIDNumer)
+    AND (DAB_CzasModyfikacji &gt; CASE WHEN @TypExp=0 THEN PcK_TSSynchrTwrPtw ELSE 0 END OR ISNULL(PcK_TSSynchrTwrPtw, PcL_TStamp) &gt; PcK_TSSynchrTwrPtw )
+
+	UNION
+
+	--Marki - do wysyłki logotypu
+	SELECT DISTINCT DAB_ID, ISNULL(DATALENGTH(DAB_Dane),0)
+	FROM CDN.DaneBinarne
+	JOIN CDN.Slowniki MRK ON MRK.SLW_WartoscL1 = DAB_ID
+	JOIN CDN.TwrKarty ON Twr_MarkaId = SLW_ID
+	JOIN CDN.PicoKonfig ON Pck_PicoId = @ID
+	LEFT OUTER JOIN CDN.PicoLog ON PcL_PcKID = Pck_PicoId AND PcL_ObiTyp = Twr_GIDTyp AND PcL_ObiNumer = Twr_GIDNumer
+	WHERE DAB_eSklep = 1 AND Twr_eSklep = 1 AND Twr_Archiwalny = 0 AND DAB_ID &gt; @DABID AND DAB_Dane IS NOT NULL
+        AND Twr_GIDNumer &gt; 0 AND EXISTS(SELECT TwL_GrONumer FROM CDN.TwrLinki WHERE Twr_GIDTyp = TwL_GIDTyp AND Twr_GIDNumer = TwL_GIDNumer AND TwL_GrONumer = @PCKTGGNumer )
+        AND (DAB_CzasModyfikacji &gt; CASE WHEN @TypExp=0 THEN PcK_TSSynchrTwrPtw ELSE 0 END OR ISNULL(PcK_TSSynchrTwrPtw, PcL_TStamp) &gt; PcK_TSSynchrTwrPtw )
+
+	ORDER BY DAB_ID	 	    
+
+DELETE FROM @Table WHERE DABRozmiar &gt; @RozmiarMax --Usuń załączniki większe niż cała paczka
+UPDATE @Table SET @Rozmiar = @Rozmiar + DABRozmiar, DABRozmiar = @Rozmiar 
+SELECT @Last_DABID = MAX(DABID) FROM @Table WHERE DABRozmiar &lt;= @RozmiarMax
+UPDATE CDN.PicoKonfig SET PcK_Blokady = (CASE WHEN @Last_DABID &lt; (SELECT MAX(DABID) FROM @Table) THEN @Last_DABID ELSE 0 END) WHERE PcK_PicoID = @ID
+
+SET NOCOUNT OFF
+
+SELECT DAB_ID AS ID, CDN.XLValidateXMLChars(DAB_Nazwa) AS Nazwa, DAB_Rozszerzenie AS Rozszerzenie, DAB_Rozmiar AS Rozmiar, DAB_Dane AS Dane,DATALENGTH(DAB_Dane) AS Rozmiar2 FROM CDN.DaneBinarne AS DAB
+WHERE DAB_ID IN (SELECT DABID FROM @Table WHERE DABID &lt;= @Last_DABID ) AND ISNULL(DATALENGTH(DAB_Dane),0) &gt; 0
+FOR XML AUTO, ROOT('DABI'),BINARY BASE64
+
+DELETE FROM @Table
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

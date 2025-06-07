@@ -1,0 +1,146 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="KPZwrocListeZgodnychKTP"></A><PRE>
+          <FONT SIZE="2"><I>/* KPZwrocListeZgodnychKTP */</I><BR>
+CREATE FUNCTION CDN.KPZwrocListeZgodnychKTP
+(	
+	@p_KPNId	int,		--identyfikator konfiguracji produktu
+	@p_TwrTyp	smallint,	--gidtyp grupy towarowej
+	@p_TwrNumer	int,		--gidnumer grupy towarowej
+	@p_Filtruj	tinyint=0	--Filtr wg zgodności parametrów 
+)
+RETURNS @Table TABLE (
+	Id int,
+	Kod varchar(40),
+	Nazwa varchar(100),
+	Dokument varchar(40),
+	Opis varchar(1023),
+	Wersja int
+) AS
+BEGIN 
+  IF(@p_Filtruj = 0) -- nie filtrowane wg zgodności parametrów
+             BEGIN
+                 INSERT INTO @Table
+                        SELECT PTE_Id AS Id,
+                               PTE_Kod AS Kod,
+                               PTE_Nazwa AS Nazwa,
+                               CDN.NumerDokumentu(14370, 0, 0, PTE_Numer, PTE_Rok, PTE_Seria, PTE_Miesiac) AS Dokument,
+                               PTE_Opis AS Opis,
+                               PTE_Wersja AS Wersja
+                        FROM CDN.ProdTechnologia
+                        WHERE PTE_Typ = 14370
+                              AND PTE_DataZatw &lt;&gt; 0
+                              AND PTE_DataArchiw = 0
+                              AND EXISTS
+                        ( --tylko te, dla których istnieje zasób typu produkt z wskazaną grupą towarową
+
+                            SELECT *
+                            FROM CDN.ProdTechnologiaZasobyTwX
+                                 JOIN CDN.ProdTechnologiaZasoby ON PTZ_Id = PTT_PTZId
+                                 JOIN CDN.ProdTechnologiaCzynnosci ON PTC_Id = PTZ_TechnologiaCzynnosc
+                            WHERE PTZ_TypZasobu = 0
+                                  AND PTC_Technologia = PTE_Id
+                                  AND PTT_TwXTyp = @p_TwrTyp
+                                  AND PTT_TwXNumer = @p_TwrNumer
+                        )
+                            AND EXISTS
+                        ( -- tylko technologie z aktywnymi terminami
+
+                            SELECT *
+                            FROM CDN.ProdTechnologiaTerminy
+                            WHERE PTR_TechnologiaId = PTE_ID
+                                  AND (PTR_TerminOd = 0
+                                       OR PTR_TerminOd &lt;= DATEDIFF(d, '18001228', GETDATE()))
+                                  AND (PTR_TerminDo = 0
+                                       OR PTR_TerminDo &gt;= DATEDIFF(d, '18001228', GETDATE()))
+                        );
+         END;
+             ELSE -- jeśli filtrować wg zgodności parametrów
+             BEGIN
+                        -- liczba udzielonych odp.
+                 DECLARE @lParam INT;
+                 SELECT @lParam = COUNT(*)
+                 FROM CDN.KonfProdElem
+                 WHERE KPE_KPNId = @p_KPNId
+                       AND KPE_TypPytania = 1
+                       AND KPE_Odpowiedz &lt;&gt; '';
+                 INSERT INTO @Table
+                 SELECT PTE_Id AS Id,
+                        PTE_Kod AS Kod,
+                        PTE_Nazwa AS Nazwa,
+                        CDN.NumerDokumentu(14370, 0, 0, PTE_Numer, PTE_Rok, PTE_Seria, PTE_Miesiac) AS Dokument,
+                        PTE_Opis AS Opis,
+                        PTE_Wersja AS Wersja
+                 FROM CDN.ProdTechnologia
+                      JOIN CDN.ParamRozKonf ON PRK_ObiTyp = 14370
+                                               AND PRK_ObiNumer = PTE_ID
+                      JOIN --udzielone odp. na parametry różnicujące
+
+                 (
+                     SELECT *
+                     FROM CDN.KonfProdElem
+                     WHERE KPE_KPNId = @p_KPNId
+                           AND KPE_TypPytania = 1
+                           AND KPE_Odpowiedz &lt;&gt; ''
+                 ) A ON A.KPE_AtkId = PRK_AtkId
+                        --tylko takie, których odp. są identyczne:
+                      JOIN CDN.Atrybuty ON Atr_ObiTyp = PRK_ObiTyp
+                                           AND Atr_ObiFirma = PRK_ObiFirma
+                                           AND Atr_ObiNumer = PRK_ObiNumer
+                                           AND Atr_ObiLp = PRK_ObiLp
+                                           AND Atr_AtkId = PRK_AtkId
+                                           AND KPE_Odpowiedz = Atr_Wartosc
+                 WHERE PTE_Typ = 14370
+                       AND PTE_DataZatw &lt;&gt; 0
+                       AND PTE_DataArchiw = 0
+                       AND EXISTS
+                 ( --tylko te, dla których istnieje zasób typu produkt z wskazaną grupą towarową
+
+                     SELECT *
+                     FROM CDN.ProdTechnologiaZasobyTwX
+                          JOIN CDN.ProdTechnologiaZasoby ON PTZ_Id = PTT_PTZId
+                          JOIN CDN.ProdTechnologiaCzynnosci ON PTC_Id = PTZ_TechnologiaCzynnosc
+                     WHERE PTZ_TypZasobu = 0
+                           AND PTC_Technologia = PTE_Id
+                           AND PTT_TwXTyp = @p_TwrTyp
+                           AND PTT_TwXNumer = @p_TwrNumer
+                 )
+                     AND EXISTS
+                 ( -- tylko technologie z aktywnymi terminami
+
+                     SELECT *
+                     FROM CDN.ProdTechnologiaTerminy
+                     WHERE PTR_TechnologiaId = PTE_ID
+                           AND (PTR_TerminOd = 0
+                                OR PTR_TerminOd &lt;= DATEDIFF(d, '18001228', GETDATE()))
+                           AND (PTR_TerminDo = 0
+                                OR PTR_TerminDo &gt;= DATEDIFF(d, '18001228', GETDATE()))
+                 )
+                 GROUP BY PTE_Id,
+                          PTE_Kod,
+                          PTE_Nazwa,
+                          PTE_Numer,
+                          PTE_Rok,
+                          PTE_Seria,
+                          PTE_Miesiac,
+                          PTE_Opis,
+                          PTE_Wersja
+                 HAVING COUNT(*) = @lParam; -- tylko te, których ilość pokrywających się odp. równa się z udzielonymi odp. (tj. żadnej nie brakuje)
+         END;
+         RETURN;
+END;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

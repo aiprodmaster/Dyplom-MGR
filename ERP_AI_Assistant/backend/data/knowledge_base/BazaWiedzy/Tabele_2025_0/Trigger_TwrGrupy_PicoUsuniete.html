@@ -1,0 +1,87 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[TwrGrupy_PicoUsuniete]"></A><PRE>
+          <FONT SIZE="2"><I>/* [TwrGrupy_PicoUsuniete] */</I><BR>
+CREATE TRIGGER [CDN].[TwrGrupy_PicoUsuniete]
+   ON  [CDN].[TwrGrupy]
+   AFTER DELETE
+AS 
+BEGIN
+	SET NOCOUNT ON;
+
+    IF NOT EXISTS(SELECT * FROM CDN.PicoKonfig WHERE PcK_Typ = 5) RETURN
+    
+    SELECT 
+		TwG_GIDTyp
+		,TwG_SyncID
+		,TwG_GrOTyp
+		,TwG_GrONumer
+		,TwG_Kod
+		,ROW_NUMBER() OVER( ORDER BY TwG_SyncID) Indeks
+                ,TwG_GIDNumer
+	INTO #Deleted
+	FROM DELETED
+	WHERE TwG_GIDTyp = -16 -- [AM] Może być wyzwolone podczas usuwania towaru związanego z kilkoma grupami i takie przypadki eleminujemy TRACK:188200	
+
+	DECLARE @Count			INT
+			,@Indeks		INT
+	
+	DECLARE	@PcKId			INT
+			,@ObiTyp		SMALLINT
+			,@ObiNumer		INT
+
+	SELECT	@Count = MAX(Indeks)
+			,@Indeks = 1
+	FROM #Deleted
+	
+	WHILE @Indeks &lt;= @Count
+	BEGIN
+		-- Wybranie drzewa grup towarów
+		;WITH CTE AS
+		(
+			SELECT TwG_GIDTyp, TwG_SyncID, TwG_GrOTyp, TwG_GrONumer, 1 AS ToDelete,TwG_GIDNumer 
+			FROM #Deleted D
+			WHERE D.Indeks = @Indeks
+			UNION ALL
+			SELECT TwG.TwG_GIDTyp, TwG.TwG_SyncID, TwG.TwG_GrOTyp, TwG.TwG_GrONumer, 0,TwG.TwG_GIDNumer
+			FROM CDN.TwrGrupy TwG
+				INNER JOIN CTE ON TwG.TwG_GIDNumer = CTE.TwG_GrONumer AND TwG.TwG_GIDTyp = CTE.TwG_GrOTyp
+		)
+		SELECT TOP 1
+			@PcKId			= PcK_PicoID
+			,@ObiTyp		= CTE.TwG_GIDTyp
+			,@ObiNumer		= CTE.TwG_SyncID			
+		FROM CTE
+			CROSS JOIN CDN.PicoKonfig
+		WHERE CTE.ToDelete = 1 AND PcK_Typ = 5 AND 
+			EXISTS(
+				SELECT * FROM CTE
+				WHERE CTE.TwG_GIDNumer = PcK_TwGNumer AND CTE.TwG_GIDTyp = PcK_TwGTyp
+			)
+		-- Dopisanie do usuniętych obiektów
+		IF	ISNULL(@PcKId,0) &lt;&gt; 0 AND ISNULL(@ObiTyp,0) &lt;&gt; 0 AND ISNULL(@ObiNumer,0) &lt;&gt; 0
+		BEGIN
+			EXEC CDN.OFFLXLSrv_LogUsunObiekt @PcKId, @ObiTyp, @ObiNumer, 0, 0
+		END
+		-- Zwiększenie indeksu
+		SET @Indeks = @Indeks + 1
+	END
+	DROP TABLE #Deleted
+	
+	SET NOCOUNT OFF;
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

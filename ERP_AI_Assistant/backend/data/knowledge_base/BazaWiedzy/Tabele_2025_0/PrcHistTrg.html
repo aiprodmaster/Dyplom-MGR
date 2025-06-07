@@ -1,0 +1,102 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="PrcHist_UaktualnijDaty"></A><PRE>
+          <FONT SIZE="2"><I>/* PrcHist_UaktualnijDaty */</I><BR>
+CREATE TRIGGER PrcHist_UaktualnijDaty
+  ON CDN.PrcHist
+  FOR INSERT,UPDATE
+AS
+BEGIN
+  IF UPDATE(PHi_PrcNumer) OR UPDATE(PHi_DataOd) OR UPDATE(PHi_DataDo)
+  BEGIN
+    begin tran;
+    set nocount on;
+
+	declare @Id int
+    declare @DataOd int
+    declare @DataDo int
+
+    declare @ins_dataod int
+    declare @ins_datado int
+
+	select @ins_dataod = inserted.PHi_DataOd
+		, @ins_datado = case when inserted.PHi_DataDo=0 then 999999 else inserted.PHi_DataDo end
+		from inserted
+
+	-- Pierwszy przebieg to sama zmiana wartosc na podstawie daty OD 	
+    declare prchistdaty_curOd cursor local fast_forward for
+      select a.PHi_ID, a.PHi_DataOd, a.PHi_DataDo from cdn.PrcHist a
+      join Inserted on a.PHi_PrcNumer=Inserted.PHi_PrcNumer where a.PHi_Id &lt;&gt; Inserted.PHi_Id
+      order by a.phi_dataod, a.phi_datado
+
+    open prchistdaty_curOd
+
+    fetch next from prchistdaty_curOd into @Id, @DataOd, @DataDo;
+    while @@FETCH_STATUS = 0
+    begin
+      -- Dodawana zakres miesci sie w istniejacym, nalezy istniejacy przyciac od prawej
+      if @DataOd=@ins_dataod and @DataDo&gt;@ins_datado
+	  begin
+			update cdn.prchist set phi_dataod=@ins_datado+1 where phi_id=@Id
+			break
+	  end
+	  -- Przypadek kiedy data do pokrywa sie z nowo dodawana data od ale nie maja wiecej wspolnych części
+      if @DataDo=@ins_dataod and @DataDo&lt;@ins_datado
+	  begin
+			update cdn.prchist set phi_datado=@ins_dataod-1 where phi_id=@Id
+			break
+	  end	  
+	  -- Dodawana zakres miesci sie w istniejacym, nalezy istniejacy przyciac od lewej
+      if @DataOd&lt;@ins_dataod and @DataDo&gt;@ins_dataod
+	  begin
+			update cdn.prchist set phi_datado=@ins_dataod-1 where phi_id=@Id
+			break
+	  end	  
+      fetch next from prchistdaty_curOd into @Id, @DataOd, @DataDo;
+    end
+
+    close prchistdaty_curOd;
+    deallocate prchistdaty_curOd;
+
+	-- Drugi przebieg to sama zmiana wartosc na podstawie daty DO 	
+    declare prchistdaty_curDo cursor local fast_forward for
+      select a.PHi_ID, a.PHi_DataOd, a.PHi_DataDo from cdn.PrcHist a
+      join Inserted on a.PHi_PrcNumer=Inserted.PHi_PrcNumer where a.PHi_Id &lt;&gt; Inserted.PHi_Id
+      order by a.phi_dataod, a.phi_datado
+
+    open prchistdaty_curDo
+
+    fetch next from prchistdaty_curDo into @Id, @DataOd, @DataDo;
+    while @@FETCH_STATUS = 0
+    begin
+      -- Dodawana zakres miesci sie w istniejacym, nalezy istniejacy przyciac
+      if @DataOd&lt;=@ins_datado and @DataDo&gt;=@ins_datado
+	  begin
+			update cdn.prchist set phi_dataod=@ins_datado+1 where phi_id=@Id
+			break
+	  end		
+      fetch next from prchistdaty_curDo into @Id, @DataOd, @DataDo;
+    end
+
+    close prchistdaty_curDo;
+    deallocate prchistdaty_curDo;
+
+    set nocount off;
+    commit;
+  END
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

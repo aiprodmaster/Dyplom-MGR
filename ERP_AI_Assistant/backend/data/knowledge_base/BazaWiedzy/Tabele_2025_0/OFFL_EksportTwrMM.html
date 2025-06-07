@@ -1,0 +1,100 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="OFFL_EksportTwrMM"></A><PRE>
+          <FONT SIZE="2"><I>/* OFFL_EksportTwrMM */</I><BR>
+CREATE PROCEDURE CDN.OFFL_EksportTwrMM
+@ID 		   INT -- ID oddziału  (PK z tabeli CDN.PicoKonfig) 
+AS
+
+SELECT DISTINCT 
+       Twr_GIDNumer,
+       Twr_Typ,
+       Twr_Kaucja,
+       Twr_Archiwalny,
+       Twr_Blokada,
+       Twr_Nazwa,
+       Twr_Kod,
+       Twr_Ean,
+       Twr_Jm,
+       Twr_JMCalkowita,
+       Twr_Sww,
+       Twr_Katalog,
+       Twr_URL,
+       (CASE WHEN EXISTS(SELECT FRO_GIDLp FROM CDN.FrmObiekty WHERE FRO_FRMID = PcK_CentrumID AND FRO_GIDTyp = 64 AND FRO_GIDLp = Twr_CenaSpr) THEN Twr_CenaSpr ELSE FRS_CenaDomyslna END) AS Twr_CenaSpr,
+       Twr_BezRabatu,
+       Twr_MarzaMin,
+       Twr_EdycjaNazwy,
+       Twr_KosztUslugi,
+       Twr_KosztUTyp,
+       Twr_GrupaPod,
+       Twr_GrupaPodSpr,
+       Twr_StawkaPodSpr,
+       Twr_FlagaVatSpr,       
+       Twr_StawkaPod,
+       Twr_FlagaVat,       
+       Twr_SKNId,
+       Twr_LastModC,
+       ISNULL(TGD_GrONumer,0) AS Twr_GrupaDom, 
+       COALESCE(Tpm_IloscMin,Twr_IloscMin,0) Twr_IloscMin,
+       COALESCE(Tpm_IloscMax,Twr_IloscMax,0) Twr_IloscMax,
+       COALESCE(Tpm_IloscZam,Twr_IloscZam,0) Twr_IloscZam,
+       ISNULL(TwO_Opis,'') As TwO_Opis,
+       ISNULL(Slw_WartoscN1,0) Twr_KGO
+       FROM CDN.TraNag 
+       JOIN CDN.TraElem ON TrN_GIDNumer=TrE_GIDNumer 
+       JOIN CDN.TwrKarty ON Twr_GIDNumer=TrE_TwrNumer
+       JOIN CDN.PicoKonfig ON PcK_PicoID=@ID
+	   JOIN CDN.FrmStruktura ON FrS_ID = PcK_CentrumID
+       LEFT OUTER JOIN CDN.TwrGrupyDom ON Twr_GIDTyp=TGD_GIDTyp AND Twr_GIDNumer=TGD_GIDNumer 
+       LEFT OUTER JOIN CDN.TwrParMag ON Twr_GIDNumer=Tpm_TwrNumer AND Tpm_MagNumer=PcK_MagNumer
+       LEFT OUTER JOIN CDN.TwrOpisy ON Twr_GIDNumer=TwO_TwrNumer 
+	   LEFT OUTER JOIN CDN.Slowniki ON Twr_StawkaKGO=Slw_ID
+       WHERE TrN_MagDNumer=PcK_MagNumer AND TrN_GIDTyp IN (1600,1604) AND TrN_TrNLp=127 AND TrN_Stan&gt;=3 AND TrN_OddDokID&lt;=0  
+       ORDER BY Twr_GIDNumer
+
+SELECT DISTINCT 
+       A.TwC_TwrNumer,A.Twc_TwrLp,A.Twc_Wartosc, 
+       CASE WHEN ISNULL(SUBSTRING(Naz_Nazwa,11,1),'N')='N' THEN 1 ELSE 2 END Twc_NettoBrutto,
+       A.Twc_Waluta,
+       Twr_LastModC,
+       Twr_Kod 
+       FROM CDN.TraNag WITH(NOLOCK)
+       JOIN CDN.TraElem WITH(NOLOCK)ON TrN_GIDNumer=TrE_GIDNumer 
+       JOIN CDN.TwrKarty WITH(NOLOCK)ON Twr_GIDNumer=TrE_TwrNumer
+       JOIN CDN.TwrCeny A WITH(NOLOCK)ON Twr_GIDNumer=A.TwC_TwrNumer
+       JOIN CDN.PicoKonfig WITH(NOLOCK)ON PcK_PicoID=@ID
+	   LEFT OUTER JOIN CDN.FrmObiekty WITH(NOLOCK) ON  FRO_FRMID = PcK_CentrumID AND FRO_GIDTyp = 64 AND FRO_GIDLp = A.TwC_TwrLp
+       LEFT OUTER JOIN CDN.Nazwy WITH(NOLOCK)ON Naz_GIDLp=A.TwC_TwrLp AND Naz_GIDTyp=64 
+       WHERE TrN_MagDNumer=PcK_MagNumer AND TrN_GIDTyp IN (1600,1604) AND TrN_TrNLp=127 AND TrN_Stan&gt;=3 AND TrN_OddDokID&lt;=0
+			 AND (FRO_GIDLp IS NOT NULL OR (PcK_CenaZakupu = 1 AND A.TwC_TwrLp = 0)  )
+			 AND A.TwC_ID = (
+				SELECT TOP 1 B.TwC_ID FROM CDN.TwrCeny B 
+				WHERE B.TwC_TwrNumer = Twr_GIDNumer AND B.TwC_TwrLp = A.TwC_TwrLp AND B.TwC_DataOd &lt;= DATEDIFF(s,CONVERT(DATETIME,'1990-01-01',120),GETDATE())
+				ORDER BY B.TwC_TwrLp,B.TwC_DataOd DESC
+				)
+       ORDER BY A.TwC_TwrNumer,A.TwC_TwrLp
+
+SET NOCOUNT ON
+UPDATE CDN.TwrKarty SET Twr_Oddzialowy = 1 + (Twr_Oddzialowy&amp;2)
+       FROM CDN.TraNag 
+       JOIN CDN.TraElem ON TrN_GIDNumer=TrE_GIDNumer 
+       JOIN CDN.TwrKarty ON Twr_GIDNumer=TrE_TwrNumer
+	   JOIN CDN.PicoKonfig ON PcK_PicoID=@ID
+       WHERE Twr_Oddzialowy &amp; 1 = 0 AND TrN_MagDNumer=PcK_MagNumer AND TrN_GIDTyp IN (1600,1604) AND TrN_TrNLp=127 AND TrN_Stan&gt;=3 AND TrN_OddDokID&lt;=0 
+SET NOCOUNT OFF
+      
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

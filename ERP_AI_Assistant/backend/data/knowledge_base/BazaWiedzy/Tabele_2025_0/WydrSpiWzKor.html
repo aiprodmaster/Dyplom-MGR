@@ -1,0 +1,268 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="WydrSpiWzKor"></A><PRE>
+          <FONT SIZE="2"><I>/* WydrSpiWzKor */</I><BR>
+CREATE function CDN.WydrSpiWzKor(@p_Filtr Varchar(512))
+returns @table table(
+  typ smallint,               -- GID Typ
+  numer int,                  -- GID Numer
+  zwrtyp smallint,            -- pobrane z trs_zwrtyp
+  zwrnumer int,               -- pobrane z trs_zwrnumer
+  orgnumer int,               -- pobrane z trs_orgnumer
+  lp smallint,                -- pobrane z trs_zwrlp
+  twrnumer int,				  -- twr_gidnumer 
+  kod varchar(40),            -- kod towaru
+  nazwa varchar(255),         -- nazwa towaru
+  sww varchar(20),            -- PKWiU towaru
+  pcn VARCHAR(10),
+  jmz varchar(8),
+  FlagaNB varchar(1),
+  PrzeliczM decimal(15),
+  PrzeliczL decimal(15),
+  org_ilosc decimal(11,4),    -- Ilosc oryginalna
+  org_cena decimal(15,4),     -- Cena oryginalna
+  org_wartosc decimal(15,2),  -- Wartosc oryginalna
+  org_vat int,                -- VAT oryginalny
+  org_FlagaVat smallint,      -- Flaga VAT oryginalna
+  pokor_ilosc decimal(11,4),
+  pokor_cena decimal(15,4),
+  pokor_wartosc decimal(15,2),
+  pokor_vat int,
+  pokor_FlagaVat smallint,
+  pokor_Pcn nvarchar(11)
+) as
+BEGIN
+
+
+DECLARE  @FiltrSQL    VARCHAR (512)
+DECLARE  @FiltrTyp    SMALLINT
+DECLARE  @FiltrNumer  INT
+DECLARE  @SFSK_gidtyp smallint -- GID (S)FSK/(S)FZK/RAK
+DECLARE  @SFSK_gidnumer int    -- GID (S)FSK/(S)FZK/RAK
+DECLARE  @ORGFS_gidtyp smallint -- GID (S)FS/(S)FZ/RAK zeby uwzglednic dokumenty ktore nie byly korygowane ale byly na spinaczu
+DECLARE  @ORGFS_gidnumer int    -- GID (S)FS/(S)FZ/RAK zeby uwzglednic dokumenty ktore nie byly korygowane ale byly na spinaczu
+DECLARE  @pos1        INT
+DECLARE  @pos2        INT
+
+   SET @FiltrSQL = @p_Filtr
+   SET @pos1 = Patindex('%TrN_GIDTyp=%', @FiltrSql)+11
+   SET @pos2 = Patindex('%AND TrN_GIDNumer%', @FiltrSql)-2
+   SET @pos2 = CASE WHEN @pos2&lt;0 THEN Patindex('%AND TraNag.TrN_GIDNumer%', @FiltrSql)-2 ELSE @pos2 END
+   SELECT @FiltrTyp = convert(smallint,substring(@filtrSQL,@pos1,@pos2-@pos1+1))
+   SET @pos1 = Patindex('%TrN_GIDNumer=%', @FiltrSql)+13
+   SET @pos2 = Patindex('%)%', @FiltrSql)-1
+   SELECT  @FiltrNumer = convert(integer,substring(@filtrSQL,@pos1,@pos2-@pos1+1))
+
+   SET  @SFSK_gidtyp = @FiltrTyp -- wyciagniete z filtra informacje o GID dla (S)FSK/(S)FZK/RAK
+   SET  @SFSK_gidnumer = @FiltrNumer
+   SELECT @ORGFS_gidnumer = TrN_ZwrNumer, @ORGFS_gidtyp = TrN_ZwrTyp 
+		from CDN.tranag where TrN_GIDTyp = @SFSK_gidtyp and TrN_GIDNumer = @SFSK_gidnumer   
+
+DECLARE @Dokumenty Table (
+  LP INT IDENTITY(1,1),
+  GIDTyp      INT,
+  GIDNumer    INT
+);
+
+
+
+if ((select TrN_SpiNumer from cdn.TraNag where trn_GidTyp = @SFSK_gidtyp and TrN_GIDNumer = @SFSK_gidnumer)&lt;&gt;0)
+  BEGIN
+    DECLARE @TMPTYP smallint
+    DECLARE @TMPNUMER int
+    SET @TMPTYP = @SFSK_gidtyp
+    SET @TMPNUMER = @SFSK_gidnumer
+
+    INSERT INTO @Dokumenty(GIDTyp,GIDNumer) VALUES(@TMPTYP,@TMPNUMER) -- wyszukiwanie kolejnych FSK az do zrodlowego FS
+    WHILE 1=1
+    BEGIN
+      SELECT @TMPTYP=TrN_ZwrTyp, @TMPNUMER=TrN_ZwrNumer FROM CDN.TraNag WHERE TrN_GIDTyp=@TMPTYP AND TrN_GIDNumer=@TMPNUMER
+      INSERT INTO @Dokumenty(GIDTyp,GIDNumer) VALUES(@TMPTYP,@TMPNUMER)
+      IF @TMPTYP in (2033,1520,2037) BREAK -- w przypadku FS koniec szukania
+    END
+  END
+else
+BEGIN -- *************************** Przypadek (S)FSK
+   -- Zmienne dla wynikow kursora
+   DECLARE @GIDTYP smallint
+   DECLARE @GIDNUMER int
+
+   -- Kursor szukajacy skladnikow (S)FSK/(S)FZK/RAK, pozwalajacy na kolejne wywolywanie ich i szukanie do nich lancuszka korekt
+   -- ustawiane sa w kolejnosc WZ/PZ/PA/WKA a pozniej WZK/PZK/PAK/WKK
+   DECLARE skladnikiSFSK CURSOR FOR
+     select trn_gidtyp, trn_gidnumer from cdn.TraNag where trn_spityp = @SFSK_gidtyp and trn_spinumer = @SFSK_gidnumer
+		or (@filtrtyp = 1624 and trn_gidtyp = @filtrtyp and trn_gidnumer = @filtrnumer)
+     UNION ALL
+     select trn_gidtyp, trn_gidnumer from cdn.TraNag where trn_spityp = @ORGFS_gidtyp and trn_spinumer = @ORGFS_gidnumer
+     order by trn_gidtyp, trn_gidnumer     
+
+   OPEN skladnikiSFSK;
+
+   -- Wpisuje kolejne pozycje lub robi update jezeli dotyczy wczesniej wpisanej pozycji
+   FETCH NEXT FROM skladnikiSFSK INTO @GIDTYP, @GIDNUMER
+
+   -- Szukanie po lancuszku korekt
+   WHILE @@Fetch_Status = 0 -- wyciaganie kolejnych pozycji (S)FSK/(S)FZK/RAK
+   BEGIN
+     WHILE 1=1 -- start petli dla lancuszka korekt, dla pozycji z (S)FSK/(S)FZK/RAK
+     BEGIN
+       IF NOT EXISTS(SELECT GIDTyp FROM @Dokumenty where GIDTyp = @GIDTYP AND GIDNumer = @GIDNUMER) -- sprawdzanie czy nie ma juz takiego wpisu w tabeli, przydatne jesli spinam dwie korekty tego samego dokumentu, z lancuszka korekt pojawily by sie zdublowane wpisy
+         INSERT INTO @Dokumenty(GIDTyp,GIDNumer) VALUES(@GIDTYP,@GIDNUMER) -- wpis znalezionej pozycji, startujac od pozycji z (S)FSK/(S)FZK/RAK i szukajac wczesniejszych
+       --IF @GIDTYP in (2001, 1489, 2034, 2000, 2002) BREAK -- po dojsciu do WZ/PZ/PA/WKA/PKA koniec poszukiwan poniewaz doszlismy do dokumentu zrodlowego
+       IF @GIDTyp&amp;8=0 or (@FiltrTyp = @GIDTyp and @GIDTyp = 1528) BREAK
+         SELECT @GIDTYP=TrN_ZwrTyp, @GIDNUMER=TrN_ZwrNumer FROM cdn.TraNag WHERE TrN_GIDTyp=@GIDTYP AND TrN_GIDNumer=@GIDNUMER -- szukanie wczesniejszej korekty
+     END
+     FETCH NEXT FROM skladnikiSFSK INTO @GIDTYP, @GIDNUMER
+   END
+
+   CLOSE skladnikiSFSK;
+   DEALLOCATE skladnikiSFSK;
+END
+
+
+
+
+
+DECLARE @TYP smallint
+DECLARE @NUMER int
+DECLARE @SPITYP smallint -- Potrzebne zeby miec informacje czy pochodzi z (S)FSK/(S)FZK/RAK czy z czegos innego
+DECLARE @SPINUMER int    -- Potrzebne zeby miec informacje czy pochodzi z (S)FSK/(S)FZK/RAK czy z czegos innego
+DECLARE @ZWRTYP smallint -- Potrzebne zeby miec informacje do ktorej pozycji koretka
+DECLARE @ZWRNUMER int    -- Potrzebne zeby miec informacje do ktorej pozycji koretka
+DECLARE @ORGNUMER int
+DECLARE @LP smallint     -- Potrzebne zeby miec informacje do ktorej pozycji koretka
+DECLARE @TWRNUMER int
+DECLARE @TwrKod varchar(40)
+DECLARE @TwrNazwa VARCHAR(255)
+DECLARE @sww VARCHAR(20)
+DECLARE @pcn VARCHAR(10)
+DECLARE @Ilosc decimal(11,4)
+DECLARE @SUMOrgIlosc decimal(11,4)
+DECLARE @SUMpokorIlosc decimal(11,4)
+DECLARE @Cena decimal(15,4)
+DECLARE @Wartosc decimal(15,2)
+DECLARE @SUMOrgWartosc decimal(15,2)
+DECLARE @SUMpokorWartosc decimal(15,2)
+DECLARE @Jmz VARCHAR(8)
+DECLARE @StawkaPod int
+DECLARE @FlagaNB varchar(1)
+DECLARE @FlagaVat smallint
+DECLARE @TrE_PrzeliczM decimal(15)
+DECLARE @TrE_PrzeliczL decimal(15)
+
+DECLARE curelementy CURSOR FOR
+select
+  trn_gidtyp, trn_gidnumer
+, max(trn_spityp) as trn_spityp -- potrzebne do identyfikacji czy dokument spiety do (S)FSK/(S)FZK/RAK
+, max(trn_spinumer) as trn_spinumer -- potrzebne do identyfikacji czy dokument spiety do (S)FSK/(S)FZK/RAK
+, max(trs_zwrtyp)
+, max(trs_zwrnumer)
+, max(TrS_OrgNumer)
+, trs_zwrlp
+, max(Twr_gidnumer) as Twr_gidnumer
+, max(Twr_Kod) as Twr_Kod
+, max(TrE_TwrNazwa) as TrE_TwrNazwa
+, max(Twr_sww) as Twr_sww
+, max(Tre_PCN) as Twe_PCN
+, sum(TrS_Ilosc) as TrS_Ilosc
+, max(TrE_Cena) as Tre_Cena
+, max(case when TrN_FlagaNB = 'N' then Tre_KsiegowaNetto else Tre_KsiegowaBrutto end) as Tre_Wartosc
+, max(TrE_JmZ) as TrE_JmZ
+, max(TrE_StawkaPod) as TrE_StawkaPod
+, max(TrE_FlagaNB) as TrE_FlagaNB
+, max(Tre_FlagaVat) as Tre_FlagaVat
+, max(TrE_PrzeliczM) as TrE_PrzeliczM
+, max(TrE_PrzeliczL) as TrE_PrzeliczL
+from cdn.tranag
+join cdn.traelem on trn_gidnumer = tre_gidnumer and trn_gidtyp = tre_gidtyp
+join cdn.twrkarty on Twr_GIDNumer=TrE_TwrNumer
+join cdn.traselem on trs_gidtyp=tre_gidtyp and trs_gidnumer=tre_gidnumer and trs_gidlp=tre_gidlp and trs_zwrlp &lt;&gt; 0
+join @Dokumenty on GIDTyp = TrN_GIDTyp and GIDNumer = TrN_GIDNumer -- polaczenie z tabela zawierajaca wszystkie znalezione wczesniej WZ/PZ/PA/WKA i WZK/PZK/PAK/WKK
+group by trn_gidtyp, trn_gidnumer, trs_zwrlp
+order by trn_gidtyp, trn_gidnumer
+
+
+OPEN curelementy;
+FETCH NEXT FROM curelementy INTO @TYP, @NUMER, @SPITYP, @SPINUMER, @ZWRTYP, @ZWRNUMER, @ORGNUMER, @LP, @TwrNumer, @TwrKod, @TwrNazwa, @sww,@pcn, @Ilosc, @Cena, @Wartosc,
+                                 @Jmz, @StawkaPod, @FlagaNB, @FlagaVat, @TrE_PrzeliczM, @TrE_PrzeliczL
+
+WHILE @@Fetch_Status = 0
+BEGIN
+  if EXISTS(select typ from @table where zwrnumer = @ZWRNUMER and lp = @LP) -- jest wpis w tabeli dla danej pozycji, szukanie wykorzystujace lancuszek korekt
+  BEGIN
+    select @SUMOrgIlosc=org_ilosc, @SUMOrgWartosc=org_wartosc, @SUMpokorIlosc=pokor_ilosc, @SUMpokorWartosc=pokor_wartosc
+           from @table where zwrnumer = @ZWRNUMER and lp = @LP
+    if (@SPITYP = @SFSK_gidtyp and @SPINUMER = @SFSK_gidnumer) -- dokument z (S)FSK/(S)FZK/RAK, wiec wplywa na pola POKOR
+		--OR (@SPITYP = 0 and @SPINUMER = 0) TFS:329769
+      UPDATE @table set typ = @TYP
+                        ,numer = @NUMER
+                        ,pokor_ilosc = @SUMpokorIlosc + (@Ilosc*@TrE_PrzeliczM/@TrE_PrzeliczL)
+                        ,pokor_wartosc = @SUMpokorWartosc + @Wartosc
+                        ,pokor_cena = @Cena*@TrE_PrzeliczL/@TrE_PrzeliczM
+                        ,pokor_vat = @StawkaPod
+                        ,pokor_FlagaVat = @FlagaVat
+						,pokor_Pcn = @pcn
+                    where lp = @LP and zwrnumer = @ZWRNUMER
+    else -- nie pochodzi z (S)FSK/(S)FZK/RAK, powinien wplywac na pola ORG i POKOR
+      UPDATE @table set typ = @TYP
+                        ,numer = @NUMER
+                        ,org_ilosc = @SUMOrgIlosc + (@Ilosc*@TrE_PrzeliczM/@TrE_PrzeliczL)
+                        ,org_wartosc = @SUMOrgWartosc + @Wartosc
+                        ,org_cena = @Cena*@TrE_PrzeliczL/@TrE_PrzeliczM
+                        ,org_vat = @StawkaPod
+                        ,org_FlagaVat = @FlagaVat
+						,pcn = @pcn
+                        ,pokor_ilosc = @SUMpokorIlosc + (@Ilosc*@TrE_PrzeliczM/@TrE_PrzeliczL)
+                        ,pokor_wartosc = @SUMpokorWartosc + @Wartosc
+                        ,pokor_cena = @Cena*@TrE_PrzeliczL/@TrE_PrzeliczM
+                        ,pokor_vat = @StawkaPod
+                        ,pokor_FlagaVat = @FlagaVat
+						,pokor_Pcn = @pcn
+                    where lp = @LP and zwrnumer = @ZWRNUMER
+  END
+  ELSE
+  BEGIN
+    if @SPITYP = @SFSK_gidtyp and @SPINUMER = @SFSK_gidnumer
+		or (@SPITYP = @filtrtyp and @SPINUMER = @filtrnumer) -- dokument z (S)FSK/(S)FZK/RAK, wplywa na ilosc POKOR
+      INSERT INTO @table (typ, numer, zwrtyp, zwrnumer,orgnumer, lp, twrnumer, kod, nazwa, sww, pcn, jmz, FlagaNB, PrzeliczM, PrzeliczL
+                        , org_ilosc, org_cena, org_wartosc, org_vat, org_FlagaVat
+                        , pokor_ilosc, pokor_cena, pokor_wartosc, pokor_vat, pokor_FlagaVat,pokor_Pcn)
+        VALUES (@TYP, @NUMER, @ZWRTYP, @ZWRNUMER,@orgNUMER, @LP, @TwrNumer, @TwrKod, @TwrNazwa, @sww, @pcn, @Jmz, @FlagaNB, @TrE_PrzeliczM, @TrE_PrzeliczL
+        , 0, 0, 0, @StawkaPod, @FlagaVat
+        , @Ilosc*@TrE_PrzeliczM/@TrE_PrzeliczL, @Cena*@TrE_PrzeliczL/@TrE_PrzeliczM, @Wartosc, @StawkaPod, @FlagaVat, @pcn)
+    else -- dokument nie pochodzi z (S)FSK/(S)FZK/RAK, powinien wplywac na ilosc ORG
+      INSERT INTO @table (typ, numer, zwrtyp, zwrnumer,orgnumer, lp, twrnumer, kod, nazwa, sww,pcn, jmz, FlagaNB, PrzeliczM, PrzeliczL
+                        , org_ilosc, org_cena, org_wartosc, org_vat, org_FlagaVat
+                        , pokor_ilosc, pokor_cena, pokor_wartosc, pokor_vat, pokor_FlagaVat,pokor_Pcn)
+        VALUES (@TYP, @NUMER, @ZWRTYP, @ZWRNUMER,@ORGNUMER, @LP, @TwrNumer, @TwrKod, @TwrNazwa, @sww,@pcn, @Jmz, @FlagaNB, @TrE_PrzeliczM, @TrE_PrzeliczL
+        , @Ilosc*@TrE_PrzeliczM/@TrE_PrzeliczL, @Cena*@TrE_PrzeliczL/@TrE_PrzeliczM, @Wartosc, @StawkaPod, @FlagaVat
+        , @Ilosc*@TrE_PrzeliczM/@TrE_PrzeliczL, @Cena*@TrE_PrzeliczL/@TrE_PrzeliczM, @Wartosc, @StawkaPod, @FlagaVat,@pcn)
+  END
+  FETCH NEXT FROM curelementy INTO @TYP, @NUMER, @SPITYP, @SPINUMER, @ZWRTYP, @ZWRNUMER,@ORGNUMER, @LP, @TwrNumer, @TwrKod, @TwrNazwa, @sww,@pcn, @Ilosc, @Cena, @Wartosc,
+                                   @Jmz, @StawkaPod, @FlagaNB, @FlagaVat, @TrE_PrzeliczM, @TrE_PrzeliczL
+
+  SET @SPITYP = case when @SFSK_gidtyp=1624 then @TYP else @SPITYP end
+  SET @SPINUMER = case when @SFSK_gidtyp=1624 then @NUMER else @SPINUMER end
+                                   
+END
+
+CLOSE curelementy;
+DEALLOCATE curelementy;
+
+RETURN
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,83 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="SumaLimituKredytuCelowegoZamowienDlaTrn"></A><PRE>
+          <FONT SIZE="2"><I>/* SumaLimituKredytuCelowegoZamowienDlaTrn */</I><BR>
+CREATE FUNCTION CDN.SumaLimituKredytuCelowegoZamowienDlaTrn (
+	@p_TrnNumer INT,
+	@p_timestamp INT,
+	@p_data INT,
+	@p_nrKursu INT
+	)
+	-- Funkcja zwraca sumę limitu kredytu celowego dla przekazanego dokumentu handlowego jeśli na jakimkolwiek zamówieniu powiązanym jest włączony limit celowy. W przypadku, gdy do dokumentu handlowego nie ma żadnego zamówienia z ustawionym limitem celowym to zwracane jest -1. Sprawdza też czy dokument jest spinaczem, który ma dokumenty powiązane z zamówieniami.
+	-- Wersja 2017.0.0   03.10.2016  TS	
+	-- Parametry:
+	-- @p_timestamp		Data TS dla której sprawdzić kurs waluty
+	-- @p_data			Data CLARION dla której sprawdzić ważność limitu
+	-- @p_nrKursu		Numer kursu który wybrać, przy potrzebie przeliczenia limitu na walute systemową
+	-- @p_TrnNumer		Trn_GIDNumer dla którego pobrać limit kredytu celowego z powiązanych zamówień
+	-- 2019.1.0			optymalizacja z maila
+
+RETURNS VARCHAR(255)
+AS
+BEGIN
+	DECLARE @retval VARCHAR(255);
+
+	SELECT @retval = isnull(SUM(KredytSys), - 1.0)
+	FROM (
+		SELECT ZaN_LimitKredytowyKwota * ISNULL((
+					SELECT TOP 1 WaE_KursL / WaE_KursM
+					FROM CDN.WalElem
+					WHERE WaE_Symbol = ZaN_LimitKredytowyWaluta
+						AND WaE_Lp = @p_nrKursu
+						AND WaE_KursTS &lt;= @p_timestamp
+					ORDER BY - WaE_KursTS
+					), 1) KredytSys
+		FROM CDN.ZamNag
+		INNER JOIN (
+			SELECT TrS_ZlcTyp,
+				TrS_ZlcNumer
+			FROM cdn.TraSElem
+			INNER JOIN cdn.tranag ON trn_gidnumer = trs_gidnumer
+			WHERE trs_gidnumer = @p_TrnNumer
+				AND NOT (
+					TrN_GIDTyp IN (1520, 1528, 1521, 1529, 2033, 2041, 2035, 2043, 2037, 2045, 2036, 2044, 2039, 2047)
+					AND TrN_SpiTyp = 0
+					)
+			
+			UNION
+			
+			SELECT TrS_ZlcTyp,
+				TrS_ZlcNumer
+			FROM cdn.TraNag a
+			INNER JOIN cdn.TraNag b ON a.TrN_GIDTyp = b.TrN_SpiTyp
+				AND a.TrN_GIDNumer = b.TrN_SpiNumer
+			INNER JOIN cdn.TraSElem ON TrS_GIDNumer = b.trn_gidnumer
+			WHERE a.TrN_GIDNumer = @p_TrnNumer
+				AND (
+					A.TrN_GIDTyp IN (1520, 1528, 1521, 1529, 2033, 2041, 2035, 2043, 2037, 2045, 2036, 2044, 2039, 2047)
+					AND A.TrN_SpiTyp = 0
+					)
+			) AS a ON zan_gidtyp = trs_zlctyp
+			AND ZaN_GIDNumer = TrS_ZlcNumer
+		WHERE ZaN_LimitKredytowyWaznyDo &gt;= @p_data
+			AND ZaN_LimitKredytowy = 1
+		) PanieSumieWSumiePanNiewieleUmie
+
+	RETURN @retval
+END
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

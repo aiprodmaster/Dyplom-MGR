@@ -1,0 +1,78 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="DataRealizacjiZPzZam"></A><PRE>
+          <FONT SIZE="2"><I>/* DataRealizacjiZPzZam */</I><BR>
+CREATE FUNCTION CDN.DataRealizacjiZPzZam(
+	@ZSTyp		SMALLINT,
+	@ZSNumer	INTEGER,
+	@ZSLp		SMALLINT,
+	@ZZTyp		SMALLINT,
+	@ZZNumer	INTEGER,
+	@ZZLp		SMALLINT,
+	@DataRealZS	INTEGER = 0)
+RETURNS INT
+AS
+BEGIN
+	DECLARE @MozliwaRealizacjaLubData	INTEGER
+
+	IF @ZSLp &gt; 0 --data realizacji konkretnej pozycji zam. związanej z ZP (dla ZZ-&gt;ZS nie korzystamy z tej funkcji)
+	BEGIN
+		SET @MozliwaRealizacjaLubData = 0
+		select @MozliwaRealizacjaLubData = (min(PCZ_TerminZakonczenia)+43200) / 86400 + 69035
+		from CDN.ZamZamLinki
+		inner join CDN.ProdZlecElem on PZE_Id=ZZL_ZZGIDNumer
+		inner join CDN.ProdProcesy on PPC_Zlecenie=PZE_Zlecenie and PPC_Technologia=PZE_Technologia
+		inner join CDN.ProdCzynnosci on PCZ_Proces=PPC_Id
+		inner join CDN.ProdTechnologiaZasoby on PTZ_TechnologiaCzynnosc=PCZ_TechnologiaCzynnosc
+			and PTZ_TwrTyp=PZE_TwrTyp and PTZ_TwrNumer=PZE_TwrNumer and PTZ_TypZasobu=0
+		where ZZL_ZSGIDTyp=@ZSTyp and ZZL_ZSGIDNumer=@ZSNumer and ZZL_ZSGIDLp=@ZSLp
+			and ZZL_ZZGIDTyp=@ZZTyp and ZZL_ZZGIDNumer=@ZZNumer and ZZL_ZZGIDLp=@ZZLp
+	END
+	ELSE -- czy istnieje jakakolwiek pozycja podanego zamówienia, niemożliwa do zrealizowania w terminie
+	BEGIN
+		SELECT @MozliwaRealizacjaLubData = (
+				CASE WHEN ZZL_ZZGIDTyp = 960 AND ZZL_Kierunek IN (0,4,256) THEN
+					(SELECT CASE WHEN EXISTS(
+						SELECT ZaN_DataRealizacji FROM CDN.ZamNag
+							WHERE ZaN_GIDNumer = Z.ZZL_ZZGIDNumer AND ZaN_DataRealizacji &gt; @DataRealZS
+					) THEN 0 ELSE 1 END)
+				WHEN ZZL_ZZGIDTyp IN (14343,14345,14346) AND ZZL_Kierunek = 8 THEN
+					(select case when isnull((select max(PCZ_TerminZakonczenia) from (
+						select min(PCZ_TerminZakonczenia) PCZ_TerminZakonczenia
+						from CDN.ProdZlecElem
+						inner join CDN.ProdProcesy on PPC_Zlecenie=PZE_Zlecenie and PPC_Technologia=PZE_Technologia
+						inner join CDN.ProdCzynnosci on PCZ_Proces=PPC_Id
+						inner join CDN.ProdTechnologiaZasoby on PTZ_TechnologiaCzynnosc=PCZ_TechnologiaCzynnosc
+							and PTZ_TwrTyp=PZE_TwrTyp and PTZ_TwrNumer=PZE_TwrNumer and PTZ_TypZasobu=0
+						where PZE_Id=ZZL_ZZGIDNumer
+						group by PZE_Id) Procesy),2147483647)&gt;86400*(@DataRealZS-69035)+43200
+					then 0 else 1 end)
+				WHEN ZZL_ZZGIDTyp = 4192 AND ZZL_Kierunek = 8 THEN --ZS-&gt;ZK
+					(SELECT CASE WHEN EXISTS(
+						SELECT ZcN_DataRealizacji FROM CDN.ZlcNag WHERE ZcN_GIDNumer = Z.ZZL_ZZGIDNumer AND ZcN_DataRealizacji &gt; @DataRealZS
+					) THEN 0 ELSE 1 END)
+				ELSE
+					1 --Inne powiązania
+				END)
+		FROM CDN.ZamZamLinki Z JOIN CDN.Rezerwacje ON Rez_ZrdTyp = Z.ZZL_ZSGIDTyp AND Rez_ZrdNumer = Z.ZZL_ZSGIDNumer AND (Rez_Ilosc - Rez_IloscMag - Rez_Zrealizowano - Rez_IloscImp - Rez_IloscSAD - Rez_IloscSSC) &gt; 0 AND Rez_DstTyp = 0  AND Rez_GIDTyp = 2576
+		WHERE ZZL_ZSGIDTyp = @ZSTyp AND ZZL_ZSGIDNumer = @ZSNumer
+		SELECT @MozliwaRealizacjaLubData = ISNULL(@MozliwaRealizacjaLubData,1)
+	END
+
+	RETURN @MozliwaRealizacjaLubData
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

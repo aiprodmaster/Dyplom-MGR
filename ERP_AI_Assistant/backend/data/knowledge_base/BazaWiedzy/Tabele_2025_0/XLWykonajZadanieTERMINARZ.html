@@ -1,0 +1,153 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[XLWykonajZadanieTERMINARZ]"></A><PRE>
+          <FONT SIZE="2"><I>/* [XLWykonajZadanieTERMINARZ] */</I><BR>
+CREATE PROCEDURE [CDN].[XLWykonajZadanieTERMINARZ]  
+        @ZadId			INT,	-- GidNumer zadania
+        @OpeTyp			SMALLINT,	-- typ operatora wykonującego (pracownik lub operator) 
+		@OpeNumer		INT,	-- Numer operatora wykonującego
+		@DataWykonania	INT=NULL,  -- Data wykonania
+		@Nazwa			VARCHAR(128)=NULL,	-- Nazwa
+        @Opis			VARCHAR(1024)=NULL,	-- Opis podjętych działań
+        @IgnorujBledy	tinyint = NULL					
+AS
+	DECLARE @Zad_NoweId			INT
+	DECLARE @Zad_PowtarzajCo	INT
+	DECLARE @Zad_PowtarzajOkres TINYINT
+	DECLARE @Zad_CzasWykonania	INT
+	DECLARE @Zad_Cykliczne		TINYINT
+	DECLARE @Zad_TerminOd		DATETIME
+	DECLARE @Zad_TerminDo		DATETIME
+	DECLARE @_TRANCOUNT			int	
+SET NOCOUNT ON
+SELECT @_TRANCOUNT=@@TRANCOUNT; 
+if not exists(select * from CDN.Zadania where Zad_Id = @ZadId and Zad_CzasWykonania=0)
+		begin
+			if @IgnorujBledy is null
+				raiserror('Brak zadania lub zadanie już wykonane - (-1)',16,1)
+			return -1
+		end
+		
+if @OpeTyp=	944
+	begin
+	if not exists(select * from cdn.PrcKarty where Prc_GIDNumer = @OpeNumer)
+		begin
+			if @IgnorujBledy is null
+				raiserror('Nie znaleziono pracownika wykonującego - (-4)',16,1)
+			return -4
+		end
+	end
+else
+	if not exists(select * from cdn.OpeKarty where Ope_GIDNumer = @OpeNumer and Ope_Zablokowane &lt;&gt; 1)
+		begin
+			if @IgnorujBledy is null
+				raiserror('Nie znaleziono operatora wykonującego - (-4)',16,1)
+			return -4
+		end
+IF @_TRANCOUNT&gt;0 SAVE TRANSACTION XLWykonajZadanieTERMINARZ
+ELSE BEGIN TRANSACTION XLWykonajZadanieTERMINARZ	
+
+	SELECT @Zad_PowtarzajCo = Zad_PowtarzajCo, 
+		   @Zad_PowtarzajOkres = Zad_PowtarzajOkres, 
+		   @Zad_CzasWykonania = Zad_CzasWykonania, 
+		   @Zad_Cykliczne = Zad_Cykliczne, 
+		   @Zad_TerminOd = CDN.TsToDate(Zad_TerminOd, 1), 
+		   @Zad_TerminDo = CDN.TsToDate(Zad_TerminDo, 1) 
+	FROM CDN.Zadania WHERE Zad_Id = @ZadId
+	
+	IF @Zad_Cykliczne &gt; 0 AND @Zad_CzasWykonania = 0
+    BEGIN
+		
+		IF @Zad_PowtarzajOkres = 1 
+		BEGIN
+			SET @Zad_TerminOd = DATEADD(d, @Zad_PowtarzajCo, @Zad_TerminOd) 
+			SET @Zad_TerminDo = DATEADD(d, @Zad_PowtarzajCo, @Zad_TerminDo) 
+		END
+		ELSE
+		IF @Zad_PowtarzajOkres = 2
+		BEGIN
+			SET @Zad_TerminOd = DATEADD(d, @Zad_PowtarzajCo * 7, @Zad_TerminOd) 
+			SET @Zad_TerminDo = DATEADD(d, @Zad_PowtarzajCo * 7, @Zad_TerminDo) 
+		END
+		ELSE
+		IF @Zad_PowtarzajOkres = 3
+		BEGIN
+			SET @Zad_TerminOd = DATEADD(m, @Zad_PowtarzajCo, @Zad_TerminOd) 
+			SET @Zad_TerminDo = DATEADD(m, @Zad_PowtarzajCo, @Zad_TerminDo) 
+		END
+		ELSE
+		IF @Zad_PowtarzajOkres = 4
+		BEGIN
+			SET @Zad_TerminOd = DATEADD(m, @Zad_PowtarzajCo * 3, @Zad_TerminOd) 
+			SET @Zad_TerminDo = DATEADD(m, @Zad_PowtarzajCo * 3, @Zad_TerminDo) 
+		END
+		ELSE
+		BEGIN
+			SET @Zad_TerminOd = DATEADD(y, @Zad_PowtarzajCo, @Zad_TerminOd) 
+			SET @Zad_TerminDo = DATEADD(y, @Zad_PowtarzajCo, @Zad_TerminDo) 
+		END
+		
+		INSERT INTO CDN.Zadania ([Zad_Kod],[Zad_Nazwa],[Zad_Priorytet],[Zad_Opis],[Zad_Przypomnienie],[Zad_CzasPrzypomnienia],[Zad_CzasPrzypomnieniaJedn],[Zad_CzasUtworzenia],[Zad_OpeUTyp],[Zad_OpeUNumer],[Zad_CzasModyfikacji],[Zad_OpeMTyp],[Zad_OpeMNumer],[Zad_CzasWykonania],[Zad_OpeWTyp],[Zad_OpeWNumer],[Zad_TerminOd],[Zad_TerminDo],[Zad_CzasPlanowanyJedn],[Zad_PowtarzajCo],[Zad_PowtarzajOkres],[Zad_RezerwujCzas],[Zad_ZrdTyp],[Zad_ZrdNumer],[Zad_ZrdLp],[Zad_ObiTyp],[Zad_ObiNumer],[Zad_ZrdPytania],[Zad_OkresId],[Zad_Notatki] ,[Zad_Cykliczne])
+        SELECT [Zad_Kod],[Zad_Nazwa],[Zad_Priorytet],[Zad_Opis],[Zad_Przypomnienie],[Zad_CzasPrzypomnienia],[Zad_CzasPrzypomnieniaJedn], DATEDIFF(second,convert(datetime,'1990-01-01',120),getdate()), [Zad_OpeUTyp],[Zad_OpeUNumer],DATEDIFF(second,convert(datetime,'1990-01-01',120),getdate()),[Zad_OpeMTyp],[Zad_OpeMNumer],0,0,0,DATEDIFF(second,convert(datetime,'1990-01-01',120),@Zad_TerminOd), DATEDIFF(second,convert(datetime,'1990-01-01',120),@Zad_TerminDo), [Zad_CzasPlanowanyJedn],[Zad_PowtarzajCo],[Zad_PowtarzajOkres],[Zad_RezerwujCzas],[Zad_ZrdTyp],[Zad_ZrdNumer],[Zad_ZrdLp],[Zad_ObiTyp],[Zad_ObiNumer],[Zad_ZrdPytania],[Zad_OkresId],[Zad_Notatki] ,[Zad_Cykliczne] 
+        FROM CDN.Zadania WHERE Zad_Id = @ZadId
+        
+        IF @@error &lt;&gt; 0 
+		BEGIN
+			IF XACT_STATE()&lt;&gt;0 rollback tran XLWykonajZadanieTERMINARZ
+			if @IgnorujBledy is null
+				raiserror('Nie powiodło się dodawanie zadania cyklicznego - (-3)',16,1)				
+			RETURN -3
+		END
+
+        SELECT @Zad_NoweId = @@IDENTITY
+        
+        INSERT INTO CDN.ZadaniaObiekty (ZaO_ZadId, ZaO_ObiTyp, ZaO_ObiNumer, ZaO_CzasUtworzenia, ZaO_Przypomnienie, ZaO_CzasPrzypomnienia)
+        SELECT @Zad_NoweId, ZaO_ObiTyp, ZaO_ObiNumer, DATEDIFF(s,'19900101',GETDATE()), ZaO_Przypomnienie, ZaO_CzasPrzypomnienia 
+        FROM CDN.ZadaniaObiekty WHERE ZaO_ZadId = @ZadId
+        
+        IF @@error &lt;&gt; 0 
+		BEGIN
+			IF XACT_STATE()&lt;&gt;0 rollback tran XLWykonajZadanieTERMINARZ
+			if @IgnorujBledy is null
+				raiserror('Nie powiodło się dodawanie obiektów do zadania cyklicznego - (-3)',16,1)				
+			RETURN -3
+		END
+		
+	END
+	
+    UPDATE CDN.Zadania
+		SET Zad_CzasModyfikacji = IsNull(@DataWykonania,DATEDIFF(s,'19900101',GETDATE())),
+		Zad_CzasWykonania = IsNull(@DataWykonania,DATEDIFF(s,'19900101',GETDATE())),
+		Zad_OpeWTyp = @OpeTyp,
+		Zad_OpeWNumer = @OpeNumer,
+		Zad_OpeMTyp = @OpeTyp,
+		Zad_OpeMNumer = @OpeNumer,
+		Zad_Opis = IsNull(@Opis,Zad_Opis),
+		Zad_Nazwa = IsNull(@Nazwa,Zad_Nazwa)
+    WHERE Zad_Id = @ZadId
+
+    IF @@error &lt;&gt; 0 
+    BEGIN
+        IF XACT_STATE()&lt;&gt;0 rollback tran XLWykonajZadanieTERMINARZ
+			if @IgnorujBledy is null
+				raiserror('Nie powiodła się aktualizacja wpisu do tabeli CDN.Zadania - (-2)',16,1)		            
+        RETURN -2
+    END
+
+	IF @_TRANCOUNT=0 COMMIT TRAN XLNoweZadanieTERMINARZ
+    RETURN 0			
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

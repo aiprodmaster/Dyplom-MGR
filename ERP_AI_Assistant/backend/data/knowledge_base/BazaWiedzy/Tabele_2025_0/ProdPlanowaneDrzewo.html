@@ -1,0 +1,128 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="ProdPlanowaneDrzewo"></A><PRE>
+          <FONT SIZE="2"><I>/* ProdPlanowaneDrzewo */</I><BR>
+CREATE FUNCTION CDN.ProdPlanowaneDrzewo (@Czynnosc varchar(8000))
+RETURNS @Czynnosci TABLE (
+  Zrodlo int,
+  Czynnosc int,
+  Ojciec int,
+  Poziom int
+)
+as
+begin
+    declare @kier tinyint
+	DECLARE @Proc int
+	DECLARE @zlec int
+	DECLARE @odd int
+    if substring(@Czynnosc,1,1)='-'
+            select @kier = 1, @Czynnosc = substring(@Czynnosc,2,len(@Czynnosc)-1)
+    else
+            set @kier = 0
+    if @Czynnosc=''
+		BEGIN
+            insert into @Czynnosci
+            select PCZ_Id, PCZ_Id, 0, 0
+            from CDN.ProdCzynnosci
+
+			SELECT @Proc = 0, @Zlec = 0, @odd = 0
+		END
+    else
+		BEGIN
+            insert into @Czynnosci
+            select PCZ_Id, PCZ_Id, 0, 0
+			from CDN.Str2List(@Czynnosc)
+            inner join CDN.ProdCzynnosci on PCZ_Id=Num
+							
+			select @Proc = ISNULL(PCZ_Proces,0), @zlec = ISNULL(PPC_Zlecenie,0), @odd = ISNULL(PPC_Oddzial,0)
+            from CDN.Str2List(@Czynnosc)
+            inner join CDN.ProdCzynnosci on PCZ_Id=Num
+			inner join CDN.ProdProcesy on PPC_Id=PCZ_Proces
+
+		END
+
+	declare @prodplanowane table (ID int IDENTITY, Zasob int, Ilosc decimal(11,4), Termin int, Proces int, Zlecenie int, Oddzial int, Czynnosc int, TechnologiaCzynnosc int, TerminRozpoczecia int, CzasRealizacji int, Primary KEY  (ID, Zasob))
+
+	INSERT INTO @prodplanowane
+	SELECT Zasob, Ilosc, Termin, Proces, Zlecenie, Oddzial, Czynnosc, TechnologiaCzynnosc, TerminRozpoczecia, CzasRealizacji 
+	FROM CDN.ProdPlanowane(@Proc,@zlec,@odd,null,null)
+
+    declare @poziom int
+    declare @planowane table (Zasob int, Ilosc decimal(11,4), Termin int, Proces int, Zlecenie int, Oddzial int, Czynnosc int, TechnologiaCzynnosc int, TerminRozpoczecia int, CzasRealizacji int)
+    set @poziom = 0
+    while 1=1
+    begin
+
+	        insert into @planowane
+            select Zasob, Ilosc, P.Termin, Proces, Zlecenie, Oddzial, P.Czynnosc, TechnologiaCzynnosc, TerminRozpoczecia, CzasRealizacji
+            from @Czynnosci C
+            inner join CDN.ProdCzynnosci on PCZ_Id=C.Czynnosc
+            inner join CDN.ProdTechnologiaZasoby
+                    on PTZ_TechnologiaCzynnosc=PCZ_TechnologiaCzynnosc and PTZ_TypZasobu=@kier and (@kier=0 or PTZ_TechnologiaZasob&gt;0)
+            inner join /*CDN.ProdPlanowane(0,0,0) */@prodplanowane P
+                    on Zasob=PTZ_Id+@kier*(PTZ_TechnologiaZasob-PTZ_Id)
+            where Poziom=@poziom
+                    and (PTZ_ZrodloZasobu&lt;&gt;0 or PCZ_Proces=Proces)
+                    and (PTZ_ZrodloZasobu&gt;1 or PCZ_PZLId=Zlecenie)
+                    and (PTZ_ZrodloZasobu&lt;&gt;2 or PCZ_Oddzial=Oddzial or PCZ_Oddzial=0 or Oddzial=0)
+
+            insert into @Czynnosci
+            select Z.Zrodlo, M.Czynnosc+@kier*(P.Czynnosc-M.Czynnosc), P.Czynnosc+@kier*(M.Czynnosc-P.Czynnosc), @poziom+1
+            from (
+                    select P.Zasob, P.Ilosc, isnull(sum(N.Ilosc),0) Narastajaco, P.Termin, P.Proces, P.Zlecenie, P.Oddzial, P.Czynnosc, P.TechnologiaCzynnosc, P.TerminRozpoczecia, P.CzasRealizacji
+                    from @planowane P
+                    left outer join @planowane N on N.Zasob=P.Zasob and N.Ilosc&gt;0 and N.Czynnosc&lt;P.Czynnosc
+                    where P.Ilosc&gt;0
+                    group by P.Zasob, P.Ilosc, P.Termin, P.Proces, P.Zlecenie, P.Oddzial, P.Czynnosc, P.TechnologiaCzynnosc, P.TerminRozpoczecia, P.CzasRealizacji
+            ) P
+            inner join (
+                    select P.Zasob, P.Ilosc, isnull(sum(N.Ilosc),0) Narastajaco, P.Termin, P.Proces, P.Zlecenie, P.Oddzial, P.Czynnosc, P.TechnologiaCzynnosc, P.TerminRozpoczecia, P.CzasRealizacji
+                    from @planowane P
+                    left outer join @planowane N on N.Zasob=P.Zasob and N.Ilosc&lt;0 and N.Czynnosc&lt;P.Czynnosc
+                    where P.Ilosc&lt;0
+                    group by P.Zasob, P.Ilosc, P.Termin, P.Proces, P.Zlecenie, P.Oddzial, P.Czynnosc, P.TechnologiaCzynnosc, P.TerminRozpoczecia, P.CzasRealizacji
+            ) M on P.Zasob=M.Zasob and P.Narastajaco&lt;-M.Narastajaco-M.Ilosc and -M.Narastajaco&lt;P.Narastajaco+P.Ilosc
+            inner join @Czynnosci Z on Z.Czynnosc=P.Czynnosc+@kier*(M.Czynnosc-P.Czynnosc) and Z.Poziom=@poziom
+            left outer join @Czynnosci O on O.Czynnosc=M.Czynnosc+@kier*(P.Czynnosc-M.Czynnosc) and O.Zrodlo=Z.Zrodlo
+            where O.Czynnosc is null
+            if @@rowcount=0 break
+
+            delete from @planowane
+            set @poziom = @poziom+1
+    end
+    return
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="ProdPlanowaneDrzewoStr"></A><PRE>
+          <FONT SIZE="2"><I>/* ProdPlanowaneDrzewoStr */</I><BR>
+CREATE FUNCTION CDN.ProdPlanowaneDrzewoStr (@Czynnosc int)
+RETURNS varchar(8000)
+as
+begin
+  declare @Czynnosci varchar(8000), @PCZ_Id varchar(10)
+  select @Czynnosci = '', @PCZ_Id = convert(varchar(10),@Czynnosc)
+  select @Czynnosci = @Czynnosci+','+convert(varchar(10),Czynnosc)
+  from CDN.ProdPlanowaneDrzewo(@PCZ_Id)
+  order by Poziom
+  return case when @Czynnosci='' then '' else substring(@Czynnosci,2,len(@Czynnosci)-1) end
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

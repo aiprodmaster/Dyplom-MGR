@@ -1,0 +1,3371 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[EP_Podzielnik_DodajPodzielnik]"></A><PRE>
+          <FONT SIZE="2"><I>/* [EP_Podzielnik_DodajPodzielnik] */</I><BR>
+CREATE procedure [CDN].[EP_Podzielnik_DodajPodzielnik]
+@KierownikKonto int,
+@PrcKonto int,
+@PDNumer int,
+@Dni decimal(5,2)
+as
+begin
+	declare @PrcNumer int
+	declare @KierownikNumer int
+	declare @Lid int
+	declare @DniPodzielnik smallint
+	declare @Procent decimal(7,4)
+	set @Lid=0
+
+	select @KierownikNumer=p.Prc_GIDNumer
+	from cdn.PrcKarty p
+	where p.Prc_OptimaId=@KierownikKonto
+
+	select @PrcNumer=p.Prc_GIDNumer
+	from cdn.PrcKarty p
+	where p.Prc_OptimaId=@PrcKonto
+
+	select @DniPodzielnik=p.PDN_DniRobocze
+	from cdn.PodzielnikNag p where p.PDN_GIDNumer=@PDNumer
+
+	set @Procent=(@Dni / @DniPodzielnik)*100
+
+	exec CDN.PodzielnikDodajLinie @KierownikNumer, @PDNumer, @PrcNumer, 0, @Lid output, @Procent
+end
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[EP_Podzielnik_ListaCentrow]"></A><PRE>
+          <FONT SIZE="2"><I>/* [EP_Podzielnik_ListaCentrow] */</I><BR>
+CREATE procedure [CDN].[EP_Podzielnik_ListaCentrow]
+as
+begin
+;with Struktura AS (
+SELECT f.FRS_ID ID
+       ,f.FRS_GRONumer ParentID
+       ,CONVERT(VARCHAR(MAX), f.FRS_Nazwa) Nazwa
+       ,1 Poziom
+FROM CDN.FrmStruktura f
+WHERE f.FRS_GRONumer = 2 AND f.FRS_GIDTyp = -4272 AND f.FRS_Warstwa = 2
+UNION ALL
+SELECT f.FRS_ID
+       ,f.FRS_GRONumer ParentID
+       ,CONVERT(VARCHAR(MAX), s.Nazwa + '.' + f.FRS_Nazwa)
+       ,s.Poziom + 1
+FROM Struktura s
+JOIN CDN.FrmStruktura f ON f.FRS_GRONumer = s.ID AND f.FRS_GIDTyp = -4272 AND f.FRS_Warstwa = 2
+WHERE s.Poziom &lt; 5)
+
+select s.ID CentrumID
+       ,s.Nazwa Nazwa
+FROM Struktura s
+order by 2
+end
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[EP_Podzielnik_ListaPodzielnikow]"></A><PRE>
+          <FONT SIZE="2"><I>/* [EP_Podzielnik_ListaPodzielnikow] */</I><BR>
+CREATE procedure [CDN].[EP_Podzielnik_ListaPodzielnikow] as
+select p.PDN_GIDNumer Id, p.PDN_Opis Nazwa, p.PDN_DniRobocze 'DniRobocze'
+	,cdn.TSToDate(p.PDN_Data, 0) as 'DataOd'
+	,cdn.TSToDate(p.PDN_DataDo, 0) as 'DataDo'
+from CDN.PodzielnikNag p order by cdn.TSToDate(p.PDN_Data, 0)
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[EP_Podzielnik_ListaProjektow]"></A><PRE>
+          <FONT SIZE="2"><I>/* [EP_Podzielnik_ListaProjektow] */</I><BR>
+CREATE procedure [CDN].[EP_Podzielnik_ListaProjektow] 
+as
+SELECT p.PRJ_ID ProjektID
+       ,p.PRJ_Kod Kod
+       ,p.PRJ_Nazwa Nazwa
+FROM CDN.PrjStruktura p
+WHERE p.PRJ_GROID = 0
+order by 2
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[EP_Podzielnik_PobierzDrzewoKierownika]"></A><PRE>
+          <FONT SIZE="2"><I>/* [EP_Podzielnik_PobierzDrzewoKierownika] */</I><BR>
+CREATE procedure [CDN].[EP_Podzielnik_PobierzDrzewoKierownika]
+@PrcId int,
+@PdeNumer int
+as
+declare @PrcNumer int
+declare @Data int
+
+select @PrcNumer=p.Prc_GIDNumer
+from cdn.PrcKarty p
+where p.Prc_OptimaId=@PrcId
+
+
+set @Data = datediff(d, '1800-12-28', getdate())
+
+create table #tmp(
+FRS_ID int,
+FRS_ParId int,
+FRS_Nazwa varchar(max),
+FRS_Opis varchar(max),
+Poziom smallint,
+FRS_GIDTyp smallint,
+FRS_GIDNumer int,
+FRS_AktywnyOd int,
+FRS_AktywnyDo int,
+Kierownik int
+)
+
+insert into #tmp
+exec CDN.PracownikDrzewo @PrcNumer, @Data, 0, '8,13'
+
+select t.FRS_ID, t.FRS_ParId, t.FRS_Nazwa, t.FRS_Opis, t.FRS_GIDTyp, t.FRS_GIDNumer, pk.Prc_OptimaId, fs.FRS_OptimaId from #tmp as t
+left join cdn.PrcKarty as pk
+on pk.Prc_GIDNumer=t.FRS_GIDNumer and t.FRS_GIDTyp=944
+left join cdn.FrmStruktura as fs
+on fs.FRS_GIDNumer=t.FRS_GIDNumer and t.FRS_GIDTyp=-4272
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[EP_Podzielnik_PobierzPodzielnik]"></A><PRE>
+          <FONT SIZE="2"><I>/* [EP_Podzielnik_PobierzPodzielnik] */</I><BR>
+CREATE procedure [CDN].[EP_Podzielnik_PobierzPodzielnik]
+@PrcId int,
+@PdeNumer int
+as
+begin
+
+declare @PrcNumer int
+
+select @PrcNumer=p.Prc_GIDNumer
+from cdn.PrcKarty p
+where p.Prc_OptimaId=@PrcId
+
+;WITH Projekty AS (
+SELECT p.PRJ_ID ProjektID
+       ,p.PRJ_Kod Kod
+       ,p.PRJ_Nazwa Projekt
+FROM CDN.PrjStruktura p
+WHERE p.PRJ_GROID = 0),
+
+
+Struktura AS (
+SELECT f.FRS_ID ID
+       ,f.FRS_GRONumer ParentID
+       ,CONVERT(VARCHAR(MAX), f.FRS_Nazwa) Nazwa
+       ,1 Poziom
+FROM CDN.FrmStruktura f
+WHERE f.FRS_GRONumer = 2 AND f.FRS_GIDTyp = -4272 AND f.FRS_Warstwa = 2
+UNION ALL
+SELECT f.FRS_ID
+       ,f.FRS_GRONumer ParentID
+       ,CONVERT(VARCHAR(MAX), s.Nazwa + '.' + f.FRS_Nazwa)
+       ,s.Poziom + 1
+FROM Struktura s
+JOIN CDN.FrmStruktura f ON f.FRS_GRONumer = s.ID AND f.FRS_GIDTyp = -4272 AND f.FRS_Warstwa = 2
+WHERE s.Poziom &lt; 5),
+
+
+Centra AS (
+SELECT s.ID CentrumID
+       ,s.Nazwa Centrum
+FROM Struktura s
+WHERE s.Poziom IN (1,2,3,4))
+
+SELECT pe.PDE_GIDLp ID
+       ,pe.PDE_Dni Dni
+       ,pe.PDE_Procent Procent
+       ,p.ProjektID as ProjektId
+       ,c.CentrumID as CentrumId
+FROM CDN.PodzielnikElem pe
+LEFT JOIN CDN.PodzielnikSElem wp ON wp.PDS_GIDTyp = pe.PDE_GIDTyp AND wp.PDS_GIDNumer = pe.PDE_GIDNumer AND wp.PDS_GIDLp = pe.PDE_GIDLp AND wp.PDS_TypWymiaru = 5
+LEFT JOIN Projekty p ON p.ProjektID = wp.PDS_WMRID
+LEFT JOIN CDN.PodzielnikSElem wc ON wc.PDS_GIDTyp = pe.PDE_GIDTyp AND wc.PDS_GIDNumer = pe.PDE_GIDNumer AND wc.PDS_GIDLp = pe.PDE_GIDLp AND wc.PDS_TypWymiaru = 1
+LEFT JOIN Centra c ON c.CentrumID = wc.PDS_WMRID
+WHERE pe.PDE_GIDNumer = @PdeNumer AND pe.PDE_PrcNumer = @PrcNumer
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[EP_Podzielnik_PobierzPodzielnikCentra]"></A><PRE>
+          <FONT SIZE="2"><I>/* [EP_Podzielnik_PobierzPodzielnikCentra] */</I><BR>
+CREATE procedure [CDN].[EP_Podzielnik_PobierzPodzielnikCentra]
+@KierownikId int,
+@PodzielnikNumer int,
+@FRSNazwa nvarchar(255),
+@FRSId int
+as
+declare @FRSNumer int
+declare @KierownikNumer int
+declare @Podz int 
+declare @Pocz int 
+declare @Data int 
+
+select @Pocz=PDN_Data from cdn.PodzielnikNag where PDN_GIDNumer=@PodzielnikNumer
+set @Data=@Pocz 
+
+select @KierownikNumer=p.Prc_GIDNumer
+from cdn.PrcKarty p
+where p.Prc_OptimaId=@KierownikId
+
+select top 1 @FRSNumer=FRS_GIDNumer from cdn.FrmStruktura
+where FRS_Nazwa=@FRSNazwa and FRS_OptimaId=@FRSId
+
+/*frsPodlega(FRS_GIDNumer, FRS_GIDTyp, FRS_ID ? FRS_ParId*/
+select @Podz=Pdn_GIDNumer, @Pocz=ISNULL(Pdn_Data,0),  @Data=ISNULL(Pdn_DataDo,0) from CDN.PodzielnikNag where Pdn_GIDNumer=@PodzielnikNumer and Pdn_Udostepniaj&lt;2 
+if not exists(select * from CDN.FrsPodlega(@KierownikNumer, -4272, @FRSNumer, @Pocz, @Data) inner join CDN.RolePrawa on RolaId=RlP_RolID and RlP_PraId=8) 
+begin   raiserror('Brak uprawnień do podzielnika dla wybranego centrum.', 16, 1)   return end 
+
+declare @Licz int 
+set @Licz=1 
+if @Podz is not null 
+begin 
+	select Akronim, Opis, 
+	case 
+		when Procent&gt;0 
+		then CAST(CAST(Procent as decimal(5,2)) as varchar)+'%' else '' 
+	end as Procent,   
+	case 
+		when exists(
+			select PDZ_PDNNumer 
+			from CDN.PodzielnikZElem       
+			where PDZ_PDNNumer=@Podz and PDZ_FrsTyp=Typ and PDZ_FrsNumer=Numer)     
+		then( 
+			select top 1 ISNULL(Prc_Nazwisko+' '+Prc_imie1,'Zatwierdzony')       
+			from CDN.PodzielnikZelem 
+			left outer join CDN.PrcKarty       
+			on PDZ_PrcTyp=Prc_GIDTyp and PDZ_PrcNumer=Prc_GIDNumer       
+			where PDZ_FrSTyp=Typ and PDZ_FrSNumer=Numer and PDZ_PdNNumer=@Podz       
+			order by PDZ_Lp desc
+			)     
+		when Zatwierdzono&gt;0     
+		then CAST(CAST(Zatwierdzono as decimal(5,2)) as varchar)+'%'     else '' 
+	end as Zatwierdzono 
+	from (   
+		select FrS_GIDTyp as Typ, FrS_GIDNumer as Numer, FrS_AktywnyOd as AktywnyOd, FrS_Nazwa as Akronim,       
+		ISNULL(LTRIM(Prc_Nazwisko+' '+Prc_Imie1),FrS_Opis) as Opis     
+		from CDN.FrsDrzewo(3,-4272,@FRSNumer,@Data,@Data,1)     
+		left outer join CDN.PrcKarty       
+		on Prc_GIDTyp=FrS_GIDTyp and Prc_GIDNumer=FrS_GIDNumer     
+		where FrS_Poziom&gt;0   
+	) as Pierw left 
+	outer join (   
+		select FrS_PierwTyp, FrS_PierwNumer, FrS_PierwAktywnyOd, sum(Procent)/count(*) as Procent, 100.0*sum(Zatwierdzono)/count(*) as Zatwierdzono     
+			from (       
+				select FrS_PierwTyp, FrS_PierwNumer, FrS_PierwAktywnyOd, FrS_GIDTyp, FrS_GIDNumer, ISNULL(Procent,0) as Procent, 
+				ISNULL(Zatwierdzono,0) as Zatwierdzono         
+				from CDN.FrsDrzewo(3,-4272,@FRSNumer,@Data,@Data,0)         
+				left outer join (           
+					select PDE_PrcTyp, PDE_PrcNumer, sum(PDE_Procent) as Procent             
+					from CDN.PodzielnikElem 
+					where PDE_GIDNumer=@Podz             
+					group by PDE_PrcTyp, PDE_PrcNumer           
+				) as PodzElem           
+			on PDE_PrcTyp=FrS_GIDTyp and PDE_PrcNumer=FrS_GIDNumer         
+			left outer join (           
+				select distinct PDZ_FrSTyp, PDZ_FrSNumer, 1 as Zatwierdzono             
+				from CDN.PodzielnikZElem 
+				where PDZ_PDNNumer=@Podz           
+			) as PodzZElem           
+			on PDZ_FrSTyp=FrS_GIDTyp and PDZ_FrSNumer=FrS_GIDNumer         
+			where FrS_GIDTyp=944 and FrS_Poziom&gt;0       
+		) as PodCentra     
+		group by FrS_PierwTyp, FrS_PierwNumer, FrS_PierwAktywnyOd   
+	) as Centra   
+	on FrS_PierwAktywnyOd=AktywnyOd and FrS_PierwNumer=Numer and FrS_PierwTyp=Typ
+end 
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[EP_Podzielnik_PobierzPodzielnikDlaPracownika]"></A><PRE>
+          <FONT SIZE="2"><I>/* [EP_Podzielnik_PobierzPodzielnikDlaPracownika] */</I><BR>
+CREATE procedure [CDN].[EP_Podzielnik_PobierzPodzielnikDlaPracownika]
+@PrcId int,
+@PdeNumer int
+as
+begin
+
+declare @PrcNumer int
+
+select @PrcNumer=p.Prc_GIDNumer
+from cdn.PrcKarty p
+where p.Prc_OptimaId=@PrcId
+
+;WITH Projekty AS (
+SELECT p.PRJ_ID ProjektID
+       ,p.PRJ_Kod Kod
+       ,p.PRJ_Nazwa Projekt
+FROM CDN.PrjStruktura p
+WHERE p.PRJ_GROID = 0),
+
+
+Struktura AS (
+SELECT f.FRS_ID ID
+       ,f.FRS_GRONumer ParentID
+       ,CONVERT(VARCHAR(MAX), f.FRS_Nazwa) Nazwa
+       ,1 Poziom
+FROM CDN.FrmStruktura f
+WHERE f.FRS_GRONumer = 2 AND f.FRS_GIDTyp = -4272 AND f.FRS_Warstwa = 2
+UNION ALL
+SELECT f.FRS_ID
+       ,f.FRS_GRONumer ParentID
+       ,CONVERT(VARCHAR(MAX), s.Nazwa + '.' + f.FRS_Nazwa)
+       ,s.Poziom + 1
+FROM Struktura s
+JOIN CDN.FrmStruktura f ON f.FRS_GRONumer = s.ID AND f.FRS_GIDTyp = -4272 AND f.FRS_Warstwa = 2
+WHERE s.Poziom &lt; 5),
+
+
+Centra AS (
+SELECT s.ID CentrumID
+       ,s.Nazwa Centrum
+FROM Struktura s
+WHERE s.Poziom IN (1,2,3,4))
+
+SELECT pe.PDE_GIDLp ID
+       ,pe.PDE_Dni Dni
+       ,pe.PDE_Procent Procent
+       ,p.ProjektID
+       ,p.Kod
+       ,p.Projekt
+       ,c.CentrumID
+       ,c.Centrum
+FROM CDN.PodzielnikElem pe
+LEFT JOIN CDN.PodzielnikSElem wp ON wp.PDS_GIDTyp = pe.PDE_GIDTyp AND wp.PDS_GIDNumer = pe.PDE_GIDNumer AND wp.PDS_GIDLp = pe.PDE_GIDLp AND wp.PDS_TypWymiaru = 5
+LEFT JOIN Projekty p ON p.ProjektID = wp.PDS_WMRID
+LEFT JOIN CDN.PodzielnikSElem wc ON wc.PDS_GIDTyp = pe.PDE_GIDTyp AND wc.PDS_GIDNumer = pe.PDE_GIDNumer AND wc.PDS_GIDLp = pe.PDE_GIDLp AND wc.PDS_TypWymiaru = 1
+LEFT JOIN Centra c ON c.CentrumID = wc.PDS_WMRID
+WHERE pe.PDE_GIDNumer = @PdeNumer AND pe.PDE_PrcNumer = @PrcNumer
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[EP_Podzielnik_SprawdzCzyKierownik]"></A><PRE>
+          <FONT SIZE="2"><I>/* [EP_Podzielnik_SprawdzCzyKierownik] */</I><BR>
+CREATE procedure [CDN].[EP_Podzielnik_SprawdzCzyKierownik](@PrcId int)
+as
+begin
+declare @PrcNumer int
+
+select @PrcNumer=p.Prc_GIDNumer
+	from cdn.PrcKarty p
+	where p.Prc_OptimaId=@PrcId
+
+select top 1 PrR_FrSId as FrsId from cdn.PrcRole where PrR_PrcNumer=@PrcNumer and PrR_RolId=1
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[EP_Podzielnik_SprawdzCzyZatwierdzony]"></A><PRE>
+          <FONT SIZE="2"><I>/* [EP_Podzielnik_SprawdzCzyZatwierdzony] */</I><BR>
+CREATE procedure [CDN].[EP_Podzielnik_SprawdzCzyZatwierdzony]
+( @PIN_GIDNumer int, @FrsId int, @Prc_GIDNumer int)
+as
+begin
+declare @Zatwierdzony smallint
+declare @ZatwNumer int
+declare @Zatwierdzil varchar(200)
+declare @Czas varchar(40)
+
+declare @PrcId int
+
+select top 1 @PrcId=Prc_GIDNumer from cdn.PrcKarty where Prc_OptimaId=@Prc_GIDNumer
+
+
+if @FrsId&lt;0
+  select top 1
+        @ZatwNumer = PDZ_PrcNumer,
+        @Czas = CONVERT(VARCHAR, dateadd( second, PDZ_TSData,CONVERT(DATETIME,'1990-01-01',120)), 120)
+  from  CDN.PodzielnikZelem
+  where PDZ_FrSTyp=944 and PDZ_FrSNumer=@PrcId and PDZ_PdNNumer=@PIN_GIDNumer
+  order by PDZ_Lp desc
+else
+  select top 1
+        @ZatwNumer = PDZ_PrcNumer,
+        @Czas = CONVERT(VARCHAR, dateadd( second, PDZ_TSData,CONVERT(DATETIME,'1990-01-01',120)), 120)
+  from  CDN.PodzielnikZelem, CDN.FrmStruktura
+  where FRS_GIDTyp=-4272 and PDZ_FrSFirma=FRS_GIDFirma and PDZ_FrSNumer=FRS_GIDNumer and PDZ_FrSLp=FRS_GIDLp
+        and FRS_OptimaId=@FrsId and PDZ_PdNNumer=@PIN_GIDNumer
+  order by PDZ_Lp desc
+
+if @ZatwNumer is null
+  begin
+      set @Zatwierdzony = 0
+      select '' as Zatwierdzil,0 as Czas
+  end
+else
+  begin
+    set @Zatwierdzony = 1
+      select LTrim(Prc_Imie1+' '+Prc_Nazwisko) as Zatwierdzil, @Czas as Czas
+      from CDN.PrcKarty
+      where Prc_GIDNumer=@ZatwNumer
+  end
+
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[EP_PodzielnikUsunLinie]"></A><PRE>
+          <FONT SIZE="2"><I>/* [EP_PodzielnikUsunLinie] */</I><BR>
+CREATE procedure [CDN].[EP_PodzielnikUsunLinie] 
+@PrcId int,
+@PDNumer int,
+@LID int
+as
+	declare @PrcNumer int
+
+	select @PrcNumer=p.Prc_GIDNumer
+	from cdn.PrcKarty p
+	where p.Prc_OptimaId=@PrcId
+
+	if @PrcNumer is null
+	begin
+	    raiserror('Brak pracownika o wskazanym id.',16,1)
+	    return
+	end
+
+	exec cdn.PodzielnikUsunLinie @PrcNumer, @PDNumer, @LID, 0
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[EP_Podzielnik_ZatwierdzPodzielnikCentra]"></A><PRE>
+          <FONT SIZE="2"><I>/* [EP_Podzielnik_ZatwierdzPodzielnikCentra] */</I><BR>
+CREATE procedure [CDN].[EP_Podzielnik_ZatwierdzPodzielnikCentra]
+@KierownikId int,
+@FrsId int,
+@PodzielnikNumer int,
+@Zatwierdz bit
+as
+declare @KierownikNumer int
+declare @FrsNumer int
+
+if @FrsId = 3
+    set @FrsNumer = 3
+else
+    select top 1 @FrsNumer=FRS_GIDNumer from cdn.FrmStruktura
+    where FRS_OptimaId=@FrsId and FRS_Warstwa = 3 and FRS_GIDTyp = -4272 and FRS_StrTyp in(1000,1001) 
+
+if @FrsNumer is null
+begin
+    raiserror('Brak centrum o wskazanym id.',16,1)
+    return
+end
+
+
+select @KierownikNumer=p.Prc_GIDNumer from cdn.PrcKarty p
+where p.Prc_OptimaId=@KierownikId
+
+if @KierownikNumer is null
+begin
+    raiserror('Brak pracownika o wskazanym id.',16,1)
+    return
+end
+
+
+exec CDN.PodzielnikZatwierdz @KierownikNumer, @PodzielnikNumer  , @FrsNumer, @Zatwierdz
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[EP_Podzielnik_ZatwierdzPodzielnikPracownika]"></A><PRE>
+          <FONT SIZE="2"><I>/* [EP_Podzielnik_ZatwierdzPodzielnikPracownika] */</I><BR>
+CREATE procedure [CDN].[EP_Podzielnik_ZatwierdzPodzielnikPracownika]
+@KierownikId int,
+@PracownikId int,
+@PodzielnikNumer int,
+@Zatwierdz bit
+as
+
+declare @KierownikNumer int
+declare @PracownikNumer int
+declare @GIDTyp int
+
+select @KierownikNumer=p.Prc_GIDNumer from cdn.PrcKarty p
+where p.Prc_OptimaId=@KierownikId
+
+if @KierownikNumer is null
+begin
+    raiserror('Brak kierownika o wskazanym id.',16,1)
+    return
+end
+
+select @PracownikNumer=p.Prc_GIDNumer
+from cdn.PrcKarty p
+where p.Prc_OptimaId=@PracownikId
+
+if @PracownikNumer is null
+begin
+    raiserror('Brak pracownika o wskazanym id.',16,1)
+    return
+end
+
+
+
+select @GIDTyp=FRS_GIDTyp
+from cdn.FrmStruktura
+where FRS_GIDNumer=@PracownikNumer
+
+declare @FrsId int 
+select top 1 @FrsId=FrS_Id from CDN.FrmStruktura   
+inner join CDN.PodzielnikNag on PdN_GIDNumer=@PodzielnikNumer  
+where FrS_Warstwa=3 and FrS_GIDTyp=944  and FrS_GIDNumer=@PracownikNumer		--pracownikID - GIDNumer
+and (FrS_AktywnyOd&lt;=PdN_DataDo or PdN_DataDo=0)   
+and (PdN_Data&lt;=FrS_AktywnyDo or FrS_AktywnyDo=0) 
+
+exec CDN.PodzielnikZatwierdz @KierownikNumer, @PodzielnikNumer , @FrsId, @Zatwierdz
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[EP_Podzielnik_PobierzWymiaryDlaLinii]"></A><PRE>
+          <FONT SIZE="2"><I>/* [EP_Podzielnik_PobierzWymiaryDlaLinii] */</I><BR>
+create procedure [CDN].[EP_Podzielnik_PobierzWymiaryDlaLinii]
+@PdzId int,
+@Lid int 
+as
+select PDS_WMRID as WymiarId, PDS_TypWymiaru as TypWymiaru from cdn.PodzielnikSElem where PDS_GIDNumer=@PdzId and PDS_GIDLp=@Lid
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[EP_Podzielnik_PobierzElement]"></A><PRE>
+          <FONT SIZE="2"><I>/* [EP_Podzielnik_PobierzElement] */</I><BR>
+create procedure [CDN].[EP_Podzielnik_PobierzElement] 
+@PrcId int,
+@Pdz_Id int
+as
+declare @PrcOptimaId int
+select @PrcOptimaId=Prc_GIDNumer from cdn.PrcKarty where Prc_OptimaId=@PrcId
+
+select pde_gidlp as Lid, PDE_Dni as Dni, PDE_Procent as Procent from cdn.PodzielnikElem where PDE_GIDNumer=@Pdz_Id and PDE_PrcNumer=@PrcOptimaId
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[EP_Podzielnik_PobierzDefinicje]"></A><PRE>
+          <FONT SIZE="2"><I>/* [EP_Podzielnik_PobierzDefinicje] */</I><BR>
+create procedure [CDN].[EP_Podzielnik_PobierzDefinicje]
+as
+
+CREATE TABLE #tmpDefinicja
+(
+   Kolumna INT,
+   WmrId INT,
+   WmrNazwa varchar(max),
+   TypWymiaru INT
+)
+
+CREATE TABLE #tmpWymiar
+(
+   WmrId INT,
+   WmrNazwa varchar(max),
+   WmrOpis varchar(max),
+   TypWymiaru INT,
+   SQL INT
+)
+
+INSERT INTO #tmpDefinicja
+exec [CDN].[EP_Podzielnik_PodzielnikDefinicja]
+
+declare @date int
+select @date=convert(decimal(12,0),getdate())
+
+
+if exists (select Kolumna from #tmpDefinicja where Kolumna=1)
+	INSERT INTO #tmpWymiar
+	exec [CDN].[PodzielnikListaElementow] 1,@date
+if exists (select Kolumna from #tmpDefinicja where Kolumna=2)
+	INSERT INTO #tmpWymiar
+	exec [CDN].[PodzielnikListaElementow] 2,@date
+if exists (select Kolumna from #tmpDefinicja where Kolumna=3)
+	INSERT INTO #tmpWymiar
+	exec [CDN].[PodzielnikListaElementow] 3,@date
+if exists (select Kolumna from #tmpDefinicja where Kolumna=4)
+	INSERT INTO #tmpWymiar
+	exec [CDN].[PodzielnikListaElementow] 4,@date
+if exists (select Kolumna from #tmpDefinicja where Kolumna=5)
+	INSERT INTO #tmpWymiar
+	exec [CDN].[PodzielnikListaElementow] 5, @date
+
+if exists (select Kolumna from #tmpDefinicja where Kolumna=6)
+	INSERT INTO #tmpWymiar
+	exec [CDN].[PodzielnikListaElementow] 6, @date
+
+	if exists (select Kolumna from #tmpDefinicja where Kolumna=7)
+	INSERT INTO #tmpWymiar
+	exec [CDN].[PodzielnikListaElementow] 7, @date
+
+	if exists (select Kolumna from #tmpDefinicja where Kolumna=8)
+	INSERT INTO #tmpWymiar
+	exec [CDN].[PodzielnikListaElementow] 8, @date
+
+	if exists (select Kolumna from #tmpDefinicja where Kolumna=9)
+	INSERT INTO #tmpWymiar
+	exec [CDN].[PodzielnikListaElementow] 9, @date
+
+	if exists (select Kolumna from #tmpDefinicja where Kolumna=10)
+	INSERT INTO #tmpWymiar
+	exec [CDN].[PodzielnikListaElementow] 10, @date
+
+
+
+select tw.WmrId ElementId, tw.WmrNazwa Nazwa,WmrOpis Opis, tw.TypWymiaru, case 
+	when w.WMR_ParID is null then (select top 1 td2.WmrNazwa from #tmpDefinicja td2 where td2.TypWymiaru=tw.TypWymiaru)
+	else  td.WmrNazwa end WymiarNazwa, 
+
+	case 
+	when w.WMR_ParID is null then (select top 1 td2.WmrId from #tmpDefinicja td2 where td2.TypWymiaru=tw.TypWymiaru)
+	else  td.WmrId end WymiarId, 
+
+	case
+	when w.WMR_ParID is null then (select top 1 t.Kolumna from #tmpDefinicja t where t.TypWymiaru=tw.TypWymiaru)
+	else  td.Kolumna end KolumnaId
+from #tmpWymiar tw
+left join cdn.Wymiary w on w.WMR_ID=tw.WmrId and tw.TypWymiaru=0 
+left join #tmpDefinicja td  on td.WmrId=w.WMR_ParID
+where tw.WmrId&gt;0
+
+drop table #tmpDefinicja
+drop table #tmpWymiar
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[EP_Podzielnik_OkreslWymiarLinii]"></A><PRE>
+          <FONT SIZE="2"><I>/* [EP_Podzielnik_OkreslWymiarLinii] */</I><BR>
+create procedure [CDN].[EP_Podzielnik_OkreslWymiarLinii]
+@KierownikKonto int,
+@PrcKonto int,
+@PDNumer int,
+@Lid int,
+@WmrId int,
+@WmrNazwa varchar(max),
+@WmrTyp int
+as
+begin
+	declare @PrcNumer int
+	declare @KierownikNumer int
+
+	select @KierownikNumer=p.Prc_GIDNumer
+	from cdn.PrcKarty p
+	where p.Prc_OptimaId=@KierownikKonto
+
+	select @PrcNumer=p.Prc_GIDNumer
+	from cdn.PrcKarty p
+	where p.Prc_OptimaId=@PrcKonto
+
+	exec CDN.PodzielnikOkreslWymiarLinii @KierownikNumer, @PDNumer, @PrcNumer, @Lid,0, @WmrId, @WmrNazwa, @WmrTyp, 0
+end
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="#tmpDefinicja"></A><PRE>
+          <FONT SIZE="2"><I>/* #tmpDefinicja */</I><BR>
+CREATE TABLE #tmpDefinicja
+(
+   Kolumna INT,
+   WmrId INT,
+   WmrNazwa varchar(max),
+   TypWymiaru INT
+)
+
+CREATE TABLE #tmpWymiar
+(
+   WmrId INT,
+   WmrNazwa varchar(max),
+   WmrOpis varchar(max),
+   TypWymiaru INT,
+   SQL INT
+)
+
+CREATE TABLE #tmpWymiarDefinicja
+(
+   WId INT,
+   WTypWymiaru INT,
+   OWSLp SMALLINT   
+)
+
+INSERT INTO #tmpDefinicja
+exec [CDN].[EP_Podzielnik_PodzielnikDefinicja]
+
+INSERT INTO #tmpWymiarDefinicja
+select OWS_WMRID,OWS_TypWymiaru,OWS_GIDLp from cdn.OpisWymSElem where OWS_GIDTyp = 4320 and OWS_GIDNumer = 75 order by OWS_GIDLp;
+
+declare @date int
+select @date=convert(decimal(12,0),getdate())
+
+
+if exists (select Kolumna from #tmpDefinicja where Kolumna=1)
+	INSERT INTO #tmpWymiar
+	exec [CDN].[PodzielnikListaElementow] 1,@date
+if exists (select Kolumna from #tmpDefinicja where Kolumna=2)
+	INSERT INTO #tmpWymiar
+	exec [CDN].[PodzielnikListaElementow] 2,@date
+if exists (select Kolumna from #tmpDefinicja where Kolumna=3)
+	INSERT INTO #tmpWymiar
+	exec [CDN].[PodzielnikListaElementow] 3,@date
+if exists (select Kolumna from #tmpDefinicja where Kolumna=4)
+	INSERT INTO #tmpWymiar
+	exec [CDN].[PodzielnikListaElementow] 4,@date
+if exists (select Kolumna from #tmpDefinicja where Kolumna=5)
+	INSERT INTO #tmpWymiar
+	exec [CDN].[PodzielnikListaElementow] 5, @date
+
+if exists (select Kolumna from #tmpDefinicja where Kolumna=6)
+	INSERT INTO #tmpWymiar
+	exec [CDN].[PodzielnikListaElementow] 6, @date
+
+	if exists (select Kolumna from #tmpDefinicja where Kolumna=7)
+	INSERT INTO #tmpWymiar
+	exec [CDN].[PodzielnikListaElementow] 7, @date
+
+	if exists (select Kolumna from #tmpDefinicja where Kolumna=8)
+	INSERT INTO #tmpWymiar
+	exec [CDN].[PodzielnikListaElementow] 8, @date
+
+	if exists (select Kolumna from #tmpDefinicja where Kolumna=9)
+	INSERT INTO #tmpWymiar
+	exec [CDN].[PodzielnikListaElementow] 9, @date
+
+	if exists (select Kolumna from #tmpDefinicja where Kolumna=10)
+	INSERT INTO #tmpWymiar
+	exec [CDN].[PodzielnikListaElementow] 10, @date
+
+	delete from #tmpWymiar where TypWymiaru in (select twd.WTypWymiaru from #tmpWymiarDefinicja twd)
+	                          and WmrID not in (select twd2.WId from #tmpWymiarDefinicja twd2 where twd2.WTypWymiaru = TypWymiaru)
+	
+
+select tw.WmrId ElementId, tw.WmrNazwa Nazwa,WmrOpis Opis, tw.TypWymiaru,  td.WmrNazwa WymiarNazwa, td.WmrId WymiarId, td.Kolumna KolumnaId
+,twdef.OWSLp WierszID
+from 
+#tmpWymiar tw
+left join #tmpDefinicja td on td.TypWymiaru=tw.TypWymiaru  
+left join cdn.wymiary wm on wm.WMR_ID = tw.WmrId and wm.WMR_RootID = td.WmrId and wm.WMR_EPrac = 1 and wm.WMR_Archiwalny = 0
+left join #tmpWymiarDefinicja twdef on twdef.WId = tw.WmrId and twdef.WTypWymiaru = tw.TypWymiaru
+where tw.WmrId&gt;0 and tw.SQL = 0
+      and isnull(twdef.OWSLp,0) &gt; 0 
+and (
+(case when wm.WMR_ID is null and tw.TypWymiaru not in (1,2,3,4,5) then 0 else (case when wm.WMR_ID is not null then wm.WMR_ID else null end) end) is null 
+and tw.TypWymiaru in (1,2,3,4,5)
+or
+(case when wm.WMR_ID is null and tw.TypWymiaru not in (1,2,3,4,5) then 0 else (case when wm.WMR_ID is not null then wm.WMR_ID else null end) end)&lt;&gt; 0 
+and tw.TypWymiaru not in (1,2,3,4,5)
+)
+drop table #tmpDefinicja
+drop table #tmpWymiar
+drop table #tmpWymiarDefinicja
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[EP_Podzielnik_PodzielnikDefinicja]"></A><PRE>
+          <FONT SIZE="2"><I>/* [EP_Podzielnik_PodzielnikDefinicja] */</I><BR>
+create procedure [CDN].[EP_Podzielnik_PodzielnikDefinicja]  as
+begin
+set nocount on
+
+declare @DefId int
+declare @NrWymiaru int
+declare @KategoriaFin smallint
+declare @Centrum smallint
+declare @Lokalizacja smallint
+declare @KontrahentDoc smallint
+declare @Projekt smallint
+declare @PustaLista smallint
+select
+  @DefId=Dok_Id,
+  @KategoriaFin=Dok_KategoriaFin,
+  @Centrum=Dok_Centrum,
+  @Lokalizacja=Dok_Lokalizacja,
+  @KontrahentDoc=Dok_KontrahentDoc,
+  @Projekt=Dok_Projekt,
+  @PustaLista=Dok_PustaLista
+from cdn.DokDefinicje
+where Dok_GIDTyp=7168 and Dok_FrSId=1
+
+if @DefId is null
+begin
+  raiserror('Błąd pobrania definicji dokumentu podzielnika.', 16, 1)
+  return
+end
+create table #pdndefinicja (Kolumna int IDENTITY (1,1) NOT NULL, WmrId int NOT NULL, WmrNazwa varchar(31) COLLATE Polish_CI_AS NOT NULL DEFAULT '', TypWymiaru smallint NOT NULL DEFAULT 0)
+
+if @KategoriaFin = 1
+  insert into #pdndefinicja (WmrId, WmrNazwa, TypWymiaru) select 10001, 'Kategoria', 4
+if @Centrum = 1
+  insert into #pdndefinicja (WmrId, WmrNazwa, TypWymiaru) select 10002, 'Centrum', 1
+if @Lokalizacja = 1
+  insert into #pdndefinicja (WmrId, WmrNazwa, TypWymiaru) select 10003, 'Lokalizacja', 2
+if @KontrahentDoc = 1
+  insert into #pdndefinicja (WmrId, WmrNazwa, TypWymiaru) select 10004, 'Kontr. docelowy', 3
+if @Projekt = 1
+  insert into #pdndefinicja (WmrId, WmrNazwa, TypWymiaru) select 10005, 'Projekt', 5
+if exists (select DoW_Id from cdn.DokWymiary where DoW_Id=@DefId)
+  insert into #pdndefinicja (WmrId,WmrNazwa) select DoW_WymID, Wmr_Nazwa from cdn.DokWymiary dk join CDN.Wymiary w on dk.DoW_WymID = w.WMR_ID where dow_id=@DefId and WMR_EPrac = 1 and WMR_Archiwalny = 0 order by DoW_WymID
+else if @PustaLista=0
+  insert into #pdndefinicja (WmrId, WmrNazwa) select Wmr_Id, WMR_Nazwa from cdn.Wymiary where Wmr_ParId=0 and Wmr_typ = 1 and Wmr_Kategoria=0  and WMR_EPrac = 1 and WMR_Archiwalny = 0 order by Wmr_Id
+
+select Kolumna, WmrId, WmrNazwa, TypWymiaru from #pdndefinicja
+
+set nocount off
+end
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[EP_Podzielnik_DodajLinie]"></A><PRE>
+          <FONT SIZE="2"><I>/* [EP_Podzielnik_DodajLinie] */</I><BR>
+create procedure [CDN].[EP_Podzielnik_DodajLinie]( @KierownikOptimaID int, @PDN_GIDNumer int, @PracownikOptimaID int, @WewTrans smallint, @lid INT output, @Procent decimal(7,4), @Dni decimal(7,4)=0)  as
+begin
+set nocount on
+declare @PRC_GIDNumer int, @Pracownik int;
+
+select @PRC_GIDNumer = prc_gidnumer from cdn.prckarty where Prc_OptimaId = @KierownikOptimaID
+if @PRC_GIDNumer is null
+begin
+  raiserror('Brak pracownika o wskazanym numerze.', 16, 1)
+  return
+end  
+
+select @Pracownik = prc_gidnumer from cdn.prckarty where Prc_OptimaId = @PracownikOptimaID
+if @Pracownik is null
+begin
+  raiserror('Brak pracownika o wskazanym numerze.', 16, 1)
+  return
+end  
+
+
+if not exists (select PdN_GIDNumer from cdn.PodzielnikNag where PdN_GIDNumer=@PDN_GIDNumer)
+begin
+  raiserror('Brak podzielnika o wskazanym numerze.', 16, 1)
+  return
+end
+
+if @PRC_GIDNumer=0
+  execute CDN.PrcUstalGidWgSID @PRC_GIDNumer output, ''
+
+if @PRC_GIDNumer=0
+begin
+  raiserror('Nieprawidłowy identyfikator pracownika.', 16, 1)
+  return
+end
+
+declare @GIDFirma int
+set @GIDFirma = (select top 1 Frm_GIDFirma from cdn.Firma)
+if @GIDFirma = 0 or @GIDFirma is null
+begin
+  raiserror('Błąd pobrania identyfikatora GIDFirma z pieczątki firmy.', 16, 1)
+  return
+end
+
+if (@PRC_GIDNumer&lt;&gt;@Pracownik)
+begin
+  declare @Podlegly int
+  declare @PinData int
+  declare @PinDataDo int
+  select @PinData=PdN_Data,@PinDataDo=PdN_DataDo from cdn.PodzielnikNag where PdN_GIDNumer=@PDN_GIDNumer
+  if @PinData is null
+    set @PinData=0
+  if @PinDataDo is null
+    set @PinDataDo=0
+  if exists(select RolaId from CDN.FrSPodlega( @PRC_GIDNumer,944,@Pracownik,@PinData,@PinDataDo) join cdn.roleprawa on rlp_rolid=rolaid where rlp_praid=8)
+    set @Podlegly = 1
+  else
+    set @Podlegly = 0
+
+  if @Podlegly=0
+  begin
+    raiserror('Brak uprawnień do wskazanego pracownika.', 16, 1)
+    return
+  end
+end
+
+if @WewTrans &gt; 0 begin transaction DodajLinie
+
+declare @Zatwierdzony smallint
+exec CDN.PodzielnikCzyZatwierdzony @PDN_GIDNumer, -1, @Pracownik, @Zatwierdzony output
+if @Zatwierdzony&gt;0
+begin
+  if @WewTrans &gt; 0 rollback transaction DodajLinie  
+  raiserror('Podzielnik jest zatwierdzony.', 16, 1)
+  return
+end
+
+exec CDN.PodzielnikLicznikCzytaj @Pdn_GIDNumer,@Pracownik,@WewTrans,1
+if @@ERROR&lt;&gt;0
+begin      
+	 if @WewTrans &gt; 0 rollback transaction DodajLinie	   	   
+	 return
+end
+
+declare @MaxLoop int
+declare @i int
+
+insert into cdn.PodzielnikElem (PDE_GIDTyp, PDE_GIDFirma, PDE_GIDNumer, PDE_PrcTyp, PDE_PrcFirma, PDE_PrcNumer, PDE_PrcLp, PDE_Dni, PDE_Procent, PDE_Kierunek, PDE_Typ, PDE_Zatwierdzono)
+values  (7168, @GIDFirma, @PDN_GIDNumer, 944, @GIDFirma, @Pracownik, 0, 0, 0, 0, 0, 0 )
+  if not @@error&lt;&gt;0	  
+      select @lid=SCOPE_IDENTITY()			  
+  else
+	  begin
+	      if @WewTrans &gt; 0 rollback transaction DodajLinie		  
+		  raiserror('Błąd dodania nowej linii podzielnika',16,1)
+	      return
+	  end  
+
+if isnull(@Procent,0) = 0
+  begin
+    set @Procent = 100-(select sum(PDE_Procent) from cdn.PodzielnikElem
+        where pde_gidtyp=7168 and pde_gidnumer=@PDN_GIDNumer and pde_prctyp=944 and pde_prcnumer=@Pracownik)
+
+    if @Procent &lt; 0
+      set @Procent = 0
+  end
+
+exec CDN.PodzielnikOkreslDniProcent @Pracownik, @PDN_GIDNumer, @Pracownik, @LID, @Procent, @Dni, @WewTrans
+if @@ERROR&lt;&gt;0
+	begin      
+		 if @WewTrans &gt; 0 rollback transaction DodajLinie	   	   
+		 return
+	end
+else
+    if @WewTrans &gt; 0 commit transaction DodajLinie
+
+select Pde_GIDLp as LID, Pde_Procent as Procent, Pde_Dni as Dni,PDE_GIDNumer,PDE_PrcNumer
+from cdn.PodzielnikElem where Pde_GIDNumer=@PDN_GIDNumer and Pde_GIDLp=@lid
+
+set nocount off
+end
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[EP_Podzielnik_PobierzListePodzielnikNag]"></A><PRE>
+          <FONT SIZE="2"><I>/* [EP_Podzielnik_PobierzListePodzielnikNag] */</I><BR>
+create procedure [CDN].[EP_Podzielnik_PobierzListePodzielnikNag]  
+@PrcID int,
+@PdnID int = 0,
+@lKierownik tinyint = 0 --jesli 1 wtedy pobierać też podzielniki prc podleglych
+as
+begin
+Declare @PrcGidNumer int
+Declare @Data int 
+set nocount on
+
+set @PrcGidNumer = isnull((select Prc_GIDNumer from cdn.PrcKarty where Prc_OptimaId = @PrcID),0)
+
+if @PrcGidNumer = 0
+begin
+  raiserror('Nie istnieje pracownik o przekazanym identyfikatorze.', 16, 1) 
+  return
+end
+
+set @Data = DateDiff(d, convert(datetime,'28-12-1800',105),getdate()) 
+
+if @PdnID = 0 and @lKierownik = 0
+	select PDP_PrcNumer,PDN_GIDNumer,PDN_Opis,CONVERT(varchar(10),DATEADD(day,ISNULL(PDN_Data,0),
+		CONVERT(datetime,'1800-12-28',120)),120)as Data,
+		CONVERT(varchar(10),DATEADD(day,ISNULL(PDN_DataDo,0),
+		CONVERT(datetime,'1800-12-28',120)),120)as DataDo,
+		PDN_DniRobocze,PDN_JM from cdn.PodzielnikPrac left join cdn.PodzielnikNag on PDP_PdnNumer = PDN_GIDNumer
+	where PDP_PrcNumer = @PrcGidNumer and not (PDN_Udostepniaj = 0 and PDN_Zatwierdzono = 1 or PDN_Udostepniaj = 2)
+	and DateDiff(d, convert(datetime,'28-12-1800',105),getdate() ) between PDN_Data and PDN_DataDo
+else if @lKierownik &lt;&gt; 0
+     select PDP_PrcNumer,PDN_GIDNumer,PDN_Opis,CONVERT(varchar(10),DATEADD(day,ISNULL(PDN_Data,0),
+		CONVERT(datetime,'1800-12-28',120)),120)as Data,
+		CONVERT(varchar(10),DATEADD(day,ISNULL(PDN_DataDo,0),
+		CONVERT(datetime,'1800-12-28',120)),120)as DataDo,
+		PDN_DniRobocze,PDN_JM from cdn.PodzielnikPrac left join cdn.PodzielnikNag on PDP_PdnNumer = PDN_GIDNumer
+	where PDP_PrcNumer in(
+	    select d.FrS_GIDNumer from
+			(select PrR_FrSId from cdn.prcrole left join cdn.Role on PrR_RolId = Rol_Id
+                where PrR_PrcNumer = @PrcGidNumer and Rol_OptimaKierownik = 0--(Rol_OptimaKierownik = 1 or Rol_OptimaKierownik = 2)
+                 and (PrR_DataOd&lt;=@Data or PrR_DataOd=0)            
+                 and (PrR_DataDo&gt;=@Data or PrR_DataDo=0) ) as t
+			cross apply 
+			CDN.FrsDrzewo(3,-4272,t.prr_frsid,78718,0,0) d 
+			where d.FrS_GIDTyp = 944 
+	) 
+	and not (PDN_Udostepniaj = 0 and PDN_Zatwierdzono = 1 or PDN_Udostepniaj = 2)
+	and DateDiff(d, convert(datetime,'28-12-1800',105),getdate() ) between PDN_Data and PDN_DataDo 
+else
+    select PDP_PrcNumer,PDN_GIDNumer,PDN_Opis,CONVERT(varchar(10),DATEADD(day,ISNULL(PDN_Data,0),
+		CONVERT(datetime,'1800-12-28',120)),120)as Data,
+		CONVERT(varchar(10),DATEADD(day,ISNULL(PDN_DataDo,0),
+		CONVERT(datetime,'1800-12-28',120)),120)as DataDo,
+		PDN_DniRobocze,PDN_JM from cdn.PodzielnikPrac left join cdn.PodzielnikNag on PDP_PdnNumer = PDN_GIDNumer
+	where PDP_PrcNumer = @PrcGidNumer and not (PDN_Udostepniaj = 0 and PDN_Zatwierdzono = 1 or PDN_Udostepniaj = 2)
+	and PDN_GIDNumer = @PdnID 
+	and DateDiff(d, convert(datetime,'28-12-1800',105),getdate() ) between PDN_Data and PDN_DataDo
+
+set nocount off
+end
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[EP_Podzielnik_PobierzListeElemWymiaryZwykle]"></A><PRE>
+          <FONT SIZE="2"><I>/* [EP_Podzielnik_PobierzListeElemWymiaryZwykle] */</I><BR>
+CREATE FUNCTION [CDN].[EP_Podzielnik_PobierzListeElemWymiaryZwykle]
+(@PrcID INT, @PdnID INT)
+RETURNS 
+    @WymiaryZwykle TABLE (
+        Lp         INT         ,
+        Root1Nazwa VARCHAR (30),
+        Wmr1       INT         ,
+        Wmr1Nazwa  VARCHAR (max),
+        Root2Nazwa VARCHAR (30),
+        Wmr2       INT         ,
+        Wmr2Nazwa  VARCHAR (max),
+        Root3Nazwa VARCHAR (30),
+        Wmr3       INT         ,
+        Wmr3Nazwa  VARCHAR (max),
+        Root4Nazwa VARCHAR (30),
+        Wmr4       INT         ,
+        Wmr4Nazwa  VARCHAR (max),
+        Root5Nazwa VARCHAR (30),
+        Wmr5       INT         ,
+        Wmr5Nazwa  VARCHAR (max),
+		Root6Nazwa VARCHAR (30),
+        Wmr6       INT         ,
+        Wmr6Nazwa  VARCHAR (max),
+		Root7Nazwa VARCHAR (30),
+        Wmr7       INT         ,
+        Wmr7Nazwa  VARCHAR (max),
+		Root8Nazwa VARCHAR (30),
+        Wmr8       INT         ,
+        Wmr8Nazwa  VARCHAR (max),
+		Root9Nazwa VARCHAR (30),
+        Wmr9       INT         ,
+        Wmr9Nazwa  VARCHAR (max),
+		Root10Nazwa VARCHAR (30),
+        Wmr10       INT         ,
+        Wmr10Nazwa  VARCHAR (max)
+		)
+
+
+
+
+AS
+BEGIN
+    DECLARE @Lp AS INT, 
+            @WmrID AS INT, 
+            @Wmr1 AS INT = 0, 
+            @Wmr2 AS INT = 0, 
+            @Wmr3 AS INT = 0, 
+            @Wmr4 AS INT = 0, 
+            @Wmr5 AS INT = 0, 
+			@Wmr6 AS INT = 0, 
+			@Wmr7 AS INT = 0, 
+			@Wmr8 AS INT = 0, 
+			@Wmr9 AS INT = 0, 
+			@Wmr10 AS INT = 0, 
+            @TempLp AS INT, 
+            @kol AS INT;
+    DECLARE @WmrNazwa AS VARCHAR (max);
+    DECLARE @PrcNumer AS INT;
+    DECLARE @WymKol AS INT, 
+            @rootID AS INT, 
+            @rootNazwa AS VARCHAR (30);
+    DECLARE @kolMin AS INT;
+    DECLARE @DefId AS INT;
+    DECLARE @NrWymiaru AS INT;
+    DECLARE @KategoriaFin AS SMALLINT;
+    DECLARE @Centrum AS SMALLINT;
+    DECLARE @Lokalizacja AS SMALLINT;
+    DECLARE @KontrahentDoc AS SMALLINT;
+    DECLARE @Projekt AS SMALLINT;
+    DECLARE @PustaLista AS SMALLINT;
+    --pobranie parametrów z definicji dokumentu podzielnika
+    SELECT @DefId = Dok_Id,
+           @KategoriaFin = Dok_KategoriaFin,
+           @Centrum = Dok_Centrum,
+           @Lokalizacja = Dok_Lokalizacja,
+           @KontrahentDoc = Dok_KontrahentDoc,
+           @Projekt = Dok_Projekt,
+           @PustaLista = Dok_PustaLista
+    FROM   cdn.DokDefinicje
+    WHERE  Dok_GIDTyp = 7168
+           AND Dok_FrSId = 1;
+    DECLARE @kolNr AS INT;
+    SET @kolNr = 0;
+    IF @PustaLista = 0
+        BEGIN
+            IF @KategoriaFin = 1
+                SET @kolNr += 1;
+            IF @Centrum = 1
+                SET @kolNr += 1;
+            IF @Lokalizacja = 1
+                SET @kolNr += 1;
+            IF @KontrahentDoc = 1
+                SET @kolNr += 1;
+            IF @Projekt = 1
+                SET @kolNr += 1;
+        END
+    SET @PrcNumer = isnull((SELECT Prc_GIDNumer
+                            FROM   cdn.prckarty
+                            WHERE  Prc_OptimaId = @PrcID), 0);
+    DECLARE WymiaryZwykle CURSOR FAST_FORWARD READ_ONLY
+        FOR 
+		
+		with WymSciezka as (
+				select cast(w.WMR_Nazwa as varchar(max))as Nazwa,w.WMR_ID as Wmrid,w.WMR_ParID as WmrParid,w.WMR_RootID as WmrRootID, 1 as Poziom from CDN.Wymiary w 
+				where w.WMR_Kategoria = 0 and w.WMR_ParID =0 and w.WMR_EPrac = 1 and w.WMR_Archiwalny = 0
+				UNION ALL
+				select cast((s.Nazwa+'.'+d.WMR_Nazwa) as varchar(max)) as Nazwa,d.wmr_id,d.WMR_ParID as WmrParid,d.WMR_RootID as WmrRootID,s.Poziom+1 
+				from WymSciezka s join CDN.Wymiary d on s.Wmrid =d.WMR_ParID
+				where d.WMR_Kategoria = 0 and d.WMR_EPrac = 1 and d.WMR_Archiwalny = 0
+		)		
+		SELECT   PDS_GIDLp,
+                     PDS_WMRID,
+                     wmr_rootid,
+                     CASE 
+                     WHEN WMR_Typ = 2
+                               OR WMR_Typ = 4 THEN PDS_Element ELSE ws.Nazwa--r.WMR_Nazwa 
+                     END AS Nazwa,
+                     Kolumny.kol AS kolumna,
+                     Kolumny.WMR_Nazwa AS RootNazwa
+            FROM     cdn.podzielnikelem
+                     INNER JOIN
+                     cdn.PodzielnikSElem
+                     ON PDE_GIDNumer = PDS_GIDNumer
+                        AND PDE_GIDLp = PDS_GIDLp
+                     INNER JOIN
+                     cdn.Wymiary AS r
+                     ON r.WMR_ID = PDS_WMRID
+                     INNER JOIN
+                     (SELECT ROW_NUMBER() OVER ( ORDER BY wmr_id) + @kolNr AS Kol,
+                             rw.wmr_id,
+                             rw.WMR_Nazwa
+                      FROM   cdn.Wymiary AS rw
+                      WHERE  rw.Wmr_ParId = 0 AND rw.WMR_Archiwalny = 0
+                             AND rw.Wmr_Kategoria = 0) AS Kolumny
+                     ON kolumny.WMR_ID = r.WMR_RootID
+					 INNER JOIN
+					 WymSciezka	ws 				    					 					 
+					 on PDS_WMRID = ws.Wmrid
+            WHERE    pde_gidnumer = @PdnID
+                     AND PDE_PrcNumer = @PrcNumer
+                     AND PDS_TypWymiaru = 0
+            ORDER BY PDS_GIDLp;
+
+    OPEN WymiaryZwykle;
+    SET @TempLp = 0;
+    SET @kolMin = @kolNr + 1;
+    FETCH NEXT FROM WymiaryZwykle INTO @lp, @WmrID, @rootID, @WmrNazwa, @WymKol, @rootNazwa;
+    WHILE @@FETCH_STATUS = 0
+        BEGIN
+            IF @TempLp &lt;&gt; @lp
+                BEGIN
+                    SET @TempLp = 1;
+                    IF @WymKol = @kolMin
+                        INSERT  INTO @WymiaryZwykle (Lp, Root1Nazwa, Root2Nazwa, Root3Nazwa, Root4Nazwa, Root5Nazwa, Root6Nazwa, Root7Nazwa,Root8Nazwa,Root9Nazwa,Root10Nazwa,Wmr1, Wmr2, Wmr3, Wmr4, Wmr5, Wmr6,Wmr7,Wmr8,Wmr9,Wmr10,Wmr1Nazwa, Wmr2Nazwa, Wmr3Nazwa, Wmr4Nazwa, Wmr5Nazwa,Wmr6Nazwa,Wmr7Nazwa,Wmr8Nazwa,Wmr9Nazwa,Wmr10Nazwa)
+                        VALUES                     (@lp, @rootNazwa, '', '', '', '','','','','','', @WmrID, 0, 0, 0, 0,0,0,0,0,0,@WmrNazwa, '', '', '', '','','','','','');
+                    IF @WymKol = @kolMin + 1
+                        INSERT  INTO @WymiaryZwykle (Lp, Root1Nazwa, Root2Nazwa, Root3Nazwa, Root4Nazwa, Root5Nazwa, Root6Nazwa, Root7Nazwa,Root8Nazwa,Root9Nazwa,Root10Nazwa,Wmr1, Wmr2, Wmr3, Wmr4, Wmr5, Wmr6,Wmr7,Wmr8,Wmr9,Wmr10,Wmr1Nazwa, Wmr2Nazwa, Wmr3Nazwa, Wmr4Nazwa, Wmr5Nazwa,Wmr6Nazwa,Wmr7Nazwa,Wmr8Nazwa,Wmr9Nazwa,Wmr10Nazwa)
+                        VALUES                     (@lp, '', @rootNazwa, '', '', '','','','','','', 0, @WmrID, 0, 0, 0,0,0,0,0,0, '', @WmrNazwa, '', '', '','','','','','');
+                    IF @WymKol = @kolMin + 2
+                        INSERT  INTO @WymiaryZwykle (Lp, Root1Nazwa, Root2Nazwa, Root3Nazwa, Root4Nazwa, Root5Nazwa, Root6Nazwa, Root7Nazwa,Root8Nazwa,Root9Nazwa,Root10Nazwa,Wmr1, Wmr2, Wmr3, Wmr4, Wmr5, Wmr6,Wmr7,Wmr8,Wmr9,Wmr10,Wmr1Nazwa, Wmr2Nazwa, Wmr3Nazwa, Wmr4Nazwa, Wmr5Nazwa,Wmr6Nazwa,Wmr7Nazwa,Wmr8Nazwa,Wmr9Nazwa,Wmr10Nazwa)
+                        VALUES                     (@lp, '', '', @rootNazwa, '', '','','','','','', 0, 0, @WmrID, 0, 0,0,0,0,0,0, '', '', @WmrNazwa, '', '','','','','','');
+                    IF @WymKol = @kolMin + 3
+                        INSERT  INTO @WymiaryZwykle (Lp, Root1Nazwa, Root2Nazwa, Root3Nazwa, Root4Nazwa, Root5Nazwa, Root6Nazwa, Root7Nazwa,Root8Nazwa,Root9Nazwa,Root10Nazwa,Wmr1, Wmr2, Wmr3, Wmr4, Wmr5, Wmr6,Wmr7,Wmr8,Wmr9,Wmr10,Wmr1Nazwa, Wmr2Nazwa, Wmr3Nazwa, Wmr4Nazwa, Wmr5Nazwa,Wmr6Nazwa,Wmr7Nazwa,Wmr8Nazwa,Wmr9Nazwa,Wmr10Nazwa)
+                        VALUES                     (@lp, '', '', '', @rootNazwa, '','','','','','', 0, 0, 0, @WmrID, 0,0,0,0,0,0, '', '', '', @WmrNazwa, '','','','','','');
+                    IF @WymKol = @kolMin + 4
+                        INSERT  INTO @WymiaryZwykle (Lp, Root1Nazwa, Root2Nazwa, Root3Nazwa, Root4Nazwa, Root5Nazwa, Root6Nazwa, Root7Nazwa,Root8Nazwa,Root9Nazwa,Root10Nazwa,Wmr1, Wmr2, Wmr3, Wmr4, Wmr5, Wmr6,Wmr7,Wmr8,Wmr9,Wmr10,Wmr1Nazwa, Wmr2Nazwa, Wmr3Nazwa, Wmr4Nazwa, Wmr5Nazwa,Wmr6Nazwa,Wmr7Nazwa,Wmr8Nazwa,Wmr9Nazwa,Wmr10Nazwa)
+                        VALUES                     (@lp, '', '', '', '', @rootNazwa,'','','','','', 0, 0, 0, 0, @WmrID,0,0,0,0,0, '', '', '', '', @WmrNazwa,'','','','','');
+                    IF @WymKol = @kolMin + 5
+                        INSERT  INTO @WymiaryZwykle (Lp, Root1Nazwa, Root2Nazwa, Root3Nazwa, Root4Nazwa, Root5Nazwa, Root6Nazwa, Root7Nazwa,Root8Nazwa,Root9Nazwa,Root10Nazwa,Wmr1, Wmr2, Wmr3, Wmr4, Wmr5, Wmr6,Wmr7,Wmr8,Wmr9,Wmr10,Wmr1Nazwa, Wmr2Nazwa, Wmr3Nazwa, Wmr4Nazwa, Wmr5Nazwa,Wmr6Nazwa,Wmr7Nazwa,Wmr8Nazwa,Wmr9Nazwa,Wmr10Nazwa)
+                        VALUES                     (@lp, '', '', '', '', '',@rootNazwa,'','','','', 0, 0, 0, 0, 0,@WmrID,0,0,0,0, '', '', '', '', '',@WmrNazwa,'','','','');
+				    IF @WymKol = @kolMin + 6
+                        INSERT  INTO @WymiaryZwykle (Lp, Root1Nazwa, Root2Nazwa, Root3Nazwa, Root4Nazwa, Root5Nazwa, Root6Nazwa, Root7Nazwa,Root8Nazwa,Root9Nazwa,Root10Nazwa,Wmr1, Wmr2, Wmr3, Wmr4, Wmr5, Wmr6,Wmr7,Wmr8,Wmr9,Wmr10,Wmr1Nazwa, Wmr2Nazwa, Wmr3Nazwa, Wmr4Nazwa, Wmr5Nazwa,Wmr6Nazwa,Wmr7Nazwa,Wmr8Nazwa,Wmr9Nazwa,Wmr10Nazwa)
+                        VALUES                     (@lp, '', '', '', '', '','',@rootNazwa,'','','', 0, 0, 0, 0, 0,0,@WmrID,0,0,0, '', '', '', '', '','',@WmrNazwa,'','','');
+					IF @WymKol = @kolMin + 7
+                        INSERT  INTO @WymiaryZwykle (Lp, Root1Nazwa, Root2Nazwa, Root3Nazwa, Root4Nazwa, Root5Nazwa, Root6Nazwa, Root7Nazwa,Root8Nazwa,Root9Nazwa,Root10Nazwa,Wmr1, Wmr2, Wmr3, Wmr4, Wmr5, Wmr6,Wmr7,Wmr8,Wmr9,Wmr10,Wmr1Nazwa, Wmr2Nazwa, Wmr3Nazwa, Wmr4Nazwa, Wmr5Nazwa,Wmr6Nazwa,Wmr7Nazwa,Wmr8Nazwa,Wmr9Nazwa,Wmr10Nazwa)
+                        VALUES                     (@lp, '', '', '', '', '','','',@rootNazwa,'','', 0, 0, 0, 0, 0,0,0,@WmrID,0,0, '', '', '', '', '','','',@WmrNazwa,'','');
+					IF @WymKol = @kolMin + 8
+                        INSERT  INTO @WymiaryZwykle (Lp, Root1Nazwa, Root2Nazwa, Root3Nazwa, Root4Nazwa, Root5Nazwa, Root6Nazwa, Root7Nazwa,Root8Nazwa,Root9Nazwa,Root10Nazwa,Wmr1, Wmr2, Wmr3, Wmr4, Wmr5, Wmr6,Wmr7,Wmr8,Wmr9,Wmr10,Wmr1Nazwa, Wmr2Nazwa, Wmr3Nazwa, Wmr4Nazwa, Wmr5Nazwa,Wmr6Nazwa,Wmr7Nazwa,Wmr8Nazwa,Wmr9Nazwa,Wmr10Nazwa)
+                        VALUES                     (@lp, '', '', '', '', '','','','',@rootNazwa,'', 0, 0, 0, 0, 0,0,0,0,@WmrID,0, '', '', '', '', '','','','',@WmrNazwa,'');
+					IF @WymKol = @kolMin + 9
+                        INSERT  INTO @WymiaryZwykle (Lp, Root1Nazwa, Root2Nazwa, Root3Nazwa, Root4Nazwa, Root5Nazwa, Root6Nazwa, Root7Nazwa,Root8Nazwa,Root9Nazwa,Root10Nazwa,Wmr1, Wmr2, Wmr3, Wmr4, Wmr5, Wmr6,Wmr7,Wmr8,Wmr9,Wmr10,Wmr1Nazwa, Wmr2Nazwa, Wmr3Nazwa, Wmr4Nazwa, Wmr5Nazwa,Wmr6Nazwa,Wmr7Nazwa,Wmr8Nazwa,Wmr9Nazwa,Wmr10Nazwa)
+                        VALUES                     (@lp, '', '', '', '', '','','','','',@rootNazwa, 0, 0, 0, 0, 0,0,0,0,0,@WmrID, '', '', '', '', '','','','','',@WmrNazwa);
+
+                END
+            ELSE
+                BEGIN
+                    IF @WymKol = @kolMin + 1
+                        BEGIN
+                            UPDATE @WymiaryZwykle
+                            SET    Wmr2       = @WmrID,
+                                   Wmr2Nazwa  = @WmrNazwa,
+                                   Root2Nazwa = @rootNazwa
+                            WHERE  Lp = @lp;
+                        END
+                    ELSE
+                        IF @WymKol = @kolMin + 2
+                            BEGIN
+                                UPDATE @WymiaryZwykle
+                                SET    Wmr3       = @WmrID,
+                                       Wmr3Nazwa  = @WmrNazwa,
+                                       Root3Nazwa = @rootNazwa
+                                WHERE  Lp = @lp;
+                            END
+                        ELSE
+                            IF @WymKol = @kolMin + 3
+                                BEGIN
+                                    UPDATE @WymiaryZwykle
+                                    SET    Wmr4       = @WmrID,
+                                           Wmr4Nazwa  = @WmrNazwa,
+                                           Root4Nazwa = @rootNazwa
+                                    WHERE  Lp = @lp;
+                                END
+                            ELSE
+                                IF @WymKol = @kolMin + 4
+                                    BEGIN
+                                        UPDATE @WymiaryZwykle
+                                        SET    Wmr5       = @WmrID,
+                                               Wmr5Nazwa  = @WmrNazwa,
+                                               Root5Nazwa = @rootNazwa
+                                        WHERE  Lp = @lp;
+                                    END
+                                ELSE
+								    IF @WymKol = @kolMin + 5
+										BEGIN
+											UPDATE @WymiaryZwykle
+											SET    Wmr6       = @WmrID,
+												   Wmr6Nazwa  = @WmrNazwa,
+												   Root6Nazwa = @rootNazwa
+											WHERE  Lp = @lp;
+										END
+                                    ELSE    
+									    IF @WymKol = @kolMin + 6
+											BEGIN
+												UPDATE @WymiaryZwykle
+												SET    Wmr7       = @WmrID,
+													   Wmr7Nazwa  = @WmrNazwa,
+													   Root7Nazwa = @rootNazwa
+												WHERE  Lp = @lp;
+											END
+										ELSE
+										    IF @WymKol = @kolMin + 7
+												BEGIN
+													UPDATE @WymiaryZwykle
+													SET    Wmr8       = @WmrID,
+														   Wmr8Nazwa  = @WmrNazwa,
+														   Root8Nazwa = @rootNazwa
+													WHERE  Lp = @lp;
+												END
+											ELSE
+											    IF @WymKol = @kolMin + 8
+													BEGIN
+														UPDATE @WymiaryZwykle
+														SET    Wmr9       = @WmrID,
+															   Wmr9Nazwa  = @WmrNazwa,
+															   Root9Nazwa = @rootNazwa
+														WHERE  Lp = @lp;
+													END
+												ELSE
+												    IF @WymKol = @kolMin + 9
+													BEGIN
+														UPDATE @WymiaryZwykle
+														SET    Wmr10       = @WmrID,
+															   Wmr10Nazwa  = @WmrNazwa,
+															   Root10Nazwa = @rootNazwa
+														WHERE  Lp = @lp;
+													END
+                END
+            SET @TempLp = @lp;
+            FETCH NEXT FROM WymiaryZwykle INTO @lp, @WmrID, @rootID, @wmrNazwa, @WymKol, @rootNazwa;
+        END
+    CLOSE WymiaryZwykle;
+    DEALLOCATE WymiaryZwykle;
+    RETURN;
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[EP_Podzielnik_PobierzListePodzielnikElem]"></A><PRE>
+          <FONT SIZE="2"><I>/* [EP_Podzielnik_PobierzListePodzielnikElem] */</I><BR>
+CREATE PROCEDURE [CDN].[EP_Podzielnik_PobierzListePodzielnikElem]
+@PrcID INT, @PdnID INT=0
+AS
+BEGIN
+    DECLARE @PrcGidNumer AS INT;
+    DECLARE @lkol AS INT = 0, 
+            @Wymlkol6 AS INT, 
+            @sWymlkol6 AS VARCHAR (20), 
+            @Wymlkol7 AS INT, 
+            @sWymlkol7 AS VARCHAR (20), 
+            @Wymlkol8 AS INT, 
+            @sWymlkol8 AS VARCHAR (20), 
+            @Wymlkol9 AS INT, 
+            @sWymlkol9 AS VARCHAR (20), 
+            @Wymlkol10 AS INT, 
+            @sWymlkol10 AS VARCHAR (20);
+    SET NOCOUNT ON;
+    SET @PrcGidNumer = isnull((SELECT Prc_GIDNumer
+                               FROM   cdn.PrcKarty
+                               WHERE  Prc_OptimaId = @PrcID), 0);
+    IF @PrcGidNumer = 0
+        BEGIN
+            RAISERROR ('Nie istnieje pracownik o przekazanym identyfikatorze.', 16, 1);
+            RETURN;
+        END;
+    WITH   Projekty
+    AS     (SELECT p.PRJ_ID AS ProjektID,
+                   p.prj_GroNumer AS ParentID,
+                   CONVERT (VARCHAR (MAX), p.PRJ_Kod) AS Kod,
+                   1 AS Poziom,
+                   p.PRJ_OptimaId AS OptimaID
+            FROM   CDN.PrjStruktura AS p
+            WHERE  p.PRJ_GROID = 0
+            UNION ALL
+            SELECT ps.PRJ_ID AS ProjektID,
+                   ps.prj_GroNumer AS ParentID,
+                   CONVERT (VARCHAR (MAX), p.Kod + '.' + ps.prj_kod),
+                   p.Poziom + 1,
+                   ps.PRJ_OptimaId AS OptimaID
+            FROM   CDN.PrjStruktura AS ps
+                   INNER JOIN
+                   Projekty AS p
+                   ON ps.PRJ_GRONumer = p.ProjektID),
+           Struktura
+    AS     (SELECT f.FRS_ID AS ID,
+                   f.FRS_GRONumer AS ParentID,
+                   CONVERT (VARCHAR (MAX), f.FRS_Nazwa) AS Nazwa,
+                   1 AS Poziom,
+                   CASE 
+                   WHEN f.FRS_ID = 2 THEN 0 ELSE f.FRS_OptimaId 
+                   END AS OptimaID
+            FROM   CDN.FrmStruktura AS f
+            WHERE  f.FRS_GRONumer = 2
+                   AND f.FRS_GIDTyp = -4272
+                   AND f.FRS_Warstwa = 2
+            UNION ALL
+            SELECT f.FRS_ID,
+                   f.FRS_GRONumer AS ParentID,
+                   CONVERT (VARCHAR (MAX), s.Nazwa + '.' + f.FRS_Nazwa),
+                   s.Poziom + 1,
+                   CASE 
+                   WHEN f.FRS_ID = 2 THEN 0 ELSE f.FRS_OptimaId 
+                   END AS OptimaID
+            FROM   Struktura AS s
+                   INNER JOIN
+                   CDN.FrmStruktura AS f
+                   ON f.FRS_GRONumer = s.ID
+                      AND f.FRS_GIDTyp = -4272
+                      AND f.FRS_Warstwa = 2
+            WHERE  s.Poziom &lt; 5),
+           Centra
+    AS     (SELECT s.ID AS CentrumID,
+                   s.Nazwa AS Centrum,
+                   s.OptimaID
+            FROM   Struktura AS s
+            WHERE  s.Poziom IN (1, 2, 3, 4)),
+           Kategoria
+    AS     (SELECT w.wmr_id AS KategoriaID,
+                   w.WMR_ParID AS ParentID,
+                   CONVERT (VARCHAR (MAX), w.WMR_Nazwa) AS Kategoria,
+                   1 AS Poziom
+            FROM   cdn.wymiary AS w
+            WHERE  WMR_ParID = 0
+                   AND WMR_Kategoria &gt; 0
+            UNION ALL
+            SELECT wy.WMR_ID,
+                   wy.wmr_parid,
+                   CONVERT (VARCHAR (MAX), k.Kategoria + '.' + wy.wmr_nazwa),
+                   k.Poziom + 1 AS Poziom
+            FROM   cdn.Wymiary AS wy
+                   INNER JOIN
+                   Kategoria AS k
+                   ON wy.WMR_ParID = k.KategoriaID
+            WHERE  wy.WMR_ParID &gt; 0
+                   AND wy.WMR_Kategoria &gt; 0)
+    SELECT isnull(pe.PDE_GIDLp, 0) AS ID,
+           'Kategoria' AS Root1Nazwa,
+           isnull(k.Kategoria, '') AS Kategoria,
+           isnull(k.KategoriaID, 0) AS KategoriaID,
+           'Centrum' AS Root2Nazwa,
+           isnull(c.Centrum, '') AS Centrum,
+           isnull(c.CentrumID, 0) AS CentrumID,
+           isnull(c.OptimaID, 0) AS CentrumOptimaID,
+           'Lokalizacja' AS Root3Nazwa,
+           isnull(sl.SLW_WartoscS, '') AS Lokalizacja,
+           isnull(sl.SLW_ID, 0) AS LokalizacjaID,
+           isnull(sl.SLW_OptimaId, 0) AS LokalizacjaOptimaID,
+           'Kontr. docelowy' AS Root4Nazwa,
+           isnull(knt.Knt_Akronim, '') AS KontrahentDocelowy,
+           isnull(knt.Knt_GIDNumer, 0) AS KontrahentID,
+           'Projekt' AS Root5Nazwa,
+           isnull(p.Kod, '') AS Projekt,
+           isnull(p.ProjektID, 0) AS ProjektID,
+           isnull(p.OptimaID, 0) AS ProjektOptimaID,
+           isnull(wymzw.Root1Nazwa, '') AS Root6Nazwa,
+           isnull(wymzw.Wmr1, 0) AS WymiarZwykly1ID,
+           isnull(wymzw.Wmr1Nazwa, '') AS WymiarZwykly1Nazwa,
+           isnull(wymzw.Root2Nazwa, '') AS Root7Nazwa,
+           isnull(wymzw.Wmr2, 0) AS WymiarZwykly2ID,
+           isnull(wymzw.Wmr2Nazwa, '') AS WymiarZwykly2Nazwa,
+           isnull(wymzw.Root3Nazwa, '') AS Root8Nazwa,
+           isnull(wymzw.Wmr3, 0) AS WymiarZwykly3ID,
+           isnull(wymzw.Wmr3Nazwa, '') AS WymiarZwykly3Nazwa,
+           isnull(wymzw.Root4Nazwa, '') AS Root9Nazwa,
+           isnull(wymzw.Wmr4, 0) AS WymiarZwykly4ID,
+           isnull(wymzw.Wmr4Nazwa, '') AS WymiarZwykly4Nazwa,
+           isnull(wymzw.Root5Nazwa, '') AS Root10Nazwa,
+           isnull(wymzw.Wmr5, 0) AS WymiarZwykly5ID,
+           isnull(wymzw.Wmr5Nazwa, '') AS WymiarZwykly5Nazwa,
+
+		   isnull(wymzw.Root6Nazwa, '') AS Root11Nazwa,
+           isnull(wymzw.Wmr6, 0) AS WymiarZwykly6ID,
+           isnull(wymzw.Wmr6Nazwa, '') AS WymiarZwykly6Nazwa,
+           isnull(wymzw.Root7Nazwa, '') AS Root12Nazwa,
+           isnull(wymzw.Wmr7, 0) AS WymiarZwykly7ID,
+           isnull(wymzw.Wmr7Nazwa, '') AS WymiarZwykly7Nazwa,
+           isnull(wymzw.Root8Nazwa, '') AS Root13Nazwa,
+           isnull(wymzw.Wmr8, 0) AS WymiarZwykly8ID,
+           isnull(wymzw.Wmr8Nazwa, '') AS WymiarZwykly8Nazwa,
+           isnull(wymzw.Root9Nazwa, '') AS Root14Nazwa,
+           isnull(wymzw.Wmr9, 0) AS WymiarZwykly9ID,
+           isnull(wymzw.Wmr9Nazwa, '') AS WymiarZwykly9Nazwa,
+           isnull(wymzw.Root10Nazwa, '') AS Root15Nazwa,
+           isnull(wymzw.Wmr10, 0) AS WymiarZwykly10ID,
+           isnull(wymzw.Wmr10Nazwa, '') AS WymiarZwykly10Nazwa,
+
+           isnull(pe.PDE_Dni, 0) AS Dni,
+           isnull(pe.PDE_Procent, 0) AS Procent
+    FROM   CDN.PodzielnikElem AS pe
+           --Wymiar Projekt
+           LEFT OUTER JOIN
+           CDN.PodzielnikSElem AS wp
+           ON wp.PDS_GIDTyp = pe.PDE_GIDTyp
+              AND wp.PDS_GIDNumer = pe.PDE_GIDNumer
+              AND wp.PDS_GIDLp = pe.PDE_GIDLp
+              AND wp.PDS_TypWymiaru = 5
+           LEFT OUTER JOIN
+           Projekty AS p
+           ON p.ProjektID = wp.PDS_WMRID
+           --Wymiar Centrum
+           LEFT OUTER JOIN
+           CDN.PodzielnikSElem AS wc
+           ON wc.PDS_GIDTyp = pe.PDE_GIDTyp
+              AND wc.PDS_GIDNumer = pe.PDE_GIDNumer
+              AND wc.PDS_GIDLp = pe.PDE_GIDLp
+              AND wc.PDS_TypWymiaru = 1
+           LEFT OUTER JOIN
+           Centra AS c
+           ON c.CentrumID = wc.PDS_WMRID
+           --Wymiar Lokalizacja
+           LEFT OUTER JOIN
+           CDN.PodzielnikSElem AS wl
+           ON wl.PDS_GIDTyp = pe.PDE_GIDTyp
+              AND wl.PDS_GIDNumer = pe.PDE_GIDNumer
+              AND wl.PDS_GIDLp = pe.PDE_GIDLp
+              AND wl.PDS_TypWymiaru = 2
+           LEFT OUTER JOIN
+           cdn.Slowniki AS sl
+           ON wl.PDS_WMRID = sl.Slw_Id
+           LEFT OUTER JOIN
+           CDN.SlownikiStruktura AS st
+           ON sl.SLW_SLSId = st.SLS_Id
+              AND st.SLS_Predefiniowany = 52
+           --Wymiar Kontr. docelowy
+           LEFT OUTER JOIN
+           CDN.PodzielnikSElem AS wk
+           ON wk.PDS_GIDTyp = pe.PDE_GIDTyp
+              AND wk.PDS_GIDNumer = pe.PDE_GIDNumer
+              AND wk.PDS_GIDLp = pe.PDE_GIDLp
+              AND wk.PDS_TypWymiaru = 3
+           LEFT OUTER JOIN
+           cdn.KntKarty AS knt
+           ON knt.Knt_GIDNumer = wk.PDS_WMRID
+           --Wymiar Kategoria 
+           LEFT OUTER JOIN
+           CDN.PodzielnikSElem AS wkat
+           ON wkat.PDS_GIDTyp = pe.PDE_GIDTyp
+              AND wkat.PDS_GIDNumer = pe.PDE_GIDNumer
+              AND wkat.PDS_GIDLp = pe.PDE_GIDLp
+              AND wkat.PDS_TypWymiaru = 4
+           LEFT OUTER JOIN
+           Kategoria AS k
+           ON k.KategoriaID = wkat.PDS_WMRID
+           --Wymiary zwykłe
+           LEFT OUTER JOIN
+           (SELECT *
+            FROM   [CDN].[EP_Podzielnik_PobierzListeElemWymiaryZwykle] (@PrcID, @PdnID)) AS wymzw
+           ON wymzw.Lp = pe.PDE_GIDLp
+    WHERE  pe.PDE_GIDNumer = @PdnID
+           AND pe.PDE_PrcNumer = @PrcGidNumer;
+    SET NOCOUNT OFF;
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[EP_Podzielnik_PobierzPodzielnikiPracownika]"></A><PRE>
+          <FONT SIZE="2"><I>/* [EP_Podzielnik_PobierzPodzielnikiPracownika] */</I><BR>
+create procedure [CDN].[EP_Podzielnik_PobierzPodzielnikiPracownika]  
+@PrcID int
+as
+begin
+Declare @PrcGidNumer int
+Declare @PdnGidNumer int
+Declare @Data int
+set nocount on
+
+set @PrcGidNumer = isnull((select Prc_GIDNumer from cdn.PrcKarty where Prc_OptimaId = @PrcID),0)
+
+if @PrcGidNumer = 0
+begin
+  raiserror('Nie istnieje pracownik o przekazanym identyfikatorze.', 16, 1) 
+  return
+end
+
+set @Data = DateDiff(d, convert(datetime,'28-12-1800',105),getdate()) 
+
+if not exists (select PrR_PrcNumer from cdn.prcrole left join cdn.Role on PrR_RolId = Rol_Id
+where PrR_PrcNumer = @PrcGidNumer and Rol_OptimaKierownik = 0--(Rol_OptimaKierownik = 1 or Rol_OptimaKierownik = 2)
+and (PrR_DataOd&lt;=@Data or PrR_DataOd=0)            
+and (PrR_DataDo&gt;=@Data or PrR_DataDo=0) )
+    --podzielniki dla zwyklego pracownika
+    begin
+
+		if (select count(*) from cdn.PodzielnikPrac where PDP_PrcNumer = @PrcGidNumer) &gt; 1
+			begin
+			   --lista naglowkow podzielnikow PRC
+			   exec [CDN].[EP_Podzielnik_PobierzListePodzielnikNag] @PrcID 
+			end
+		else
+			begin
+				set @PdnGidNumer = isnull((select PDP_PdnNumer from cdn.PodzielnikPrac where PDP_PrcNumer = @PrcGidNumer),0)
+				if @PdnGidNumer = 0
+				begin
+					raiserror('Nie istnieje podzielnik dla pracownika o przekazanym identyfikatorze.', 16, 1) 
+					return
+				end
+				--lista wymiarow podzialnika PRC
+				exec [CDN].[EP_Podzielnik_PobierzListePodzielnikElem] @PrcID,@PdnGidNumer
+			end
+    end
+
+else
+    --podzielniki dla kierownika
+    begin
+	    if (select count(*) from cdn.PodzielnikPrac where PDP_PrcNumer in(
+		    select d.FrS_GIDNumer from
+			(select PrR_FrSId from cdn.prcrole left join cdn.Role on PrR_RolId = Rol_Id
+                where PrR_PrcNumer = @PrcGidNumer and Rol_OptimaKierownik = 0--(Rol_OptimaKierownik = 1 or Rol_OptimaKierownik = 2)
+                 and (PrR_DataOd&lt;=@Data or PrR_DataOd=0)            
+                 and (PrR_DataDo&gt;=@Data or PrR_DataDo=0) ) as t
+			cross apply 
+			CDN.FrsDrzewo(3,-4272,t.prr_frsid,@Data,0,0) d 
+			where d.FrS_GIDTyp = 944
+		          ) ) &gt; 1
+			begin
+			   --lista naglowkow podzielnikow PRC
+			   exec [CDN].[EP_Podzielnik_PobierzListePodzielnikNag] @PrcID,0,1
+			end
+		--else
+		--    begin
+
+		--	end
+
+	end
+
+set nocount off
+end
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[EP_Podzielnik_PobierzPracownikowPodleglych]"></A><PRE>
+          <FONT SIZE="2"><I>/* [EP_Podzielnik_PobierzPracownikowPodleglych] */</I><BR>
+create procedure [CDN].[EP_Podzielnik_PobierzPracownikowPodleglych]  
+@PrcID int
+as
+begin
+Declare @PrcGidNumer int
+Declare @Data int 
+set nocount on
+
+set @PrcGidNumer = isnull((select Prc_GIDNumer from cdn.PrcKarty where Prc_OptimaId = @PrcID),0)
+
+if @PrcGidNumer = 0
+begin
+  raiserror('Nie istnieje pracownik o przekazanym identyfikatorze.', 16, 1) 
+  return
+end
+
+set @Data = DateDiff(d, convert(datetime,'28-12-1800',105),getdate()) 
+
+
+select d.FrS_GIDNumer as PracownikID, d.FrS_Nazwa as PracownikAkronim ,d.FRS_Gronumer as CentrumPracownikaID,d.FrS_Poziom as Poziom
+from
+			(select PrR_FrSId from cdn.prcrole left join cdn.Role on PrR_RolId = Rol_Id
+                where PrR_PrcNumer = @PrcGidNumer and Rol_OptimaKierownik = 0--(Rol_OptimaKierownik = 1 or Rol_OptimaKierownik = 2)
+                 and (PrR_DataOd&lt;=@Data or PrR_DataOd=0)            
+                 and (PrR_DataDo&gt;=@Data or PrR_DataDo=0) ) as t
+			cross apply 
+			CDN.FrsDrzewo(3,-4272,t.prr_frsid,78718,0,0) d 
+			where d.FrS_GIDTyp = 944
+
+
+set nocount off
+end
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[EP_PodzielnikListaElementow]"></A><PRE>
+          <FONT SIZE="2"><I>/* [EP_PodzielnikListaElementow] */</I><BR>
+create procedure [CDN].[EP_PodzielnikListaElementow]  
+( @Kolumna int, @Data_Od Datetime, @Data_Do Datetime, @IndexOd int, @IndexDo int ) as
+begin
+set nocount on
+
+declare @Data int, @DataDo int
+set @Data = isnull(DateDiff(d, CONVERT (DATETIME, '28-12-1800', 105), @Data_Od), 0)
+set @DataDo = isnull(DateDiff(d, CONVERT (DATETIME, '28-12-1800', 105), @Data_Do), 0)
+
+declare @DefId int
+declare @KategoriaFin smallint
+declare @Centrum smallint
+declare @Lokalizacja smallint
+declare @KontrahentDoc smallint
+declare @Projekt smallint
+declare @PustaLista smallint
+
+declare @NrWymiaru int
+declare @TypWymiaru smallint
+
+declare @szKropki char(2)
+declare @MaxLenName int
+
+set @MaxLenName = 100
+set @szKropki = '..'
+
+select 
+  @DefId=Dok_Id, 
+  @KategoriaFin=Dok_KategoriaFin, 
+  @Centrum=Dok_Centrum, 
+  @Lokalizacja=Dok_Lokalizacja,
+  @KontrahentDoc=Dok_KontrahentDoc,
+  @Projekt=Dok_Projekt,
+  @PustaLista=Dok_PustaLista
+from cdn.DokDefinicje 
+where Dok_GIDTyp=7168 and Dok_FrSId=1
+
+if @DefId is null
+begin
+  raiserror('Błąd pobrania definicji dokumentu podzielnika.', 16, 1) 
+  return
+end
+
+create table #pdndefinicja (Kolumna int IDENTITY (1,1) NOT NULL, WmrId int NOT NULL, WmrNazwa varchar(31) COLLATE Polish_CI_AS NOT NULL DEFAULT '', TypWymiaru smallint NOT NULL DEFAULT 0)
+
+if @KategoriaFin = 1
+  insert into #pdndefinicja (WmrId, WmrNazwa, TypWymiaru) select 10001, 'Kategoria', 4
+if @Centrum = 1
+  insert into #pdndefinicja (WmrId, WmrNazwa, TypWymiaru) select 10002, 'Centrum', 1
+if @Lokalizacja = 1
+  insert into #pdndefinicja (WmrId, WmrNazwa, TypWymiaru) select 10003, 'Lokalizacja', 2
+if @KontrahentDoc = 1
+  insert into #pdndefinicja (WmrId, WmrNazwa, TypWymiaru) select 10004, 'Kontr. docelowy', 3
+if @Projekt = 1
+  insert into #pdndefinicja (WmrId, WmrNazwa, TypWymiaru) select 10005, 'Projekt', 5
+if exists (select DoW_Id from cdn.DokWymiary where DoW_Id=@DefId)
+  insert into #pdndefinicja (WmrId) select DoW_WymID from cdn.DokWymiary where dow_id=@DefId order by DoW_WymID
+else if @PustaLista=0
+  insert into #pdndefinicja (WmrId) select Wmr_Id from cdn.Wymiary where Wmr_ParId=0 and Wmr_Kategoria=0 and WMR_Archiwalny = 0 and WMR_EPrac = 1 order by Wmr_Id
+
+select @NrWymiaru=#pdndefinicja.WmrId, @TypWymiaru=#pdndefinicja.TypWymiaru
+from #pdndefinicja where #pdndefinicja.Kolumna=@Kolumna
+
+if @NrWymiaru is null
+  set @NrWymiaru = 0
+
+if @TypWymiaru is null
+  set @TypWymiaru = 0
+
+if @NrWymiaru&gt;0
+begin
+  create table #tempElementy (WmrId int NOT NULL, WmrNazwa varchar(1000) COLLATE Polish_CI_AS, WmrOpis varchar(256) COLLATE Polish_CI_AS, TypWymiaru smallint, SQL smallint)
+  create table #wmrPotomne (WmrID int unique, Wmr_Nazwa varchar(1000) COLLATE Polish_CI_AS)
+
+  if @TypWymiaru=1
+  begin
+    --wymiar specjalny centrum
+    declare @f int
+
+    insert into #wmrPotomne 
+      select A.FrS_Id, A.FrS_Nazwa
+      from cdn.FrmStruktura as A 
+			join cdn.FrmStruktura as B			
+			on B.FRS_GidTyp=A.FRS_GroTyp and B.FRS_GidFirma=A.FRS_GroFirma and B.FRS_GidNumer=A.FRS_GroNumer and B.FRS_GidLp=A.FRS_GroLp 
+      		and A.FrS_GIDTyp=-4272 and (A.FrS_StrTyp=1000 or A.FrS_StrTyp=1001) and A.FrS_Warstwa=2 and B.FrS_GRONumer = 0 
+                        and (@Data between A.FRS_AktywnyOd and (case when A.FRS_AktywnyDo = 0 then 1000000 else A.FRS_AktywnyDo end)
+                              or @DataDo between A.FRS_AktywnyOd and (case when A.FRS_AktywnyDo = 0 then 1000000 else A.FRS_AktywnyDo end))                  
+            and A.FRS_Archiwalny = 0 and B.FRS_Archiwalny = 0
+
+    set @f=0
+    while @f&lt;&gt;(select count(*) from #wmrPotomne)
+    begin
+      set @f=(select count(*) from #wmrPotomne)
+      insert into #wmrPotomne 
+      select A.FrS_Id, #wmrPotomne.Wmr_Nazwa + '.' + A.FrS_Nazwa
+      from cdn.FrmStruktura as A 
+			join (cdn.FrmStruktura as B
+					join #wmrPotomne 
+						on B.FrS_Id = #wmrPotomne.WmrID)
+			on B.FRS_GidTyp=A.FRS_GroTyp and B.FRS_GidFirma=A.FRS_GroFirma and B.FRS_GidNumer=A.FRS_GroNumer and B.FRS_GidLp=A.FRS_GroLp 
+      		and A.FrS_GIDTyp=-4272 and (A.FrS_StrTyp=1000 or A.FrS_StrTyp=1001) and A.FrS_Warstwa=2 and A.FrS_Id NOT IN (select WmrID from #wmrPotomne )
+                        and (@Data between A.FRS_AktywnyOd and (case when A.FRS_AktywnyDo = 0 then 1000000 else A.FRS_AktywnyDo end)
+                              or @DataDo between A.FRS_AktywnyOd and (case when A.FRS_AktywnyDo = 0 then 1000000 else A.FRS_AktywnyDo end))
+            and A.FRS_Archiwalny = 0 and B.FRS_Archiwalny = 0
+    end
+
+    insert into #tempElementy
+      select FrS_Id, case when len(#wmrPotomne.Wmr_Nazwa) &gt; @MaxLenName then @szKropki + substring(#wmrPotomne.Wmr_Nazwa, len(#wmrPotomne.Wmr_Nazwa) - @MaxLenName - Len(@szKropki), len(#wmrPotomne.Wmr_Nazwa)) else #wmrPotomne.Wmr_Nazwa end as Wmr_Nazwa, 
+		FrS_Opis, 1, 0
+      from cdn.FrmStruktura join #wmrPotomne on FrmStruktura.FrS_Id = #wmrPotomne.WmrId
+
+
+  end
+  if @TypWymiaru=2
+  begin
+    --wymiar specjalny lokalizacja
+    insert into #tempElementy 
+      select Slw_Id, Slw_WartoscS, '', 2, 0
+      from cdn.Slowniki
+      join CDN.SlownikiStruktura on SLW_SLSId = SLS_Id
+      where SLS_Predefiniowany = 52 and SLW_Archiwalny = 0
+  end
+  if @TypWymiaru=3
+  begin
+ --wymiar specjalny Kontrahent docelowy
+    insert into #tempElementy 		
+      select -11, '&lt;controllingowi&gt;', '', 3, 1	
+    insert into #tempElementy 		
+      select -1, '&lt;do uzupełnienia&gt;', '', 3, 0	
+  end
+  if @TypWymiaru=4
+  begin
+    --wymiar specjalny kategoria finansowa 
+ 	declare @e int
+    insert into #wmrPotomne 
+	select A.WMR_ID , B.WMR_Nazwa + '.' + A.WMR_Nazwa 
+	from cdn.Wymiary as A join cdn.Wymiary as B on B.Wmr_Id=A.Wmr_ParId AND B.Wmr_ParID=0 and B.Wmr_Kategoria &gt; 0 
+	and A.WMR_Archiwalny = 0 and B.WMR_Archiwalny = 0
+	and A.WMR_EPrac = 1 and B.WMR_EPrac = 1
+    set @e=0
+    while @e&lt;&gt;(select count(*) from #wmrPotomne)
+    begin
+      set @e=(select count(*) from #wmrPotomne)
+      insert into #wmrPotomne 
+	  select A.Wmr_ID , #wmrPotomne.WMR_Nazwa + '.' + A.WMR_Nazwa--B.WMR_Nazwa + '.' + A.WMR_Nazwa
+	  from cdn.Wymiary as A 
+			join cdn.Wymiary as B on B.Wmr_Id=A.Wmr_ParId 
+			JOIN #wmrPotomne on  B.Wmr_ID=#wmrPotomne.WmrID AND NOT EXISTS(select * from #wmrPotomne where #wmrPotomne.WmrID=A.Wmr_ID) and A.Wmr_Kategoria &gt; 0 
+			and A.WMR_Archiwalny = 0 and B.WMR_Archiwalny = 0 and A.wmr_eprac = 1 and B.wmr_eprac = 1
+    end
+	delete p from #wmrPotomne p join cdn.wymiary r on p.WmrID = r.WMR_ID and r.WMR_Typ = 1
+
+    insert into #tempElementy 
+      select Wmr_Id, case when len(#wmrPotomne.Wmr_Nazwa) &gt; @MaxLenName then @szKropki + substring(#wmrPotomne.Wmr_Nazwa, len(#wmrPotomne.Wmr_Nazwa) - @MaxLenName - Len(@szKropki), len(#wmrPotomne.Wmr_Nazwa)) else #wmrPotomne.Wmr_Nazwa end as Wmr_Nazwa,
+		Wmr_Opis, 4, case Wmr_Typ when 2 then Wmr_Typ when 4 then Wmr_Typ else 0 end
+      from cdn.Wymiary join #wmrPotomne on wymiary.Wmr_Id = #wmrPotomne.WmrId
+  end
+  if @TypWymiaru=5
+  begin
+    --wymiar specjalny Projekt
+    declare @d int
+
+    insert into #wmrPotomne 
+	select Prj_ID , Prj_Kod from cdn.PrjStruktura 
+	where Prj_GROID = 0
+	and PRJ_Archiwalny = 0
+
+    set @d=0
+    while @d&lt;&gt;(select count(*) from #wmrPotomne)
+    begin
+      set @d=(select count(*) from #wmrPotomne)
+      insert into #wmrPotomne 
+	  select B.Prj_ID, #wmrPotomne.Wmr_Nazwa + '.' + B.Prj_Kod
+	  from cdn.PrjStruktura as B  		
+		JOIN #wmrPotomne on B.Prj_GROID=#wmrPotomne.WmrID
+		and B.Prj_ID NOT in (select WmrID from #wmrPotomne )  
+    end
+
+    insert into #tempElementy
+      select Prj_Id, case when len(#wmrPotomne.Wmr_Nazwa) &gt; @MaxLenName then @szKropki + substring(#wmrPotomne.Wmr_Nazwa, len(#wmrPotomne.Wmr_Nazwa) - @MaxLenName - Len(@szKropki), len(#wmrPotomne.Wmr_Nazwa)) else #wmrPotomne.Wmr_Nazwa end as Wmr_Nazwa, 
+		Prj_Nazwa, 5, 0
+      from cdn.PrjStruktura join #wmrPotomne on PrjStruktura.Prj_Id = #wmrPotomne.WmrId
+
+  end
+  if @TypWymiaru=0
+  begin
+    declare @c int
+    insert into #wmrPotomne select A.WMR_ID , A.WMR_Nazwa from cdn.Wymiary as A join cdn.Wymiary as B on B.Wmr_Id=A.Wmr_ParId AND B.Wmr_ID=@NrWymiaru 
+	and A.WMR_Archiwalny = 0 and B.WMR_Archiwalny = 0 and A.wmr_eprac = 1 and B.wmr_eprac = 1 
+    set @c=0
+    while @c&lt;&gt;(select count(*) from #wmrPotomne)
+    begin
+      set @c=(select count(*) from #wmrPotomne)
+      insert into #wmrPotomne select A.Wmr_ID ,  #wmrPotomne.WMR_Nazwa + '.' + A.WMR_Nazwa from cdn.Wymiary as A join cdn.Wymiary as B on B.Wmr_Id=A.Wmr_ParId JOIN #wmrPotomne on  B.Wmr_ID=#wmrPotomne.WmrID AND NOT EXISTS(select * from #wmrPotomne where #wmrPotomne.WmrID=A.Wmr_ID) 
+	  and A.WMR_Archiwalny = 0 and B.WMR_Archiwalny = 0 and A.wmr_eprac = 1 and B.wmr_eprac = 1
+    end
+
+    insert into #tempElementy 
+      select Wmr_Id, case when len(#wmrPotomne.Wmr_Nazwa) &gt; @MaxLenName then @szKropki + substring(#wmrPotomne.Wmr_Nazwa, len(#wmrPotomne.Wmr_Nazwa) - @MaxLenName - Len(@szKropki), len(#wmrPotomne.Wmr_Nazwa)) else #wmrPotomne.Wmr_Nazwa end as Wmr_Nazwa,
+		Wmr_Opis, 0, case Wmr_Typ when 2 then Wmr_Typ when 4 then Wmr_Typ else 0 end
+      from cdn.Wymiary join #wmrPotomne on wymiary.Wmr_Id = #wmrPotomne.WmrId
+  end
+
+  --wiersz zerowy
+  insert into #tempElementy select 0,'','',@TypWymiaru,0
+
+  --właściwe zwrócenie elementów
+  if @IndexOd &lt;&gt; 0 and @IndexDo &lt;&gt; 0
+      begin
+		  --właściwe zwrócenie elementów
+		  select * from
+		  (select *
+				 ,ROW_NUMBER() over (order by (select 0)) WierszID
+		  from #tempElementy)Elem 
+		  where Elem.WierszID between @IndexOd and @IndexDo and Elem.SQL = 0
+		  order by WmrNazwa
+	  end
+   else
+      begin
+		   select * from
+		  (select *
+				 ,ROW_NUMBER() over (order by (select 0)) WierszID
+		  from #tempElementy)Elem 
+		  where Elem.SQL = 0
+		  order by WmrNazwa
+      end
+
+  drop table #wmrPotomne
+  drop table #tempElementy
+end
+
+drop table #pdndefinicja
+
+set nocount off
+end
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[EP_PodzielnikListaElementowSQL]"></A><PRE>
+          <FONT SIZE="2"><I>/* [EP_PodzielnikListaElementowSQL] */</I><BR>
+create procedure [CDN].[EP_PodzielnikListaElementowSQL]  
+( @WmrId int, @TypWymiaru smallint = 0 ) as
+begin
+set nocount on
+
+exec [CDN].[PodzielnikListaElementowSQL] @WmrID,@TypWymiaru
+
+set nocount off
+end
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[EP_Podzielnik_ModyfikujPodzielnikPracownika]"></A><PRE>
+          <FONT SIZE="2"><I>/* [EP_Podzielnik_ModyfikujPodzielnikPracownika] */</I><BR>
+CREATE procedure [CDN].[EP_Podzielnik_ModyfikujPodzielnikPracownika]
+@PracownikId int,--OptimaID pracownika(węzeł w strukturze podl.)
+@PodzielnikNumer int--ID podzielnika w xlu,
+as
+declare @PracownikNumer int
+declare @PracownikModNumer int
+declare @GIDTyp int
+
+if exists(select Kon_Wartosc from cdn.Konfig where kon_numer = 20129 and Kon_Wartosc &lt;&gt; '')
+    begin
+       SET @PracownikModNumer = isnull((select Ope_PrcNumer from cdn.OpeKarty where Ope_GIDNumer = (select Ope_GIDNumer from cdn.OpeKarty where Ope_Ident = (select Kon_Wartosc from cdn.Konfig where kon_numer = 20129))),0)     
+	   if @PracownikModNumer = 0
+	       begin
+		       RAISERROR('W Konfiguracji nie przypisano pracownika do wybranego operatora. Dane nie zostaną zapisane.',16,1)
+               Return
+		   end
+	end
+else
+    begin
+        RAISERROR('W Konfiguracji brak wybranego operatora. Dane nie zostaną zapisane.',16,1)
+        Return
+    end
+
+select @PracownikNumer=p.Prc_GIDNumer
+from cdn.PrcKarty p
+where p.Prc_OptimaId=@PracownikId
+
+if @PracownikNumer is null
+    begin
+	    raiserror('Nie istnieje pracownik o przekazanym ID.', 16, 1) 
+        return
+	end
+
+select @GIDTyp=FRS_GIDTyp
+from cdn.FrmStruktura
+where FRS_GIDNumer=@PracownikNumer and FRS_Warstwa = 3
+
+declare @FrsId int 
+select top 1 @FrsId=FrS_Id from CDN.FrmStruktura   
+inner join CDN.PodzielnikNag on PdN_GIDNumer=@PodzielnikNumer  
+where FrS_Warstwa=3 and FrS_GIDTyp=944  and FrS_GIDNumer=@PracownikNumer		--pracownikID - GIDNumer
+and (FrS_AktywnyOd&lt;=PdN_DataDo or PdN_DataDo=0)   
+and (PdN_Data&lt;=FrS_AktywnyDo or FrS_AktywnyDo=0) 
+
+exec CDN.PodzielnikElemModyfikuj @PracownikModNumer, @PodzielnikNumer , @FrsId, 1 
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="d"></A><PRE>
+          <FONT SIZE="2"><I>/* d */</I><BR>
+CREATE PROCEDURE CDN.[EP_Podzielnik_ListaPodzielnikowPrc_Stronicowana] @IndexOd int,@IndexDo int
+as
+select * from (
+	select PDN_GIDNumer, ISNULL(PDN_Opis,'') as PDN_Opis,
+	  ISNULL(PDN_DniRobocze,0) as PDN_DniRobocze,
+	  CONVERT(varchar(10),DATEADD(day,ISNULL(PDN_Data,0),
+	  CONVERT(datetime,'1800-12-28',120)),120) as PDN_Data,
+	  CONVERT(varchar(10),DATEADD(day,ISNULL(PDN_DataDo,0),
+	  CONVERT(datetime,'1800-12-28',120)),120) as PDN_DataDo,
+	  ISNULL(PDN_Zatwierdzono,0) as PDN_Zatwierdzono,  
+	  ISNULL(PDN_Udostepniaj,0) as PDN_Udostepniaj, 
+	  case when ISNULL(PDN_Zatwierdzono,0)=1 or not ISNULL(PDN_Udostepniaj,0)=1 then 1 else 0 end as PDN_TylkoOdczyt,
+	  ISNULL(PDN_JM,'') as PDN_JM,
+	  ISNULL(PDP_PrcNumer,0) as PDP_PrcNumer,
+	  isnull((select prc_optimaid from cdn.PrcKarty where Prc_GIDNumer = ISNULL(PDP_PrcNumer,0)),0) as PrcOptimaID,
+	  isnull(PDP_Ilosc,0) as IloscPrzepracowanegoCzasu,
+	  (ROW_NUMBER() over (order by (select 0))) WierszID
+	from 
+	  CDN.PodzielnikNag 
+	  LEFT JOIN 
+	  CDN.PodzielnikPrac
+	on PDN_GIDNumer = PDP_PdnNumer
+)Podzielniki
+where WierszID between @IndexOd and @IndexDo;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[EP_Podzielnik_ListaPodzielnikowPrcFiltr_Stronicowana]"></A><PRE>
+          <FONT SIZE="2"><I>/* [EP_Podzielnik_ListaPodzielnikowPrcFiltr_Stronicowana] */</I><BR>
+CREATE PROCEDURE [CDN].[EP_Podzielnik_ListaPodzielnikowPrcFiltr_Stronicowana]
+@PdnId INT, @sNazwa VARCHAR (80)='', @zaznaczone VARCHAR (MAX), @FrsOptimaID INT=3, @DataOd DATETIME='1900-01-01', @DataDo DATETIME='2999-12-31', @Status INT=-1, @PrcId INT, @PokazWlasne BIT=0, @PokazPodwladnych BIT=0
+AS
+DECLARE @OdData int, @DoData int;
+DECLARE @OdDataOd int, @DoDataDo int;
+if @DataOd = 0 or @DataOd = convert(datetime,'1900-01-01',120) 
+begin
+    set @OdData = 0
+	set @OdDataOd = -999999
+end
+else
+begin
+    set @OdData = DateDiff(d, convert(datetime,'28-12-1800',105),@DataOd)
+	set @OdDataOd = @OdData
+end
+
+if @DataDo = 0 or @DataDo = convert(datetime,'2999-12-31',120) 
+begin
+    set @DoData = 0
+	set @DoDataDo = 999999
+end
+else
+begin
+    set @DoData = DateDiff(d, convert(datetime,'28-12-1800',105),@DataDo)
+	set @DoDataDo = @DoData
+end
+
+
+DECLARE @FrsID AS INT;
+IF @FrsOptimaID = 3
+    SET @FrsID = 3;
+ELSE
+    SET @FrsID = (SELECT TOP 1 FRS_GIDNumer
+                  FROM   cdn.FrmStruktura
+                  WHERE  FRS_OptimaId = @FrsOptimaID
+                         AND FRS_Warstwa = 3
+                         AND FRS_GIDTyp = -4272
+                         AND FRS_StrTyp IN (1000, 1001));
+IF ISNULL(@PdnId, 0) &gt; 0
+    BEGIN
+        DECLARE @PrcPodlID AS INT;
+        DECLARE PrcCur CURSOR FAST_FORWARD READ_ONLY
+            FOR SELECT FrS_GIDNumer
+                FROM   CDN.FrsDrzewo (3, -4272, @FrsID, @OdData, @DoData, 0)
+                WHERE  FrS_GIDTyp = 944;
+        OPEN PrcCur;
+        FETCH NEXT FROM PrcCur INTO @PrcPodlID;
+        WHILE (@@FETCH_STATUS = 0)
+            BEGIN
+                EXECUTE CDN.PodzielnikLicznikCzytaj @PdnId, @PrcPodlID, 0, 1;
+                FETCH NEXT FROM PrcCur INTO @PrcPodlID;
+            END
+        CLOSE PrcCur;
+        DEALLOCATE PrcCur;
+    END
+SELECT PDN_GIDNumer,
+       PDN_Opis,
+       PDN_DniRobocze,
+       WypelnionoProcent,
+       PDN_Data,
+       PDN_DataDo,
+       Status,
+       PDN_Udostepniaj,
+       PDN_TylkoOdczyt,
+       PDN_JM,
+       PDP_PrcNumer,
+       PrcOptimaID,
+       PrcOptimaIDZatwierdz,
+       IloscPrzepracowanegoCzasu,
+	   PrcNazwisko,
+	   PrcImie,
+	   PrcAkronim,
+	   PrcImieZatwierdzil,
+	   PrcNazwiskoZatwierdzil,
+	   PrcAkronimZatwierdzil,
+       (ROW_NUMBER() OVER ( ORDER BY PrcNazwa ASC)) AS WierszID
+FROM   (SELECT DISTINCT PDN_GIDNumer,
+               ISNULL(PDN_Opis, '') AS PDN_Opis,
+               ISNULL(PDN_DniRobocze, 0) AS PDN_DniRobocze,
+               ISNULL(PDE.WypelnionoProcent, 0) AS WypelnionoProcent,
+               CONVERT (VARCHAR (10), DATEADD(day, ISNULL(PDN_Data, 0), CONVERT (DATETIME, '1800-12-28', 120)), 120) AS PDN_Data,
+               CONVERT (VARCHAR (10), DATEADD(day, ISNULL(PDN_DataDo, 0), CONVERT (DATETIME, '1800-12-28', 120)), 120) AS PDN_DataDo,
+               CASE 
+               WHEN ISNULL(ISNULL(KZ.Prc_OptimaId, PZ.Prc_OptimaId), 0) = 0
+                         AND ISNULL(PDE.WypelnionoProcent, 0) = 0 THEN 0 
+               WHEN ISNULL(ISNULL(KZ.Prc_OptimaId, PZ.Prc_OptimaId), 0) = 0
+                                                                              AND (ISNULL(PDE.WypelnionoProcent, 0) &lt;&gt; 100) THEN 5 
+               WHEN ISNULL(ISNULL(KZ.Prc_OptimaId, PZ.Prc_OptimaId), 0) = 0
+                                                                                                                                        AND ISNULL(PDE.WypelnionoProcent, 0) = 100 THEN 1 
+               WHEN PDN_Zatwierdzono = 1 THEN 4 
+               WHEN ISNULL(KZ.Prc_OptimaId, 0) &gt; 0 THEN 3 
+               WHEN ISNULL(PZ.Prc_OptimaId, 0) &gt; 0 THEN 2 
+               END AS Status,
+               ISNULL(PDN_Udostepniaj, 0) AS PDN_Udostepniaj,
+               CASE 
+               WHEN ISNULL(PDN_Zatwierdzono, 0) = 1
+                         OR NOT ISNULL(PDN_Udostepniaj, 0) = 1 THEN 1 ELSE 0 
+               END AS PDN_TylkoOdczyt,
+               ISNULL(PDN_JM, '') AS PDN_JM,
+               ISNULL(PDP_PrcNumer, 0) AS PDP_PrcNumer,
+               Prc.Prc_OptimaId AS PrcOptimaID,
+               isnull(PDP_Ilosc, 0) AS IloscPrzepracowanegoCzasu,
+               isnull(ISNULL(KZ.Prc_OptimaId, PZ.Prc_OptimaId), 0) AS PrcOptimaIDZatwierdz,
+               Prc.Prc_Nazwisko + ' ' + Prc.Prc_Imie1 AS PrcNazwa,
+			   Prc.Prc_Nazwisko as PrcNazwisko, 
+			   Prc.Prc_Imie1 as PrcImie,
+			   prc.Prc_Akronim as PrcAkronim,
+			   case when KZ.Prc_OptimaId is null then isnull(PZ.prc_imie1,'') else isnull(KZ.prc_imie1,'') end as PrcImieZatwierdzil,
+			   case when KZ.Prc_OptimaId is null then isnull(PZ.Prc_Nazwisko,'') else isnull(KZ.Prc_Nazwisko,'') end as PrcNazwiskoZatwierdzil,
+			   case when KZ.Prc_OptimaId is null then isnull(PZ.Prc_akronim,'') else isnull(KZ.prc_akronim,'') end as PrcAkronimZatwierdzil
+        FROM   CDN.PodzielnikNag
+               LEFT OUTER JOIN
+               CDN.PodzielnikPrac
+               ON PDN_GIDNumer = PDP_PdnNumer
+               LEFT OUTER JOIN
+               CDN.PrcKarty AS Prc
+               ON PDP_PrcNumer = Prc.Prc_GIDNumer
+               LEFT OUTER JOIN
+               (SELECT   ZapisyPrcFiltr.FrS_GIDNumer
+			     FROM     
+				 (select ZapisyPrc.PrcID as Frs_GidNumer from
+					( 
+					  SELECT   Prc.FrS_GIDNumer as PrcID,
+						case when Centra.FRS_AktywnyOd = 0 then -999999 else Centra.FRS_AktywnyOd end as AktywnyOd,
+						case when Centra.FRS_AktywnyDo =0 then 999999 else Centra.FRS_AktywnyDo end as AktywnyDo,
+						Centra.FRS_Nazwa as PrcAkronim,
+						Centra.frs_gronumer as CentrumID,
+						Centra.frs_id as FrsID,
+						case when (select MAX(case when F.FRS_AktywnyDo = 0 then 999999 else F.FRS_AktywnyDo end) from CDN.FrmStruktura F 
+						where F.frs_warstwa =3 and F.FRS_GIDTyp = 944 and F.FrS_GIDNumer = Centra.FRS_GIDNumer						
+						and not (
+						((case when F.FRS_AktywnyOd=0 then -999999 else F.FRS_AktywnyOd end) &lt; @OdDataOd ) and ((case when F.FRS_AktywnyDo=0 then 999999 else F.FRS_AktywnyDo end) &lt; @OdDataOd)
+						      or
+                          ((case when F.FRS_AktywnyOd=0 then -999999 else F.FRS_AktywnyOd end) &gt; @DoDataDo ) and ((case when F.FRS_AktywnyDo=0 then 999999 else F.FRS_AktywnyDo end) &gt; @DoDataDo)
+						)
+						) = 
+						case when Centra.FRS_AktywnyDo =0 then 999999 else Centra.FRS_AktywnyDo end then 1 else 0 end as OstatniZapisHist
+						FROM    CDN.FrsDrzewo (3, -4272, @FrsID, @OdData, @DoData, 0)Prc
+						join CDN.FrmStruktura Centra on Centra.FRS_GIDNumer = Prc.FrS_GIDNumer and Centra.FRS_GIDTyp = Prc.FrS_GIDTyp
+						and Centra.FRS_ID = Prc.FrS_Id and Centra.FRS_GRONumer = Prc.FrS_GRONumer 
+						WHERE Prc.FrS_GIDTyp = 944
+						and Centra.FRS_Warstwa = 3 
+						and Centra.FRS_GIDTyp = 944									
+					)ZapisyPrc
+					where ZapisyPrc.OstatniZapisHist = 1  
+					and ZapisyPrc.CentrumID = @FrsID					  
+				 )ZapisyPrcFiltr					
+			   ) AS PracownicyCentrum
+               ON PracownicyCentrum.FrS_GIDNumer = PDP_PrcNumer
+               LEFT OUTER JOIN
+               (SELECT   PDE_PrcNumer,
+                         SUM(PDE_Dni) AS WypelnionoDni,
+                         SUM(PDE_Procent) AS WypelnionoProcent
+                FROM     cdn.PodzielnikPrac
+                         LEFT OUTER JOIN
+                         cdn.PodzielnikElem
+                         ON PDE_PrcNumer = PDP_PrcNumer
+                            AND PDP_PdnNumer = PDE_GIDNumer
+                WHERE    PDP_PdnNumer = @PdnId
+                GROUP BY PDE_GIDNumer, PDE_PrcNumer, PDP_Ilosc) AS PDE
+               ON PDE.PDE_PrcNumer = PDP_PrcNumer
+               LEFT OUTER JOIN
+               (SELECT DISTINCT MAX(p.prc_optimaID) AS prc_optimaID,prc_akronim,prc_imie1,prc_nazwisko,
+                                PDZ_FrSNumer AS PDZ_FrSNumer,
+                                PDZ_PdNNumer AS PDZ_PdNNumer
+                FROM   CDN.PodzielnikZElem
+                       INNER JOIN
+                       cdn.PrcKarty AS p
+                       ON pdz_prcnumer = p.Prc_GIDNumer
+                       INNER JOIN
+                       cdn.PodzielnikPrac
+                       ON PDP_PdnNumer = PDZ_PdNNumer
+                WHERE  PDZ_FrSTyp = 944
+                       AND PDZ_FrSNumer != PDZ_PrcNumer
+					   AND PDZ_PdNNumer = @PdnId
+				GROUP BY PDZ_FrSNumer, PDZ_PdNNumer,prc_akronim,prc_imie1,prc_nazwisko) AS KZ
+               ON KZ.PDZ_FrSNumer = Prc.Prc_GIDNumer
+                  AND KZ.PDZ_PdNNumer = PDN_GIDNumer
+               LEFT OUTER JOIN
+               (SELECT DISTINCT p.prc_optimaID,prc_akronim,prc_imie1,prc_nazwisko,
+                                PDZ_FrSNumer AS PDZ_FrSNumer,
+                                PDZ_PdNNumer AS PDZ_PdNNumer
+                FROM   CDN.PodzielnikZElem
+                       INNER JOIN
+                       cdn.PrcKarty AS p
+                       ON pdz_prcnumer = p.Prc_GIDNumer
+                       INNER JOIN
+                       cdn.PodzielnikPrac
+                       ON PDP_PdnNumer = PDZ_PdNNumer
+                WHERE  PDZ_FrSTyp = 944
+                       AND PDZ_FrSNumer = PDZ_PrcNumer) AS PZ
+               ON PZ.PDZ_FrSNumer = Prc.Prc_GIDNumer
+                  AND PZ.PDZ_PdNNumer = PDN_GIDNumer
+        WHERE  (@zaznaczone IS NULL
+                OR (Prc.Prc_OptimaId IN (SELECT [Val]
+                                         FROM   cdn.[EP_SplitString] (@zaznaczone, ','))
+                    AND ISNULL(@zaznaczone, '') != ''))
+               AND Prc.Prc_Nazwisko + ' ' + Prc.Prc_Imie1 LIKE '%' + ISNULL(@sNazwa, '') + '%'
+               AND PDN_GIDNumer = @PdnID
+               AND PDN_Data &lt;= isnull(DateDiff(d, CONVERT (DATETIME, '28-12-1800', 105), @DataDo), 0)
+               AND @DataOd &lt;= isnull(DateDiff(d, CONVERT (DATETIME, '28-12-1800', 105), PDN_DataDo), 0)
+               AND ((@PokazWlasne = 1
+                     AND @PokazPodwladnych = 1
+                     AND PDP_PrcNumer IN (PracownicyCentrum.FrS_GIDNumer))
+                    OR (@PokazWlasne = 0
+                        AND @PokazPodwladnych = 1
+                        AND PDP_PrcNumer IN (PracownicyCentrum.FrS_GIDNumer)
+                        AND Prc.Prc_OptimaId != @PrcId)
+                    OR (@PokazWlasne = 1
+                        AND @PokazPodwladnych = 0
+                        AND PDP_PrcNumer IN (PracownicyCentrum.FrS_GIDNumer)
+                        AND Prc.Prc_OptimaId = @PrcId))) AS Pdz
+WHERE  @Status = -1
+       OR Status = @Status;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[EP_Podzielnik_ListaPodzielnikowFiltr_Stronicowana]"></A><PRE>
+          <FONT SIZE="2"><I>/* [EP_Podzielnik_ListaPodzielnikowFiltr_Stronicowana] */</I><BR>
+CREATE PROCEDURE [CDN].[EP_Podzielnik_ListaPodzielnikowFiltr_Stronicowana]
+@sNazwa VARCHAR (80), @DataOd DATETIME, @DataDo DATETIME, @IndexOd INT, @IndexDo INT
+AS
+SELECT *
+FROM   (SELECT PDN_GIDNumer AS ID,
+               ISNULL(PDN_Opis, '') AS Nazwa,
+               (ROW_NUMBER() OVER ( ORDER BY (SELECT 0))) AS WierszID
+        FROM   CDN.PodzielnikNag
+        WHERE  PDN_Opis LIKE '%' + ISNULL(@sNazwa, '') + '%'
+               AND PDN_Data &lt;= isnull(DateDiff(d, CONVERT (DATETIME, '28-12-1800', 105), @DataDo), 0)
+               AND isnull(DateDiff(d, CONVERT (DATETIME, '28-12-1800', 105), @DataOd), 0) &lt;= PDN_DataDo
+			   AND PDN_Udostepniaj != 2) AS Podzielniki
+WHERE  WierszID BETWEEN @IndexOd AND @IndexDo;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[EP_Podzielnik_PobierzListeWymiarow_Stronicowana]"></A><PRE>
+          <FONT SIZE="2"><I>/* [EP_Podzielnik_PobierzListeWymiarow_Stronicowana] */</I><BR>
+create procedure [CDN].[EP_Podzielnik_PobierzListeWymiarow_Stronicowana]
+@PrcID int,
+@PdnID int = 0,
+@IndexOd int,
+@IndexDo int
+as
+begin
+
+
+declare @PrcGidNumer int
+ 
+declare
+@lkol int = 0,
+@Wymlkol6 int,
+@sWymlkol6 varchar(30),
+@Wymlkol7 int,
+@sWymlkol7 varchar(30),
+@Wymlkol8 int,
+@sWymlkol8 varchar(30),
+@Wymlkol9 int,
+@sWymlkol9 varchar(30),
+@Wymlkol10 int,
+@sWymlkol10 varchar(30)
+ 
+ 
+set @PrcGidNumer = isnull((select Prc_GIDNumer from cdn.PrcKarty where Prc_OptimaId = @PrcID),0)
+ 
+if @PrcGidNumer = 0
+begin
+  return
+end
+ 
+;WITH Projekty AS (
+SELECT p.PRJ_ID ProjektID
+       ,p.prj_GroNumer ParentID
+          ,convert(varchar(max),p.PRJ_Kod) Kod
+          ,1 Poziom             
+          ,p.PRJ_OptimaId OptimaID
+FROM CDN.PrjStruktura p
+WHERE p.PRJ_GROID = 0
+UNION ALL
+SELECT ps.PRJ_ID ProjektID
+       ,ps.prj_GroNumer ParentID
+          ,CONVERT(varchar(max),p.Kod + '.' + ps.prj_kod)
+          ,p.Poziom + 1
+          ,ps.PRJ_OptimaId OptimaID
+FROM CDN.PrjStruktura ps
+join Projekty p on ps.PRJ_GRONumer = p.ProjektID
+),
+ 
+Struktura AS (
+SELECT f.FRS_ID ID
+       ,f.FRS_GRONumer ParentID
+       ,CONVERT(VARCHAR(MAX), f.FRS_Nazwa) Nazwa
+       ,1 Poziom
+          ,case when f.FRS_ID = 2 then 0 else f.FRS_OptimaId end OptimaID
+FROM CDN.FrmStruktura f
+WHERE f.FRS_GRONumer = 2 AND f.FRS_GIDTyp = -4272 AND f.FRS_Warstwa = 2
+UNION ALL
+SELECT f.FRS_ID
+       ,f.FRS_GRONumer ParentID
+       ,CONVERT(VARCHAR(MAX), s.Nazwa + '.' + f.FRS_Nazwa)
+       ,s.Poziom + 1
+          ,case when f.FRS_ID = 2 then 0 else f.FRS_OptimaId end OptimaID
+FROM Struktura s
+JOIN CDN.FrmStruktura f ON f.FRS_GRONumer = s.ID AND f.FRS_GIDTyp = -4272 AND f.FRS_Warstwa = 2
+WHERE s.Poziom &lt; 5),
+ 
+Centra AS (
+SELECT s.ID CentrumID
+       ,s.Nazwa Centrum
+          ,s.OptimaID
+FROM Struktura s
+WHERE s.Poziom IN (1,2,3,4)),
+ 
+Kategoria as(
+select w.wmr_id KategoriaID
+       ,w.WMR_ParID ParentID
+          ,convert(varchar(max),w.WMR_Nazwa) Kategoria
+          ,1 as Poziom       
+from cdn.wymiary w
+where WMR_ParID = 0 and WMR_Kategoria &gt; 0
+UNION ALL
+select wy.WMR_ID
+       ,wy.wmr_parid
+          ,convert(varchar(max),k.Kategoria + '.' +wy.wmr_nazwa)
+          ,k.Poziom + 1 Poziom
+from cdn.Wymiary wy join Kategoria k on wy.WMR_ParID = k.KategoriaID
+where wy.WMR_ParID &gt; 0 and wy.WMR_Kategoria &gt; 0
+)
+select * from (
+	SELECT isnull(pe.PDE_GIDLp,0) ID
+		   ,isnull(k.Kategoria,'') Kategoria
+			  ,isnull(k.KategoriaID,0) KategoriaID
+		   ,isnull(c.Centrum,'') Centrum
+		   ,isnull(c.CentrumID,0) CentrumID  
+			  ,isnull(c.OptimaID,0) CentrumOptimaID
+			  ,isnull(sl.SLW_WartoscS,'') Lokalizacja
+			  ,isnull(sl.SLW_ID,0) LokalizacjaID
+			  ,isnull(sl.SLW_OptimaId,0) LokalizacjaOptimaID
+			  ,isnull(knt.Knt_Akronim,'') as 'Kontr. docelowy'
+			  ,isnull(knt.Knt_GIDNumer,0) as KontrahentID
+			  ,isnull(p.Kod,'') Projekt
+			  ,isnull(p.ProjektID,0) ProjektID
+			  ,isnull(p.OptimaID,0) as ProjektOptimaID
+			  ,isnull(wymzw.Wmr1,0) as Wymiar1ID
+			  ,isnull(wymzw.Wmr1Nazwa,'') as Wymiar1Nazwa
+			  ,isnull(wymzw.Wmr2,0) as Wymiar2ID
+			  ,isnull(wymzw.Wmr2Nazwa,'') as Wymiar2Nazwa
+			  ,isnull(wymzw.Wmr3,0) as Wymiar3ID
+			  ,isnull(wymzw.Wmr3Nazwa,'') as Wymiar3Nazwa
+			  ,isnull(wymzw.Wmr4,0) as Wymiar4ID
+			  ,isnull(wymzw.Wmr4Nazwa,'') as Wymiar4Nazwa
+			  ,isnull(wymzw.Wmr5,0) as Wymiar5ID
+			  ,isnull(wymzw.Wmr5Nazwa,'') as Wymiar5Nazwa
+		   ,isnull(pe.PDE_Dni,0) Dni
+		   ,isnull(pe.PDE_Procent,0) Procent,
+		   (ROW_NUMBER() over (order by (select 0))) WierszID             
+	FROM CDN.PodzielnikElem pe
+	--Wymiar Projekt
+	LEFT JOIN CDN.PodzielnikSElem wp ON wp.PDS_GIDTyp = pe.PDE_GIDTyp AND wp.PDS_GIDNumer = pe.PDE_GIDNumer AND wp.PDS_GIDLp = pe.PDE_GIDLp AND wp.PDS_TypWymiaru = 5
+	LEFT JOIN Projekty p ON p.ProjektID = wp.PDS_WMRID
+	--Wymiar Centrum
+	LEFT JOIN CDN.PodzielnikSElem wc ON wc.PDS_GIDTyp = pe.PDE_GIDTyp AND wc.PDS_GIDNumer = pe.PDE_GIDNumer AND wc.PDS_GIDLp = pe.PDE_GIDLp AND wc.PDS_TypWymiaru = 1
+	LEFT JOIN Centra c ON c.CentrumID = wc.PDS_WMRID
+	--Wymiar Lokalizacja
+	LEFT JOIN CDN.PodzielnikSElem wl ON wl.PDS_GIDTyp = pe.PDE_GIDTyp AND wl.PDS_GIDNumer = pe.PDE_GIDNumer AND wl.PDS_GIDLp = pe.PDE_GIDLp AND wl.PDS_TypWymiaru = 2
+	left outer join cdn.Slowniki sl on wl.PDS_WMRID = sl.Slw_Id
+	left outer join CDN.SlownikiStruktura st on sl.SLW_SLSId = st.SLS_Id and st.SLS_Predefiniowany=52
+	--Wymiar Kontr. docelowy
+	LEFT JOIN CDN.PodzielnikSElem wk ON wk.PDS_GIDTyp = pe.PDE_GIDTyp AND wk.PDS_GIDNumer = pe.PDE_GIDNumer AND wk.PDS_GIDLp = pe.PDE_GIDLp AND wk.PDS_TypWymiaru = 3
+	LEFT JOIN cdn.KntKarty knt ON knt.Knt_GIDNumer = wk.PDS_WMRID
+	--Wymiar Kategoria
+	LEFT JOIN CDN.PodzielnikSElem wkat ON wkat.PDS_GIDTyp = pe.PDE_GIDTyp AND wkat.PDS_GIDNumer = pe.PDE_GIDNumer AND wkat.PDS_GIDLp = pe.PDE_GIDLp AND wkat.PDS_TypWymiaru = 4
+	LEFT JOIN Kategoria k ON k.KategoriaID = wkat.PDS_WMRID
+	--Wymiary zwykłe
+	left join
+	(select * from [CDN].[EP_Podzielnik_PobierzListeElemWymiaryZwykle](@PrcID,@PdnID)) wymzw on wymzw.Lp = pe.PDE_GIDLp
+	WHERE pe.PDE_GIDNumer = @PdnID AND pe.PDE_PrcNumer = @PrcGidNumer
+)Wymiary
+where WierszID between @IndexOd and @IndexDo
+
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[EP_Podzielnik_DodajWymiar]"></A><PRE>
+          <FONT SIZE="2"><I>/* [EP_Podzielnik_DodajWymiar] */</I><BR>
+CREATE PROCEDURE [CDN].[EP_Podzielnik_DodajWymiar]
+@PDN_GIDNumer INT, @LId INT, @WmrID INT, @Element VARCHAR (30), @TypWymiaru TINYINT, @WewTrans SMALLINT
+AS
+BEGIN
+    SET NOCOUNT ON;
+    --*****************
+    -- dodaje,aktualizuje wymiar w danej linii podzielnika prc
+    -- @PDN_GIDNumer - gidnumer podzielnika z xl'a
+    -- @LId - GidLp linii 
+    -- @WmrID - id wymiaru z xl'a
+    -- @Element - przekazywany w przypadku wymiarów sql
+    -- @TypWymiaru - typ wymiaru(1-centrum,2-lokalizacja,3-kontrahent,4-kat. finansowa,5-projekt)-
+    -- @WewTrans - czy zakladac transakcje wewnetrzna, domyslnie 0.
+    --*****************
+    IF NOT EXISTS (SELECT PdN_GIDNumer
+                   FROM   cdn.PodzielnikNag
+                   WHERE  PdN_GIDNumer = @PDN_GIDNumer)
+        BEGIN
+            RAISERROR ('Brak podzielnika o wskazanym numerze.', 16, 1);
+            RETURN;
+        END
+    DECLARE @GIDFirma AS INT;
+    SET @GIDFirma = (SELECT TOP 1 Frm_GIDFirma
+                     FROM   cdn.Firma);
+    IF @GIDFirma = 0
+       OR @GIDFirma IS NULL
+        BEGIN
+            RAISERROR ('Błąd pobrania identyfikatora GIDFirma z pieczątki firmy.', 16, 1);
+            RETURN;
+        END
+    IF @WewTrans &gt; 0
+        BEGIN TRANSACTION DodajLinie;
+    IF NOT EXISTS (SELECT *
+                   FROM   cdn.PodzielnikSElem
+                   WHERE  PDS_GIDTyp = 7168
+                          AND PDS_GIDNumer = @PDN_GIDNumer
+                          AND PDS_GIDLp = @LId
+						  AND PDS_WMRID = @WmrID)
+        INSERT  INTO cdn.PodzielnikSElem (PDS_GIDTyp, PDS_GIDFirma, PDS_GIDNumer, PDS_GIDLp, PDS_WMRID, PDS_Element, PDS_TypWymiaru)
+        VALUES                          (7168, @GIDFirma, @PDN_GIDNumer, @LId, @WmrID, @Element, @TypWymiaru);
+    IF NOT @@error &lt;&gt; 0
+        BEGIN
+            IF @WewTrans &gt; 0
+                COMMIT TRANSACTION DodajLinie;
+        END
+    ELSE
+        BEGIN
+            IF @WewTrans &gt; 0
+                ROLLBACK TRANSACTION DodajLinie;
+            RAISERROR ('Błąd dodania nowego wymiaru podzielnika.', 16, 1);
+            RETURN;
+        END
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[EP_Podzielnik_Utworz]"></A><PRE>
+          <FONT SIZE="2"><I>/* [EP_Podzielnik_Utworz] */</I><BR>
+create procedure [CDN].[EP_Podzielnik_Utworz](@Ope_GIDNumer int, @Data int, @Opis varchar(81), @DniRobocze smallint)  as
+begin
+  exec CDN.PodzielnikOtworz @Ope_GIDNumer,@Data,@Opis,@DniRobocze
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[EP_DodajPodzielnikPrc]"></A><PRE>
+          <FONT SIZE="2"><I>/* [EP_DodajPodzielnikPrc] */</I><BR>
+create procedure [CDN].[EP_DodajPodzielnikPrc](@Pdn_GIDNumer int, @Prc_OptimaID int, @WewTrans int)  as
+begin
+declare @PrcGidNumer int;
+
+ select @PrcGidNumer=p.Prc_GIDNumer from cdn.PrcKarty p where p.Prc_OptimaId=@Prc_OptimaID
+
+if @PrcGidNumer is null
+    begin
+	    raiserror('Nie istnieje pracownik o przekazanym ID.', 16, 1) 
+        return
+	end
+
+   exec CDN.PodzielnikLicznikCzytaj  @Pdn_GIDNumer,@WewTrans,1
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="EP_PodzielnikCzyZatwierdzDlaFrs"></A><PRE>
+          <FONT SIZE="2"><I>/* EP_PodzielnikCzyZatwierdzDlaFrs */</I><BR>
+create procedure CDN.EP_PodzielnikCzyZatwierdzDlaFrs( @PRCOptimaID INT, @PIN_GIDNumer INT, @FrsOptimaID int, @Zatwierdz smallint, 
+@CzyPozwolZatwierdz smallint output)  as
+begin
+set nocount on
+declare @Podlegly int
+declare @PinData int
+declare @PinDataDo int
+declare @FrsTyp smallint
+declare @FrsNumer int
+declare @Procent decimal(7,4)
+declare @FrsNazwa varchar(250)
+declare @sKomunikat varchar(500)
+
+declare @PRC_GIDNumer int
+declare @FrsId int
+
+set @CzyPozwolZatwierdz = 1
+
+set @PRC_GIDNumer = (select Prc_GIDNumer from cdn.PrcKarty where Prc_OptimaId = @PRCOptimaID)
+if @PRC_GIDNumer is null
+begin
+    --raiserror('Brak pracownika o wskazanym numerze.', 16, 1) 
+    set @CzyPozwolZatwierdz = 0
+    return
+end
+
+if @FrsOptimaID = 3 
+    set @FrsId = 3
+else
+begin
+    select @FrsId=FRS_ID from cdn.FrmStruktura
+    where FRS_OptimaId=@FrsOptimaID and FRS_Warstwa = 3 and FRS_GIDTyp = -4272 and FRS_StrTyp in(1000,1001) 
+
+	if @FrsId is null
+	begin
+	    --raiserror('Brak centrum o wskazanym numerze.', 16, 1) 
+	    set @CzyPozwolZatwierdz = 0
+        return
+	end
+end
+
+
+if not exists (select PdN_GIDNumer from cdn.PodzielnikNag where PdN_GIDNumer=@PIN_GIDNumer)
+begin
+  --raiserror('Brak podzielnika o wskazanym numerze.', 16, 1) 
+  set @CzyPozwolZatwierdz = 0
+  return
+end
+
+if exists (select PdN_GIDNumer from cdn.PodzielnikNag where PdN_GIDNumer=@PIN_GIDNumer and PdN_Zatwierdzono=1)
+begin
+  --raiserror('Podzielnik jest już potwierdzony.', 16, 1) 
+  set @CzyPozwolZatwierdz = 0
+  return
+end
+
+if @PRC_GIDNumer=0
+  execute CDN.PrcUstalGidWgSID @PRC_GIDNumer output, ''
+
+if @PRC_GIDNumer=0
+begin
+  --raiserror('Nieprawidłowy identyfikator pracownika.', 16, 1) 
+  set @CzyPozwolZatwierdz = 0
+  return
+end
+
+select @FrsTyp = Frs_GIDTyp, @FrsNumer=Frs_GIDNumer from cdn.FrmStruktura
+where FrS_Id = @FrsId and FrS_Warstwa=3
+
+if @FrsTyp is null
+  set @FrsTyp = 0
+
+if @FrsNumer is null
+  set @FrsNumer = 0
+
+if @FrsTyp=0
+begin
+  --raiserror('Nie znaleziono wskazanego elementu struktury firmy.', 16, 1) 
+  set @CzyPozwolZatwierdz = 0
+  return
+end
+
+declare @GIDFirma int
+set @GIDFirma = (select isnull(max(Frm_GIDFirma),0) from cdn.Firma)
+if @GIDFirma = 0
+begin
+  --raiserror('Błąd pobrania identyfikatora GIDFirma z pieczątki firmy.', 16, 1) 
+  set @CzyPozwolZatwierdz = 0
+  return
+end
+
+select @PinData=PdN_Data,@PinDataDo=PdN_DataDo from cdn.PodzielnikNag where PdN_GIDNumer=@PIN_GIDNumer
+if @PinData is null
+  set @PinData=0
+if @PinDataDo is null
+  set @PinDataDo=0
+
+if @FrsTyp=-4272 or @PRC_GIDNumer&lt;&gt;@FrsNumer
+begin
+  if exists(select RolaId from CDN.FrSPodlega( @PRC_GIDNumer,@FrsTyp,@FrsNumer,@PinData,@PinDataDo) 
+  join cdn.roleprawa on rlp_rolid=rolaid where rlp_praid=8)
+    set @Podlegly = 1
+  else
+    set @Podlegly = 0
+
+  if @Podlegly=0
+  begin
+    --raiserror('Brak uprawnień do wskazanego elementu.', 16, 1) 
+	set @CzyPozwolZatwierdz = 0
+    return
+  end
+end
+
+declare @OstatniPrcZatwierdzajacy int
+select top 1 @OstatniPrcZatwierdzajacy=PdZ_PrcNumer from cdn.PodzielnikZElem
+where PdZ_PdNTyp=7168 and PdZ_PdNNumer=@PIN_GIDNumer and PdZ_FrSTyp=@FrsTyp and PdZ_FrSNumer=@FrsNumer
+order by PdZ_Lp desc
+
+if @OstatniPrcZatwierdzajacy is null
+begin
+    if @Zatwierdz = 0
+	    begin
+		    set @CzyPozwolZatwierdz = 0
+            return
+		end
+    set @OstatniPrcZatwierdzajacy=0
+end
+
+if @OstatniPrcZatwierdzajacy&lt;&gt;0
+begin
+  select @PinData=PdN_Data,@PinDataDo=PdN_DataDo from cdn.PodzielnikNag where PdN_GIDNumer=@PIN_GIDNumer
+  if @PinData is null
+    set @PinData=0
+  if @PinDataDo is null
+    set @PinDataDo=0
+
+  if exists(select RolaId from CDN.FrSPodlega( @PRC_GIDNumer,944,@OstatniPrcZatwierdzajacy,@PinData,@PinDataDo) 
+  join cdn.roleprawa on rlp_rolid=rolaid where rlp_praid=8)
+    set @Podlegly = 1
+  else
+    set @Podlegly = 0
+
+  if @Podlegly=0
+  begin    
+    --raiserror('Podzielnik został zatwierdzony przez pracownika z wyższymi uprawnieniami.', 16, 1) 
+	set @CzyPozwolZatwierdz = 3
+    return
+  end
+end
+
+if @OstatniPrcZatwierdzajacy&lt;&gt;0
+begin
+    if @Zatwierdz = 1
+	    begin
+		    set @CzyPozwolZatwierdz = 0
+			--raiserror('Podzielnik został już zatwierdzony.', 16, 1) 
+            return
+		end	
+end
+
+create table #wynikiPodzielnikDrzewo (FRS_ID int, FRS_ParId int, FRS_Nazwa varchar(250) COLLATE Polish_CI_AS, 
+FRS_Opis varchar(255) COLLATE Polish_CI_AS, Poziom int, FRS_GIDTyp smallint, FRS_GIDNumer int, FRS_AktywnyOd int, 
+FRS_AktywnyDo int, Zatwierdzony int, Opisany int default(0), Procent decimal(7,4), OpisanyPDS int default(0) )
+insert into #wynikiPodzielnikDrzewo (FRS_ID, FRS_ParId, FRS_Nazwa, FRS_Opis, Poziom, FRS_GIDTyp, FRS_GIDNumer, FRS_AktywnyOd, 
+FRS_AktywnyDo) 
+  select FRS_ID, FRS_ParId, FRS_Nazwa, FRS_Opis, FRS_Poziom, FRS_GIDTyp, FRS_GIDNumer, FRS_AktywnyOd, FRS_AktywnyDo 
+  from CDN.FrsDrzewo(0,0,0,@PinData,@PinDataDo,0)
+
+update #wynikiPodzielnikDrzewo set Zatwierdzony = (select top 1 pdz_lp from cdn.podzielnikzelem 
+where pdz_pdntyp=7168 and pdz_pdnnumer=@PIN_GIDNumer
+and pdz_frstyp=#wynikiPodzielnikDrzewo.FRS_GIDTyp and pdz_frsnumer=#wynikiPodzielnikDrzewo.FRS_GIDNumer
+order by pdz_lp desc)
+update #wynikiPodzielnikDrzewo set Zatwierdzony = 0 where Zatwierdzony is null
+
+update #wynikiPodzielnikDrzewo set Procent = case when Zatwierdzony = 1 then 100 else (select isnull(sum(PDE_Procent),0)
+ from cdn.PodzielnikElem
+join cdn.PodzielnikNag on pde_gidtyp=pdn_gidtyp and pde_gidfirma=pdn_gidfirma and pde_gidnumer=pdn_gidnumer
+where pdn_gidtyp=7168 and pdn_gidnumer=@PIN_GIDNumer
+and pde_prctyp=#wynikiPodzielnikDrzewo.FRS_GIDTyp and pde_prcnumer=#wynikiPodzielnikDrzewo.FRS_GIDNumer) end
+update #wynikiPodzielnikDrzewo set Opisany = 1 where Procent = 100
+
+create table #wynikiStrukturaDrzewo (FRS_ID int, FRS_ParId int, FRS_Nazwa varchar(250) COLLATE Polish_CI_AS, 
+FRS_Opis varchar(255) COLLATE Polish_CI_AS, Poziom int, FRS_GIDTyp smallint, FRS_GIDNumer int, FRS_AktywnyOd int, FRS_AktywnyDo int)
+insert into #wynikiStrukturaDrzewo 
+  select FRS_ID, FRS_ParId, FRS_Nazwa, FRS_Opis, FRS_Poziom, FRS_GIDTyp, FRS_GIDNumer, FRS_AktywnyOd, FRS_AktywnyDo 
+  from CDN.FrsDrzewo(3,@FrsTyp,@FrsNumer,@PinData,@PinDataDo,0)
+
+if @Zatwierdz=0 and exists(select syn.FRS_ID from #wynikiPodzielnikDrzewo as syn 
+  join #wynikiPodzielnikDrzewo as ojciec on syn.FRS_ID=@FrsId and ojciec.FRS_ID=syn.FRS_ParId
+  where ojciec.Zatwierdzony = 1)
+begin  
+  --raiserror('Podzielnik został zatwierdzony na wyższym poziomie.', 16, 1) 
+  set @CzyPozwolZatwierdz = 2
+  return
+end
+
+
+create table #BledneZaokraglenia (FRS_GIDNumer int, roznica decimal(7,4), MaxLID int)
+insert into #BledneZaokraglenia
+select #wynikiPodzielnikDrzewo.FRS_GIDNumer , (cast(100 as decimal(7,4)) - isnull(#wynikiPodzielnikDrzewo.Procent,0)) as roznica,
+(select top 1 Pde_GIDLp as MaxLID from cdn.PodzielnikElem as a1 where a1.pde_gidtyp = 7168 and a1.pde_gidnumer = @PIN_GIDNumer and
+a1.pde_prctyp = 944 and a1.pde_prcNumer = #wynikiPodzielnikDrzewo.FRS_GIDNumer and 
+pde_Procent = (select max(pde_procent) from cdn.PodzielnikElem as a2 where a1.pde_gidtyp = a2.pde_gidtyp 
+and a1.pde_gidnumer = a2.pde_gidnumer and a1.pde_prcNumer = a2.pde_prcNumer)) as MaxLID
+from #wynikiStrukturaDrzewo
+join #wynikiPodzielnikDrzewo on #wynikiStrukturaDrzewo.FRS_ID=#wynikiPodzielnikDrzewo.FRS_ID
+where #wynikiPodzielnikDrzewo.Opisany = 0 and #wynikiStrukturaDrzewo.FRS_GIDTyp=944 and 
+(isnull(#wynikiPodzielnikDrzewo.Procent,0) &gt; 99 and isnull(#wynikiPodzielnikDrzewo.Procent,0) &lt; 101)
+
+if exists(select top 1 FRS_GIDNumer from #BledneZaokraglenia)
+	begin		
+		--zaktualizuj strukture
+		update  #wynikiPodzielnikDrzewo set Opisany = 1
+		from  #wynikiPodzielnikDrzewo , #BledneZaokraglenia 
+		where #wynikiPodzielnikDrzewo.FRS_GIDNumer=#BledneZaokraglenia.FRS_GIDNumer and
+			 #wynikiPodzielnikDrzewo.FRS_GIDTyp = 944
+	end
+
+drop table #BledneZaokraglenia
+
+
+if @Zatwierdz=1 and exists (select #wynikiStrukturaDrzewo.FRS_ID from #wynikiStrukturaDrzewo
+  join #wynikiPodzielnikDrzewo on #wynikiStrukturaDrzewo.FRS_ID=#wynikiPodzielnikDrzewo.FRS_ID
+  join CDN.PrcKarty on Prc_GIDNumer =#wynikiStrukturaDrzewo.FRS_GIDNumer 
+                       AND (Prc_Archiwalny = 0 OR (Prc_Archiwalny = 1 AND Prc_ArchiwalnyData &gt; @PinData)) 
+  where #wynikiPodzielnikDrzewo.Opisany = 0 and #wynikiStrukturaDrzewo.FRS_GIDTyp=944)
+begin
+  select top 1 @Procent = 100-isnull(#wynikiPodzielnikDrzewo.Procent,0), @FrsNazwa = isnull(#wynikiPodzielnikDrzewo.FRS_Nazwa,'') 
+  from #wynikiStrukturaDrzewo
+  join #wynikiPodzielnikDrzewo on #wynikiStrukturaDrzewo.FRS_ID=#wynikiPodzielnikDrzewo.FRS_ID
+  where #wynikiPodzielnikDrzewo.Opisany = 0 and #wynikiStrukturaDrzewo.FRS_GIDTyp=944
+  set @sKomunikat = 'Nie można zatwierdzić podzielnika. Nie wszystkie elementy zostały w pełni opisane. Pracownik: '+rtrim(@FrsNazwa)+', brakująca wartość: '+
+                    rtrim(cast(@Procent as varchar(10)))+'%%'  
+  --raiserror(@sKomunikat, 16, 1) 
+  set @CzyPozwolZatwierdz = 0
+  return
+end
+
+if @Zatwierdz=1 and exists(select pde_gidtyp from #wynikiStrukturaDrzewo
+  join cdn.podzielnikelem on pde_gidtyp=7168 and pde_gidnumer=@PIN_GIDNumer and pde_prctyp=#wynikiStrukturaDrzewo.FRS_GIDTyp 
+  and pde_prcnumer=#wynikiStrukturaDrzewo.FRS_GIDNumer
+  left join cdn.podzielnikselem on pde_gidtyp=pds_gidtyp and pde_gidfirma=pds_gidfirma and pde_gidnumer=pds_gidnumer 
+  and pde_gidlp=pds_gidlp
+  where #wynikiStrukturaDrzewo.FRS_GIDTyp=944 and pds_gidtyp is null)
+begin
+  select top 1 @FrsNazwa = #wynikiStrukturaDrzewo.FRS_Nazwa from #wynikiStrukturaDrzewo
+  join cdn.podzielnikelem on pde_gidtyp=7168 and pde_gidnumer=@PIN_GIDNumer and pde_prctyp=#wynikiStrukturaDrzewo.FRS_GIDTyp 
+  and pde_prcnumer=#wynikiStrukturaDrzewo.FRS_GIDNumer
+  left join cdn.podzielnikselem on pde_gidtyp=pds_gidtyp and pde_gidfirma=pds_gidfirma and pde_gidnumer=pds_gidnumer 
+  and pde_gidlp=pds_gidlp
+  where #wynikiStrukturaDrzewo.FRS_GIDTyp=944 and pds_gidtyp is null
+
+  --set @sKomunikat = 'Nie można zatwierdzić podzielnka. W każdym wierszu opisu musisz podać przynajmniej jeden wymiar analityczny! Element: '+rtrim(@FrsNazwa)  
+  --raiserror(@sKomunikat, 16, 1) 
+  set @CzyPozwolZatwierdz = 0
+  return
+end
+
+
+
+create table #tmpPrcDoUzupelnienia (prc_Akronim varchar(20) COLLATE Polish_CI_AS)
+insert into #tmpPrcDoUzupelnienia (prc_Akronim)
+select prc_akronim from #wynikiStrukturaDrzewo 
+  join cdn.podzielnikelem on pde_gidtyp=7168 and pde_gidnumer=@PIN_GIDNumer and pde_prctyp=#wynikiStrukturaDrzewo.FRS_GIDTyp 
+  and pde_prcnumer=#wynikiStrukturaDrzewo.FRS_GIDNumer 
+  join cdn.podzielnikselem on pde_gidtyp=pds_gidtyp and pde_gidfirma=pds_gidfirma and pde_gidnumer=pds_gidnumer 
+  and pde_gidlp=pds_gidlp 
+  join cdn.PrcKarty on pde_prcnumer = prc_GIDNumer and pde_prctyp = prc_GIDTyp
+  where #wynikiStrukturaDrzewo.FRS_GIDTyp=944 and pds_wmrid = -1
+
+
+declare @tmpPrcAkronim varchar(20)
+
+select @tmpPrcAkronim = prc_akronim from #tmpPrcDoUzupelnienia
+
+if @Zatwierdz=1 and isnull(@tmpPrcAkronim,'') &lt;&gt; ''
+begin
+
+  drop table #tmpPrcDoUzupelnienia
+
+  --set @sKomunikat = 'Nie można zatwierdzić podzielnka. Dla pracownika ''' + rtrim(@tmpPrcAkronim) + ''' istnieją pola ''do uzupełnienia'''  
+  --raiserror(@sKomunikat, 16, 1) 
+  set @CzyPozwolZatwierdz = 0
+  return 
+end
+
+drop table #tmpPrcDoUzupelnienia
+
+
+declare @IloscElementowNiezatwierdzonych int
+if @Zatwierdz=1
+  set @IloscElementowNiezatwierdzonych = (select count(*) from #wynikiStrukturaDrzewo 
+        join #wynikiPodzielnikDrzewo on #wynikiStrukturaDrzewo.FRS_ID=#wynikiPodzielnikDrzewo.FRS_ID
+        where #wynikiStrukturaDrzewo.Frs_GIDTyp=944 and #wynikiPodzielnikDrzewo.Zatwierdzony=0)
+if @Zatwierdz=1 and @OstatniPrcZatwierdzajacy=0 and @IloscElementowNiezatwierdzonych &gt; 0
+while 1=1
+begin
+  declare @DefId int  --id definicji dokumentu podzielnika
+  select @DefId=Dok_Id from cdn.DokDefinicje where Dok_GIDTyp=7168 and Dok_FrSId=1
+
+  create table #krotki(LID int, WmrId int, TypWymiaru smallint, NrKolumny smallint)
+  insert into #krotki select ows_gidlp, ows_wmrid, ows_typwymiaru,null from cdn.opiswymselem where ows_gidtyp=4320 
+  and ows_gidnumer=@DefId
+  --jeśli nie ma zdefiniowanych krotek to kończymy sprawdzanie
+  if (select count(*) from #krotki) = 0
+  begin
+    break
+    drop table #krotki
+  end
+
+  --pobranie, jakie kolumny na definicji podzielnika, potrzebne gdyż
+  --wycinamy z opisu te kolumny, których brak na definicji
+  create table #pdndefinicja (Kolumna int NOT NULL, WmrId int NOT NULL, WmrNazwa varchar(31) COLLATE Polish_CI_AS NOT NULL DEFAULT '', TypWymiaru smallint NOT NULL DEFAULT 0)
+  insert into #pdndefinicja(Kolumna,WmrId,WmrNazwa,TypWymiaru) execute cdn.PodzielnikDefinicja
+  --wycięcie kolumn nie występujących na definicji
+  --w dwóch podejściach, najpierw wymiary niestandardowe, potem standardowe
+  delete podzielnikselem from #wynikiStrukturaDrzewo 
+    join cdn.podzielnikelem on pde_gidtyp=7168 and pde_gidnumer=@PIN_GIDNumer and pde_prctyp=#wynikiStrukturaDrzewo.FRS_GIDTyp and pde_prcnumer=#wynikiStrukturaDrzewo.FRS_GIDNumer 
+    join cdn.podzielnikselem on pde_gidtyp=pds_gidtyp and pde_gidfirma=pds_gidfirma and pde_gidnumer=pds_gidnumer and pde_gidlp=pds_gidlp
+    left outer join #pdndefinicja on #pdndefinicja.TypWymiaru=pds_typwymiaru
+    where #wynikiStrukturaDrzewo.FRS_GIDTyp=944 and pds_typwymiaru &gt; 0 and #pdndefinicja.WmrId is null
+  delete podzielnikselem from #wynikiStrukturaDrzewo 
+    join cdn.podzielnikelem on pde_gidtyp=7168 and pde_gidnumer=@PIN_GIDNumer and pde_prctyp=#wynikiStrukturaDrzewo.FRS_GIDTyp and pde_prcnumer=#wynikiStrukturaDrzewo.FRS_GIDNumer 
+    join cdn.podzielnikselem on pde_gidtyp=pds_gidtyp and pde_gidfirma=pds_gidfirma and pde_gidnumer=pds_gidnumer and pde_gidlp=pds_gidlp
+    join cdn.wymiary on wmr_id=pds_wmrid
+    left outer join #pdndefinicja on #pdndefinicja.WmrId=wmr_rootid
+    where #wynikiStrukturaDrzewo.FRS_GIDTyp=944 and pds_typwymiaru = 0 and #pdndefinicja.WmrId is null and WMR_Archiwalny= 0
+
+  declare @IlKolumn int --ilość kolumn (wymiarów) na podzielniku
+  declare @Kolumna int
+  set @Kolumna = 0 
+  set @IlKolumn = (select count(WmrId) from #pdndefinicja)
+  --wypełnienie pomocniczej tabeli z wymiarami i numerami kolumn
+  create table #wymKolumny(WmrId int NOT NULL, WmrNazwa varchar(41) COLLATE Polish_CI_AS, WmrOpis varchar(256) COLLATE Polish_CI_AS, TypWymiaru smallint, SQL smallint, NrKolumny smallint)
+  while @Kolumna &lt; @IlKolumn
+  begin
+    set @Kolumna = @Kolumna + 1
+    insert into #wymKolumny(WmrId, WmrNazwa, WmrOpis, TypWymiaru, SQL) execute CDN.PodzielnikListaElementow @Kolumna, @PinData, @PinDataDo
+    update #wymKolumny set NrKolumny = @Kolumna where NrKolumny is null
+    --aktualizacja nr kolumny na tabeli z krotkami
+    update #krotki set NrKolumny = (select NrKolumny from #wymKolumny where #wymKolumny.WmrId=#krotki.WmrId 
+	and #wymKolumny.TypWymiaru=#krotki.TypWymiaru) where #krotki.NrKolumny is null
+    --uzupełnienie tabeli z krotkami o puste wiersze
+    insert into #krotki select owe_gidlp,null,null,@Kolumna from cdn.opiswymelem where owe_gidtyp=4320 and owe_gidnumer=@DefId 
+	and not exists(select * from #krotki where #krotki.LID=owe_gidlp and #krotki.NrKolumny=@Kolumna)
+  end
+  --właściwe sprawdzanie krotek
+  declare @PDELp int
+  declare @countPds int
+  declare @PrcNumer int
+  declare @savPrcNumer int
+  set @savPrcNumer=0
+  set @countPds=0
+  declare @blednyNrLinii int
+  declare PodzielnikElementyCursor CURSOR LOCAL FAST_FORWARD READ_ONLY FOR 
+  select #wynikiStrukturaDrzewo.Frs_Nazwa, pde_gidlp, pde_prcnumer from #wynikiStrukturaDrzewo
+      join #wynikiPodzielnikDrzewo on #wynikiStrukturaDrzewo.FRS_ID=#wynikiPodzielnikDrzewo.FRS_ID
+      join cdn.podzielnikelem on pde_prctyp=#wynikiStrukturaDrzewo.Frs_GIDTyp and pde_prcnumer=#wynikiStrukturaDrzewo.Frs_GIDNumer
+      where #wynikiStrukturaDrzewo.Frs_GIDTyp=944 and #wynikiPodzielnikDrzewo.Zatwierdzony=0 and pde_gidnumer=@PIN_GIDNumer
+      order by pde_prcnumer,pde_gidlp
+  open PodzielnikElementyCursor 
+  while 1=1 
+  begin 
+    fetch next from PodzielnikElementyCursor into @FrsNazwa, @PDELp, @PrcNumer
+    if @@FETCH_STATUS &lt;&gt; 0 break
+    
+    if @savPrcNumer&lt;&gt;@PrcNumer
+      set @blednyNrLinii = 1
+    set @countPds = (select count(*) from cdn.podzielnikselem where pds_gidnumer=@PIN_GIDNumer and pds_gidlp=@PDELp)
+
+    if not exists (select @FrsNazwa from cdn.podzielnikselem
+        join #wymKolumny on #wymKolumny.WmrId=pds_wmrid and #wymKolumny.TypWymiaru=pds_typwymiaru
+        join #krotki on #wymKolumny.NrKolumny=#krotki.NrKolumny
+        where pds_gidnumer=@PIN_GIDNumer and pds_gidlp=@PDELp and (#krotki.WmrId=#wymKolumny.WmrId or #krotki.WmrId is null)
+        group by #krotki.LID
+        having count(*) = @countPds)
+    begin
+      close PodzielnikElementyCursor 
+      deallocate PodzielnikElementyCursor 
+      drop table #wymKolumny
+      drop table #krotki
+      drop table #pdndefinicja
+      --set @sKomunikat = 'Nie można zatwierdzić podzielnka. Nieprawidłowa kombinacja krotek na pracowniku: '+rtrim(@FrsNazwa)+' w liniii: '+ltrim(str(@blednyNrLinii))     
+      --raiserror(@sKomunikat, 16, 1) 
+	  set @CzyPozwolZatwierdz = 0
+      return
+    end
+    set @savPrcNumer = @PrcNumer
+    set @blednyNrLinii = @blednyNrLinii + 1
+  end
+  close PodzielnikElementyCursor 
+  deallocate PodzielnikElementyCursor 
+  drop table #wymKolumny
+  drop table #krotki
+  drop table #pdndefinicja
+
+  break
+end
+
+drop table #wynikiPodzielnikDrzewo
+drop table #wynikiStrukturaDrzewo
+
+set nocount off
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[EP_PodzielnikKrotki]"></A><PRE>
+          <FONT SIZE="2"><I>/* [EP_PodzielnikKrotki] */</I><BR>
+Create Procedure [CDN].[EP_PodzielnikKrotki](@IdWymiar1 int , @IdWymiar2 int, @IdWymiar3 int, @IdWymiar4 int, @IdWymiar5 int, @IdWymiar6 int, @IdWymiar7 int, @IdWymiar8 int, @IdWymiar9 int, @IdWymiar10 int, @lKolumna int, @Data_Od Datetime, @Data_Do Datetime ) AS
+begin
+  set nocount on
+
+  declare @Data int, @DataDo int
+  set @Data = isnull(DateDiff(d, CONVERT (DATETIME, '28-12-1800', 105), @Data_Od), 0)
+  set @DataDo = isnull(DateDiff(d, CONVERT (DATETIME, '28-12-1800', 105), @Data_Do), 0)
+ 
+  --EXECUTE CDN.PodzielnikKrotki @IdWymiar1,@IdWymiar2,@IdWymiar3,@IdWymiar4,@IdWymiar5,@IdWymiar6,@IdWymiar7,@IdWymiar8,@IdWymiar9,@IdWymiar10,@lKolumna,@Data,@DataDo
+  declare @DefId int
+	declare @KategoriaFin smallint
+	declare @Centrum smallint
+	declare @Lokalizacja smallint
+	declare @KontrahentDoc smallint
+	declare @Projekt smallint
+	declare @KolKategoriaFin smallint
+	declare @KolCentrum smallint
+	declare @KolLokalizacja smallint
+	declare @KolKontrahentDoc smallint
+	declare @KolProjekt smallint
+	declare @actKol smallint
+
+
+	select 
+	  @DefId=Dok_Id, 
+	  @KategoriaFin=Dok_KategoriaFin, 
+	  @Centrum=Dok_Centrum, 
+	  @Lokalizacja=Dok_Lokalizacja,
+	  @KontrahentDoc=Dok_KontrahentDoc,
+	  @Projekt=Dok_Projekt
+	from cdn.DokDefinicje 
+	where Dok_GIDTyp=7168 and Dok_FrSId=1
+
+
+
+	set @actKol = 0
+	set @KolKategoriaFin = @actKol
+	set @KolCentrum = @actKol
+	set @KolLokalizacja = @actKol
+	set @KolKontrahentDoc = @actKol
+	set @KolProjekt = @actKol
+
+	
+	if isnull(@KategoriaFin,0) = 1
+		begin
+		set @actKol = @actKol + 1
+		set @KolKategoriaFin = @actKol
+		end
+
+	if isnull(@Centrum,0) = 1
+		begin
+		set @actKol = @actKol + 1
+		set @KolCentrum = @actKol
+		end
+
+	if isnull(@Lokalizacja,0) = 1
+		begin
+		set @actKol = @actKol + 1
+		set @KolLokalizacja = @actKol
+		end
+
+	if isnull(@KontrahentDoc,0) = 1
+		begin
+		set @actKol = @actKol + 1
+		set @KolKontrahentDoc = @actKol
+		end
+
+	if isnull(@Projekt,0) = 1
+		begin
+		set @actKol = @actKol + 1
+		set @KolProjekt = @actKol
+		end
+	
+	
+	create table #tmpWymiaryKr (kolumna int identity (1, 1), WmrId int)
+	insert into #tmpWymiaryKr select Wmr_Id from cdn.Wymiary where Wmr_ParId=0 and Wmr_Kategoria=0 and WMR_Archiwalny = 0 and WMR_EPrac = 1 order by Wmr_Id
+	
+
+	create table #tempElementyAll (WmrId int, WmrNazwa varchar(1000) COLLATE Polish_CI_AS, WmrOpis varchar(256) COLLATE Polish_CI_AS, TypWymiaru smallint, SQL smallint)
+	--insert into #tempElementyAll execute cdn.PodzielnikListaElementow @lKolumna	, @Data, @DataDo
+	create table #tempElementyEprc (WmrId int, WmrNazwa varchar(1000) COLLATE Polish_CI_AS, WmrOpis varchar(256) COLLATE Polish_CI_AS, TypWymiaru smallint, SQL smallint, WierszID int)
+	insert into #tempElementyEprc execute cdn.EP_PodzielnikListaElementow @lKolumna	, @Data, @DataDo, 0, 0
+	
+	insert into #tempElementyAll(WmrId,WmrNazwa,WmrOpis,TypWymiaru,SQL)
+	select WmrId,WmrNazwa,WmrOpis,TypWymiaru,SQL from  #tempElementyEprc
+	
+
+	create table #tempElementyKr (WmrId int, WmrNazwa varchar(1000) COLLATE Polish_CI_AS, WmrOpis varchar(256) COLLATE Polish_CI_AS, TypWymiaru smallint, SQL smallint)
+			
+	insert into #tempElementyKr 
+	select WmrId as WmrId, 
+			 case TypWymiaru 
+				 when 0 then wym0.Wmr_Nazwa 
+				 when 1 then FrS_Nazwa 
+				 when 2 then Slw_WartoscS 
+				 when 4 then wym4.Wmr_Nazwa 
+				 when 5 then Prj_Kod
+				 else null 
+			 end as WmrNazwa, 
+			 case TypWymiaru 
+				 when 0 then wym0.Wmr_Opis 
+				 when 1 then FrS_Opis 
+				 when 2 then ''	
+				 when 4 then wym4.Wmr_Opis 
+				 when 5 then Prj_Nazwa 
+				 else null 
+			 end as WmrOpis, 
+			 TypWymiaru  as TypWymiaru, 
+			 case TypWymiaru 
+				 when 3 then 1
+				 when 0 then
+					case 
+						when wym0.Wmr_Typ = 2 then wym0.Wmr_Typ
+						when wym0.Wmr_Typ = 4 then wym0.Wmr_Typ
+						else
+							0
+					end			 
+				 when 4 then
+					case 
+						when wym4.Wmr_Typ = 2 then wym4.Wmr_Typ
+						when wym4.Wmr_Typ = 4 then wym4.Wmr_Typ
+						else
+							0
+					end			 
+				 else
+					0
+			 end as SQL 
+			 from 
+			(select  distinct case  @lKolumna
+				 when 1 then IDWymiar1 
+				 when 2 then IDWymiar2 
+				 when 3 then IDWymiar3 
+				 when 4 then IDWymiar4 
+				 when 5 then IDWymiar5 
+				 when 6 then IDWymiar6 
+				 when 7 then IDWymiar7 
+				 when 8 then IDWymiar8 
+				 when 9 then IDWymiar9 
+				 when 10 then IDWymiar10 
+			 end as wmrid, 
+			 case @lKolumna 
+				 when 1 then TypWymiar1 
+				 when 2 then TypWymiar2
+				 when 3 then TypWymiar3 
+				 when 4 then TypWymiar4
+				 when 5 then TypWymiar5
+				 when 6 then TypWymiar6
+				 when 7 then TypWymiar7
+				 when 8 then TypWymiar8 
+				 when 9 then TypWymiar9 
+				 when 10 then TypWymiar10 
+			 end as TypWymiaru 
+			 from 
+			 (select LID, IDWymiar1, TypWymiar1, IDWymiar2, TypWymiar2, IDWymiar3, TypWymiar3, IDWymiar4, TypWymiar4, IDWymiar5, TypWymiar5, IDWymiar6, TypWymiar6, IDWymiar7, TypWymiar7, IDWymiar8, TypWymiar8, IDWymiar9, TypWymiar9, IDWymiar10, TypWymiar10
+			 from 
+			 (select ows_gidlp as LID,  
+			 sum ( case wmrKolumna when 1 then ows_wmrId else NULL end) as IDWymiar1, 
+			 sum ( case wmrKolumna when 1 then OWS_TypWymiaru else NULL end) as TypWymiar1, 
+			 sum ( case wmrKolumna when 2 then ows_wmrId else NULL end) as IDWymiar2, 
+			 sum ( case wmrKolumna when 2 then OWS_TypWymiaru else NULL end) as TypWymiar2, 
+			 sum ( case wmrKolumna when 3 then ows_wmrId else NULL end) as IDWymiar3, 
+			 sum ( case wmrKolumna when 3 then OWS_TypWymiaru else NULL end) as TypWymiar3, 
+			 sum ( case wmrKolumna when 4 then ows_wmrId else NULL end) as IDWymiar4, 
+			 sum ( case wmrKolumna when 4 then OWS_TypWymiaru else NULL end) as TypWymiar4, 
+			 sum ( case wmrKolumna when 5 then ows_wmrId else NULL end) as IDWymiar5, 
+			 sum ( case wmrKolumna when 5 then OWS_TypWymiaru else NULL end) as TypWymiar5, 
+			 sum ( case wmrKolumna when 6 then ows_wmrId else NULL end) as IDWymiar6, 
+			 sum ( case wmrKolumna when 6 then OWS_TypWymiaru else NULL end) as TypWymiar6,
+			 sum ( case wmrKolumna when 7 then ows_wmrId else NULL end) as IDWymiar7, 
+			 sum ( case wmrKolumna when 7 then OWS_TypWymiaru else NULL end) as TypWymiar7, 
+			 sum ( case wmrKolumna when 8 then ows_wmrId else NULL end) as IDWymiar8, 
+			 sum ( case wmrKolumna when 8 then OWS_TypWymiaru else NULL end) as TypWymiar8, 
+			 sum ( case wmrKolumna when 9 then ows_wmrId else NULL end) as IDWymiar9, 
+			 sum ( case wmrKolumna when 9 then OWS_TypWymiaru else NULL end) as TypWymiar9, 
+			 sum ( case wmrKolumna when 10 then ows_wmrId else NULL end) as IDWymiar10, 
+			 sum ( case wmrKolumna when 10 then OWS_TypWymiaru else NULL end) as TypWymiar10 
+			 from 
+			 (select ows_gidlp, ows_wmrId, OWS_TypWymiaru, case OWS_TypWymiaru when 4 then @KolKategoriaFin when 1 then @KolCentrum  when 2 then @KolLokalizacja when 3 then @KolKontrahentDoc when 5 then @KolProjekt else isnull(kolumna,0) + @actKol end as wmrKolumna 
+			 from cdn.opiswymselem left outer join (cdn.Wymiary join #tmpWymiaryKr on wmr_rootid = wmrId ) on ows_wmrid = wmr_id where ows_gidtyp=4320 and ows_gidnumer= @DefId
+			 ) as a8 
+			 group by ows_gidlp) as a0 
+			 where  
+			 ((( @IDWymiar1 &lt;&gt; 0) and  IDWymiar1 = @IDWymiar1 and not IDWymiar1 is null and @lKolumna &lt;&gt; 1) or (@lKolumna  = 1 and @IDWymiar1 &lt;&gt; 0 and not IDWymiar1 is null) or (@lKolumna = 1 and @IDWymiar1 = 0 and not IDWymiar1 is null) or (@lKolumna &lt;&gt; 1 and @IDWymiar1 = 0) or ( @IDWymiar1 &lt;&gt; 0 and IDWymiar1 is null) ) and
+			 ((( @IDWymiar2 &lt;&gt; 0) and  IDWymiar2 = @IDWymiar2 and not IDWymiar2 is null and @lKolumna &lt;&gt; 2) or (@lKolumna  = 2 and @IDWymiar2 &lt;&gt; 0 and not IDWymiar2 is null) or (@lKolumna = 2 and @IDWymiar2 = 0 and not IDWymiar2 is null) or (@lKolumna &lt;&gt; 2 and @IDWymiar2 = 0) or ( @IDWymiar2 &lt;&gt; 0 and IDWymiar2 is null) ) and
+			 ((( @IDWymiar3 &lt;&gt; 0) and  IDWymiar3 = @IDWymiar3 and not IDWymiar3 is null and @lKolumna &lt;&gt; 3) or (@lKolumna  = 3 and @IDWymiar3 &lt;&gt; 0 and not IDWymiar3 is null) or (@lKolumna = 3 and @IDWymiar3 = 0 and not IDWymiar3 is null) or (@lKolumna &lt;&gt; 3 and @IDWymiar3 = 0) or ( @IDWymiar3 &lt;&gt; 0 and IDWymiar3 is null) ) and
+			 ((( @IDWymiar4 &lt;&gt; 0) and  IDWymiar4 = @IDWymiar4 and not IDWymiar4 is null and @lKolumna &lt;&gt; 4) or (@lKolumna  = 4 and @IDWymiar4 &lt;&gt; 0 and not IDWymiar4 is null) or (@lKolumna = 4 and @IDWymiar4 = 0 and not IDWymiar4 is null) or (@lKolumna &lt;&gt; 4 and @IDWymiar4 = 0) or ( @IDWymiar4 &lt;&gt; 0 and IDWymiar4 is null) ) and
+			 ((( @IDWymiar5 &lt;&gt; 0) and  IDWymiar5 = @IDWymiar5 and not IDWymiar5 is null and @lKolumna &lt;&gt; 5) or (@lKolumna  = 5 and @IDWymiar5 &lt;&gt; 0 and not IDWymiar5 is null) or (@lKolumna = 5 and @IDWymiar5 = 0 and not IDWymiar5 is null) or (@lKolumna &lt;&gt; 5 and @IDWymiar5 = 0) or ( @IDWymiar5 &lt;&gt; 0 and IDWymiar5 is null) ) and
+			 ((( @IDWymiar6 &lt;&gt; 0) and  IDWymiar6 = @IDWymiar6 and not IDWymiar6 is null and @lKolumna &lt;&gt; 6) or (@lKolumna  = 6 and @IDWymiar6 &lt;&gt; 0 and not IDWymiar6 is null) or (@lKolumna = 6 and @IDWymiar6 = 0 and not IDWymiar6 is null) or (@lKolumna &lt;&gt; 6 and @IDWymiar6 = 0) or ( @IDWymiar6 &lt;&gt; 0 and IDWymiar6 is null) ) and
+			 ((( @IDWymiar7 &lt;&gt; 0) and  IDWymiar7 = @IDWymiar7 and not IDWymiar7 is null and @lKolumna &lt;&gt; 7) or (@lKolumna  = 7 and @IDWymiar7 &lt;&gt; 0 and not IDWymiar7 is null) or (@lKolumna = 7 and @IDWymiar7 = 0 and not IDWymiar7 is null) or (@lKolumna &lt;&gt; 7 and @IDWymiar7 = 0) or ( @IDWymiar7 &lt;&gt; 0 and IDWymiar7 is null) ) and
+			 ((( @IDWymiar8 &lt;&gt; 0) and  IDWymiar8 = @IDWymiar8 and not IDWymiar8 is null and @lKolumna &lt;&gt; 8) or (@lKolumna  = 8 and @IDWymiar8 &lt;&gt; 0 and not IDWymiar8 is null) or (@lKolumna = 8 and @IDWymiar8 = 0 and not IDWymiar8 is null) or (@lKolumna &lt;&gt; 8 and @IDWymiar8 = 0) or ( @IDWymiar8 &lt;&gt; 0 and IDWymiar8 is null) ) and
+			 ((( @IDWymiar9 &lt;&gt; 0) and  IDWymiar9 = @IDWymiar9 and not IDWymiar9 is null and @lKolumna &lt;&gt; 9) or (@lKolumna  = 9 and @IDWymiar9 &lt;&gt; 0 and not IDWymiar9 is null) or (@lKolumna = 9 and @IDWymiar9 = 0 and not IDWymiar9 is null) or (@lKolumna &lt;&gt; 9 and @IDWymiar9 = 0) or ( @IDWymiar9 &lt;&gt; 0 and IDWymiar9 is null) ) and
+			 ((( @IDWymiar10 &lt;&gt; 0) and  IDWymiar10 = @IDWymiar10 and not IDWymiar10 is null and @lKolumna &lt;&gt; 10) or (@lKolumna  = 10 and @IDWymiar10 &lt;&gt; 0 and not IDWymiar10 is null) or (@lKolumna = 10 and @IDWymiar10 = 0 and not IDWymiar10 is null) or (@lKolumna &lt;&gt; 10 and @IDWymiar10 = 0) or ( @IDWymiar10 &lt;&gt; 0 and IDWymiar10 is null) ) 
+			) as a1) as a2
+			 left outer join cdn.FrmStruktura on TypWymiaru = 1 and FrS_GIDTyp=-4272 and (FrS_StrTyp=1000 or FrS_StrTyp=1001) and FrS_Warstwa=2 and wmrid = FrS_Id and (FRS_AktywnyOd = 0 or FRS_AktywnyOd &gt;= @Data) and (FRS_AktywnyDo = 0 or FRS_AktywnyDo &lt;= @Data) 
+			 left outer join cdn.Slowniki on TypWymiaru = 2 and wmrid = Slw_Id
+			 left outer join CDN.SlownikiStruktura on SLW_SLSId = SLS_Id and SLS_Predefiniowany=52
+			 left outer join cdn.Wymiary as wym4 on TypWymiaru = 4 and Wmr_Kategoria&gt;0 and wmrid = wym4.Wmr_ID and wym4.WMR_Archiwalny = 0 and wym4.WMR_EPrac = 1
+			 left outer join cdn.Wymiary as wym0 on TypWymiaru = 0 and wmrid = wym0.Wmr_ID and wym0.WMR_Archiwalny = 0 and wym0.WMR_EPrac = 1
+			 left outer join cdn.PrjStruktura on TypWymiaru = 5 and wmrid = Prj_Id
+			 where not (WmrId is null and TypWymiaru is null) order by 2
+
+
+	
+	
+	if exists (select top 1 wmrid from #tempElementyKr) 
+		begin
+			insert into #tempElementyKr select 0,'','',0,0
+			select #tempElementyAll.* from #tempElementyKr join #tempElementyAll on #tempElementyKr.WmrId = #tempElementyAll.WmrId order by 2
+		end
+	else
+		select * from #tempElementyAll order by 2	
+
+	drop table #tmpWymiaryKr
+	drop table #tempElementyKr
+	drop table #tempElementyAll
+	drop table #tempElementyEprc
+
+	set nocount off
+
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[EP_Podzielnik_PodzielnikNag]"></A><PRE>
+          <FONT SIZE="2"><I>/* [EP_Podzielnik_PodzielnikNag] */</I><BR>
+CREATE PROCEDURE CDN.[EP_Podzielnik_PodzielnikNag] @PdnID int
+as
+select PDN_GIDNumer, 
+	  ISNULL(PDN_Opis,'') as PDN_Opis,
+	  ISNULL(PDN_DniRobocze,0) as PDN_DniRobocze,
+	  CONVERT(varchar(10),DATEADD(day,ISNULL(PDN_Data,0),
+	  CONVERT(datetime,'1800-12-28',120)),120) as PDN_Data,
+	  CONVERT(varchar(10),DATEADD(day,ISNULL(PDN_DataDo,0),
+	  CONVERT(datetime,'1800-12-28',120)),120) as PDN_DataDo,
+	  ISNULL(PDN_Zatwierdzono,0) as PDN_Zatwierdzono,  
+	  ISNULL(PDN_Udostepniaj,0) as PDN_Udostepniaj, 
+	  case when ISNULL(PDN_Zatwierdzono,0)=1 or not ISNULL(PDN_Udostepniaj,0)=1 then 1 else 0 end as PDN_TylkoOdczyt,
+	  ISNULL(PDN_JM,'') as PDN_JM
+	from 
+	  CDN.PodzielnikNag where PDN_GIDNumer = @PdnID
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[EP_SplitString]"></A><PRE>
+          <FONT SIZE="2"><I>/* [EP_SplitString] */</I><BR>
+CREATE FUNCTION [CDN].[EP_SplitString]
+(@delimString NVARCHAR (2000), @delim CHAR (1)='')
+RETURNS 
+    @paramtable TABLE (
+        Lp  INT             IDENTITY (1, 1),
+        Val NVARCHAR (1000))
+AS
+BEGIN
+    DECLARE @len AS INT, 
+            @index AS INT, 
+            @nextindex AS INT;
+    SET @len = DATALENGTH(@delimString);
+    SET @index = 0;
+    SET @nextindex = 0;
+    WHILE (@len &gt; @index)
+        BEGIN
+            SET @nextindex = CHARINDEX(@delim, @delimString, @index);
+            IF (@nextindex = 0)
+                SET @nextindex = @len + 2;
+            INSERT @paramtable (val)
+            SELECT SUBSTRING(@delimString, @index, @nextindex - @index);
+            SET @index = @nextindex + 1;
+        END
+    RETURN;
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[EP_Podzielnik_PracownikNaglowek]"></A><PRE>
+          <FONT SIZE="2"><I>/* [EP_Podzielnik_PracownikNaglowek] */</I><BR>
+CREATE PROCEDURE [CDN].[EP_Podzielnik_PracownikNaglowek]
+@PdnId INT, @prcId INT
+AS
+SELECT *
+FROM   (SELECT PDN_GIDNumer,
+               ISNULL(PDN_Opis, '') AS PDN_Opis,
+               ISNULL(PDN_DniRobocze, 0) AS PDN_DniRobocze,
+               ISNULL(PDE.WypelnionoProcent, 0) AS WypelnionoProcent,
+               ISNULL(PDE.WypelnionoDni, 0) AS WypelnionoDni,
+               CONVERT (VARCHAR (10), DATEADD(day, ISNULL(PDN_Data, 0), CONVERT (DATETIME, '1800-12-28', 120)), 120) AS PDN_Data,
+               CONVERT (VARCHAR (10), DATEADD(day, ISNULL(PDN_DataDo, 0), CONVERT (DATETIME, '1800-12-28', 120)), 120) AS PDN_DataDo,
+               CASE 
+               WHEN ISNULL(ISNULL(KZ.Prc_OptimaId, PZ.Prc_OptimaId), 0) = 0
+                         AND ISNULL(PDE.WypelnionoProcent, 0) = 0 THEN 0 
+               WHEN ISNULL(ISNULL(KZ.Prc_OptimaId, PZ.Prc_OptimaId), 0) = 0
+                                                                              AND (ISNULL(PDE.WypelnionoProcent, 0) &lt;&gt; 100) THEN 5 
+               WHEN ISNULL(ISNULL(KZ.Prc_OptimaId, PZ.Prc_OptimaId), 0) = 0
+                                                                                                                                       AND ISNULL(PDE.WypelnionoProcent, 0) = 100 THEN 1 
+               WHEN PDN_Zatwierdzono = 1 THEN 4 
+               WHEN ISNULL(KZ.Prc_OptimaId, 0) &gt; 0 THEN 3 
+               WHEN ISNULL(PZ.Prc_OptimaId, 0) &gt; 0 THEN 2 
+               END AS Status,
+               ISNULL(PDN_Udostepniaj, 0) AS PDN_Udostepniaj,
+               CASE 
+               WHEN ISNULL(PDN_Zatwierdzono, 0) = 1
+                         OR NOT ISNULL(PDN_Udostepniaj, 0) = 1 THEN 1 ELSE 0 
+               END AS PDN_TylkoOdczyt,
+               ISNULL(PDN_JM, '') AS PDN_JM,
+               ISNULL(PDP_PrcNumer, 0) AS PDP_PrcNumer,
+               Prc.Prc_OptimaId AS PrcOptimaID,
+               isnull(PDP_Ilosc, 0) AS IloscPrzepracowanegoCzasu,
+               isnull(ISNULL(KZ.Prc_OptimaId, PZ.Prc_OptimaId), 0) AS PrcOptimaIDZatwierdz,
+			   Prc.Prc_Nazwisko as PrcNazwisko, 
+			   Prc.Prc_Imie1 as PrcImie,
+			   prc.Prc_Akronim as PrcAkronim,
+			   case when KZ.Prc_OptimaId is null then isnull(PZ.prc_imie1,'') else isnull(KZ.prc_imie1,'') end as PrcImieZatwierdzil,
+			   case when KZ.Prc_OptimaId is null then isnull(PZ.Prc_Nazwisko,'') else isnull(KZ.Prc_Nazwisko,'') end as PrcNazwiskoZatwierdzil,
+			   case when KZ.Prc_OptimaId is null then isnull(PZ.Prc_akronim,'') else isnull(KZ.prc_akronim,'') end as PrcAkronimZatwierdzil
+        FROM   CDN.PodzielnikNag
+               LEFT OUTER JOIN
+               CDN.PodzielnikPrac
+               ON PDN_GIDNumer = PDP_PdnNumer
+               LEFT OUTER JOIN
+               CDN.PrcKarty AS Prc
+               ON PDP_PrcNumer = Prc.Prc_GIDNumer
+               LEFT OUTER JOIN
+               (SELECT   PDE_PrcNumer,
+                         SUM(PDE_Dni) AS WypelnionoDni,
+                         SUM(PDE_Procent) AS WypelnionoProcent
+                FROM     cdn.PrcKarty
+                         INNER JOIN
+                         cdn.PodzielnikPrac
+                         ON PDP_PrcNumer = Prc_GIDNumer
+                         LEFT OUTER JOIN
+                         cdn.PodzielnikElem
+                         ON PDE_PrcNumer = PDP_PrcNumer
+                            AND PDP_PdnNumer = PDE_GIDNumer
+                WHERE    Prc_OptimaId = @prcId
+                         AND PDP_PdnNumer = @PdnId
+                GROUP BY PDE_GIDNumer, PDE_PrcNumer, PDP_Ilosc) AS PDE
+               ON PDE.PDE_PrcNumer = PDP_PrcNumer
+               LEFT OUTER JOIN
+               (SELECT DISTINCT p.prc_optimaID,p.prc_akronim,p.prc_imie1,p.prc_nazwisko,
+                                PDZ_FrSNumer AS PDZ_FrSNumer,
+                                PDZ_PdNNumer AS PDZ_PdNNumer
+                FROM   CDN.PodzielnikZElem
+                       INNER JOIN
+                       cdn.PrcKarty AS p
+                       ON pdz_prcnumer = p.Prc_GIDNumer
+                       INNER JOIN
+                       cdn.PodzielnikPrac
+                       ON PDP_PdnNumer = PDZ_PdNNumer
+                WHERE  PDZ_FrSTyp = 944
+                       AND PDZ_FrSNumer != PDZ_PrcNumer) AS KZ
+               ON KZ.PDZ_FrSNumer = Prc.Prc_GIDNumer
+                  AND KZ.PDZ_PdNNumer = PDN_GIDNumer
+               LEFT OUTER JOIN
+               (SELECT DISTINCT p.prc_optimaID,p.prc_akronim,p.prc_imie1,p.prc_nazwisko,
+                                PDZ_FrSNumer AS PDZ_FrSNumer,
+                                PDZ_PdNNumer AS PDZ_PdNNumer
+                FROM   CDN.PodzielnikZElem
+                       INNER JOIN
+                       cdn.PrcKarty AS p
+                       ON pdz_prcnumer = p.Prc_GIDNumer
+                       INNER JOIN
+                       cdn.PodzielnikPrac
+                       ON PDP_PdnNumer = PDZ_PdNNumer
+                WHERE  PDZ_FrSTyp = 944
+                       AND PDZ_FrSNumer = PDZ_PrcNumer) AS PZ
+               ON PZ.PDZ_FrSNumer = Prc.Prc_GIDNumer
+                  AND PZ.PDZ_PdNNumer = PDN_GIDNumer
+        WHERE  Prc.Prc_OptimaId = @prcId
+               AND PDN_GIDNumer = @PdnID) AS Podzielniki;
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="EP_PodzielnikZapiszModyfikacje"></A><PRE>
+          <FONT SIZE="2"><I>/* EP_PodzielnikZapiszModyfikacje */</I><BR>
+Create Procedure CDN.EP_PodzielnikZapiszModyfikacje( @PRC_OptimaID INT, @PIN_GIDNumer INT, @Frs_OptimaID int)  as
+begin
+set nocount on;
+
+declare @PrcGidNumer int, @FrsGidNumer int;
+
+select @PrcGidNumer=p.Prc_GIDNumer from cdn.PrcKarty p where p.Prc_OptimaId=@Prc_OptimaID;
+
+if @PrcGidNumer is null
+    begin
+	    raiserror('Nie istnieje pracownik o przekazanym ID.', 16, 1);
+        return;
+	end
+
+if @Frs_OptimaID = 3
+    set @FrsGidNumer = 3
+else
+    select top 1 @FrsGidNumer=FRS_GIDNumer from cdn.FrmStruktura
+    where FRS_OptimaId=@Frs_OptimaID and FRS_Warstwa = 3 and FRS_GIDTyp = -4272 and FRS_StrTyp in(1000,1001);
+
+if @FrsGidNumer is null
+begin
+    raiserror('Brak centrum o wskazanym ID.',16,1);
+    return;
+end
+
+exec CDN.PodzielnikElemModyfikuj @PrcGidNumer,@PIN_GIDNumer,@FrsGidNumer; 
+
+set nocount off;
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

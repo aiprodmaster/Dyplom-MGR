@@ -1,0 +1,118 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="WFL_SzukajStatusKoncowy"></A><PRE>
+          <FONT SIZE="2"><I>/* WFL_SzukajStatusKoncowy */</I><BR>
+Create Procedure CDN.WFL_SzukajStatusKoncowy
+ @p_WDZID integer,	-- identyfikator definicji zadania
+ @p_OBITyp   smallint = 0,  -- typ obiektu
+ @p_OBINumer integer = 0,  -- identyfikator obiektu
+ @p_PRCTyp   smallint = 0,  -- identyfikator pracownika
+ @p_PRCNumer integer = 0,  -- identyfikator pracownika
+ @p_OPENumer integer = 0,  -- identyfikator operatora
+ @p_DataUtworzenia integer = 0,
+ @p_ZwrotWyniku	smallint=0, --  czy zwracać wyynik selectem
+ @lStatus integer OUTPUT, -- status
+ @ret_status integer=0 OUTPUT
+
+as 
+
+
+
+
+begin
+
+	DECLARE @STATUS_KONIEC integer
+	SET @STATUS_KONIEC = -1	
+
+	SET @ret_status = 0
+	Set @lStatus = 0
+
+	DECLARE @lWDZ_Wynik integer
+	DECLARE @lWDSID integer
+	DECLARE @lWDKLP integer
+	DECLARE @sWDKSQL varchar(2048)
+	DECLARE @p_DataRealizacji integer	
+
+	if (@p_DataUtworzenia=0)
+		SET @p_DataUtworzenia = CDN.WFL_PobierzDate(GETDATE())
+
+
+
+	DECLARE @wyniksql integer
+
+
+	DECLARE cur_statusy CURSOR FOR 
+	Select WDK_WDSID,WDK_LP,WDK_SQL
+	From CDN.WF_DEFStatKonc  (NOLOCK) 
+	Where WDK_WDZID = @p_WDZID
+	Order by WDK_LP
+
+	OPEN cur_statusy
+	FETCH NEXT FROM cur_statusy INTO @lWDSID, @lWDKLP, @sWDKSQL
+
+
+
+	SET @lStatus = @STATUS_KONIEC
+
+	WHILE @@FETCH_STATUS=0			
+	BEGIN
+
+		if (len(@sWDKSQL) &lt;&gt; 0)
+		BEGIN
+			EXEC CDN.WFL_WykonajZapytanie 
+				@p_sqlZapytanie =@sWDKSQL,
+				@p_OBITyp = @p_OBITyp, 
+				@p_OBINumer = @p_OBINumer,
+				@p_PRCTyp = @p_PRCTyp,
+				@p_PRCNumer = @p_PRCNumer,
+				@p_OPENumer = @p_OPENumer,
+				@p_DataUtworzenia = @p_DataUtworzenia,
+				@p_DataRealizacji = @p_DataUtworzenia,					
+				@wyniksql = @wyniksql OUTPUT,
+				@ret_status = @ret_status OUTPUT
+			if @ret_status &lt;&gt;0
+				break
+		END
+		Else
+			Set @wyniksql = 1
+
+		if (@wyniksql&lt;&gt;0)
+		BEGIN
+			insert into #tbl_statusykoncowe(tsk_status,tsk_lp) values(@lWDSID,@lWDKLP)
+			SET @lStatus = @lWDSID				
+		END
+		FETCH NEXT FROM cur_statusy INTO @lWDSID, @lWDKLP, @sWDKSQL
+	END
+
+
+	CLOSE cur_statusy
+	DEALLOCATE cur_statusy
+
+	if((select count(*) from #tbl_statusykoncowe) = 0)
+	Begin
+		Select @lWDZ_Wynik = WDZ_Wynik
+		From CDN.WF_DEFZadania  (NOLOCK)
+		Where WDZ_ID = @p_WDZID
+
+		if (@lWdz_Wynik&lt;&gt;0)
+		Begin
+			SET @lStatus = @lWdz_Wynik
+			insert into #tbl_statusykoncowe(tsk_status,tsk_lp) values(@lStatus,1)
+		End
+	End
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

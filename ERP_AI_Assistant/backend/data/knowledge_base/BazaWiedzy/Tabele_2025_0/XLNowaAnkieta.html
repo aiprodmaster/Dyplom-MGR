@@ -1,0 +1,135 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="XLNowaAnkieta"></A><PRE>
+          <FONT SIZE="2"><I>/* XLNowaAnkieta */</I><BR>
+CREATE PROCEDURE CDN.XLNowaAnkieta
+(
+/* ==========================================================================================
+	SQL API: Procedura serwerowa do dodawania ankiety
+
+	Dla uproszczenia założono, że jeżeli w systemie zewnętrznym zostanie dodana ankieta,
+	to w trakcie dodawania jej przez API nie ma potrzeby kontrolowania uprawnień do obiektów, z których ona korzysta	
+
+	Parametry wejściowe: 
+   ========================================================================================== */
+	@RodzajId INT,										-- Identyfikator rodzaju ankiety
+	@Kod VARCHAR(40),									-- Kod ankiety
+	@Nazwa VARCHAR(100),								-- Nazwa ankiety
+	@Aktywna TINYINT = NULL,							-- Czy ankieta aktywna
+	@PodmiotWymagany TINYINT = NULL,					-- Czy podmiot ankiety wymagany
+	@Anonimowa INT = NULL,								-- Czy ankieta anonimowa
+	@PytaniaAnkiety AS CDN.PytaniaAnkietyTable READONLY	-- Pytania ankiety
+
+/* ==========================================================================================
+	Return:
+	&gt;0 : Operacja zakończona sukcesem (zwrócono ID ankiety)
+	-1 : Nie powiodło się dodawanie wpisu do tabeli CDN.Ankiety
+	-2 : Wystąpił błąd podczas dodawania ankiety. Brak kodu ankiety.
+	-3 : Wystąpił błąd podczas dodawania ankiety. Brak nazwy ankiety.
+	-4 : Wystąpił błąd podczas dodawania ankiety. Nie powiodło się ustalenie rodzaju ankiety.
+	-5 : Wystąpił błąd podczas dodania pytań do ankiety.
+   ========================================================================================== */
+)
+AS
+BEGIN
+	declare @TypAnkieta INT = 14460,
+			@TypPytanieAnkiety INT = 14462,
+			@Id INT = NULL,
+			@RodzId INT = 0,
+			@BladId INT = 0,
+			@BladOpis VARCHAR(2048) = 'Wystąpił błąd podczas dodawania ankiety. '
+
+	select @RodzId = SLW_Id
+	from cdn.SlownikiStruktura
+	join cdn.Slowniki on SLS_Id = SLW_SLSId
+	where SLS_Predefiniowany = 58 and SLW_Id = isnull(@RodzajId,0) and SLW_Aktywny = 1
+
+	select @BladId = case when isnull(@Kod, '') = '' then -2
+						when isnull(@Nazwa, '') = '' then -3
+						when @RodzId = 0 then -4
+						else 0
+					end
+
+	if @BladId &lt; 0
+	begin
+		select @BladOpis = case @BladId 
+							when -2 then @BladOpis + 'Brak kodu ankiety.'
+							when -3 then @BladOpis + 'Brak nazwy ankiety.'
+							when -4 then @BladOpis + 'Nie powiodło się ustalenie rodzaju ankiety.'
+							end
+		raiserror(@BladOpis, 16, 1)
+		return @BladId
+	end
+
+	begin tran
+
+	select @Id = isnull(max(ANT_Id),0)+1 from cdn.Ankiety
+
+	insert into cdn.Ankiety(ANT_Id, ANT_Rodzaj, ANT_Aktywna, ANT_Kod, ANT_Nazwa, ANT_PodmiotWymagany, ANT_Anonimowa)
+	values (@Id, @RodzId, isnull(@Aktywna,1), @Kod, @Nazwa, isnull(@PodmiotWymagany,0), isnull(@Anonimowa,0));
+
+	if @@ROWCOUNT = 0
+	begin
+		rollback tran		
+		raiserror ('Nie powiodło się dodawanie wpisu do tabeli CDN.Ankieta.', 16, 1);
+		return -1
+	end
+
+	--Dodanie pytań do ankiety:
+	insert into cdn.PytaniaAnkiety(PAN_AntId, PAN_PytId, PAN_PytWaga, PAN_GrupWaga, PAN_Opis, PAN_Pozycja)
+	select @Id, PYT_Id, PYTWaga, 0, Opis, ROW_NUMBER() over(partition by PYT_GrupaID order by Pozycja) -- renumeracja pozycji 
+	from @PytaniaAnkiety
+	left join cdn.Pytania on PYT_Id = PYTId
+
+	if @@ERROR &lt;&gt; 0
+	begin
+		rollback tran
+		raiserror('Wystąpił błąd podczas dodawania pytań do ankiety.',16,1)
+		return -5
+	end
+
+	--Atrybuty automatyczne ankiety:
+	INSERT INTO CDN.Atrybuty(Atr_ObiTyp,Atr_ObiFirma,Atr_ObiNumer,Atr_ObiLp,Atr_ObiSubLp
+							,Atr_AtkId,Atr_Wartosc,Atr_AtrTyp,Atr_AtrFirma,Atr_AtrNumer,Atr_AtrLp,Atr_AtrSubLp,Atr_OptimaId)
+	SELECT @TypAnkieta,CDN.GIDFirma(),@Id,0,0,Atk_Id,'',0,0,0,0,0,0
+	FROM CDN.AtrybutyKlasy
+	JOIN CDN.AtrybutyObiekty ON AtO_AtKId=AtK_ID
+	WHERE AtK_Automat=1 AND AtO_GIDTyp=@TypAnkieta AND AtO_Element=0
+
+	--Atrybuty automatyczne pytań ankiety:
+	merge cdn.Atrybuty as target
+	using (SELECT @TypPytanieAnkiety,CDN.GIDFirma(),PytId,0,0,Atk_Id,'',0,0,0,0,0,0
+			FROM @PytaniaAnkiety
+			cross join CDN.AtrybutyKlasy
+			JOIN CDN.AtrybutyObiekty ON AtO_AtKId=AtK_ID
+			WHERE AtK_Automat=1 AND AtO_GIDTyp=@TypPytanieAnkiety AND AtO_Element=0
+			) as source (Atr_ObiTyp,Atr_ObiFirma,Atr_ObiNumer,Atr_ObiLp,Atr_ObiSubLp
+						,Atr_AtkId,Atr_Wartosc,Atr_AtrTyp,Atr_AtrFirma,Atr_AtrNumer,Atr_AtrLp,Atr_AtrSubLp,Atr_OptimaId) 			
+		on target.Atr_ObiNumer = source.Atr_ObiNumer and target.Atr_ObiTyp = source.Atr_ObiTyp and target.Atr_ObiLp = source.Atr_ObiLp 
+			and target.Atr_ObiSubLp = source.Atr_ObiSubLp and target.Atr_AtkId = source.Atr_AtkId 
+	when not matched by target then
+		insert (Atr_ObiTyp,Atr_ObiFirma,Atr_ObiNumer,Atr_ObiLp,Atr_ObiSubLp
+				,Atr_AtkId,Atr_Wartosc,Atr_AtrTyp,Atr_AtrFirma,Atr_AtrNumer,Atr_AtrLp,Atr_AtrSubLp,Atr_OptimaId)
+		values (Atr_ObiTyp,Atr_ObiFirma,Atr_ObiNumer,Atr_ObiLp,Atr_ObiSubLp
+				,Atr_AtkId,Atr_Wartosc,Atr_AtrTyp,Atr_AtrFirma,Atr_AtrNumer,Atr_AtrLp,Atr_AtrSubLp,Atr_OptimaId)
+	;
+
+	commit tran
+	RETURN @Id
+	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,274 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="OdbudujTwrLinkiDlaElementu"></A><PRE>
+          <FONT SIZE="2"><I>/* OdbudujTwrLinkiDlaElementu */</I><BR>
+CREATE PROCEDURE Cdn.OdbudujTwrLinkiDlaElementu (
+	@GIDTyp INT,
+	@GIDNumer INT
+	)
+AS
+BEGIN
+	--dane o sobie
+	SELECT *
+	INTO #TwrLinkiDane
+	FROM CDN.BudujTwrLinkiKuKorzeniowi(@GIDNumer, @GIDTyp)
+
+	--gdy grupa to dane o dzieciach
+	IF @GIDTyp = - 16
+	BEGIN
+		WITH GrupyVsLinki
+		AS (
+			SELECT TwG_GIDNumer OryNumer,
+				TwG_GIDTyp OryTyp,
+				TwG_GrONumer GrONumer,
+				1 Lisc,
+				TwG_GIDFirma FirmaId
+			FROM CDN.TwrGrupy
+			WHERE EXISTS (
+					SELECT *
+					FROM CDN.TwrLinki
+					WHERE TwL_GrONumer = @GIDNumer
+						AND TwG_GIDNumer = TwL_GIDNumer
+						AND TwG_GIDTyp = TwL_GIDTyp
+					)
+			
+			UNION ALL
+			
+			SELECT OryNumer OryNumer,
+				OryTyp OryTyp,
+				TwG_GrONumer GrONumer,
+				0 Lisc,
+				FirmaId FirmaId
+			FROM GrupyVsLinki
+			INNER JOIN CDN.TwrGrupy ON GrONumer = TwG_GIDNumer
+				AND TwG_GIDTyp = - 16
+			)
+		INSERT INTO #TwrLinkiDane
+		SELECT OryTyp,
+			FirmaId,
+			OryNumer,
+			GrONumer,
+			SUM(Lisc) Lisc,
+			COUNT(*) LiczbaPowtorzen,
+			DATEDIFF(S, '19900101', GETDATE()) CzasModyfikacji
+		FROM GrupyVsLinki
+		WHERE GrONumer &gt; - 1
+		GROUP BY OryNumer,
+			OryTyp,
+			GrONumer,
+			FirmaId
+	END
+
+	CREATE TABLE #UsuwaneLinki(id int not null)
+	create clustered index idx_primary on #UsuwaneLinki(id)
+
+	insert into #UsuwaneLinki select twl_id FROM CDN.TwrLinki
+	WHERE TwL_GIDNumer = @GIDNumer --usuwamy wszystkie wpisy o sobie
+		AND TwL_GIDTyp = @GIDTyp
+		OR EXISTS (
+			--usuwamy wszystkie wpisy o dzieciach
+			SELECT *
+			FROM #TwrLinkiDane
+			WHERE TwL_GIDNumer = OryNumer
+				--AND TwL_GrONumer = GrONumer --przy for delete musimy usunać wszystkie wystąpienia, a nie tylko dla kontretnych rodziców(?), a przy for insert to nie ma znaczenia, bo powinno być to samo i tak
+				AND TwL_GIDTyp = OryTyp
+			)
+			
+	IF EXISTS(select * from cdn.picostanowiska)
+	Insert into cdn.picousuniete(PcU_PcKId, PcU_ObiTyp, PcU_ObiNumer, PcU_ObiektTyp, PcU_ObiektID, PcU_TSUsuniecia, PcU_Stan, pcu_ident, pcu_psaid)
+		select distinct  PSa_PcKID,TwL_GIDTyp,TwL_Id,TwL_GIDTyp,TwL_Id,DATEDIFF(second, convert(datetime,'01-01-1990',105),GETDATE()),0,cast(TwL_Id as nvarchar),psa_id
+		from CDN.PicoStanowiska
+		outer apply CDN.POS_TwrDoEksportu(psa_id,0)
+		join cdn.TwrLinki on TwL_GIDNumer = TwrGidNumer and twl_gidtyp=16
+		join #UsuwaneLinki on id=TwrLinki.TwL_Id		
+		where not exists(select * from CDN.PicoUsuniete u where u.pcu_pckid = PSa_PcKID and u.pcu_psaid = psa_id and u.PcU_ObiTyp=TwL_GIDTyp and PcU_ObiNumer=TwL_Id)
+
+	DELETE cdn.TwrLinki where twl_id in (select * from #UsuwaneLinki)
+
+	INSERT INTO CDN.TwrLinki (
+		TwL_GIDTyp,
+		TwL_GIDFirma,
+		TwL_GIDNumer,
+		TwL_GIDLp,
+		TwL_GrOTyp,
+		TwL_GrOFirma,
+		TwL_GrONumer,
+		TwL_GrOLp,
+		TwL_Lisc,
+		TwL_LiczbaPowtorzen,
+		TwL_TStampDataMod
+		)
+	SELECT OryTyp,
+		FirmaId,
+		OryNumer,
+		0,
+		- 16,
+		FirmaId,
+		GrONumer,
+		0,
+		Lisc,
+		LiczbaPowtorzen,
+		CzasModyfikacji
+	FROM #TwrLinkiDane
+
+	DROP TABLE #TwrLinkiDane
+	DROP TABLE #UsuwaneLinki
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="TwrLinkiInsert"></A><PRE>
+          <FONT SIZE="2"><I>/* TwrLinkiInsert */</I><BR>
+CREATE TRIGGER TwrLinkiInsert ON CDN.TwrGrupy
+FOR INSERT
+AS
+DECLARE @GidTyp SMALLINT
+DECLARE @GidNumer INT
+
+DECLARE TriggerCursor CURSOR
+FOR
+SELECT TWG_GIDTyp,
+	TWG_GIDNumer
+FROM INSERTED
+
+OPEN TriggerCursor
+
+FETCH NEXT
+FROM TriggerCursor
+INTO @GIDTyp,
+	@GIDNumer
+
+WHILE @@FETCH_STATUS = 0
+BEGIN
+	EXEC cdn.OdbudujTwrLinkiDlaElementu @GIDTyp,
+		@GIDNumer
+
+	FETCH NEXT
+	FROM TriggerCursor
+	INTO @GIDTyp,
+		@GIDNumer
+END
+
+CLOSE TriggerCursor
+
+DEALLOCATE TriggerCursor
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="TwrLinkiUpdate"></A><PRE>
+          <FONT SIZE="2"><I>/* TwrLinkiUpdate */</I><BR>
+CREATE TRIGGER TwrLinkiUpdate ON CDN.TwrGrupy
+FOR UPDATE
+AS
+IF NOT (
+		--pola typ, firma i lp są niezmienne, więc można zakomentować
+		--UPDATE (TwG_GIDTyp)
+		--	OR
+		--UPDATE (TwG_GIDFirma)
+		--	OR
+		--UPDATE (TwG_GIDNumer) --zdaje się, że to i tak zbędne, bo aktualizacjatego pola oznaczała by zastąpienie jednej grupy w drzewie inną, a nie ma takiej funkcjonalności(?)
+		--	OR
+		--UPDATE (TwG_GIDLp)
+		--	OR		
+		--UPDATE (TwG_GrOTyp)
+		--	OR
+		--UPDATE (TwG_GrOFirma)
+		--	OR
+		UPDATE (TwG_GrONumer) --tylko to ma jakiś sens i oznacza, że wycinamy grupę i przenosimy ją w inne miejsce, ale też pod warunkiem, że jest to realizowane przez update na to pole, a nie dwie osobne operacje insert i delete, bo też tak mogło by to być zrobione
+			--	OR
+			--UPDATE (TwG_GrOLp)
+		)
+	RETURN
+
+DECLARE @GidTyp SMALLINT
+DECLARE @GidNumer INT
+
+DECLARE TriggerCursorInserted CURSOR
+FOR
+SELECT TWG_GIDTyp,
+	TWG_GIDNumer
+FROM INSERTED
+
+OPEN TriggerCursorInserted
+
+FETCH NEXT
+FROM TriggerCursorInserted
+INTO @GIDTyp,
+	@GIDNumer
+
+WHILE @@FETCH_STATUS = 0
+BEGIN
+	EXEC cdn.OdbudujTwrLinkiDlaElementu @GIDTyp,
+		@GIDNumer
+
+	FETCH NEXT
+	FROM TriggerCursorInserted
+	INTO @GIDTyp,
+		@GIDNumer
+END
+
+CLOSE TriggerCursorInserted
+
+DEALLOCATE TriggerCursorInserted
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="TwrLinkiDelete"></A><PRE>
+          <FONT SIZE="2"><I>/* TwrLinkiDelete */</I><BR>
+CREATE TRIGGER TwrLinkiDelete ON CDN.TwrGrupy
+FOR DELETE
+AS
+DECLARE @GidTyp SMALLINT
+DECLARE @GidNumer INT
+
+DECLARE TriggerCursor CURSOR
+FOR
+SELECT TWG_GIDTyp,
+	TWG_GIDNumer
+FROM DELETED
+
+OPEN TriggerCursor
+
+FETCH NEXT
+FROM TriggerCursor
+INTO @GIDTyp,
+	@GIDNumer
+
+WHILE @@FETCH_STATUS = 0
+BEGIN
+	EXEC cdn.OdbudujTwrLinkiDlaElementu @GIDTyp,
+		@GIDNumer
+
+	FETCH NEXT
+	FROM TriggerCursor
+	INTO @GIDTyp,
+		@GIDNumer
+END
+
+CLOSE TriggerCursor
+
+DEALLOCATE TriggerCursor
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

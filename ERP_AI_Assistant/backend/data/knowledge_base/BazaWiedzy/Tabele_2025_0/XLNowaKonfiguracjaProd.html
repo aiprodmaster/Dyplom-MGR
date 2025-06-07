@@ -1,0 +1,211 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="XLNowaKonfiguracjaProd"></A><PRE>
+          <FONT SIZE="2"><I>/* XLNowaKonfiguracjaProd */</I><BR>
+CREATE PROCEDURE CDN.XLNowaKonfiguracjaProd
+(
+	@DokTyp		SMALLINT,		--Typ dokumentu
+	@DokFirma	INTEGER,		--Identyfikator firmy
+	@DokNumer	INTEGER,		--Numer dokumentu
+	@DokLp		SMALLINT,		--Lp elementu dokumentu
+	@TwGTyp		SMALLINT,		--GidTyp grupy towarowej
+	@TwGNumer	INTEGER,		--GidNumer grupy towarowej
+	@OpeNumer	INTEGER,		--Numer operatora modyfikującego
+	@KopiaKPNId	INTEGER=null,	--Identyfikator konfiguracji produktu, z którego ew. przepisywać odpowiedzi na pytania
+	@PokazBledy TINYINT=1,		--Czy pokazywać błędy 
+	@Wynik		INTEGER OUTPUT
+	/*
+        &gt;0 : Operacja zakończona sukcesem (zwrócono ID nowej konfiguracji)
+        -1 : Nie powiodło się dodawanie wpisu do tabeli CDN.KonfProdNag
+		-2 : Wystąpił błąd podczas dodawania nowej konfiguracji produktu. Podany element dokumentu nie występuje w bazie.
+		-3 : Wystąpił błąd podczas dodawania nowej konfiguracji produktu. Podana grupa towarowa nie występuje w bazie.
+        -4 : Wystąpił błąd podczas dodawania nowej konfiguracji produktu. Podany operator nie występuje w bazie.
+		-5 : Wystąpił błąd podczas dodawania parametrów różnicujących konfiguratory.
+		-6 : Dla wskazanej grypy towarów nie zdefiniowano żadnego konfiguratora produktu, lub nie został on zatwierdzony.
+		Inne &lt;0: Błąd z podrzędnej procedury/funkcji wywoływanej wewnątrz tej metody
+	*/			
+)
+AS
+BEGIN
+
+	IF @TwGTyp = 0 BEGIN
+		SELECT @TwGTyp = KPN_TwGTyp, @TwGNumer = KPN_TwGNumer FROM CDN.KonfProdNag  WHERE KPN_Id=@KopiaKPNId
+	END
+	ELSE BEGIN
+		SET @KopiaKPNId = 0
+	END
+	INSERT INTO CDN.KonfProdNag
+			   (KPN_DokTyp
+			   ,KPN_DokFirma
+			   ,KPN_DokNumer
+			   ,KPN_DokLp
+			   ,KPN_TwGTyp
+			   ,KPN_TwGNumer
+			   ,KPN_KTPId
+			   ,KPN_PrdTyp
+			   ,KPN_PrdNumer
+			   ,KPN_PTEId
+			   ,KPN_CzasModyfikacji
+			   ,KPN_OpeNumerM)
+	SELECT DISTINCT --TwrGrupa dubluje wpisy
+				@DokTyp
+			  ,@DokFirma
+			  ,@DokNumer
+			  ,@DokLp
+			  ,@TwGTyp
+			  ,@TwGNumer
+			  ,IsNull(K.KPN_KTPId,0)
+			  ,IsNull(K.KPN_PrdTyp,0)
+			  ,IsNull(K.KPN_PrdNumer,0)
+			  ,IsNull(K.KPN_PTEId,0)
+			  ,DATEDIFF(s,'19900101',GETDATE())
+			  ,@OpeNumer
+	  FROM CDN.ZamElem
+	  JOIN CDN.TwrGrupy on TwG_GIDTyp=@TwGTyp and TwG_GIDNumer=@TwGNumer
+	  JOIN CDN.OpeKarty on Ope_GIDNumer=@OpeNumer
+	  LEFT JOIN CDN.KonfProdNag K on K.KPN_Id=@KopiaKPNId
+	  WHERE @DokTyp=ZaE_GIDTyp and @DokFirma=ZaE_GIDFirma and @DokNumer=ZaE_GIDNumer and @DokLp=ZaE_GIDLp
+
+	IF @@ROWCOUNT=0 BEGIN
+
+		IF NOT EXISTS(SELECT * FROM CDN.ZamElem WHERE @DokTyp=ZaE_GIDTyp and @DokFirma=ZaE_GIDFirma and @DokNumer=ZaE_GIDNumer and @DokLp=ZaE_GIDLp) BEGIN
+			if @PokazBledy=1
+				RAISERROR ('Wystąpił błąd podczas dodawania nowej konfiguracji produktu. Podany element dokumentu nie występuje w bazie.', 16, 1)
+			SET @Wynik = -2
+            RETURN @Wynik
+        END
+        IF NOT EXISTS(SELECT * FROM CDN.TwrGrupy WHERE TwG_GIDTyp=@TwGTyp and TwG_GIDNumer=@TwGNumer) BEGIN
+			if @PokazBledy=1
+				RAISERROR ('Wystąpił błąd podczas dodawania nowej konfiguracji produktu. Podana grupa towarowa nie występuje w bazie.', 16, 1)
+			SET @Wynik = -3
+            RETURN @Wynik
+        END
+        IF NOT EXISTS(SELECT * FROM CDN.OpeKarty WHERE Ope_GIDNumer=@OpeNumer) BEGIN
+            if @PokazBledy=1
+				RAISERROR ('Wystąpił błąd podczas dodawania nowej konfiguracji produktu. Podany operator nie występuje w bazie.', 16, 1)
+			SET @Wynik = -4
+            RETURN @Wynik
+        END
+        -- inny powód błędu:
+        if @PokazBledy=1
+			RAISERROR ('Nie powiodło się dodawanie wpisu do tabeli CDN.KonfProdNag.', 16, 1)
+		SET @Wynik = -1
+        RETURN @Wynik
+
+    END
+
+    --OK:
+    SET @Wynik = scope_identity()
+
+	--Dodanie parametrów różnicujących konfiguratory:
+	INSERT INTO CDN.KonfProdElem
+			   (KPE_KPNId
+			   ,KPE_ObiTyp
+			   ,KPE_ObiFirma
+			   ,KPE_ObiNumer
+			   ,KPE_ObiLp
+			   ,KPE_TypPytania
+			   ,KPE_Pozycja
+			   ,KPE_Tresc
+			   ,KPE_AtkId
+			   ,KPE_Odpowiedz
+			   ,KPE_OdpTyp
+			   ,KPE_OdpFirma
+			   ,KPE_OdpNumer
+			   ,KPE_OdpLp
+			   ,KPE_Edycja
+			   ,KPE_Wymagaj
+			   ,KPE_Kopiuj)
+	SELECT		@Wynik--KPE_KPNId
+				,PRK_ObiTyp--KPE_ObiTyp
+				,PRK_ObiFirma--KPE_ObiFirma
+				,PRK_ObiNumer--KPE_ObiNumer
+				,PRK_ObiLp--KPE_ObiLp
+				,1--KPE_TypPytania
+				,PRK_Pozycja--KPE_Pozycja
+				,REPLACE(REPLACE(REPLACE(SLW_WartoscS2,'&lt;AtK_Nazwa&gt;',AtK_Nazwa),'&lt;TwG_Nazwa&gt;',TwG_Nazwa),'&lt;TwG_Kod&gt;',TwG_Kod)--KPE_Tresc
+				,PRK_AtkId--KPE_AtkId
+				,IsNUll(E.KPE_Odpowiedz,'')--KPE_Odpowiedz
+				,IsNUll(E.KPE_OdpTyp,0)--KPE_OdpTyp
+				,IsNUll(E.KPE_OdpFirma,0)--KPE_OdpFirma
+				,IsNUll(E.KPE_OdpNumer,0)--KPE_OdpNumer
+				,IsNUll(E.KPE_OdpLp,0)--KPE_OdpLp
+				,1--PRK_Edycja
+				,1--PRK_Wymagaj
+				,1--PRK_Kopiuj
+		FROM CDN.ParamRozKonf
+		JOIN CDN.AtrybutyKlasy ON AtK_ID=PRK_AtkId
+		JOIN CDN.Slowniki ON SLW_ID=PRK_DefPytId
+		JOIN CDN.TwrGrupy ON TwG_GIDTyp=@TwGTyp and TwG_GIDNumer=@TwGNumer
+		LEFT JOIN CDN.KonfProdElem E on E.KPE_KPNId=@KopiaKPNId and E.KPE_ObiTyp=PRK_ObiTyp and E.KPE_ObiFirma=PRK_ObiFirma and E.KPE_ObiNumer=PRK_ObiNumer and E.KPE_ObiLp=PRK_ObiLp and E.KPE_TypPytania in (1,2) and E.KPE_AtkId=PRK_AtkId
+		WHERE PRK_ObiTyp=@TwGTyp AND PRK_ObiNumer=@TwGNumer
+
+    IF @@error &lt;&gt; 0 
+    BEGIN
+		DELETE CDN.KonfProdNag WHERE KPN_Id = @Wynik
+		if @PokazBledy=1
+			RAISERROR ('Wystąpił błąd podczas dodawania parametrów różnicujących konfiguratory.', 16, 1)		            
+		SET @Wynik = -5
+        RETURN @Wynik
+    END
+
+	DECLARE @lKTP INT
+	SELECT @lKTP=count(*) FROM CDN.KPZwrocListeZgodnychKTP(@Wynik, @TwGTyp, @TwGNumer, 0)
+	/*
+	IF (@lKTP = 0)
+	BEGIN
+		DELETE CDN.KonfProdNag WHERE KPN_Id = @Wynik
+		if @PokazBledy=1
+			RAISERROR ('Dla wskazanej grypy towarów nie zdefiniowano żadnego konfiguratora produktu, lub nie został on zatwierdzony.', 16, 1)		            
+		SET @Wynik = -6
+        RETURN @Wynik
+	END
+	
+	ELSE*/ IF (@lKTP = 1) OR @KopiaKPNId &gt; 0
+	BEGIN
+		IF @KopiaKPNId &gt; 0 BEGIN
+			SELECT @lKTP = KPN_KTPId FROM CDN.KonfProdNag  where KPN_Id=@KopiaKPNId
+		END 
+		ELSE BEGIN
+			SELECT TOP 1 @lKTP=Id FROM CDN.KPZwrocListeZgodnychKTP(@Wynik, @TwGTyp, @TwGNumer, 0)
+		END
+		DECLARE @WynikProc INT
+		SET @WynikProc = 0
+		
+		EXEC CDN.KPPrzypiszKTP @p_KPNId=@Wynik, @p_KTPId=@lKTP, @p_KopiaKPNId=@KopiaKPNId, @p_PokazBledy=@PokazBledy, @Wynik=@WynikProc OUTPUT 
+
+		IF @WynikProc&lt;0 
+		BEGIN
+			DELETE CDN.KonfProdNag WHERE KPN_Id = @Wynik	            
+			SET @Wynik = @WynikProc
+			RETURN @Wynik
+		END
+		ELSE IF @KopiaKPNId &gt; 0 AND EXISTS(SELECT * FROM CDN.KonfProdElem WHERE KPE_KPNId = @Wynik AND KPE_Wymagaj &gt; 0 AND KPE_Odpowiedz IN('','&lt;Brak&gt;')) BEGIN
+			UPDATE CDN.KonfProdNag SET KPN_PTEId = 0 WHERE KPN_Id = @Wynik
+			IF @@ROWCOUNT=0 BEGIN
+				if @PokazBledy=1
+					RAISERROR ('Nie powiodło się dodawanie wpisu do tabeli CDN.KonfProdNag.', 16, 1)
+				SET @Wynik = -1
+				RETURN @Wynik
+			END
+		END
+	END
+		
+    --OK:
+    RETURN @Wynik
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

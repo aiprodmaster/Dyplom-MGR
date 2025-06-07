@@ -1,0 +1,198 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="ProdPrzepnijZasoby"></A><PRE>
+          <FONT SIZE="2"><I>/* ProdPrzepnijZasoby */</I><BR>
+CREATE PROCEDURE CDN.ProdPrzepnijZasoby @Czynnosc int, @Funkcja int, @Zasoby varchar(8000), @TerminOd int, @TerminDo int, 
+										@OpeTyp smallint, @OpeNumer int
+AS
+BEGIN
+	BEGIN TRY
+		SET NOCOUNT ON
+		BEGIN TRAN
+		
+		--przygotowanie danych
+		if object_id('tempdb..#obiekty') is not null
+			DROP TABLE #obiekty
+
+		CREATE TABLE #obiekty  (Obiekt int, Czynnosc int, Funkcja int, ZaO_ZadId int, ZaO_ObiTyp int, ZaO_ObiNumer int, NumerZlecenia varchar(50))
+
+		insert into #obiekty
+		select Obiekt, Czynnosc, Funkcja, ZaO_ZadId, ZaO_ObiTyp, ZaO_ObiNumer, NumerZlecenia
+		from
+		(
+			select pob_id Obiekt, Czynnosc, Funkcja, PCTID, Od, Do, NumerZlecenia from
+			(
+				select pob_id, Czynnosc, Funkcja, PCTID, Od, Do, NumerZlecenia
+				from
+				(
+					Select PO.pob_id,
+						   case when PTF_Zmienna=0 then PCZ_TerminRozpoczecia else PCT1.PCT_TerminOd end as Od,
+						   case when PTF_Zmienna=0 then PCZ_TerminZakonczenia else PCT1.PCT_TerminDo end as Do,
+						   PCZ_Id Czynnosc,
+						   PTF_Funkcja Funkcja,
+						   isnull(PCT2.PCT_ID,0) PCTID,
+						   isnull(CDN.NumerDokumentu(case when PZL_PrjID = 0 then 14343 else 14350 end,0,case when PZL_PrjID = 0 then 14343 else 14350 end,
+						                             PZL_Numer,PZL_Rok,PZL_Seria, PZL_Miesiac),'') NumerZlecenia							   
+					from CDN.ProdCzynnosciObiekty
+					join
+					(
+						select pob_id,pob_kod,pob_nazwa			--wyciągnięcie obiektów mogących realizować żądaną funkcję
+						from cdn.prodfunkcje
+						join cdn.prodobiektyfunkcje on pof_funkcja = pfu_id AND POF_Widocznosc IN (2,3)
+						join cdn.prodobiekty on pob_id = pof_obiekt and pof_obityp = 14337
+						where pfu_id = @Funkcja
+					) PO
+					on PO.pob_id = pco_obiekt
+					join CDN.ProdCzynnosci on PCZ_Id=PCO_Czynnosc 
+					join CDN.ProdTechnologiaFunkcje on PTF_TechnologiaCzynnosc=PCZ_TechnologiaCzynnosc and PTF_Funkcja=PCO_Funkcja 
+					left join CDN.ProdCzynnosciTerminy PCT1 on PTF_Zmienna&gt;0 and PCT1.PCT_Czynnosc=PCO_Czynnosc and (PCT1.PCT_Id=PCO_Termin Or PCO_Termin=0)
+					left join CDN.ProdCzynnosciTerminy PCT2 on PCT2.PCT_Czynnosc = PCO_Czynnosc and (PCT2.PCT_Id=PCO_Termin Or PCO_Termin=0)
+					join CDN.Str2List(@Zasoby) on Num = pob_id
+					left join cdn.ProdZlecenia on PZL_Id = PCZ_PZLId					
+				) A
+				where Od &lt; @TerminDo and @TerminOd &lt; Do
+			) ZasobyWszystkie
+			left join	--odfiltrowanie obiektów, które już są przypięte do bieżącej czynności
+			(
+				select pco_obiekt from cdn.prodczynnosciobiekty
+				where pco_czynnosc = @Czynnosc
+			) BC on BC.pco_obiekt = ZasobyWszystkie.pob_id
+			where BC.pco_obiekt is null
+		) Obiekty
+		join cdn.prodobiekty on pob_id = Obiekt
+		left join cdn.prckarty on prc_gidtyp = pob_obityp and prc_gidnumer = pob_obinumer
+		left join cdn.zadania on zad_zrdtyp = 14345 and zad_zrdnumer = PCTID
+		left join cdn.zadaniaobiekty on zao_zadid = zad_id and ((zao_obityp = 14337 and zao_obinumer = pob_id) or
+		(zao_obityp = prc_gidtyp and zao_obinumer = prc_gidnumer))
+		
+
+		-------------------odpinanie obiektów od czynności na innych zleceniach oraz odpięcie z zadań terminarza--------------------
+		--odpięcie zasobów
+		delete PCO from
+		#obiekty join 
+		cdn.prodczynnosciobiekty PCO on 
+		PCO.pco_czynnosc = Czynnosc and 
+		PCO.pco_funkcja = Funkcja and 
+		PCO.pco_obiekt = Obiekt
+		
+		--usunięcie obiektów przypiętych do zadań w terminarzu
+		delete ZO from
+		#obiekty O
+		join cdn.zadaniaobiekty ZO on ZO.zao_zadid = O.Zao_ZadId and ZO.zao_obityp = O.Zao_ObiTyp and ZO.zao_obinumer = O.Zao_Obinumer
+			
+		--usunięcie całych zadań terminarza w przypadku gdy powyższy delete usunął wszystkie obiekty
+		delete Z from
+		#obiekty O
+		join cdn.zadania Z on Z.Zad_ID = O.ZaO_ZadID
+		left join cdn.zadaniaobiekty ZO on ZO.ZaO_ZadID = Z.Zad_ID
+		where ZO.ZaO_ZadID is null
+
+
+		---------------------przypinanie obiektów do aktualnej czynności------------------------------
+		--przypięcie zasobu do bieżącej czynności i z funkcją (wraz z zabezpieczeniem aby nie przypinać zasobów które są już przypięte)
+		insert into CDN.ProdCzynnosciObiekty(PCO_Czynnosc, PCO_Funkcja, PCO_Obiekt, PCO_Termin, pco_koszt, pco_kosztprzygotowania, pco_kosztzakonczenia)
+		select @Czynnosc, @Funkcja, Num, 0, 0, 0, 0 from CDN.Str2List(@Zasoby) 
+		left join cdn.prodczynnosciobiekty PCO on PCO.pco_obiekt = num and PCO.pco_czynnosc = @Czynnosc
+		where PCO.pco_obiekt is null and Num &gt; 0
+
+		--dodanie nowego zadania w terminarzu z odpowiednimi obiektami
+		if exists(select * from cdn.prodczynnosci where pcz_id = @Czynnosc and pcz_generujzapiswterminarzu = 1)
+		begin
+			if not exists(select * from cdn.prodczynnosci
+						  join cdn.prodczynnosciterminy on pct_czynnosc = pcz_id
+						  join cdn.zadania on zad_zrdtyp = 14345 and zad_zrdnumer = PCT_ID
+						  where pcz_id = @Czynnosc)
+			begin
+				--dodajemy nowe zadanie wraz z odpowiednimi obiektami
+				insert into cdn.zadania
+				(Zad_Kod,Zad_Nazwa,Zad_Priorytet,Zad_Opis,Zad_Przypomnienie,Zad_CzasPrzypomnienia,Zad_CzasPrzypomnieniaJedn,Zad_CzasUtworzenia,Zad_OpeUTyp,Zad_OpeUNumer,
+				Zad_CzasModyfikacji,Zad_OpeMTyp,Zad_OpeMNumer,Zad_CzasWykonania,Zad_OpeWTyp,Zad_OpeWNumer,Zad_TerminOd,Zad_TerminDo,Zad_CzasPlanowanyJedn,Zad_PowtarzajCo,
+				Zad_PowtarzajOkres,Zad_RezerwujCzas,Zad_ZrdTyp,Zad_ZrdNumer,Zad_ZrdLp,Zad_ObiTyp,Zad_ObiNumer,Zad_ZrdPytania,Zad_OkresId,Zad_Notatki,Zad_Cykliczne,Zad_Aktywny,
+				Zad_NodDdsId,Zad_NodDwdId)
+				select 
+					ptc_kod,	--zad_kod
+					ptc_nazwa,	--zad_nazwa
+					20,			--zad_priorytet
+					'',			--zad_opis
+					0,			--zad_przypomnienie
+					0,			--zad_czasprzypomnienia
+					0,			--zad_czasprzypomnieniajedn
+					datediff(s,'19900101',getdate()),	--zad_czasutworzenia
+					@OpeTyp,	--zad_opeutyp
+					@OpeNumer,	--zad_opeunumer
+					datediff(s,'19900101',getdate()),	--zad_czasmodyfikacji
+					@OpeTyp,	--zad_opemtyp
+					@OpeNumer,	--zad_opemnumer
+					0,			--zad_czaswykonania
+					0,			--zad_opewtyp
+					0,			--zad_opewnumer
+					PCZ_TerminRozpoczecia,	--zad_terminod
+					PCZ_TerminZakonczenia,	--zad_termindo
+					2,			--zad_czasplanowanyjedn
+					0,			--zad_powtarzajco
+					0,			--zad_powtarzajokres
+					1,			--zad_rezerwujczas
+					14345,		--zad_zrdtyp
+					pct_id,		--zad_zrdnumer
+					0,			--zad_zrdlp
+					0,			--zad_obityp
+					0,			--zad_obinumer
+					0,			--zad_zrdpytania
+					0,			--zad_okresid
+					'',			--zad_notatki
+					0,			--zad_cykliczne
+					0,			--zad_aktywny
+					0,			--Zad_NodDdsId
+					0			--Zad_NodDwdId
+			    from cdn.prodczynnosci
+				join cdn.prodtechnologiaczynnosci on ptc_id = pcz_technologiaczynnosc
+				join cdn.prodczynnosciterminy on pct_czynnosc = pcz_id
+				where pcz_id = @Czynnosc
+			end
+
+			--dodajemy obiekty do zadań
+			insert into cdn.zadaniaobiekty
+			select distinct zad_id,coalesce(prc_gidtyp,14337),coalesce(prc_gidnumer,pob_id),datediff(s,'19900101',getdate()),0,0
+			from cdn.prodczynnosci
+			join cdn.prodczynnosciobiekty on pco_czynnosc = pcz_id			
+			join cdn.prodobiekty on pob_id = pco_obiekt
+			join #obiekty O on O.Obiekt = pob_id
+			left join cdn.prckarty on prc_gidtyp = pob_obityp and prc_gidnumer = pob_obinumer
+			join cdn.prodczynnosciterminy on pct_czynnosc = pcz_id
+			join cdn.zadania on zad_zrdtyp = 14345 and zad_zrdnumer = PCT_ID
+			where pcz_id = @Czynnosc
+		end
+		
+		select distinct NumerZlecenia from #obiekty where NumerZlecenia &lt;&gt; '' order by NumerZlecenia
+		
+		SET NOCOUNT OFF
+		
+		COMMIT TRAN				
+	END TRY
+	BEGIN CATCH	
+		IF @@TRANCOUNT &gt; 0 ROLLBACK TRAN;
+
+		DECLARE @ErrorMsg varchar(8000)
+		set @ErrorMsg = 'Wystąpił błąd('+CAST(ERROR_NUMBER() as varchar(20))+'): '+ERROR_MESSAGE()+' Procedura: '+ERROR_PROCEDURE()+', linia: '+CAST(ERROR_LINE() as varchar(20))
+
+		SET NOCOUNT OFF
+		
+		RAISERROR(@ErrorMsg,16,1)		
+	END CATCH
+	return	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

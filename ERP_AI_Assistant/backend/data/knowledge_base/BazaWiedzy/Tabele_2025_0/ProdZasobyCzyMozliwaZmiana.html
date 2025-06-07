@@ -1,0 +1,144 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="ProdZasobyCzyMozliwaZmiana"></A><PRE>
+          <FONT SIZE="2"><I>/* ProdZasobyCzyMozliwaZmiana */</I><BR>
+CREATE FUNCTION [CDN].ProdZasobyCzyMozliwaZmiana (@PZAId INT, @TypZmiany TINYINT)
+RETURNS INT
+AS
+BEGIN
+
+DECLARE @SprTwr TINYINT, @SprMag TINYINT
+
+SET @SprTwr = @TypZmiany&amp;1
+SET @SprMag = @TypZmiany&amp;2
+
+DECLARE @PZAZasob INT,@DowolneZasoby TINYINT,@TechnologiaZasob INT,@EdycjaMagazynu TINYINT,@TypZasobu TINYINT,@DokZaks INT
+
+DECLARE @ZmianaTwr TINYINT = 0,@ZmianaMag TINYINT = 0
+
+DECLARE @ZmianyMozliwe INT = 0
+
+IF @SprTwr &gt; 0
+BEGIN
+	SET @ZmianaTwr = 1
+	IF @SprMag &gt; 0
+	BEGIN
+		SET @ZmianaMag = 2
+		SELECT @PZAZasob = PZA_Zasob,@TypZasobu = PZA_TypZasobu,@TechnologiaZasob = PZA_TechnologiaZasob,@DowolneZasoby = PTC_DowolneZasoby,
+		@EdycjaMagazynu = CASE WHEN PZA_TechnologiaZasob = 0 OR PTZ_MagNumer = 0 OR PZA_TypZasobu = 0 OR PZA_TypZasobu = 4 THEN 1 ELSE PTZ_EdycjaMagazynuPrzyRealizacji END
+		FROM CDN.ProdZasoby 
+		LEFT JOIN CDN.ProdTechnologiaZasoby ON PTZ_Id = PZA_TechnologiaZasob
+		JOIN CDN.ProdCzynnosci ON PCZ_Id = PZA_Czynnosc
+		JOIN CDN.ProdTechnologiaCzynnosci ON PTC_Id = PCZ_TechnologiaCzynnosc
+		WHERE PZA_Id = @PZAId		
+		IF @EdycjaMagazynu = 0
+			SET @ZmianaMag = 0
+	END
+	ELSE
+	BEGIN
+		SELECT @PZAZasob = PZA_Zasob,@TypZasobu = PZA_TypZasobu,@TechnologiaZasob = PZA_TechnologiaZasob,@DowolneZasoby = PTC_DowolneZasoby
+		FROM CDN.ProdZasoby 
+		JOIN CDN.ProdCzynnosci ON PCZ_Id = PZA_Czynnosc
+		JOIN CDN.ProdTechnologiaCzynnosci ON PTC_Id = PCZ_TechnologiaCzynnosc
+		WHERE PZA_Id = @PZAId
+	END
+	IF @DowolneZasoby = 0
+		SET @ZmianaTwr = 0
+	ELSE
+	BEGIN
+		IF @TechnologiaZasob &gt; 0
+			SET @ZmianaTwr = 0		
+	END
+
+	IF @PZAZasob &gt; 0 
+	BEGIN
+		SET @ZmianaTwr = 0
+		SET @ZmianaMag = 0
+	END
+END
+ELSE
+BEGIN
+	IF @SprMag &gt; 0
+	BEGIN
+		SET @ZmianaMag = 2
+		SELECT @PZAZasob = PZA_Zasob,@TypZasobu = PZA_TypZasobu,@TechnologiaZasob = PZA_TechnologiaZasob,
+		@EdycjaMagazynu = CASE WHEN PZA_TechnologiaZasob = 0 OR PTZ_MagNumer = 0 OR PZA_TypZasobu = 0 OR PZA_TypZasobu = 4 THEN 1 ELSE PTZ_EdycjaMagazynuPrzyRealizacji END
+		FROM CDN.ProdZasoby
+		LEFT JOIN CDN.ProdTechnologiaZasoby ON PTZ_Id = PZA_TechnologiaZasob
+		WHERE PZA_Id = @PZAId
+
+		IF @EdycjaMagazynu = 0
+			SET @ZmianaMag = 0
+	END
+	ELSE
+	BEGIN
+		SELECT @PZAZasob = PZA_Zasob,@TypZasobu = PZA_TypZasobu,@TechnologiaZasob = PZA_TechnologiaZasob
+		FROM CDN.ProdZasoby
+		WHERE PZA_Id = @PZAId
+	END
+END
+
+SET @ZmianyMozliwe = @ZmianaMag + @ZmianaTwr
+IF @ZmianyMozliwe = 0
+	--RETURN @ZmianyMozliwe
+	set @ZmianyMozliwe = 00
+
+IF @SprMag &gt; 0 AND @ZmianaMag &gt; 0
+BEGIN
+	Select @ZmianaMag = case when exists (select * from CDN.rezerwacje where isnull(rez_dstnumer,0)&lt;&gt;0 and rez_zrdtyp=14346 and rez_zrdnumer= @PZAId ) 
+		or exists (select * from CDN.TrasElem where Trs_ZlcNumer = @PZAId and Trs_ZlcTyp = 14346) 
+		or exists(select * from CDN.MagSElem where Mas_ZlcNumer = @PZAId and Mas_ZlcTyp = 14346) then 0 else 2 end
+			 
+	SET @ZmianyMozliwe = @ZmianaMag + @ZmianaTwr
+	IF @ZmianyMozliwe = 0
+		--RETURN @ZmianyMozliwe
+		set @ZmianyMozliwe = 00
+END
+
+IF (@SprTwr &gt; 0 AND @ZmianaTwr &gt; 0) OR (@SprMag &gt; 0 AND @ZmianaMag &gt; 0)
+BEGIN
+	select @DokZaks = IsNull(max(t.a),0)
+     from (
+     Select Max(Trn_Zaksiegowano+1) as a
+     From CDN.ProdZasoby
+     join CDN.Traselem on Trs_ZlcTyp=14346 and PZA_ID=Trs_ZlcNumer
+     join CDN.TraNag on TrN_GIDNumer = Trs_GIDNumer
+     Where (PZA_TypZasobu = 0 OR PZA_TypZasobu = 4) and PZA_Id = @PZAId
+     union
+     Select max( case when PZL_DataZamkniecia=0 then 1 else 2 end) as a
+     From CDN.ProdZasoby P
+     join CDN.ProdZasoby S on P.PZA_ID = S.PZA_Zasob
+	 join CDN.ProdZlecenia on  S.PZA_PZLId = PZL_ID
+     Where P.PZA_Id = @PZAId
+     union
+     Select max( case when PZL_DataZamkniecia=0 then 1 else 2 end) as a
+     From CDN.ProdZasoby
+     join CDN.ProdZlecenia on PZA_PZLId = PZL_ID
+     Where PZA_Id = @PZAZasob
+     ) t
+	 IF @DokZaks &gt; 0
+	 BEGIN
+		SET @ZmianaTwr = 0
+		SET @ZmianaMag = 0
+	END
+END
+
+SET @ZmianyMozliwe = @ZmianaMag + @ZmianaTwr
+
+RETURN @ZmianyMozliwe
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

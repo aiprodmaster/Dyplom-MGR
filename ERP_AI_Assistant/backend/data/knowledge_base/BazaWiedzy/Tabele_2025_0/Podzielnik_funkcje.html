@@ -1,0 +1,294 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="FrsCentra"></A><PRE>
+          <FONT SIZE="2"><I>/* FrsCentra */</I><BR>
+CREATE FUNCTION CDN.FrsCentra (@FrsWarstwa smallint, @FrsTyp smallint,@FrsNumer int,@DataOd int,@DataDo int = -1)
+RETURNS @Centra TABLE (
+  FrS_Id int,
+  FrS_GIDTyp smallint,
+  FrS_GIDNumer int,
+  FrS_Nazwa varchar(40),
+  FrS_Opis varchar(254),
+  FrS_AktywnyOd int,
+  FrS_AktywnyDo int,
+  FrS_Poziom smallint,
+  FrS_GROTyp smallint,
+  FrS_GRONumer int
+)
+as
+begin
+  if @FrsWarstwa=0 set @FrsWarstwa=3
+  if @DataDo=-1 set @DataDo = @DataOd
+  insert into @Centra
+    select FrS_Id, FrS_GIDTyp, FrS_GIDNumer, Frs_Nazwa, FrS_Opis,
+	case when FrS_AktywnyOd&lt;@DataOd then @DataOd else FrS_AktywnyOd end as FrS_AktywnyOd,
+	case when @DataDo&gt;0 and (@DataDo&lt;FrS_AktywnyDo or FrS_AktywnyDo=0) then @DataDo else FrS_AktywnyDo end as FrS_AktywnyDo,
+	0 as FrS_Poziom, FrS_GROTyp, FrS_GRONumer
+    from CDN.FrmStruktura
+    where ((FrS_GIDTyp=@FrsTyp and FrS_GIDNumer=@FrsNumer) or (@FrsTyp=0 and FrS_Id=@FrsNumer))
+	and FrS_Warstwa=@FrsWarstwa and	(FrS_AktywnyOd&lt;=@DataDo or @DataDo=0) and (@DataOd&lt;=FrS_AktywnyDo or FrS_AktywnyDo=0)
+  declare @Poziom smallint
+  set @Poziom = 0
+  while @Poziom&gt;-1000 and exists(select FrS_Id from @Centra where FrS_Poziom=@Poziom)
+    begin
+      insert into @Centra
+        select Struktura.FrS_Id, Struktura.FrS_GIDTyp, Struktura.FrS_GIDNumer, Struktura.Frs_Nazwa, Struktura.FrS_Opis,
+		case when Struktura.FrS_AktywnyOd&lt;Centra.FrS_AktywnyOd then Centra.FrS_AktywnyOd else Struktura.FrS_AktywnyOd end as FrS_AktywnyOd,
+		case when Centra.FrS_AktywnyDo&gt;0 and (Centra.FrS_AktywnyDo&lt;Struktura.FrS_AktywnyDo or Struktura.FrS_AktywnyDo=0) then Centra.FrS_AktywnyDo else Struktura.FrS_AktywnyDo end as FrS_AktywnyDo,
+		@Poziom-1, Struktura.FrS_GROTyp, Struktura.FrS_GRONumer
+          from CDN.FrmStruktura as Struktura inner join @Centra as Centra on Struktura.FrS_GIDTyp=Centra.FrS_GROTyp and Struktura.FrS_GIDNumer=Centra.FrS_GRONumer and Struktura.FrS_Warstwa=@FrsWarstwa and
+		(Struktura.FrS_AktywnyOd&lt;=Centra.FrS_AktywnyDo or Centra.FrS_AktywnyDo=0) and (Centra.Frs_AktywnyOd&lt;=Struktura.FrS_AktywnyDo or Struktura.FrS_AktywnyDo=0) and Centra.FrS_Poziom=@Poziom
+      set @Poziom = @Poziom - 1
+    end
+  return
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="FrsPodlega"></A><PRE>
+          <FONT SIZE="2"><I>/* FrsPodlega */</I><BR>
+CREATE FUNCTION CDN.FrsPodlega (@PrcNumer int,@FrsTyp smallint,@FrsNumer int,@DataOd int,@DataDo int = -1)
+RETURNS @Podlega TABLE (
+  DataOd int,
+  DataDo int,
+  RolaId int
+)
+as
+begin
+  if @DataDo=-1 set @DataDo = @DataOd
+  insert into @Podlega
+    select
+	case when FrS_AktywnyOd&gt;PrR_DataOd then FrS_AktywnyOd else PrR_DataOd end as DataOd,
+	case when FrS_AktywnyDo&lt;PrR_DataDo or PrR_DataDo=0 then FrS_AktywnyDo else PrR_DataDo end as DataDo,
+	PrR_RolId as RolaId
+    from CDN.FrsCentra(3,@FrsTyp,@FrsNumer,@DataOd,@DataDo)
+    inner join CDN.PrcRole on FrS_Id=PrR_FrSId and PrR_PrcTyp=944 and PrR_PrcNumer=@PrcNumer
+	and (PrR_DataOd&lt;=FrS_AktywnyDo or FrS_AktywnyDo=0) and (FrS_AktywnyOd&lt;=PrR_DataDo or PrR_DataDo=0)
+  if @FrsTyp=944 and @FrsNumer=@PrcNumer
+    insert into @Podlega
+      select
+	case when PrR_DataOd&gt;@DataOd then PrR_DataOd else @DataOd end as DataOd,
+	case when PrR_DataDo&lt;@DataDo and PrR_DataDo&gt;0 then PrR_DataDo else @DataDo end as DataDo,
+	PrR_RolId as RolaId
+      from CDN.PrcRole
+      where PrR_FrSId=0 and PrR_PrcTyp=944 and PrR_PrcNumer=@PrcNumer
+	and (@DataOd&lt;=PrR_DataDo or PrR_DataDo=0) and (PrR_DataOd&lt;=@DataDo or @DataDo=0)
+  return
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="FrsPodlegaOkres"></A><PRE>
+          <FONT SIZE="2"><I>/* FrsPodlegaOkres */</I><BR>
+CREATE PROCEDURE CDN.FrsPodlegaOkres @PrcNumer int,@FrsTyp smallint,@FrsNumer int,@DataOd int output,@DataDo int output,@Prawa varchar(200)=''
+as
+begin
+  declare @Role table (RolId int) 
+  if LTRIM(@Prawa) = ''
+    insert into @Role (RolId) values (1)
+  else if SUBSTRING(@Prawa,1,1)='#'
+    insert into @Role (RolId) values (CONVERT(int,SUBSTRING(@Prawa,2,199)))
+  else
+    begin
+      set @Prawa = ','+RTRIM(@Prawa)+','
+      insert into @Role (RolId)
+        select distinct RlP_RolId
+        from CDN.RolePrawa
+        where CHARINDEX(','+CONVERT(varchar(10),RlP_PraId)+',',@Prawa)&gt;0
+    end
+  declare @Podlega table (DataOd int, DataDo int)
+  insert into @Podlega
+    select DataOd, DataDo
+    from CDN.FrsPodlega(@PrcNumer,@FrsTyp,@FrsNumer,@DataOd,@DataDo)
+    inner join @Role on RolId=RolaId
+  if not exists(select DataDo from @Podlega)
+    begin
+      set @DataOd = null
+      set @DataDo = null
+      return
+    end
+  declare @Data int
+  if exists(select DataDo from @Podlega
+      where (DataOd&lt;=@DataDo or @DataDo=0) and ((@DataDo&gt;0 and @DataDo&lt;=DataDo) or DataDo=0))
+    begin
+      set @Data = @DataDo-1
+      while (@DataOd&lt;=@Data or @Data=-1) and exists(select DataDo
+          from @Podlega where (DataOd&lt;=@Data and @Data&lt;=DataDo) or DataDo=0)
+        select @Data=min(DataOd)-1
+          from @Podlega where (DataOd&lt;=@Data and @Data&lt;=DataDo) or DataDo=0
+      set @DataOd = @Data+1
+    end
+  else if exists(select DataOd from @Podlega where DataOd&lt;=@DataOd and (@DataOd&lt;=DataDo or DataDo=0))
+    begin
+      set @Data = @DataOd+1
+      while (@Data&lt;=@DataDo or @DataDo=0) and
+          exists(select DataOd from @Podlega where DataOd&lt;=@Data and (@Data&lt;=DataDo or DataDo=0))
+        if exists(select DataOd from @Podlega where DataOd&lt;=@Data and DataDo=0)
+          begin
+            set @Data = 1
+            break
+          end
+        else
+          select @Data=max(DataDo)+1 from @Podlega where DataOd&lt;=@Data and @Data&lt;=DataDo
+      set @DataOd = @Data-1
+    end
+  else
+      select top 1 @DataOd=DataOd, @DataDo=DataDo from @Podlega order by DataDo desc
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="FrsDrzewo"></A><PRE>
+          <FONT SIZE="2"><I>/* FrsDrzewo */</I><BR>
+CREATE FUNCTION CDN.FrsDrzewo (@FrsWarstwa smallint, @FrsTyp smallint,@FrsNumer int,@DataOd int,@DataDo int = -1,@Poziom smallint = 0)
+RETURNS @Drzewo TABLE (
+  FrS_Id int,
+  FrS_ParId int,
+  FrS_GIDTyp smallint,
+  FrS_GIDNumer int,
+  FrS_Nazwa varchar(40),
+  FrS_Opis varchar(254),
+  FrS_AktywnyOd int,
+  FrS_AktywnyDo int,
+  FrS_Poziom smallint,
+  FrS_GROTyp smallint,
+  FrS_GRONumer int,
+  FrS_PierwTyp smallint,
+  FrS_PierwNumer int,
+  FrS_PierwAktywnyOd int
+)
+as
+begin
+  if @FrsWarstwa=0 set @FrsWarstwa=3
+  if @FrsNumer=0 set @FrsNumer = 3
+  if @DataDo=-1 set @DataDo = @DataOd
+  if @Poziom=0 set @Poziom = 1000
+  declare @Poz smallint
+  set @Poz = 0
+  insert into @Drzewo
+    select FrS_Id, 0, FrS_GIDTyp, FrS_GIDNumer, Frs_Nazwa, FrS_Opis,
+	case when FrS_AktywnyOd&lt;@DataOd then @DataOd else FrS_AktywnyOd end as FrS_AktywnyOd,
+	case when @DataDo&lt;FrS_AktywnyDo or FrS_AktywnyDo=0 then @DataDo else FrS_AktywnyDo end as FrS_AktywnyDo,
+	@Poz as FrS_Poziom, FrS_GROTyp, FrS_GRONumer, 0, 0, 0
+    from CDN.FrmStruktura
+    where ((FrS_GIDTyp=@FrsTyp and FrS_GIDNumer=@FrsNumer) or (@FrsTyp=0 and FrS_Id=@FrsNumer))
+	and FrS_Warstwa=@FrsWarstwa and	(FrS_AktywnyOd&lt;=@DataDo or @DataDo=0) and (@DataOd&lt;=FrS_AktywnyDo or FrS_AktywnyDo=0)
+  while @Poz&lt;@Poziom and exists(select FrS_Id from @Drzewo where FrS_Poziom=@Poz)
+    begin
+      insert into @Drzewo
+        select Struktura.FrS_Id, Centra.FrS_Id, Struktura.FrS_GIDTyp, Struktura.FrS_GIDNumer, Struktura.Frs_Nazwa, Struktura.FrS_Opis,
+		  case when Struktura.FrS_AktywnyOd&lt;Centra.FrS_AktywnyOd then Centra.FrS_AktywnyOd else Struktura.FrS_AktywnyOd end as FrS_AktywnyOd,
+		  case when Centra.FrS_AktywnyDo&lt;Struktura.FrS_AktywnyDo or Struktura.FrS_AktywnyDo=0 then Centra.FrS_AktywnyDo else Struktura.FrS_AktywnyDo end as FrS_AktywnyDo,
+		  @Poz+1, Struktura.FrS_GROTyp, Struktura.FrS_GRONumer,
+		  case @Poz when 0 then Struktura.FrS_GIDTyp else Centra.FrS_PierwTyp end,
+		  case @Poz when 0 then Struktura.FrS_GIDNumer else Centra.FrS_PierwNumer end,
+		  case when @Poz&gt;0 then Centra.FrS_PierwAktywnyOd when Struktura.FrS_AktywnyOd&lt;Centra.FrS_AktywnyOd then Centra.FrS_AktywnyOd else Struktura.FrS_AktywnyOd end
+        from CDN.FrmStruktura as Struktura inner join @Drzewo as Centra on Struktura.FrS_GROTyp=Centra.FrS_GIDTyp and Struktura.FrS_GRONumer=Centra.FrS_GIDNumer and Struktura.FrS_Warstwa=@FrsWarstwa and
+		  (Struktura.FrS_AktywnyOd&lt;=Centra.FrS_AktywnyDo or Centra.FrS_AktywnyDo=0) and (Centra.Frs_AktywnyOd&lt;=Struktura.FrS_AktywnyDo or Struktura.FrS_AktywnyDo=0) and Centra.FrS_Poziom=@Poz
+      set @Poz = @Poz + 1
+    end
+  return
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="FrsPracownik"></A><PRE>
+          <FONT SIZE="2"><I>/* FrsPracownik */</I><BR>
+CREATE FUNCTION CDN.FrsPracownik (@PrcNumer int,@DataOd int,@DataDo int = -1,@Poziom int = 0,@Prawa varchar(200) = '')
+RETURNS @Drzewo TABLE (
+  FrS_Id int,
+  FrS_ParId int,
+  FrS_GIDTyp smallint,
+  FrS_GIDNumer int,
+  FrS_Nazwa varchar(40),
+  FrS_Opis varchar(254),
+  FrS_AktywnyOd int,
+  FrS_AktywnyDo int,
+  FrS_Poziom smallint,
+  FrS_GROTyp smallint,
+  FrS_GRONumer int
+)
+as
+begin
+  declare @Role table (RolId int) 
+  if LTRIM(@Prawa) = ''
+    insert into @Role (RolId) values (1)
+  else if SUBSTRING(@Prawa,1,1)='#'
+    insert into @Role (RolId) values (CONVERT(int,SUBSTRING(@Prawa,2,199)))
+  else
+    begin
+      set @Prawa = ','+RTRIM(@Prawa)+','
+      insert into @Role (RolId)
+        select distinct RlP_RolId
+        from CDN.RolePrawa
+        where CHARINDEX(','+CONVERT(varchar(10),RlP_PraId)+',',@Prawa)&gt;0
+    end
+  if exists(select PrR_RolId from CDN.PrcRole
+      inner join @Role on RolId=PrR_RolId
+      where PrR_PrcTyp=944 and PrR_PrcNumer=@PrcNumer and
+        (PrR_DataOd&lt;=@DataDo or @DataDo=0) and (@DataOd&lt;=PrR_DataDo or PrR_DataDo=0))
+    insert into @Drzewo
+      select 0, -1, 944, @PrcNumer, Prc_Akronim,
+        LTRIM(Prc_Imie1+' '+Prc_Nazwisko), @DataOd, @DataDo, -1, 0, 0
+        from CDN.PrcKarty where Prc_GIDTyp=944 and Prc_GIDNumer=@PrcNumer
+  declare PrRCursor CURSOR LOCAL FAST_FORWARD READ_ONLY FOR
+    select FrS_GIDTyp, FrS_GIDNumer from ( CDN.PrcRole
+      inner join @Role on RolId=PrR_RolId and PrR_PrcTyp=944
+        and PrR_PrcNumer=@PrcNumer and (PrR_DataOd&lt;=@DataDo or @DataDo=0)
+        and (@DataOd&lt;=PrR_DataDo or PrR_DataDo=0) )
+      inner join CDN.FrmStruktura on PrR_FrSId=FrS_Id and PrR_FrSId&lt;&gt;0 and
+        (FrS_AktywnyOd&lt;=PrR_DataDo or PrR_DataDo=0) and (PrR_DataOd&lt;=FrS_AktywnyDo or FrS_AktywnyDo=0) and
+        (FrS_AktywnyOd&lt;=@DataDo or @DataDo=0) and (@DataOd&lt;=FrS_AktywnyDo or FrS_AktywnyDo=0)
+  declare @Struktura table ( FrS_Id int, FrS_ParId int, FrS_GIDTyp smallint, FrS_GIDNumer int,
+    FrS_Nazwa varchar(40), FrS_Opis varchar(254), FrS_AktywnyOd int, FrS_AktywnyDo int,
+    FrS_Poziom smallint, FrS_GROTyp smallint, FrS_GRONumer int )
+  declare @FrsTyp smallint
+  declare @FrsNumer int
+  open PrRCursor
+  while 1=1
+    begin
+      fetch next from PrRCursor into @FrsTyp, @FrsNumer
+      if @@FETCH_STATUS &lt;&gt; 0 break
+      if not exists(select FrS_Id from @Struktura where FrS_GIDTyp=@FrsTyp and FrS_GIDNumer=@FrsNumer
+          and FrS_AktywnyOd=@DataOd and FrS_AktywnyDo=@DataDo)
+        insert into @Struktura
+          select FrS_Id, FrS_ParId, FrS_GIDTyp, FrS_GIDNumer, FrS_Nazwa, FrS_Opis,
+              FrS_AktywnyOd, FrS_AktywnyDo, FrS_Poziom, FrS_GROTyp, FrS_GRONumer
+            from CDN.FrsDrzewo(3,@FrsTyp,@FrsNumer,@DataOd,@DataDo,@Poziom)
+            where FrS_GIDTyp&lt;&gt;944 or FrS_GIDNumer&lt;&gt;@PrcNumer
+    end
+  close PrRCursor
+  deallocate PrRCursor
+  insert into @Drzewo
+    select max(FrS_Id), max(FrS_ParId), FrS_GIDTyp, FrS_GIDNumer, max(FrS_Nazwa), max(FrS_Opis),
+        FrS_AktywnyOd, FrS_AktywnyDo, max(FrS_Poziom), max(FrS_GROTyp), max(FrS_GRONumer) from @Struktura
+      group by FrS_GIDTyp, FrS_GIDNumer, FrS_AktywnyOd, FrS_AktywnyDo
+  return
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

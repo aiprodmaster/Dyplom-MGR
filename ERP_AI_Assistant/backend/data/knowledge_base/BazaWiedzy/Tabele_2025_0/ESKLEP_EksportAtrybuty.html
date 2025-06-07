@@ -1,0 +1,117 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="ESKLEP_EksportAtrybuty"></A><PRE>
+          <FONT SIZE="2"><I>/* ESKLEP_EksportAtrybuty */</I><BR>
+CREATE PROCEDURE CDN.ESKLEP_EksportAtrybuty
+  @ID INT      -- ID e-sklepu
+ ,@TypExp INT  -- Typ eksportu (0 - różnicowy, 1 - pełny)
+AS
+
+SET NOCOUNT ON
+DECLARE @Typ_AtrybutKlasa SMALLINT = 14416
+DECLARE @Typ_AtrybutWartosc SMALLINT = 14417
+DECLARE @PcKTSSynchr INT
+
+SELECT @PcKTSSynchr = PcK_TSSynchrTwrPtw from cdn.PicoKonfig where PcK_PicoID = @ID
+
+CREATE TABLE #tmpRecordSet(AtKID INT,AtkTyp TINYINT,ATKFormat VARCHAR(129),AtKNazwa VARCHAR(256),AtWLp INT,AtWWartosc VARCHAR(513),AtWID INT,AtkWWart TINYINT)
+
+INSERT INTO #tmpRecordSet SELECT AtK_ID,AtK_Typ,AtK_Format,AtK_Nazwa,AtW_Lp,AtW_Wartosc,AtW_ID,AtK_Wielowart FROM CDN.AtrybutyKlasy 
+LEFT JOIN CDN.AtrybutyWartosci ON AtW_AtKId = AtK_ID
+LEFT JOIN #tmpRecordSet ON AtKID = AtK_ID
+WHERE (AtK_eSklep = 1 AND AtK_CzasModyfikacji &gt;= CASE WHEN @TypExp = 0 THEN @PcKTSSynchr ELSE 0 END)
+	OR(AtK_eSklep = 1 AND AtW_CzasModyfikacji &gt;= CASE WHEN @TypExp = 0 THEN @PcKTSSynchr ELSE 0 END)
+
+
+INSERT INTO #tmpRecordSet SELECT DISTINCT AtK_ID,AtK_Typ,AtK_Format,AtK_Nazwa,AtW_Lp,AtW_Wartosc,AtW_ID,AtK_Wielowart FROM CDN.AtrybutyKlasy 
+LEFT JOIN #tmpRecordSet t ON t.AtKID = AtK_ID
+LEFT JOIN CDN.AtrybutyWartosci ON AtW_AtKId = t.AtKID
+WHERE AtW_Wartosc NOT LIKE '&lt;...&gt;%' AND AtW_Wartosc NOT LIKE '' AND Atk_ID = t.AtKID AND Atw_ID &lt;&gt; t.atwid AND @TypExp = 0 AND AtW_ID NOT IN (SELECT AtwID FROM #tmpRecordSet)
+
+
+SELECT DISTINCT 1 AS Tag, NULL AS Parent, @TypExp AS [SATRI!1!Pelny]
+,NULL AS [SATR!2!AtrDefID], NULL AS [SATR!2!Format],NULL AS [SATR!2!Typ], NULL AS [SATRJI!3],
+NULL AS [SATRJ!4!JezykID],NULL AS [SATRJ!4!Nazwa],NULL AS [SATRWI!5],NULL AS [SATRW!6!LpWart],NULL AS [SATRW!6!WartoscID],NULL AS [SATRWJI!7],NULL AS [SATRWJ!8!JezykID],NULL AS [SATRWJ!8!Wartosc]
+FROM #tmpRecordSet
+UNION ALL
+SELECT DISTINCT 2 AS Tag, 1 AS Parent, @TypExp AS [SATRI!1!Pelny]
+,AtKID AS [SATR!2!AtrDefID], CDN.ESKLEP_UstalTypKlasyAtrybutow(AtKTyp,AtKFormat) AS [SATR!2!Format],CASE WHEN AtkTyp = 4 OR AtkWWart=1 THEN 1 ELSE 0 END AS [SATR!2!Typ], NULL AS [SATRJI!3],
+NULL AS [SATRJ!4!JezykID],NULL AS [SATRJ!4!Nazwa],NULL AS [SATRWI!5],NULL AS [SATRW!6!LpWart],NULL AS [SATRW!6!WartoscID],NULL AS [SATRWJI!7],NULL AS [SATRWJ!8!JezykID],NULL AS [SATRWJ!8!Wartosc]
+FROM #tmpRecordSet
+UNION ALL
+SELECT DISTINCT 3 AS Tag, 2 AS Parent, @TypExp AS [SATRI!1!Pelny]
+,AtKID AS AtrDefID, CDN.ESKLEP_UstalTypKlasyAtrybutow(AtKTyp,AtKFormat) AS Format,0 AS [SATR!2!Typ], NULL AS [SATRJI!3],
+NULL AS [SATRJ!4!JezykID],NULL AS [SATRJ!4!Nazwa],NULL AS [SATRWI!5],NULL AS [SATRW!6!LpWart],NULL AS [SATRW!6!WartoscID],NULL AS [SATRWJI!7],NULL AS [SATRWJ!8!JezykID],NULL AS [SATRWJ!8!Wartosc]
+FROM #tmpRecordSet
+UNION ALL
+SELECT DISTINCT 4 AS Tag, 3 AS Parent, @TypExp AS [SATRI!1!Pelny]
+,AtKID AS AtrDefID, CDN.ESKLEP_UstalTypKlasyAtrybutow(AtKTyp,AtKFormat) AS Format,0 AS [SATR!2!Typ],  NULL AS [SATRJI!3],
+CASE WHEN ISNULL(SlwJezyk.SLW_Predefiniowany,0) IN (21,22,23,24,25,34,35,36,98,99,100,101,110) OR ISNULL(SLWJezyk.SLW_WartoSCL3,0) &lt;&gt; 0 THEN SlwJezyk.SLW_WartoscL3 ELSE 1 END AS [SATRJ!4!JezykID],CASE WHEN SLW_WartoscL1 = 204 THEN CDN.CyrillicToUnicode(ISNULL(TLM_Tekst,AtKNazwa)) ELSE ISNULL(TLM_Tekst,AtKNazwa) END AS [SATRJ!4!Nazwa],
+NULL AS [SATRWI!5],NULL AS [SATRW!6!LpWart],NULL AS [SATRW!6!WartoscID],NULL AS [SATRWJI!7],NULL AS [SATRWJ!8!JezykID],NULL AS [SATRWJ!8!Wartosc]
+FROM #tmpRecordSet
+JOIN CDN.Tlumaczenia ON TLM_Typ = @Typ_AtrybutKlasa AND TLM_Numer = AtKID AND TLM_Pole = 2 --nazwa
+JOIN CDN.Slowniki SlwJezyk ON SlwJezyk.SLW_ID = TLM_Jezyk AND SLW_WartoscL2 IN (2,3)
+WHERE ISNULL(SlwJezyk.SLW_WartoSCL3,1) &lt;&gt; 0
+UNION ALL
+SELECT DISTINCT 4 AS Tag, 3 AS Parent, @TypExp AS [SATRI!1!Pelny]
+,AtKID AS AtrDefID, CDN.ESKLEP_UstalTypKlasyAtrybutow(AtKTyp,AtKFormat) AS Format,0 AS [SATR!2!Typ],  NULL AS [SATRJI!3],
+1 AS [SATRJ!4!JezykID],AtKNazwa AS [SATRJ!4!Nazwa],NULL AS [SATRWI!5],NULL AS [SATRW!6!LpWart],NULL AS [SATRW!6!WartoscID],NULL AS [SATRWJI!7],NULL AS [SATRWJ!8!JezykID],NULL AS [SATRWJ!8!Wartosc]
+FROM #tmpRecordSet
+UNION ALL --Wartosci
+SELECT DISTINCT 5 AS Tag, 2 AS Parent, @TypExp AS [SATRI!1!Pelny]
+,AtKID AS AtrDefID, CDN.ESKLEP_UstalTypKlasyAtrybutow(AtKTyp,AtKFormat) AS Format,0 AS [SATR!2!Typ], NULL AS [SATRJI!3],
+NULL AS [SATRJ!4!JezykID],NULL AS [SATRJ!4!Nazwa],NULL AS [SATRWI!5],NULL AS [SATRW!6!LpWart],NULL AS [SATRW!6!WartoscID],NULL AS [SATRWJI!7],NULL AS [SATRWJ!8!JezykID],NULL AS [SATRWJ!8!Wartosc]
+FROM #tmpRecordSet WHERE AtWLp IS NOT NULL
+UNION ALL
+SELECT 6 AS Tag, 5 AS Parent, @TypExp AS [SATRI!1!Pelny]
+,AtKID AS AtrDefID, CDN.ESKLEP_UstalTypKlasyAtrybutow(AtKTyp,AtKFormat) AS Format,0 AS [SATR!2!Typ],  NULL AS [SATRJI!3],
+NULL AS [SATRJ!4!JezykID],NULL AS [SATRJ!4!Nazwa],
+NULL AS [SATRWI!5],AtWLp AS [SATRW!6!LpWart],AtWID AS [SATRW!6!WartoscID],NULL AS [SATRWJI!7],NULL AS [SATRWJ!8!JezykID],NULL AS [SATRWJ!8!Wartosc]
+FROM #tmpRecordSet  
+WHERE AtWLp IS NOT NULL
+UNION ALL --wartosci
+SELECT 7 AS Tag, 6 AS Parent, @TypExp AS [SATRI!1!Pelny]
+,AtKID AS AtrDefID, CDN.ESKLEP_UstalTypKlasyAtrybutow(AtKTyp,AtKFormat) AS Format,0 AS [SATR!2!Typ],  NULL AS [SATRJI!3],
+NULL AS [SATRJ!4!JezykID],NULL AS [SATRJ!4!Nazwa],
+NULL AS [SATRWI!5],AtWLp AS [SATRW!6!LpWart],AtWID AS [SATRW!6!WartoscID],NULL AS [SATRWJI!7], NULL AS [SATRWJ!8!JezykID],NULL AS [SATRWJ!8!Wartosc]
+FROM #tmpRecordSet  
+WHERE AtWLp IS NOT NULL
+UNION ALL --Polskie wartosci
+SELECT 8 AS Tag, 7 AS Parent, @TypExp AS [SATRI!1!Pelny]
+,AtKID AS AtrDefID, CDN.ESKLEP_UstalTypKlasyAtrybutow(AtKTyp,AtKFormat) AS Format,0 AS [SATR!2!Typ],  NULL AS [SATRJI!3],
+NULL AS [SATRJ!4!JezykID],NULL AS [SATRJ!4!Nazwa],
+NULL AS [SATRWI!5],AtWLp AS [SATRW!6!LpWart],AtWID AS [SATRW!6!WartoscID],NULL AS [SATRWJI!7], 1 AS [SATRWJ!8!JezykID],AtWWartosc AS [SATRWJ!8!Wartosc]
+FROM #tmpRecordSet  
+WHERE AtWLp IS NOT NULL
+UNION ALL --Tlumaczenia wartosci
+SELECT 8 AS Tag, 7 AS Parent, @TypExp AS [SATRI!1!Pelny]
+,AtKID AS AtrDefID, CDN.ESKLEP_UstalTypKlasyAtrybutow(AtKTyp,AtKFormat) AS Format,0 AS [SATR!2!Typ],  NULL AS [SATRJI!3],
+NULL AS [SATRJ!4!JezykID],NULL AS [SATRJ!4!Nazwa],
+NULL AS [SATRWI!5],AtWLp AS [SATRW!6!LpWart],AtWID AS [SATRW!6!WartoscID],NULL AS [SATRWJI!7],CASE WHEN ISNULL(SlwJezyk.SLW_Predefiniowany,0) IN (21,22,23,24,25,34,35,36,98,99,100,101,110) OR ISNULL(SLWJezyk.SLW_WartoSCL3,0) &lt;&gt; 0 THEN SlwJezyk.SLW_WartoscL3 ELSE 1 END AS [SATRWJ!8!JezykID],CASE WHEN SLW_WartoscL1 = 204 THEN CDN.CyrillicToUnicode(ISNULL(TLM_Tekst,AtWWartosc)) ELSE ISNULL(TLM_Tekst,AtWWartosc) END AS [SATRWJ!8!Wartosc]
+FROM #tmpRecordSet  
+JOIN CDN.Tlumaczenia ON TLM_Typ = @Typ_AtrybutWartosc AND TLM_Numer = AtWID AND TLM_Pole = 2 --nazwa
+JOIN CDN.Slowniki SlwJezyk ON SlwJezyk.SLW_ID = TLM_Jezyk AND SLW_WartoscL2 IN (2,3)
+WHERE AtWLp IS NOT NULL AND ISNULL(SlwJezyk.SLW_WartoSCL3,1) &lt;&gt; 0
+
+ORDER BY [SATR!2!AtrDefID],[SATRW!6!WartoscID],tag,[SATRJ!4!JezykID]
+FOR XML EXPLICIT
+
+
+DROP TABLE #tmpRecordSet
+SET NOCOUNT OFF
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

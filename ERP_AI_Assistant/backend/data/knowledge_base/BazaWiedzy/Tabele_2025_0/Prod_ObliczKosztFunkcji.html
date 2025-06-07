@@ -1,0 +1,95 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[Prod_ObliczKosztFunkcji]"></A><PRE>
+          <FONT SIZE="2"><I>/* [Prod_ObliczKosztFunkcji] */</I><BR>
+CREATE function [CDN].[Prod_ObliczKosztFunkcji]
+(
+@idFunkcji int,
+@idCzynnosci int,
+@iloscWykonanCzynnosci decimal(11,4),
+@terminRozpoczecia int,
+@sposobObliczenia tinyint
+) 
+RETURNS  decimal(20,4)
+AS
+BEGIN
+			
+        declare @ptcOddzial int
+        declare @czasTrwaniaCzynnosci decimal(20,4)
+
+   --stale
+        declare    @najniszyKosztZasobu tinyint
+        set                @najniszyKosztZasobu   = 1
+        declare    @sredniKosztZasobu  tinyint
+        set                @sredniKosztZasobu     = 2
+        declare    @najwyzszyKosztZasobu  tinyint
+        set                @najwyzszyKosztZasobu  = 3
+		
+        select
+        @czasTrwaniaCzynnosci = CDN.ProdIloscAtr(@iloscWykonanCzynnosci,PTC_CzasRozliczeniowy,PTC_CzasRozliczeniowyAtr,4,0,
+        PTC_Ilosc,PTC_IloscAtr,14340,PTC_Technologia,@terminRozpoczecia,0)  + PTC_CzasPrzygotowawczyRozliczeniowy,
+        @ptcOddzial = PTC_Oddzial
+        from CDN.ProdTechnologiaCzynnosci where PTC_Id = @idCzynnosci
+
+        DECLARE @wynikZapytania TABLE (kolumna1 decimal(20,4))
+
+        INSERT INTO @wynikZapytania
+        select
+        sum(CDN.Prod_WartoscAtr(POB_StawkaStala,POB_StawkaStalaAtr,14337,POB_ID,@terminRozpoczecia,-1)+
+        CDN.ProdIloscAtr(@iloscWykonanCzynnosci ,POB_StawkaIlosc,POB_StawkaIloscAtr,4,0,POB_StawkaIloscM,0,14337,POB_Id,@terminRozpoczecia,-1)+
+        CDN.ProdIloscAtr(@czasTrwaniaCzynnosci, POB_StawkaCzas,POB_StawkaCzasAtr,4,0,POB_StawkaCzasM,0,14337,POB_Id,@terminRozpoczecia,-1))
+        from CDN.ProdObiekty inner join CDN.ProdObiektyFunkcje on POB_ID=POF_Obiekt and POF_ObiTyp=14337
+        and POF_Funkcja=@idFunkcji  and POF_CzyStawki=0 AND POF_Widocznosc IN (2,3) --and (POF_Oddzial=0 or POF_Oddzial=@ptcOddzial)
+		group by Pof_grupa
+
+        INSERT INTO @wynikZapytania
+        select
+        sum(CDN.Prod_WartoscAtr(POF_StawkaStala,POF_StawkaStalaAtr,14337,POB_ID,@terminRozpoczecia,-1)+
+        CDN.ProdIloscAtr(@iloscWykonanCzynnosci ,POF_StawkaIlosc,POF_StawkaIloscAtr,4,0,POF_StawkaIloscM,0,14337,POB_Id,@terminRozpoczecia,-1)+
+        CDN.ProdIloscAtr(@czasTrwaniaCzynnosci, POF_StawkaCzas,POF_StawkaCzasAtr,4,0,POF_StawkaCzasM,0,14337,POB_Id,@terminRozpoczecia,-1))
+        from CDN.ProdObiekty inner join CDN.ProdObiektyFunkcje on POB_ID=POF_Obiekt and POF_ObiTyp=14337
+        and POF_Funkcja=@idFunkcji and POF_CzyStawki=1 AND POF_Widocznosc IN (2,3) --and (POF_Oddzial=0 or POF_Oddzial=@ptcOddzial)
+		group by Pof_grupa
+
+
+
+        declare @wynik decimal(20,4)
+
+        if @sposobObliczenia = @najniszyKosztZasobu
+        begin
+          select @wynik = MIN(kolumna1) from @wynikZapytania
+          --select @wynik = AVG(kolumna1) from @wynikZapytania
+          RETURN IsNull(@wynik,0)
+        end
+
+        if @sposobObliczenia = @sredniKosztZasobu
+        begin
+           select @wynik = AVG(kolumna1) from @wynikZapytania
+           RETURN IsNull(@wynik,0)
+        end
+
+        if @sposobObliczenia = @najwyzszyKosztZasobu
+        begin
+           select @wynik = MAX(kolumna1) from @wynikZapytania
+           RETURN IsNull(@wynik,0)
+        end
+        RETURN @sposobObliczenia
+    RETURN IsNull(@wynik,0)
+
+
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

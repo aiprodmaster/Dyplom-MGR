@@ -1,0 +1,722 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="CUKListaDok"></A><PRE>
+          <FONT SIZE="2"><I>/* CUKListaDok */</I><BR>
+CREATE PROCEDURE CDN.CUKListaDok (
+@typDaty    SMALLINT,			--typ daty (0- data sprzedaĹĽy, 1- data wystawienia)
+@dataOd    	INT,				--Data od ktĂłrej obowiÄ…zuje okres sporzÄ…dzenia CUK
+@dataDo		INT,				--Data do ktĂłrej obowiÄ…zuje okres sporzÄ…dzenia CUK
+@PONNumer	INT=0,				--GIDNumer deklaracji, dla ktĂłrej wywoĹ‚ywana jest procedura
+@stawkaMax	SMALLINT,			--NadwyĹĽka cukru liczona wg stawki max
+@dataOryginalu SMALLINT			--0- ujÄ™cie dokumentĂłw wg daty wĹ‚asnej, 1- ujÄ™cie dokumentĂłw wg daty oryginaĹ‚u
+)
+
+AS
+BEGIN
+set nocount on
+
+	CREATE TABLE #CUKDokumenty(
+		DokGIDTyp   SMALLINT,
+		DokGIDNumer INT,
+		LpFaktury	INT,
+		NrFaktury	VARCHAR(50),
+		DataFaktury INT,	--data wystawienia
+		DataSprzedazy INT,
+		NIPDostawcy	VARCHAR(20),
+		NIPNabywcy	VARCHAR(20),		
+		P_11		BIGINT,
+		P_12		decimal(25,2),
+		P_13		decimal(25,2),
+		P_14		BIGINT,
+		P_15		BIGINT,
+		P_16		decimal(25,2),
+		P_17		decimal(25,2),
+		P_18		decimal(25,2),
+		P_19		BIGINT,
+		P_20		decimal(25,2),
+		P_21		decimal(25,2),
+		P_22		BIGINT,
+		P_23		BIGINT,
+		P_24		decimal(25,2),
+		P_25		decimal(25,2),
+		P_26		BIGINT,
+		P_27		BIGINT,
+		P_28		decimal(25,2),
+		P_29		decimal(25,2)
+		);
+	create clustered index CUKDokumentyPrimary on #CUKDokumenty (DokGIDNumer,DokGIDTyp)
+
+
+	CREATE TABLE #CUKPartie(
+		DokGIDTyp		SMALLINT,
+		DokGIDNumer		INT,
+		kodTowaru		VARCHAR(40),
+		cecha			VARCHAR(255),
+		ean				VARCHAR(40),
+		DataW			INT,
+		NrPartiiTowaru	VARCHAR(350)
+		);
+	create clustered index CUKPartiePrimary on #CUKPartie (DokGIDNumer,DokGIDTyp)
+
+
+	DECLARE @Dokumenty Table (
+		  LpFaktury		 INT,
+		  DokGIDTyp      SMALLINT,
+		  DokGIDNumer    INT
+		);
+
+	DECLARE  @CUKPartieTmp TABLE(
+		DokGIDTyp		SMALLINT,
+		DokGIDNumer		INT,
+		kodTowaru		VARCHAR(40),
+		cecha			VARCHAR(255),
+		ean				VARCHAR(40),
+		DataW			INT
+		);
+	DECLARE @Obliczenia TABLE(
+		DokGIDTyp   SMALLINT,
+		DokGIDNumer INT,
+		P_11		BIGINT,
+		P_12		decimal(25,2),
+		P_13		decimal(25,2),
+		P_14		BIGINT,
+		P_15		BIGINT,
+		P_16		decimal(25,2),
+		P_17		decimal(25,2),
+		P_18		decimal(25,2),
+		P_19		BIGINT,
+		P_20		decimal(25,2),
+		P_21		decimal(25,2),
+		P_22		BIGINT,
+		P_23		BIGINT,
+		P_24		decimal(25,2),
+		P_25		decimal(25,2),
+		P_26		BIGINT,
+		P_27		BIGINT,
+		P_28		decimal(25,2),
+		P_29		decimal(25,2)
+		);
+	DECLARE	 @TMPTYP			SMALLINT,
+				 @TMPNUMER			INT,
+				 @TMPTYP2			SMALLINT,
+				 @TMPNUMER2			INT,
+				 @TMPTYP3			SMALLINT,
+				 @TMPNUMER3			INT,
+				 @TMPSPITYP			SMALLINT,
+				 @TMPSPINUMER		INT,
+				 @TMPLP				SMALLINT,
+				 @TMPLpFaktury		INT = 0,
+				 @TMPStan			SMALLINT,
+				 @TMPZWRTYP			SMALLINT, 
+				 @TMPZWRNUMER		INT,
+				 @sSQL				nvarchar(max),
+				 @NrPartiiTowaruTMP VARCHAR(350),
+				 @kodTowaruTMP		VARCHAR(40),
+				 @cechaTMP			VARCHAR(255),
+				 @eanTMP			VARCHAR(40),
+				 @DataWTMP			INT
+
+	DECLARE kursorPartie CURSOR FOR 
+			SELECT * FROM @CUKPartieTmp
+	IF @dataOryginalu = 0
+	BEGIN
+		IF @typDaty = 0 
+		BEGIN
+			DECLARE kursorDokumenty CURSOR FOR 
+				SELECT A.TrN_GIDTyp, A.TrN_GIDNumer, A.TrN_SpiTyp, A.TrN_SpiNumer, A.TrN_ZwrTyp, A.TrN_ZwrNumer FROM cdn.TraNag A 
+				 LEFT JOIN cdn.tranag B on A.TrN_SpiTyp=B.TrN_GIDTyp and A.TrN_SpiNumer=B.TrN_GIDNumer	
+				WHERE ((A.TrN_GIDTyp in (2033,2035,2037,2036,2041,2043,2045,2044) AND A.Trn_Data3 BETWEEN @dataOd AND @dataDo AND A.Trn_OplataSpozFlaga = 1 AND A.TrN_Stan BETWEEN 3 AND 5) 
+				 OR (A.TrN_SpiTyp = 0 AND A.TrN_GIDTyp in (2034,2042) AND A.Trn_Data3 BETWEEN @dataOd AND @dataDo AND A.Trn_OplataSpozFlaga = 1 AND A.TrN_Stan BETWEEN 3 AND 5)
+				 OR (A.TrN_SpiTyp &gt; 0 AND A.TrN_GIDTyp in (1489,2000,2001,2005,2008,2009,2013) AND B.TrN_Stan BETWEEN 3 AND 5 AND B.Trn_OplataSpozFlaga = 1  AND B.Trn_Data3 BETWEEN @dataOd AND @dataDo))
+		END
+		ELSE
+		BEGIN
+			DECLARE kursorDokumenty CURSOR FOR 
+				SELECT A.TrN_GIDTyp, A.TrN_GIDNumer, A.TrN_SpiTyp, A.TrN_SpiNumer, A.TrN_ZwrTyp, A.TrN_ZwrNumer FROM cdn.TraNag A 
+				 LEFT JOIN cdn.tranag B on A.TrN_SpiTyp=B.TrN_GIDTyp and A.TrN_SpiNumer=B.TrN_GIDNumer	
+				WHERE ((A.TrN_GIDTyp in (2033,2035,2037,2036,2041,2043,2045,2044) AND A.Trn_Data2 BETWEEN @dataOd AND @dataDo AND A.Trn_OplataSpozFlaga = 1 AND A.TrN_Stan BETWEEN 3 AND 5) 
+				 OR (A.TrN_SpiTyp = 0 AND A.TrN_GIDTyp in (2034,2042) AND A.Trn_Data2 BETWEEN @dataOd AND @dataDo AND A.Trn_OplataSpozFlaga = 1 AND A.TrN_Stan BETWEEN 3 AND 5)
+				 OR (A.TrN_SpiTyp &gt; 0 AND A.TrN_GIDTyp in (1489,2000,2001,2005,2008,2009,2013) AND B.TrN_Stan BETWEEN 3 AND 5 AND B.Trn_OplataSpozFlaga = 1  AND B.Trn_Data2 BETWEEN @dataOd AND @dataDo))
+		END
+	END	
+	ELSE
+	BEGIN
+		IF @typDaty = 0 
+		BEGIN
+			DECLARE kursorDokumenty CURSOR FOR 
+				SELECT A.TrN_GIDTyp, A.TrN_GIDNumer, A.TrN_SpiTyp, A.TrN_SpiNumer, A.TrN_ZwrTyp, A.TrN_ZwrNumer FROM cdn.TraNag A 
+					LEFT JOIN cdn.tranag B on A.TrN_SpiTyp=B.TrN_GIDTyp and A.TrN_SpiNumer=B.TrN_GIDNumer	
+					LEFT JOIN cdn.TraNag D ON D.TrN_GIDNumer = B.TrN_ZwrNumer AND D.TrN_GIDTyp = B.TrN_ZwrTyp
+					WHERE ((A.TrN_GIDTyp in (2033,2035,2037,2036) AND A.Trn_Data3 BETWEEN @dataOd AND @dataDo AND A.Trn_OplataSpozFlaga = 1 AND A.TrN_Stan BETWEEN 3 AND 5) 
+					OR (A.TrN_SpiTyp = 0 AND A.TrN_GIDTyp in (2034) AND A.Trn_Data3 BETWEEN @dataOd AND @dataDo AND A.Trn_OplataSpozFlaga = 1 AND A.TrN_Stan BETWEEN 3 AND 5)
+					OR (A.TrN_SpiTyp &gt; 0 AND A.TrN_GIDTyp in (1489,2000,2001,2005,2008) AND B.TrN_Stan BETWEEN 3 AND 5 AND B.Trn_OplataSpozFlaga = 1  AND B.Trn_Data3 BETWEEN @dataOd AND @dataDo)
+				 OR (A.TrN_SpiTyp &gt; 0 AND A.TrN_GIDTyp in (2009,2013) AND B.TrN_Stan BETWEEN 3 AND 5 AND B.Trn_OplataSpozFlaga = 1  AND B.Trn_Data3 BETWEEN @dataOd AND @dataDo AND d.TrN_GIDTyp IS NULL))
+			UNION ALL
+				SELECT DISTINCT B.TrN_GIDTyp, B.TrN_GIDNumer, B.TrN_SpiTyp, B.TrN_SpiNumer, B.TrN_ZwrTyp, B.TrN_ZwrNumer FROM cdn.TraNag A 
+					LEFT JOIN cdn.tranag B on B.TrN_ZwrNumer = A.TrN_GIDNumer
+					LEFT JOIN cdn.TraElem ON A.TrN_GIDTyp=TrE_GIDTyp AND A.TrN_GIDNumer=TrE_GIDNumer
+					LEFT JOIN cdn.TraSElem C ON TrE_GIDTyp=C.TrS_GIDTyp AND TrE_GIDNumer=C.TrS_GIDNumer AND TrE_GIDLp=C.TrS_GIDLp
+					LEFT JOIN cdn.TraNag D ON D.TrN_GIDTyp= C.TrS_OrgTyp and D.TrN_GIDNumer = C.TrS_OrgNumer
+					WHERE (B.TrN_SpiTyp = 0 AND B.TrN_GIDTyp in (2041,2045,2044,2042) AND D.TrN_Data3 BETWEEN @dataOd AND @dataDo AND B.Trn_OplataSpozFlaga = 1 AND B.TrN_Stan BETWEEN 3 AND 5)
+					OR (B.TrN_SpiTyp = 0 AND B.TrN_GIDTyp in (2043) AND A.TrN_Data3 BETWEEN @dataOd AND @dataDo AND B.Trn_OplataSpozFlaga = 1 AND B.TrN_Stan BETWEEN 3 AND 5)--spinacze nagĹ‚Ăłwkowe i korekty z datÄ… oryginaĹ‚u
+			UNION ALL
+				SELECT DISTINCT B.TrN_GIDTyp, B.TrN_GIDNumer, B.TrN_SpiTyp, B.TrN_SpiNumer, B.TrN_ZwrTyp, B.TrN_ZwrNumer FROM cdn.TraNag A 
+					JOIN cdn.TraSElem C ON A.TrN_GIDNumer = C.TrS_OrgNumer AND A.TrN_GIDTyp = C.TrS_OrgTyp
+					LEFT JOIN cdn.tranag B on C.TrS_GIDNumer = B.TrN_GIDNumer
+					WHERE (B.TrN_SpiTyp &lt;&gt; 0 AND B.TrN_GIDTyp in (2041,2043,2045,2044,2042) AND A.Trn_Data3 BETWEEN @dataOd AND @dataDo AND B.Trn_OplataSpozFlaga = 1 AND B.TrN_Stan BETWEEN 3 AND 5) 
+			UNION 
+				SELECT DISTINCT A.TrN_GIDTyp, A.TrN_GIDNumer, A.TrN_SpiTyp, A.TrN_SpiNumer, A.TrN_ZwrTyp, A.TrN_ZwrNumer FROM cdn.TraNag A	--spinacze nagĹ‚Ăłwkowe korekt przy dacie oryginaĹ‚u
+					LEFT JOIN cdn.tranag B on A.TrN_SpiTyp=B.TrN_GIDTyp and A.TrN_SpiNumer=B.TrN_GIDNumer	
+					JOIN cdn.TraSElem C ON A.TrN_GIDNumer = C.TrS_GIDNumer AND A.TrN_GIDTyp = C.TrS_GIDTyp
+					LEFT JOIN cdn.TraNag D ON D.TrN_GIDNumer = B.TrN_ZwrNumer AND D.TrN_GIDTyp = B.TrN_ZwrTyp
+					WHERE (A.TrN_SpiTyp &gt; 0 AND A.TrN_GIDTyp in (1489,2000,2001,2005,2008,2009,2013) AND B.TrN_Stan BETWEEN 3 AND 5 AND B.Trn_OplataSpozFlaga = 1  AND D.Trn_Data3 BETWEEN @dataOd AND @dataDo
+					AND C.TrS_GIDNumer &lt;&gt; C.TrS_OrgNumer)
+		END
+		ELSE
+		BEGIN
+			DECLARE kursorDokumenty CURSOR FOR 
+				SELECT A.TrN_GIDTyp, A.TrN_GIDNumer, A.TrN_SpiTyp, A.TrN_SpiNumer, A.TrN_ZwrTyp, A.TrN_ZwrNumer FROM cdn.TraNag A 
+					LEFT JOIN cdn.tranag B on A.TrN_SpiTyp=B.TrN_GIDTyp and A.TrN_SpiNumer=B.TrN_GIDNumer	
+					LEFT JOIN cdn.TraNag D ON D.TrN_GIDNumer = B.TrN_ZwrNumer AND D.TrN_GIDTyp = B.TrN_ZwrTyp
+					WHERE ((A.TrN_GIDTyp in (2033,2035,2037,2036) AND A.TrN_Data2 BETWEEN @dataOd AND @dataDo AND A.Trn_OplataSpozFlaga = 1 AND A.TrN_Stan BETWEEN 3 AND 5) 
+					OR (A.TrN_SpiTyp = 0 AND A.TrN_GIDTyp in (2034) AND A.TrN_Data2 BETWEEN @dataOd AND @dataDo AND A.Trn_OplataSpozFlaga = 1 AND A.TrN_Stan BETWEEN 3 AND 5)
+					OR (A.TrN_SpiTyp &gt; 0 AND A.TrN_GIDTyp in (1489,2000,2001,2005,2008) AND B.TrN_Stan BETWEEN 3 AND 5 AND B.Trn_OplataSpozFlaga = 1  AND B.Trn_Data2 BETWEEN @dataOd AND @dataDo)
+				 OR (A.TrN_SpiTyp &gt; 0 AND A.TrN_GIDTyp in (2009,2013) AND B.TrN_Stan BETWEEN 3 AND 5 AND B.Trn_OplataSpozFlaga = 1  AND B.Trn_Data2 BETWEEN @dataOd AND @dataDo AND d.TrN_GIDTyp IS NULL))
+			UNION ALL
+				SELECT DISTINCT B.TrN_GIDTyp, B.TrN_GIDNumer, B.TrN_SpiTyp, B.TrN_SpiNumer, B.TrN_ZwrTyp, B.TrN_ZwrNumer FROM cdn.TraNag A 
+					LEFT JOIN cdn.tranag B on B.TrN_ZwrNumer = A.TrN_GIDNumer
+					LEFT JOIN cdn.TraElem ON A.TrN_GIDTyp=TrE_GIDTyp AND A.TrN_GIDNumer=TrE_GIDNumer
+					LEFT JOIN cdn.TraSElem C ON TrE_GIDTyp=C.TrS_GIDTyp AND TrE_GIDNumer=C.TrS_GIDNumer AND TrE_GIDLp=C.TrS_GIDLp
+					LEFT JOIN cdn.TraNag D ON D.TrN_GIDTyp= C.TrS_OrgTyp and D.TrN_GIDNumer = C.TrS_OrgNumer
+					WHERE (B.TrN_SpiTyp = 0 AND B.TrN_GIDTyp in (2041,2045,2044,2042) AND D.TrN_Data2 BETWEEN @dataOd AND @dataDo AND B.Trn_OplataSpozFlaga = 1 AND B.TrN_Stan BETWEEN 3 AND 5)
+					OR (B.TrN_SpiTyp = 0 AND B.TrN_GIDTyp in (2043) AND A.TrN_Data2 BETWEEN @dataOd AND @dataDo AND B.Trn_OplataSpozFlaga = 1 AND B.TrN_Stan BETWEEN 3 AND 5)--spinacze nagĹ‚Ăłwkowe i korekty z datÄ… oryginaĹ‚u
+				UNION ALL
+				SELECT DISTINCT B.TrN_GIDTyp, B.TrN_GIDNumer, B.TrN_SpiTyp, B.TrN_SpiNumer, B.TrN_ZwrTyp, B.TrN_ZwrNumer FROM cdn.TraNag A 
+					JOIN cdn.TraSElem C ON A.TrN_GIDNumer = C.TrS_OrgNumer AND A.TrN_GIDTyp = C.TrS_OrgTyp
+					LEFT JOIN cdn.tranag B on C.TrS_GIDNumer = B.TrN_GIDNumer
+					WHERE (B.TrN_SpiTyp &lt;&gt; 0 AND B.TrN_GIDTyp in (2041,2043,2045,2044,2042) AND A.TrN_Data2 BETWEEN @dataOd AND @dataDo AND B.Trn_OplataSpozFlaga = 1 AND B.TrN_Stan BETWEEN 3 AND 5) 
+			UNION 
+				SELECT DISTINCT A.TrN_GIDTyp, A.TrN_GIDNumer, A.TrN_SpiTyp, A.TrN_SpiNumer, A.TrN_ZwrTyp, A.TrN_ZwrNumer FROM cdn.TraNag A	--spinacze nagĹ‚Ăłwkowe korekt przy dacie oryginaĹ‚u
+					LEFT JOIN cdn.tranag B on A.TrN_SpiTyp=B.TrN_GIDTyp and A.TrN_SpiNumer=B.TrN_GIDNumer	
+					JOIN cdn.TraSElem C ON A.TrN_GIDNumer = C.TrS_GIDNumer AND A.TrN_GIDTyp = C.TrS_GIDTyp
+					LEFT JOIN cdn.TraNag D ON D.TrN_GIDNumer = B.TrN_ZwrNumer AND D.TrN_GIDTyp = B.TrN_ZwrTyp
+					WHERE (A.TrN_SpiTyp &gt; 0 AND A.TrN_GIDTyp in (1489,2000,2001,2005,2008,2009,2013) AND B.TrN_Stan BETWEEN 3 AND 5 AND B.Trn_OplataSpozFlaga = 1  AND D.Trn_Data2 BETWEEN @dataOd AND @dataDo
+					AND C.TrS_GIDNumer &lt;&gt; C.TrS_OrgNumer)
+		END
+	END
+
+	OPEN kursorDokumenty
+	FETCH NEXT FROM kursorDokumenty INTO @TMPTYP, @TMPNUMER, @TMPSPITYP, @TMPSPINUMER, @TMPZWRTYP, @TMPZWRNUMER
+
+	WHILE @@Fetch_Status = 0
+	BEGIN
+		IF (((@TMPTYP = @TMPSPITYP AND @TMPNUMER = @TMPSPINUMER )OR( @TMPTYP = @TMPSPITYP * (-1) AND @TMPSPINUMER = 0))  AND @TMPTYP in (2033,2037,2036,2041,2045,2044) OR (@TMPTYP in (2034,2042) AND @TMPSPITYP = 0 )) --dokument niespiÄ™ty lub spinacz elementĂłw
+		BEGIN
+		
+			IF exists(SELECT DISTINCT * FROM cdn.TwrKarty JOIN CDN.TraElem ON Twr_GIDNumer=TrE_TwrNumer
+				WHERE ((Twr_OplataSpozFlaga = 1 AND Twr_ZawartoscCukru &gt; 0) OR (Twr_OplataSpozFlaga &gt; 1 AND NOT (Twr_OplataSpozFlaga IN (9,11,17,19) AND Twr_ZawartoscCukru &lt;= 5)))
+				 AND TrE_GIDTyp = @TMPTYP AND TrE_GIDNumer = @TMPNUMER)
+			BEGIN
+				SET @TMPLpFaktury += 1;
+				INSERT INTO @Dokumenty(LpFaktury,DokGIDTyp, DokGIDNumer) VALUES(@TMPLpFaktury,@TMPTYP,@TMPNUMER)	
+				INSERT INTO @Obliczenia SELECT * FROM CDN.CUKOplataAnalityczna(@TMPTYP,@TMPNUMER,@stawkaMax)	
+				IF (((@TMPTYP = @TMPSPITYP AND @TMPNUMER = @TMPSPINUMER) OR @TMPSPITYP = 0))	--partie dokumentĂłw niespiÄ™tych
+				BEGIN
+				INSERT INTO @CUKPartieTmp 
+				SELECT DISTINCT Trs_GIDTyp, TrS_GIDNumer, Twr_Kod, Dst_Cecha, Dst_Ean, Dst_DataW FROM CDN.Dostawy 
+						JOIN CDN.TraSElem ON Dst_GIDNumer=TrS_DstNumer  
+						JOIN CDN.TwrKarty ON Twr_GIDNumer=Dst_TwrNumer
+						WHERE Trs_GIDTyp = @TMPTYP AND TrS_GIDNumer = @TMPNUMER AND Trs_Ilosc &lt;&gt;0 
+						AND ((Twr_OplataSpozFlaga = 1 AND Twr_ZawartoscCukru &gt; 0) OR (Twr_OplataSpozFlaga &gt; 1 AND NOT (Twr_OplataSpozFlaga IN (9,11,17,19) AND Twr_ZawartoscCukru &lt;= 5)))
+				END
+				IF ( @TMPTYP = @TMPSPITYP * (-1) AND @TMPSPINUMER = 0 AND @TMPTYP not in (2041,2045,2044)) --partie spinacza elementĂłw
+				BEGIN
+				INSERT INTO @CUKPartieTmp 
+					SELECT DISTINCT B.Trs_GIDTyp, B.TrS_GIDNumer, Twr_Kod, Dst_Cecha, Dst_Ean, Dst_DataW FROM CDN.Dostawy 
+						JOIN CDN.TraSElem A ON Dst_GIDNumer=A.TrS_DstNumer 
+						JOIN cdn.TraSElem B on A.TrS_GIDNumer = B.TrS_SpiNumer AND A.TrS_GIDTyp = B.TrS_SpiTyp
+						JOIN CDN.TwrKarty ON Twr_GIDNumer=Dst_TwrNumer
+						WHERE A.Trs_Ilosc &lt;&gt;0 AND ((Twr_OplataSpozFlaga = 1 AND Twr_ZawartoscCukru &gt; 0) OR (Twr_OplataSpozFlaga &gt; 1 AND NOT (Twr_OplataSpozFlaga IN (9,11,17,19) AND Twr_ZawartoscCukru &lt;= 5)))
+				END
+			END		
+		END
+		ELSE IF ((@TMPSPITYP &gt; 0 AND @TMPTYP in (1489,2000,2001,2005,2008,2009,2013))) -- spinacz nagĹ‚Ăłwkowy 
+		BEGIN
+			IF exists(SELECT DISTINCT * FROM cdn.TwrKarty 
+						JOIN CDN.TraElem ON Twr_GIDNumer=TrE_TwrNumer 
+						JOIN CDN.TraSElem ON TrE_GIDTyp=TrS_GIDTyp AND TrE_GIDNumer=TrS_GIDNumer AND TrE_GIDLp=TrS_GIDLp
+						WHERE ((Twr_OplataSpozFlaga = 1 AND Twr_ZawartoscCukru &gt; 0) OR (Twr_OplataSpozFlaga &gt; 1 AND NOT (Twr_OplataSpozFlaga IN (9,11,17,19) AND Twr_ZawartoscCukru &lt;= 5)))
+						  AND TrS_GIDTyp = @TMPTYP AND TrS_GIDNumer = @TMPNUMER)
+			BEGIN
+			
+				
+				SELECT @TMPTYP2 = TrN_SpiTyp, @TMPNUMER2 = TrN_SpiNumer FROM CDN.TraNag WHERE TrN_GIDTyp = @TMPTYP AND TrN_GIDNumer = @TMPNUMER;
+				SELECT @TMPStan = Trn_Stan FROM CDN.TraNag WHERE TrN_GIDTyp = @TMPTYP2 AND TrN_GIDNumer = @TMPNUMER2
+				IF (@TMPStan BETWEEN 3 AND 5)
+				BEGIN
+					IF NOT EXISTS(SELECT * FROM @Dokumenty WHERE DokGIDTyp = @TMPTYP2 AND DokGIDNumer = @TMPNUMER2)
+					BEGIN
+						SET @TMPLpFaktury += 1;
+						INSERT INTO @Dokumenty(LpFaktury,DokGIDTyp, DokGIDNumer) VALUES(@TMPLpFaktury,@TMPTYP2,@TMPNUMER2)
+					END
+					INSERT INTO @Obliczenia SELECT * FROM CDN.CUKOplataAnalityczna(@TMPTYP,@TMPNUMER,@stawkaMax)
+					INSERT INTO @CUKPartieTmp 
+					SELECT DISTINCT A.TrN_SpiTyp, A.TrN_SpiNumer, Twr_Kod, Dst_Cecha, Dst_Ean, Dst_DataW FROM CDN.Dostawy 
+						JOIN CDN.TraSElem ON Dst_GIDNumer=TrS_DstNumer 
+						JOIN CDN.TwrKarty ON Twr_GIDNumer=Dst_TwrNumer
+						JOIN cdn.TraNag A ON A.TrN_GIDTyp=TrS_GIDTyp AND A.TrN_GIDNumer=TrS_GIDNumer
+						JOIN cdn.tranag B on A.TrN_SpiTyp=B.TrN_GIDTyp and A.TrN_SpiNumer=B.TrN_GIDNumer
+						WHERE TrS_GIDTyp = @TMPTYP AND TrS_GIDNumer = @TMPNUMER AND Trs_Ilosc &lt;&gt;0 
+						AND ((Twr_OplataSpozFlaga = 1 AND Twr_ZawartoscCukru &gt; 0) OR (Twr_OplataSpozFlaga &gt; 1 AND NOT (Twr_OplataSpozFlaga IN (9,11,17,19) AND Twr_ZawartoscCukru &lt;= 5)))
+				END
+			END	
+		END
+		ELSE IF (@TMPTYP in (2035,2043)) -- RA, RAK
+		BEGIN
+			IF exists(SELECT DISTINCT * FROM cdn.TwrKarty 
+						JOIN CDN.TraElem ON Twr_GIDNumer=TrE_TwrNumer 
+						JOIN CDN.TraSElem ON TrE_GIDTyp=TrS_GIDTyp AND TrE_GIDNumer=TrS_GIDNumer AND TrE_GIDLp=TrS_GIDLp
+						JOIN cdn.TraNag A ON A.TrN_GIDTyp=TrS_GIDTyp AND A.TrN_GIDNumer=TrS_GIDNumer
+						JOIN cdn.tranag B on A.TrN_SpiTyp=B.TrN_GIDTyp and A.TrN_SpiNumer=B.TrN_GIDNumer
+						WHERE ((Twr_OplataSpozFlaga = 1 AND Twr_ZawartoscCukru &gt; 0) OR (Twr_OplataSpozFlaga &gt; 1 AND NOT (Twr_OplataSpozFlaga IN (9,11,17,19) AND Twr_ZawartoscCukru &lt;= 5)))
+						  AND  B.TrN_GIDTyp = @TMPTYP AND B.TrN_GIDNumer = @TMPNUMER)
+			BEGIN
+				SET @TMPLpFaktury += 1;
+				INSERT INTO @Dokumenty(LpFaktury,DokGIDTyp, DokGIDNumer) VALUES(@TMPLpFaktury,@TMPTYP,@TMPNUMER)
+				INSERT INTO @Obliczenia SELECT * FROM CDN.CUKOplataAnalityczna(@TMPTYP,@TMPNUMER,@stawkaMax)
+				INSERT INTO @CUKPartieTmp 
+				SELECT DISTINCT A.TrN_SpiTyp, A.TrN_SpiNumer, Twr_Kod, Dst_Cecha, Dst_Ean, Dst_DataW FROM CDN.Dostawy 
+					JOIN CDN.TraSElem ON Dst_GIDNumer=TrS_DstNumer 
+					JOIN CDN.TwrKarty ON Twr_GIDNumer=Dst_TwrNumer
+					JOIN cdn.TraNag A ON A.TrN_GIDTyp=TrS_GIDTyp AND A.TrN_GIDNumer=TrS_GIDNumer
+					JOIN cdn.tranag B on A.TrN_SpiTyp=B.TrN_GIDTyp and A.TrN_SpiNumer=B.TrN_GIDNumer
+					WHERE ((Twr_OplataSpozFlaga = 1 AND Twr_ZawartoscCukru &gt; 0) OR (Twr_OplataSpozFlaga &gt; 1 AND NOT (Twr_OplataSpozFlaga IN (9,11,17,19) AND Twr_ZawartoscCukru &lt;= 5)))
+			END	
+		END
+		
+	FETCH NEXT FROM kursorDokumenty INTO @TMPTYP, @TMPNUMER, @TMPSPITYP, @TMPSPINUMER, @TMPZWRTYP, @TMPZWRNUMER
+	END
+
+	CLOSE kursorDokumenty
+	DEALLOCATE kursorDokumenty
+
+	
+	OPEN kursorPartie
+	FETCH NEXT FROM kursorPartie INTO @TMPTYP, @TMPNUMER, @kodTowaruTMP, @cechaTMP, @eanTMP, @dataWTMP
+
+	WHILE @@Fetch_Status = 0
+	BEGIN
+		IF (@kodTowaruTMP &lt;&gt; '')
+			SET @NrPartiiTowaruTMP = @kodTowaruTMP + '; '
+		IF (@cechaTMP &lt;&gt; '')
+			SET @NrPartiiTowaruTMP = @NrPartiiTowaruTMP+ @cechaTMP + '; '
+		IF (@eanTMP &lt;&gt; '')
+			SET @NrPartiiTowaruTMP = @NrPartiiTowaruTMP+ @eanTMP + '; '
+		IF (@dataWTMP &lt;&gt; 0)
+			SET @NrPartiiTowaruTMP = @NrPartiiTowaruTMP+ CONVERT(varchar(10), DATEADD(day,@dataWTMP,CONVERT(DATETIME,'1800-12-28',120)), 120) + ';'
+
+		SET @NrPartiiTowaruTMP = SUBSTRING(@NrPartiiTowaruTMP,0,LEN(@NrPartiiTowaruTMP));
+		INSERT INTO #CUKPartie VALUES (@TMPTYP,@TMPNUMER, @kodTowaruTMP,@cechaTMP,@eanTMP,@dataWTMP, @NrPartiiTowaruTMP)
+
+		FETCH NEXT FROM kursorPartie INTO @TMPTYP, @TMPNUMER, @kodTowaruTMP, @cechaTMP, @eanTMP, @dataWTMP
+	END
+
+	CLOSE kursorPartie
+	DEALLOCATE kursorPartie
+
+	INSERT INTO #CUKDokumenty
+		SELECT DISTINCT A.DokGIDTyp, A.DokGIDNumer,  LpFaktury, TrN_DokumentObcy, TrN_Data2,TrN_Data3, '', COALESCE(KnA_NIP,''), 
+			 SUM(B.P_11), SUM(B.P_12), SUM(B.P_13), SUM(B.P_14), SUM(B.P_15), SUM(B.P_16), SUM(B.P_17), SUM(B.P_18), 
+			 SUM(B.P_19), SUM(B.P_20), SUM(B.P_21), SUM(B.P_22), SUM(B.P_23), SUM(B.P_24), SUM(B.P_25), SUM(B.P_26), SUM(B.P_27), SUM(B.P_28), SUM(B.P_29)
+			 FROM @Dokumenty A
+			 JOIN CDN.TraNag ON TrN_GIDTyp = DokGIDTyp and TrN_GIDNumer = DokGIDNumer 
+			 LEFT JOIN CDN.KntAdresy ON KnA_GIDNumer=TrN_KAGNumer 
+			 JOIN @Obliczenia B ON A.DokGIDNumer = B.DokGIDNumer AND A.DokGIDTyp = B.DokGIDTyp
+			 GROUP BY A.DokGIDTyp, A.DokGIDNumer,  LpFaktury,TrN_DokumentObcy,trn_Data2,TrN_Data3,KnA_NIP
+
+	set @sSQL = N'SELECT * INTO ##CUKDokumenty_'+CONVERT(nvarchar, @PONNumer)+' FROM #CUKDokumenty;'
+	set @sSQL = @sSQL + N'SELECT DISTINCT #CUKPartie.*, #CUKDokumenty.LpFaktury, #CUKDokumenty.NrFaktury, #CUKDokumenty.DataFaktury, #CUKDokumenty.NIPDostawcy, #CUKDokumenty.NIPNabywcy INTO ##CUKPartie_'+CONVERT(nvarchar, @PONNumer)+' FROM #CUKPartie INNER JOIN #CUKDokumenty ON #CUKPartie.DokGIDNumer = #CUKDokumenty.DokGIDNumer AND #CUKPartie.DokGIDTyp = #CUKDokumenty.DokGIDTyp;'
+	
+	exec sp_executeSQL @sSQL
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="CUKListaDok2"></A><PRE>
+          <FONT SIZE="2"><I>/* CUKListaDok2 */</I><BR>
+CREATE PROCEDURE CDN.CUKListaDok2 (
+@typDaty    SMALLINT,			--typ daty (0- data sprzedaĹĽy, 1- data wystawienia)
+@dataOd    	INT,				--Data od ktĂłrej obowiÄ…zuje okres sporzÄ…dzenia CUK
+@dataDo		INT,				--Data do ktĂłrej obowiÄ…zuje okres sporzÄ…dzenia CUK
+@PONNumer	INT=0,				--GIDNumer deklaracji, dla ktĂłrej wywoĹ‚ywana jest procedura
+@stawkaMax	SMALLINT,			--NadwyĹĽka cukru liczona wg stawki max
+@dataOryginalu SMALLINT			--0- ujÄ™cie dokumentĂłw wg daty wĹ‚asnej, 1- ujÄ™cie dokumentĂłw wg daty oryginaĹ‚u
+)
+
+AS
+BEGIN
+set nocount on
+
+	CREATE TABLE #CUKDokumenty(
+		DokGIDTyp   SMALLINT,
+		DokGIDNumer INT,
+		LpFaktury	INT,
+		NrFaktury	VARCHAR(50),
+		DataFaktury INT,	--data wystawienia
+		DataSprzedazy INT,
+		NIPDostawcy	VARCHAR(20),
+		NIPNabywcy	VARCHAR(20),		
+		P_11		BIGINT,
+		P_12		decimal(25,2),
+		P_13		decimal(25,2),
+		P_14		decimal(25,2),
+		P_15		decimal(25,2),
+		P_16		BIGINT,
+		P_17		BIGINT,
+		P_18		decimal(25,2),
+		P_19		decimal(25,2),
+		P_20		decimal(25,2),
+		P_21		decimal(25,2),
+		P_22		decimal(25,2),
+		P_23		BIGINT,
+		P_24		decimal(25,2),
+		P_25		decimal(25,2),
+		P_26		decimal(25,2),
+		P_27		decimal(25,2),
+		P_28		BIGINT,
+		P_29		BIGINT,
+		P_30		decimal(25,2),
+		P_31		decimal(25,2),
+		P_32		decimal(25,2),
+		P_33		decimal(25,2),
+		P_34		BIGINT,
+		P_35		BIGINT,
+		P_36		decimal(25,2),
+		P_37		decimal(25,2),
+		P_38		decimal(25,2),
+		P_39		decimal(25,2)
+		);
+	create clustered index CUKDokumentyPrimary on #CUKDokumenty (DokGIDNumer,DokGIDTyp)
+
+
+	CREATE TABLE #CUKPartie(
+		DokGIDTyp		SMALLINT,
+		DokGIDNumer		INT,
+		kodTowaru		VARCHAR(40),
+		cecha			VARCHAR(255),
+		ean				VARCHAR(40),
+		DataW			INT,
+		NrPartiiTowaru	VARCHAR(350)
+		);
+	create clustered index CUKPartiePrimary on #CUKPartie (DokGIDNumer,DokGIDTyp)
+
+
+	DECLARE @Dokumenty Table (
+		  LpFaktury		 INT,
+		  DokGIDTyp      SMALLINT,
+		  DokGIDNumer    INT
+		);
+
+	DECLARE  @CUKPartieTmp TABLE(
+		DokGIDTyp		SMALLINT,
+		DokGIDNumer		INT,
+		kodTowaru		VARCHAR(40),
+		cecha			VARCHAR(255),
+		ean				VARCHAR(40),
+		DataW			INT
+		);
+	DECLARE @Obliczenia TABLE(
+		DokGIDTyp   SMALLINT,
+		DokGIDNumer INT,
+		P_11		BIGINT,
+		P_12		decimal(25,2),
+		P_13		decimal(25,2),
+		P_14		decimal(25,2),
+		P_15		decimal(25,2),
+		P_16		BIGINT,
+		P_17		BIGINT,
+		P_18		decimal(25,2),
+		P_19		decimal(25,2),
+		P_20		decimal(25,2),
+		P_21		decimal(25,2),
+		P_22		decimal(25,2),
+		P_23		BIGINT,
+		P_24		decimal(25,2),
+		P_25		decimal(25,2),
+		P_26		decimal(25,2),
+		P_27		decimal(25,2),
+		P_28		BIGINT,
+		P_29		BIGINT,
+		P_30		decimal(25,2),
+		P_31		decimal(25,2),
+		P_32		decimal(25,2),
+		P_33		decimal(25,2),
+		P_34		BIGINT,
+		P_35		BIGINT,
+		P_36		decimal(25,2),
+		P_37		decimal(25,2),
+		P_38		decimal(25,2),
+		P_39		decimal(25,2)
+		);
+	DECLARE	 @TMPTYP			SMALLINT,
+				 @TMPNUMER			INT,
+				 @TMPTYP2			SMALLINT,
+				 @TMPNUMER2			INT,
+				 @TMPTYP3			SMALLINT,
+				 @TMPNUMER3			INT,
+				 @TMPSPITYP			SMALLINT,
+				 @TMPSPINUMER		INT,
+				 @TMPLP				SMALLINT,
+				 @TMPLpFaktury		INT = 0,
+				 @TMPStan			SMALLINT,
+				 @TMPZWRTYP			SMALLINT, 
+				 @TMPZWRNUMER		INT,
+				 @sSQL				nvarchar(max),
+				 @NrPartiiTowaruTMP VARCHAR(350),
+				 @kodTowaruTMP		VARCHAR(40),
+				 @cechaTMP			VARCHAR(255),
+				 @eanTMP			VARCHAR(40),
+				 @DataWTMP			INT
+
+	DECLARE kursorPartie CURSOR FOR 
+			SELECT * FROM @CUKPartieTmp
+	IF @dataOryginalu = 0
+	BEGIN
+		IF @typDaty = 0 
+		BEGIN
+			DECLARE kursorDokumenty CURSOR FOR 
+				SELECT A.TrN_GIDTyp, A.TrN_GIDNumer, A.TrN_SpiTyp, A.TrN_SpiNumer, A.TrN_ZwrTyp, A.TrN_ZwrNumer FROM cdn.TraNag A 
+				 LEFT JOIN cdn.tranag B on A.TrN_SpiTyp=B.TrN_GIDTyp and A.TrN_SpiNumer=B.TrN_GIDNumer	
+				WHERE ((A.TrN_GIDTyp in (2033,2035,2037,2036,2041,2043,2045,2044) AND A.Trn_Data3 BETWEEN @dataOd AND @dataDo AND A.Trn_OplataSpozFlaga = 1 AND A.TrN_Stan BETWEEN 3 AND 5) 
+				 OR (A.TrN_SpiTyp = 0 AND A.TrN_GIDTyp in (2034,2042) AND A.Trn_Data3 BETWEEN @dataOd AND @dataDo AND A.Trn_OplataSpozFlaga = 1 AND A.TrN_Stan BETWEEN 3 AND 5)
+				 OR (A.TrN_SpiTyp &gt; 0 AND A.TrN_GIDTyp in (1489,2000,2001,2005,2008,2009,2013) AND B.TrN_Stan BETWEEN 3 AND 5 AND B.Trn_OplataSpozFlaga = 1  AND B.Trn_Data3 BETWEEN @dataOd AND @dataDo))
+		END
+		ELSE
+		BEGIN
+			DECLARE kursorDokumenty CURSOR FOR 
+				SELECT A.TrN_GIDTyp, A.TrN_GIDNumer, A.TrN_SpiTyp, A.TrN_SpiNumer, A.TrN_ZwrTyp, A.TrN_ZwrNumer FROM cdn.TraNag A 
+				 LEFT JOIN cdn.tranag B on A.TrN_SpiTyp=B.TrN_GIDTyp and A.TrN_SpiNumer=B.TrN_GIDNumer	
+				WHERE ((A.TrN_GIDTyp in (2033,2035,2037,2036,2041,2043,2045,2044) AND A.Trn_Data2 BETWEEN @dataOd AND @dataDo AND A.Trn_OplataSpozFlaga = 1 AND A.TrN_Stan BETWEEN 3 AND 5) 
+				 OR (A.TrN_SpiTyp = 0 AND A.TrN_GIDTyp in (2034,2042) AND A.Trn_Data2 BETWEEN @dataOd AND @dataDo AND A.Trn_OplataSpozFlaga = 1 AND A.TrN_Stan BETWEEN 3 AND 5)
+				 OR (A.TrN_SpiTyp &gt; 0 AND A.TrN_GIDTyp in (1489,2000,2001,2005,2008,2009,2013) AND B.TrN_Stan BETWEEN 3 AND 5 AND B.Trn_OplataSpozFlaga = 1  AND B.Trn_Data2 BETWEEN @dataOd AND @dataDo))
+		END
+	END	
+	ELSE
+	BEGIN
+		IF @typDaty = 0 
+		BEGIN
+			DECLARE kursorDokumenty CURSOR FOR 
+				SELECT A.TrN_GIDTyp, A.TrN_GIDNumer, A.TrN_SpiTyp, A.TrN_SpiNumer, A.TrN_ZwrTyp, A.TrN_ZwrNumer FROM cdn.TraNag A 
+					LEFT JOIN cdn.tranag B on A.TrN_SpiTyp=B.TrN_GIDTyp and A.TrN_SpiNumer=B.TrN_GIDNumer	
+					LEFT JOIN cdn.TraNag D ON D.TrN_GIDNumer = B.TrN_ZwrNumer AND D.TrN_GIDTyp = B.TrN_ZwrTyp
+					WHERE ((A.TrN_GIDTyp in (2033,2035,2037,2036) AND A.Trn_Data3 BETWEEN @dataOd AND @dataDo AND A.Trn_OplataSpozFlaga = 1 AND A.TrN_Stan BETWEEN 3 AND 5) 
+					OR (A.TrN_SpiTyp = 0 AND A.TrN_GIDTyp in (2034) AND A.Trn_Data3 BETWEEN @dataOd AND @dataDo AND A.Trn_OplataSpozFlaga = 1 AND A.TrN_Stan BETWEEN 3 AND 5)
+					OR (A.TrN_SpiTyp &gt; 0 AND A.TrN_GIDTyp in (1489,2000,2001,2005,2008) AND B.TrN_Stan BETWEEN 3 AND 5 AND B.Trn_OplataSpozFlaga = 1  AND B.Trn_Data3 BETWEEN @dataOd AND @dataDo)
+				 OR (A.TrN_SpiTyp &gt; 0 AND A.TrN_GIDTyp in (2009,2013) AND B.TrN_Stan BETWEEN 3 AND 5 AND B.Trn_OplataSpozFlaga = 1  AND B.Trn_Data3 BETWEEN @dataOd AND @dataDo AND d.TrN_GIDTyp IS NULL))
+			UNION ALL
+				SELECT DISTINCT B.TrN_GIDTyp, B.TrN_GIDNumer, B.TrN_SpiTyp, B.TrN_SpiNumer, B.TrN_ZwrTyp, B.TrN_ZwrNumer FROM cdn.TraNag A 
+					LEFT JOIN cdn.tranag B on B.TrN_ZwrNumer = A.TrN_GIDNumer
+					LEFT JOIN cdn.TraElem ON A.TrN_GIDTyp=TrE_GIDTyp AND A.TrN_GIDNumer=TrE_GIDNumer
+					LEFT JOIN cdn.TraSElem C ON TrE_GIDTyp=C.TrS_GIDTyp AND TrE_GIDNumer=C.TrS_GIDNumer AND TrE_GIDLp=C.TrS_GIDLp
+					LEFT JOIN cdn.TraNag D ON D.TrN_GIDTyp= C.TrS_OrgTyp and D.TrN_GIDNumer = C.TrS_OrgNumer
+					WHERE (B.TrN_SpiTyp = 0 AND B.TrN_GIDTyp in (2041,2045,2044,2042) AND D.TrN_Data3 BETWEEN @dataOd AND @dataDo AND B.Trn_OplataSpozFlaga = 1 AND B.TrN_Stan BETWEEN 3 AND 5)
+					OR (B.TrN_SpiTyp = 0 AND B.TrN_GIDTyp in (2043) AND A.TrN_Data3 BETWEEN @dataOd AND @dataDo AND B.Trn_OplataSpozFlaga = 1 AND B.TrN_Stan BETWEEN 3 AND 5)--spinacze nagĹ‚Ăłwkowe i korekty z datÄ… oryginaĹ‚u
+			UNION ALL
+				SELECT DISTINCT B.TrN_GIDTyp, B.TrN_GIDNumer, B.TrN_SpiTyp, B.TrN_SpiNumer, B.TrN_ZwrTyp, B.TrN_ZwrNumer FROM cdn.TraNag A 
+					JOIN cdn.TraSElem C ON A.TrN_GIDNumer = C.TrS_OrgNumer AND A.TrN_GIDTyp = C.TrS_OrgTyp
+					LEFT JOIN cdn.tranag B on C.TrS_GIDNumer = B.TrN_GIDNumer
+					WHERE (B.TrN_SpiTyp &lt;&gt; 0 AND B.TrN_GIDTyp in (2041,2043,2045,2044,2042) AND A.Trn_Data3 BETWEEN @dataOd AND @dataDo AND B.Trn_OplataSpozFlaga = 1 AND B.TrN_Stan BETWEEN 3 AND 5) 
+			UNION
+				SELECT DISTINCT A.TrN_GIDTyp, A.TrN_GIDNumer, A.TrN_SpiTyp, A.TrN_SpiNumer, A.TrN_ZwrTyp, A.TrN_ZwrNumer FROM cdn.TraNag A	--spinacze nagĹ‚Ăłwkowe korekt przy dacie oryginaĹ‚u
+					LEFT JOIN cdn.tranag B on A.TrN_SpiTyp=B.TrN_GIDTyp and A.TrN_SpiNumer=B.TrN_GIDNumer	
+					JOIN cdn.TraSElem C ON A.TrN_GIDNumer = C.TrS_GIDNumer AND A.TrN_GIDTyp = C.TrS_GIDTyp
+					LEFT JOIN cdn.TraNag D ON D.TrN_GIDNumer = B.TrN_ZwrNumer AND D.TrN_GIDTyp = B.TrN_ZwrTyp
+					WHERE (A.TrN_SpiTyp &gt; 0 AND A.TrN_GIDTyp in (1489,2000,2001,2005,2008,2009,2013) AND B.TrN_Stan BETWEEN 3 AND 5 AND B.Trn_OplataSpozFlaga = 1  AND D.Trn_Data3 BETWEEN @dataOd AND @dataDo
+					AND C.TrS_GIDNumer &lt;&gt; C.TrS_OrgNumer)
+		END
+		ELSE
+		BEGIN
+			DECLARE kursorDokumenty CURSOR FOR 
+				SELECT A.TrN_GIDTyp, A.TrN_GIDNumer, A.TrN_SpiTyp, A.TrN_SpiNumer, A.TrN_ZwrTyp, A.TrN_ZwrNumer FROM cdn.TraNag A 
+					LEFT JOIN cdn.tranag B on A.TrN_SpiTyp=B.TrN_GIDTyp and A.TrN_SpiNumer=B.TrN_GIDNumer	
+					LEFT JOIN cdn.TraNag D ON D.TrN_GIDNumer = B.TrN_ZwrNumer AND D.TrN_GIDTyp = B.TrN_ZwrTyp
+					WHERE ((A.TrN_GIDTyp in (2033,2035,2037,2036) AND A.TrN_Data2 BETWEEN @dataOd AND @dataDo AND A.Trn_OplataSpozFlaga = 1 AND A.TrN_Stan BETWEEN 3 AND 5) 
+					OR (A.TrN_SpiTyp = 0 AND A.TrN_GIDTyp in (2034) AND A.TrN_Data2 BETWEEN @dataOd AND @dataDo AND A.Trn_OplataSpozFlaga = 1 AND A.TrN_Stan BETWEEN 3 AND 5)
+					OR (A.TrN_SpiTyp &gt; 0 AND A.TrN_GIDTyp in (1489,2000,2001,2005,2008) AND B.TrN_Stan BETWEEN 3 AND 5 AND B.Trn_OplataSpozFlaga = 1  AND B.Trn_Data2 BETWEEN @dataOd AND @dataDo)
+				 OR (A.TrN_SpiTyp &gt; 0 AND A.TrN_GIDTyp in (2009,2013) AND B.TrN_Stan BETWEEN 3 AND 5 AND B.Trn_OplataSpozFlaga = 1  AND B.Trn_Data2 BETWEEN @dataOd AND @dataDo AND d.TrN_GIDTyp IS NULL))
+			UNION ALL
+				SELECT DISTINCT B.TrN_GIDTyp, B.TrN_GIDNumer, B.TrN_SpiTyp, B.TrN_SpiNumer, B.TrN_ZwrTyp, B.TrN_ZwrNumer FROM cdn.TraNag A 
+					LEFT JOIN cdn.tranag B on B.TrN_ZwrNumer = A.TrN_GIDNumer
+					LEFT JOIN cdn.TraElem ON A.TrN_GIDTyp=TrE_GIDTyp AND A.TrN_GIDNumer=TrE_GIDNumer
+					LEFT JOIN cdn.TraSElem C ON TrE_GIDTyp=C.TrS_GIDTyp AND TrE_GIDNumer=C.TrS_GIDNumer AND TrE_GIDLp=C.TrS_GIDLp
+					LEFT JOIN cdn.TraNag D ON D.TrN_GIDTyp= C.TrS_OrgTyp and D.TrN_GIDNumer = C.TrS_OrgNumer
+					WHERE (B.TrN_SpiTyp = 0 AND B.TrN_GIDTyp in (2041,2045,2044,2042) AND D.TrN_Data2 BETWEEN @dataOd AND @dataDo AND B.Trn_OplataSpozFlaga = 1 AND B.TrN_Stan BETWEEN 3 AND 5)
+					OR (B.TrN_SpiTyp = 0 AND B.TrN_GIDTyp in (2043) AND A.TrN_Data2 BETWEEN @dataOd AND @dataDo AND B.Trn_OplataSpozFlaga = 1 AND B.TrN_Stan BETWEEN 3 AND 5)--spinacze nagĹ‚Ăłwkowe i korekty z datÄ… oryginaĹ‚u
+				UNION ALL
+				SELECT DISTINCT B.TrN_GIDTyp, B.TrN_GIDNumer, B.TrN_SpiTyp, B.TrN_SpiNumer, B.TrN_ZwrTyp, B.TrN_ZwrNumer FROM cdn.TraNag A 
+					JOIN cdn.TraSElem C ON A.TrN_GIDNumer = C.TrS_OrgNumer AND A.TrN_GIDTyp = C.TrS_OrgTyp
+					LEFT JOIN cdn.tranag B on C.TrS_GIDNumer = B.TrN_GIDNumer
+					WHERE (B.TrN_SpiTyp &lt;&gt; 0 AND B.TrN_GIDTyp in (2041,2043,2045,2044,2042) AND A.TrN_Data2 BETWEEN @dataOd AND @dataDo AND B.Trn_OplataSpozFlaga = 1 AND B.TrN_Stan BETWEEN 3 AND 5) 
+			UNION 
+				SELECT DISTINCT A.TrN_GIDTyp, A.TrN_GIDNumer,  A.TrN_SpiTyp, A.TrN_SpiNumer, A.TrN_ZwrTyp, A.TrN_ZwrNumer FROM cdn.TraNag A --spinacze nagĹ‚Ăłwkowe korekt przy dacie oryginaĹ‚u
+					LEFT JOIN cdn.tranag B on A.TrN_SpiTyp=B.TrN_GIDTyp and A.TrN_SpiNumer=B.TrN_GIDNumer	
+					JOIN cdn.TraSElem C ON A.TrN_GIDNumer = C.TrS_GIDNumer AND A.TrN_GIDTyp = C.TrS_GIDTyp
+					LEFT JOIN cdn.TraNag D ON D.TrN_GIDNumer = B.TrN_ZwrNumer AND D.TrN_GIDTyp = B.TrN_ZwrTyp
+					WHERE (A.TrN_SpiTyp &gt; 0 AND A.TrN_GIDTyp in (1489,2000,2001,2005,2008,2009,2013) AND B.TrN_Stan BETWEEN 3 AND 5 AND B.Trn_OplataSpozFlaga = 1  AND D.Trn_Data2 BETWEEN @dataOd AND @dataDo
+					AND C.TrS_GIDNumer &lt;&gt; C.TrS_OrgNumer)
+		END
+	END
+
+	OPEN kursorDokumenty
+	FETCH NEXT FROM kursorDokumenty INTO @TMPTYP, @TMPNUMER, @TMPSPITYP, @TMPSPINUMER, @TMPZWRTYP, @TMPZWRNUMER
+
+	WHILE @@Fetch_Status = 0
+	BEGIN
+		IF (((@TMPTYP = @TMPSPITYP AND @TMPNUMER = @TMPSPINUMER )OR( @TMPTYP = @TMPSPITYP * (-1) AND @TMPSPINUMER = 0))  AND @TMPTYP in (2033,2037,2036,2041,2045,2044) OR (@TMPTYP in (2034,2042) AND @TMPSPITYP = 0 )) --dokument niespiÄ™ty lub spinacz elementĂłw
+		BEGIN
+		
+			IF exists(SELECT DISTINCT * FROM cdn.TwrKarty JOIN CDN.TraElem ON Twr_GIDNumer=TrE_TwrNumer
+				WHERE ((Twr_OplataSpozFlaga = 1 AND Twr_ZawartoscCukru &gt; 0) OR (Twr_OplataSpozFlaga &gt; 1 AND NOT (Twr_OplataSpozFlaga IN (9,11,17,19) AND Twr_ZawartoscCukru &lt;= 5)))
+				 AND TrE_GIDTyp = @TMPTYP AND TrE_GIDNumer = @TMPNUMER)
+			BEGIN
+				SET @TMPLpFaktury += 1;
+				INSERT INTO @Dokumenty(LpFaktury,DokGIDTyp, DokGIDNumer) VALUES(@TMPLpFaktury,@TMPTYP,@TMPNUMER)	
+				INSERT INTO @Obliczenia SELECT * FROM CDN.CUKOplataAnalityczna2(@TMPTYP,@TMPNUMER,@stawkaMax)	
+				IF (((@TMPTYP = @TMPSPITYP AND @TMPNUMER = @TMPSPINUMER) OR @TMPSPITYP = 0))	--partie dokumentĂłw niespiÄ™tych
+				BEGIN
+				INSERT INTO @CUKPartieTmp 
+				SELECT DISTINCT Trs_GIDTyp, TrS_GIDNumer, Twr_Kod, Dst_Cecha, Dst_Ean, Dst_DataW FROM CDN.Dostawy 
+						JOIN CDN.TraSElem ON Dst_GIDNumer=TrS_DstNumer  
+						JOIN CDN.TwrKarty ON Twr_GIDNumer=Dst_TwrNumer
+						WHERE Trs_GIDTyp = @TMPTYP AND TrS_GIDNumer = @TMPNUMER AND Trs_Ilosc &lt;&gt;0 
+						AND ((Twr_OplataSpozFlaga = 1 AND Twr_ZawartoscCukru &gt; 0) OR (Twr_OplataSpozFlaga &gt; 1 AND NOT (Twr_OplataSpozFlaga IN (9,11,17,19) AND Twr_ZawartoscCukru &lt;= 5)))
+				END
+				IF ( @TMPTYP = @TMPSPITYP * (-1) AND @TMPSPINUMER = 0 AND @TMPTYP not in (2041,2045,2044)) --partie spinacza elementĂłw
+				BEGIN
+				INSERT INTO @CUKPartieTmp 
+					SELECT DISTINCT B.Trs_GIDTyp, B.TrS_GIDNumer, Twr_Kod, Dst_Cecha, Dst_Ean, Dst_DataW FROM CDN.Dostawy 
+						JOIN CDN.TraSElem A ON Dst_GIDNumer=A.TrS_DstNumer 
+						JOIN cdn.TraSElem B on A.TrS_GIDNumer = B.TrS_SpiNumer AND A.TrS_GIDTyp = B.TrS_SpiTyp
+						JOIN CDN.TwrKarty ON Twr_GIDNumer=Dst_TwrNumer
+						WHERE A.Trs_Ilosc &lt;&gt;0 AND ((Twr_OplataSpozFlaga = 1 AND Twr_ZawartoscCukru &gt; 0) OR (Twr_OplataSpozFlaga &gt; 1 AND NOT (Twr_OplataSpozFlaga IN (9,11,17,19) AND Twr_ZawartoscCukru &lt;= 5)))
+				END
+			END		
+		END
+		ELSE IF ((@TMPSPITYP &gt; 0 AND @TMPTYP in (1489,2000,2001,2005,2008,2009,2013))) -- spinacz nagĹ‚Ăłwkowy 
+		BEGIN
+			IF exists(SELECT DISTINCT * FROM cdn.TwrKarty 
+						JOIN CDN.TraElem ON Twr_GIDNumer=TrE_TwrNumer 
+						JOIN CDN.TraSElem ON TrE_GIDTyp=TrS_GIDTyp AND TrE_GIDNumer=TrS_GIDNumer AND TrE_GIDLp=TrS_GIDLp
+						WHERE ((Twr_OplataSpozFlaga = 1 AND Twr_ZawartoscCukru &gt; 0) OR (Twr_OplataSpozFlaga &gt; 1 AND NOT (Twr_OplataSpozFlaga IN (9,11,17,19) AND Twr_ZawartoscCukru &lt;= 5)))
+						  AND TrS_GIDTyp = @TMPTYP AND TrS_GIDNumer = @TMPNUMER)
+			BEGIN
+			
+				
+				SELECT @TMPTYP2 = TrN_SpiTyp, @TMPNUMER2 = TrN_SpiNumer FROM CDN.TraNag WHERE TrN_GIDTyp = @TMPTYP AND TrN_GIDNumer = @TMPNUMER;
+				SELECT @TMPStan = Trn_Stan FROM CDN.TraNag WHERE TrN_GIDTyp = @TMPTYP2 AND TrN_GIDNumer = @TMPNUMER2
+				IF (@TMPStan BETWEEN 3 AND 5)
+				BEGIN
+					IF NOT EXISTS(SELECT * FROM @Dokumenty WHERE DokGIDTyp = @TMPTYP2 AND DokGIDNumer = @TMPNUMER2)
+					BEGIN
+						SET @TMPLpFaktury += 1;
+						INSERT INTO @Dokumenty(LpFaktury,DokGIDTyp, DokGIDNumer) VALUES(@TMPLpFaktury,@TMPTYP2,@TMPNUMER2)
+					END
+					INSERT INTO @Obliczenia SELECT * FROM CDN.CUKOplataAnalityczna2(@TMPTYP,@TMPNUMER,@stawkaMax)
+					INSERT INTO @CUKPartieTmp 
+					SELECT DISTINCT A.TrN_SpiTyp, A.TrN_SpiNumer, Twr_Kod, Dst_Cecha, Dst_Ean, Dst_DataW FROM CDN.Dostawy 
+						JOIN CDN.TraSElem ON Dst_GIDNumer=TrS_DstNumer 
+						JOIN CDN.TwrKarty ON Twr_GIDNumer=Dst_TwrNumer
+						JOIN cdn.TraNag A ON A.TrN_GIDTyp=TrS_GIDTyp AND A.TrN_GIDNumer=TrS_GIDNumer
+						JOIN cdn.tranag B on A.TrN_SpiTyp=B.TrN_GIDTyp and A.TrN_SpiNumer=B.TrN_GIDNumer
+						WHERE TrS_GIDTyp = @TMPTYP AND TrS_GIDNumer = @TMPNUMER AND Trs_Ilosc &lt;&gt;0 
+						AND ((Twr_OplataSpozFlaga = 1 AND Twr_ZawartoscCukru &gt; 0) OR (Twr_OplataSpozFlaga &gt; 1 AND NOT (Twr_OplataSpozFlaga IN (9,11,17,19) AND Twr_ZawartoscCukru &lt;= 5)))
+				END
+			END	
+		END
+		ELSE IF (@TMPTYP in (2035,2043)) -- RA, RAK
+		BEGIN
+			IF exists(SELECT DISTINCT * FROM cdn.TwrKarty 
+						JOIN CDN.TraElem ON Twr_GIDNumer=TrE_TwrNumer 
+						JOIN CDN.TraSElem ON TrE_GIDTyp=TrS_GIDTyp AND TrE_GIDNumer=TrS_GIDNumer AND TrE_GIDLp=TrS_GIDLp
+						JOIN cdn.TraNag A ON A.TrN_GIDTyp=TrS_GIDTyp AND A.TrN_GIDNumer=TrS_GIDNumer
+						JOIN cdn.tranag B on A.TrN_SpiTyp=B.TrN_GIDTyp and A.TrN_SpiNumer=B.TrN_GIDNumer
+						WHERE ((Twr_OplataSpozFlaga = 1 AND Twr_ZawartoscCukru &gt; 0) OR (Twr_OplataSpozFlaga &gt; 1 AND NOT (Twr_OplataSpozFlaga IN (9,11,17,19) AND Twr_ZawartoscCukru &lt;= 5)))
+						  AND  B.TrN_GIDTyp = @TMPTYP AND B.TrN_GIDNumer = @TMPNUMER)
+			BEGIN
+				SET @TMPLpFaktury += 1;
+				INSERT INTO @Dokumenty(LpFaktury,DokGIDTyp, DokGIDNumer) VALUES(@TMPLpFaktury,@TMPTYP,@TMPNUMER)
+				INSERT INTO @Obliczenia SELECT * FROM CDN.CUKOplataAnalityczna2(@TMPTYP,@TMPNUMER,@stawkaMax)
+				INSERT INTO @CUKPartieTmp 
+				SELECT DISTINCT A.TrN_SpiTyp, A.TrN_SpiNumer, Twr_Kod, Dst_Cecha, Dst_Ean, Dst_DataW FROM CDN.Dostawy 
+					JOIN CDN.TraSElem ON Dst_GIDNumer=TrS_DstNumer 
+					JOIN CDN.TwrKarty ON Twr_GIDNumer=Dst_TwrNumer
+					JOIN cdn.TraNag A ON A.TrN_GIDTyp=TrS_GIDTyp AND A.TrN_GIDNumer=TrS_GIDNumer
+					JOIN cdn.tranag B on A.TrN_SpiTyp=B.TrN_GIDTyp and A.TrN_SpiNumer=B.TrN_GIDNumer
+					WHERE ((Twr_OplataSpozFlaga = 1 AND Twr_ZawartoscCukru &gt; 0) OR (Twr_OplataSpozFlaga &gt; 1 AND NOT (Twr_OplataSpozFlaga IN (9,11,17,19) AND Twr_ZawartoscCukru &lt;= 5)))
+			END	
+		END
+		
+	FETCH NEXT FROM kursorDokumenty INTO @TMPTYP, @TMPNUMER, @TMPSPITYP, @TMPSPINUMER, @TMPZWRTYP, @TMPZWRNUMER
+	END
+
+	CLOSE kursorDokumenty
+	DEALLOCATE kursorDokumenty
+
+	
+	OPEN kursorPartie
+	FETCH NEXT FROM kursorPartie INTO @TMPTYP, @TMPNUMER, @kodTowaruTMP, @cechaTMP, @eanTMP, @dataWTMP
+
+	WHILE @@Fetch_Status = 0
+	BEGIN
+		IF (@kodTowaruTMP &lt;&gt; '')
+			SET @NrPartiiTowaruTMP = @kodTowaruTMP + '; '
+		IF (@cechaTMP &lt;&gt; '')
+			SET @NrPartiiTowaruTMP = @NrPartiiTowaruTMP+ @cechaTMP + '; '
+		IF (@eanTMP &lt;&gt; '')
+			SET @NrPartiiTowaruTMP = @NrPartiiTowaruTMP+ @eanTMP + '; '
+		IF (@dataWTMP &lt;&gt; 0)
+			SET @NrPartiiTowaruTMP = @NrPartiiTowaruTMP+ CONVERT(varchar(10), DATEADD(day,@dataWTMP,CONVERT(DATETIME,'1800-12-28',120)), 120) + ';'
+
+		SET @NrPartiiTowaruTMP = SUBSTRING(@NrPartiiTowaruTMP,0,LEN(@NrPartiiTowaruTMP));
+		INSERT INTO #CUKPartie VALUES (@TMPTYP,@TMPNUMER, @kodTowaruTMP,@cechaTMP,@eanTMP,@dataWTMP, @NrPartiiTowaruTMP)
+
+		FETCH NEXT FROM kursorPartie INTO @TMPTYP, @TMPNUMER, @kodTowaruTMP, @cechaTMP, @eanTMP, @dataWTMP
+	END
+
+	CLOSE kursorPartie
+	DEALLOCATE kursorPartie
+
+	INSERT INTO #CUKDokumenty
+		SELECT DISTINCT A.DokGIDTyp, A.DokGIDNumer,  LpFaktury, TrN_DokumentObcy, TrN_Data2,TrN_Data3, '', COALESCE(KnA_NIP,''), 
+			 SUM(B.P_11), SUM(B.P_12), SUM(B.P_13), SUM(B.P_14), SUM(B.P_15), SUM(B.P_16), SUM(B.P_17), SUM(B.P_18), 
+			 SUM(B.P_19), SUM(B.P_20), SUM(B.P_21), SUM(B.P_22), SUM(B.P_23), SUM(B.P_24), SUM(B.P_25), SUM(B.P_26), SUM(B.P_27), SUM(B.P_28), SUM(B.P_29),
+			 SUM(B.P_30), SUM(B.P_31), SUM(B.P_32), SUM(B.P_33), SUM(B.P_34), SUM(B.P_35), SUM(B.P_36), SUM(B.P_37), SUM(B.P_38), SUM(B.P_39)
+			 FROM @Dokumenty A
+			 JOIN CDN.TraNag ON TrN_GIDTyp = DokGIDTyp and TrN_GIDNumer = DokGIDNumer 
+			 LEFT JOIN CDN.KntAdresy ON KnA_GIDNumer=TrN_KAGNumer 
+			 JOIN @Obliczenia B ON A.DokGIDNumer = B.DokGIDNumer AND A.DokGIDTyp = B.DokGIDTyp
+			 GROUP BY A.DokGIDTyp, A.DokGIDNumer,  LpFaktury,TrN_DokumentObcy,trn_Data2,TrN_Data3,KnA_NIP
+
+	set @sSQL = N'SELECT * INTO ##CUKDokumenty_'+CONVERT(nvarchar, @PONNumer)+' FROM #CUKDokumenty;'
+	set @sSQL = @sSQL + N'SELECT DISTINCT #CUKPartie.*, #CUKDokumenty.LpFaktury, #CUKDokumenty.NrFaktury, #CUKDokumenty.DataFaktury, #CUKDokumenty.NIPDostawcy, #CUKDokumenty.NIPNabywcy INTO ##CUKPartie_'+CONVERT(nvarchar, @PONNumer)+' FROM #CUKPartie INNER JOIN #CUKDokumenty ON #CUKPartie.DokGIDNumer = #CUKDokumenty.DokGIDNumer AND #CUKPartie.DokGIDTyp = #CUKDokumenty.DokGIDTyp;'
+	
+	exec sp_executeSQL @sSQL
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,274 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie procedury KsiWycenKW"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie procedury KsiWycenKW */</I><BR>
+if exists (select name from sysobjects where name = 'KsiWycenKW' and type = 'P')
+  drop procedure CDN.KsiWycenKW;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury KsiWycenKW"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury KsiWycenKW */</I><BR>
+CREATE PROCEDURE cdn.KsiWycenKW (
+@GIDFirma int,
+@GIDNumer int,
+@WalutaSys varchar(3),
+@DataDzisiejsza int,
+@UserID int,
+@SesjaID int,
+@Tryb tinyint, --0 - tylko wczesniejsze, 1 - wczesniejsze i pozniejsze
+@Kwota decimal(15,2) output
+)
+as
+begin
+set nocount on
+
+declare @err int
+declare @Rcount int
+declare @Aktywny int
+declare @IleKP int
+declare @KWKwota Decimal(15,2)
+declare @Kolejnosc smallint
+declare @NumerZapisu varchar(20)
+declare @CzasZapisu int
+declare @Znak tinyint
+declare @Wyceniony tinyint
+declare @SumaWal decimal(15,2)
+set @SumaWal = 0
+declare @KwotaWal decimal(15,2)
+declare @Rejestr varchar(5)
+declare @UwzglPozniejsze tinyint
+declare @KARUwzglPozniejsze tinyint
+
+
+declare @rv int
+set @rv = 1
+
+declare @KAZGIDNumer int
+set @KAZGIDNumer = 0
+declare @KAZCzasZapisu int
+set @KAZCzasZapisu = 0
+declare @KAZKrpLp smallint
+set @KAZKrpLp = 0
+declare @KrpLp smallint
+
+declare @tmpKWKwota decimal(15,2)
+
+declare @R2ParID int
+
+	begin tran
+
+	select 
+		@Aktywny = KAZ_Aktywny,
+		@KWKwota = KAZ_PozostajeWycena,
+		@NumerZapisu = CDN.NumerDokumentu(784,784,784,KRP_Numer,KAZ_Rok,KAZ_Seria,KAZ_KrpLp),
+		@CzasZapisu = KAZ_CzasZapisu,		
+		@Kolejnosc = KAZ_WycenaKolejnosc,
+		@Znak = KAZ_Znak,
+		@Wyceniony = KAZ_Wyceniony,
+		@Rejestr = KAZ_Seria,
+		@KrpLp = KAZ_KrpLp,
+		@KARUwzglPozniejsze = KAR_WycenaPozniejszymi
+	from cdn.Zapisy with(updlock)
+		join cdn.Raporty with(nolock)
+			on KRP_GIDTyp=KAZ_KRPTyp AND KRP_GIDNumer=KAZ_KRPNumer
+		join cdn.Rejestry with(nolock)
+			on KAZ_Seria = KAR_Seria
+	where KAZ_GIDNumer = @GIDNumer
+
+	select @err = @@Error, @Rcount = @@RowCount
+	if @err&lt;&gt;0
+	begin
+		rollback tran
+		raiserror('201:Wycena zapisu %s. Błąd pobrania rekordu z tabeli cdn.Zapisy',16,1, @NumerZapisu)
+		return 201
+	end
+
+	if @RCount = 0
+	begin
+		rollback tran
+		raiserror('201:Wycena zapisu %s. Podany do wyceny zapis KB nie istnieje (GIDNumer:%d)',16,1,@NumerZapisu, @GIDNumer)
+		return 201
+	end
+
+	if @Znak &lt;&gt; 1
+	begin
+		rollback tran
+		raiserror('201:Wycena zapisu %s. Podany do wyceny zapis KB nie jest zapisem rozchodowym',16,1,@NumerZapisu)
+		return 201
+	end
+
+
+	if @Kolejnosc = 0
+	begin
+		rollback tran
+		raiserror('201:Wycena zapisu %s. Podany do wyceny zapis KB nie podlega wycenie',16,1,@NumerZapisu)
+		return 201
+	end
+	
+	if @Aktywny &lt;&gt; 0 and @Aktywny &lt;&gt; @SesjaID
+	begin
+		rollback tran
+		raiserror('201:Wycena zapisu %s. Zapis %s jest edytowany na innym stanowisku',16,1,@NumerZapisu,@NumerZapisu)
+		return 201
+	end
+
+
+	if @KWKwota = 0 and @Wyceniony = 0
+	begin
+		rollback tran
+		raiserror('201:Wycena zapisu %s. Zapis %s został błędnie wyceniony',16,1,@NumerZapisu,@NumerZapisu)
+		return 201
+	end
+	else if @KWKwota = 0 and @Wyceniony = 1
+	begin
+		commit tran
+		return 0
+	end
+
+
+
+
+	if @Tryb = 0 and @Kolejnosc = 2 and @KARUwzglPozniejsze &lt;&gt; 0 --lifo
+		set @UwzglPozniejsze = 0 --najpierw tylko wczesniejsze
+	else
+		set @UwzglPozniejsze = @KARUwzglPozniejsze
+
+	
+	create table #tmpKP (UwzglPozniejsze tinyint, KAZ_CzasZapisu int, KAZ_KrpLp smallint, KAZ_GIDNumer int, KAZ_KwotaWycena decimal(15,2), KAZ_KursL decimal(15,10), KAZ_KursM decimal(5), KAZ_Aktywny int)
+
+	set @tmpKWKwota = @KWKwota
+	while @tmpKWKwota &lt;&gt; 0
+	begin
+		insert into #tmpKP
+		exec cdn.KsiWycenaKWProponujX @Rejestr, @Kolejnosc, @UwzglPozniejsze, @tmpKWKwota output, @CzasZapisu, @KrpLp, @WalutaSys, @SesjaID, @KAZGIDNumer output, @KAZCzasZapisu output, @KAZKrpLp output
+		
+		if @@ROWCOUNT = 0
+		begin
+			if @Kolejnosc = 2 and @KARUwzglPozniejsze &lt;&gt; 0 and @UwzglPozniejsze = 0
+			begin
+				set @UwzglPozniejsze = 1				
+				set @KAZGIDNumer = 0	
+				set @KAZCzasZapisu = 0
+				set @KAZKrpLp = 0
+			end				
+			else
+				break
+		end
+	end
+
+
+	set @IleKP = isnull((select count(*) from #tmpKP),0)
+	if @IleKP = 0
+	begin
+		--rollback tran		
+		--raiserror('201:Wycena zapisu %s. Niemożliwe dokonanie wyceny. Brak koniecznych zapisów przychodowych',16,1, @NumerZapisu)
+		--return 201
+		commit tran
+		set @rv = 0
+		goto lExit
+	end
+	
+
+	declare cursKP cursor STATIC for 
+	select KAZ_GIDNumer, KAZ_CzasZapisu, KAZ_KrpLp from #tmpKP 
+
+	open cursKP
+
+	fetch next from cursKP into @KAZGIDNumer, @KAZCzasZapisu, @KAZKrpLp
+
+	while @@fetch_Status = 0
+	begin
+		if @UwzglPozniejsze = 1 and @Tryb = 0
+		begin			
+			--tryb sprawdzania pozniejszcyh dla fifo i lifo
+			if @CzasZapisu &lt; @KAZCzasZapisu or @CzasZapisu = @KAZCzasZapisu and @KrpLp &lt; @KAZKrpLp
+			begin
+				set @rv = 0 --nie wyceniony do konca ale sa pozniejsze
+				set @SumaWal = abs(@KWKwota) + 1 --kwota ujemna bedzie znaczyc ze nie do konca rozliczony ale sa pozniejsze/taki brzydki sposob na przekazanie info do gory
+				commit tran
+				goto lExitCurs
+			end		
+		end
+	
+	
+		set @KwotaWal = 0
+
+		exec @rv = cdn.DodajRozliczenie
+				@GIDFirma = @GIDFirma,
+				@GIDTyp1 = 784,
+				@GIDNumer1 = @GIDNumer,
+				@GIDLp1 = 0,
+				@GIDTyp2 = 784,
+				@GIDNumer2 = @KAZGIDNumer,
+				@GIDLp2 = 0,
+				@Kwota = @KwotaWal output,
+				@UserID = @UserID,
+				@DataDzisiejsza = @DataDzisiejsza,
+				@R2ParID = @R2ParID OUTPUT,								
+				@Wycena = 1,
+				@WycenaWskazanie = 0
+				
+
+
+		if @rv &lt;&gt; 0 or @@TRANCOUNT = 0
+		begin
+			goto lExitCurs
+		end
+
+		set @SumaWal = @SumaWal + @KwotaWal
+		if abs(@KWKwota) &lt;= @SumaWal
+		begin --w miedzyczasie cos moglo sie zmienic
+			set @rv = 0
+			commit Tran			
+			goto lExitCurs
+		end
+
+		fetch next from cursKP into @KAZGIDNumer, @KAZCzasZapisu, @KAZKrpLp
+	end
+			
+	set @rv = 0		
+	commit tran
+	
+
+lExitCurs:
+	close cursKP
+	deallocate cursKP
+	
+	
+lExit:
+	set @Kwota = abs(@KWKwota) - @SumaWal
+	drop table #tmpKP
+	return @rv
+
+
+
+set nocount off
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury KsiWycenKW"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury KsiWycenKW */</I><BR>
+GRANT EXECUTE ON CDN.KsiWycenKW TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

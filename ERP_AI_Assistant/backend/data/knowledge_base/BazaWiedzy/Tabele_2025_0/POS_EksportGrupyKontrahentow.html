@@ -1,0 +1,69 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[POS_EksportGrupyKontrahentow]"></A><PRE>
+          <FONT SIZE="2"><I>/* [POS_EksportGrupyKontrahentow] */</I><BR>
+CREATE PROCEDURE [CDN].[POS_EksportGrupyKontrahentow]
+	@rowVersion bigint,
+	@PointOfSaleId int
+AS
+BEGIN
+SET NOCOUNT ON;	
+	declare @LastMod int = isnull((select max(case when @PointOfSaleId is null and oddzialBylWyslany = 0 and PSaDataDodania &gt; KnG_CzasModyfikacji and PSaDataDodania &gt; PcK_TSZmianyGrupyEksportuKnt then PSaDataDodania else case when KnG_CzasModyfikacji &gt; PcK_TSZmianyGrupyEksportuKnt then KnG_CzasModyfikacji else PcK_TSZmianyGrupyEksportuKnt end end) from cdn.PicoKonfig 
+			join cdn.PicoStanowiska on pck_picoid = psa_pckid
+			outer apply cdn.PobierzDrzewoGrupKontrahentow(PcK_KnGENumer,default)
+			outer apply [CDN].[PobierzDrzewoGrupKntKuKorzeniowi](AktuGIDNumer,-32,AktuGrONumer)
+			join cdn.KntGrupy on KnG_GIDNumer = PobierzDrzewoGrupKontrahentow.AktuGidNumer and KnG_GIDTyp = -32
+			join cdn.POS_OddzialyDoEksportu(@PointOfSaleId, @rowVersion) on PckCentrumID = PcK_CentrumID
+			where ((@PointOfSaleId is not null and psa_id = @PointOfSaleId) or (@PointOfSaleId is null and PSa_TypAplikacji = 2))
+			AND PobierzDrzewoGrupKontrahentow.Poziom = [PobierzDrzewoGrupKntKuKorzeniowi].Poziom and (case when KnG_CzasModyfikacji &gt; PcK_TSZmianyGrupyEksportuKnt then KnG_CzasModyfikacji else PcK_TSZmianyGrupyEksportuKnt end &gt; @rowVersion
+			 OR (@PointOfSaleId is null and oddzialBylWyslany = 0 and PSa_DataDodania &gt; @rowVersion)
+			 )),@rowVersion)
+	
+
+			declare @grp table (Id int, Name varchar(20), Kind bit, IsRoot varchar(7), HierarchyPath nvarchar(max))
+			insert into @grp select KnG_SyncId as [@Id],
+			kng_akronim as [@Name],
+			--as [@CategoryId], NULL
+			case when KnW_Typ = 8 then 2 when KnW_Typ = 16 then 1 else 0 end as [@Kind],
+			case when PcK_KnGENumer = KnG_GIDNumer then 'true' else 'false' end as [@IsRoot],
+			min(Sciezka) as [@HierarchyPath]
+			from cdn.PicoKonfig 
+			join cdn.PicoStanowiska on pck_picoid = psa_pckid
+			outer apply cdn.PobierzDrzewoGrupKontrahentow(PcK_KnGENumer,default)
+			outer apply [CDN].[PobierzDrzewoGrupKntKuKorzeniowi](AktuGIDNumer,-32,AktuGrONumer)
+			join cdn.KntGrupy on KnG_GIDNumer = PobierzDrzewoGrupKontrahentow.AktuGidNumer and KnG_GIDTyp = -32
+			join cdn.KntWzorce on KnW_GrpTyp=KnG_GIDTyp AND KnW_GrpNumer=KnG_GIDNumer
+			where ((@PointOfSaleId is not null and psa_id = @PointOfSaleId) or (@PointOfSaleId is null and PSa_TypAplikacji = 2)) AND PobierzDrzewoGrupKontrahentow.Poziom = [PobierzDrzewoGrupKntKuKorzeniowi].Poziom and (case when KnG_CzasModyfikacji &gt; PcK_TSZmianyGrupyEksportuKnt then KnG_CzasModyfikacji else PcK_TSZmianyGrupyEksportuKnt end &gt; @rowVersion OR @rowVersion = 0
+			OR (@PointOfSaleId is null and PcK_CentrumID in (select PckCentrumID from cdn.POS_OddzialyDoEksportu(@PointOfSaleId,@RowVersion) where oddzialBylWyslany = 0) and PSa_DataDodania &gt; @rowVersion))
+			group by KnG_SyncId,KnG_Akronim,KnW_Typ,KnG_GIDNumer,PcK_KnGENumer
+
+	SELECT @LastMod AS [@RowVersion]
+		,(		
+		select Id as [@Id],
+			Name as [@Name],
+			--as [@CategoryId], NULL
+			Kind as [@Kind],
+			min(IsRoot) as [@IsRoot],
+			'true' as [@IsActive],
+			'false' as [@IsDefault],
+			min(HierarchyPath) as [@HierarchyPath]
+			from @grp group by Id, Name, Kind
+		for xml path('CustomerGroup'), type)
+	for xml path('CustomerGroups')
+	SET NOCOUNT OFF;	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

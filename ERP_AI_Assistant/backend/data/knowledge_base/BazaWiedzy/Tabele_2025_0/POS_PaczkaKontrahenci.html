@@ -1,0 +1,111 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[POS_PaczkaKontrahenci]"></A><PRE>
+          <FONT SIZE="2"><I>/* [POS_PaczkaKontrahenci] */</I><BR>
+CREATE PROCEDURE [CDN].[POS_PaczkaKontrahenci]
+	@rowVersion bigint,
+	@PointOfSaleId int,
+	@packageSize int,
+	@packageNumber int
+AS
+BEGIN
+SET NOCOUNT ON;
+
+	declare @maskaDostawca INT = 8,
+			@maskaOdbiorca INT = 16
+			
+
+		declare @oddzialy table(PicoId int, PsaId int, DomyslnyKnt int, PcKLimitKrObs tinyint, PcKNrCenyDomyslnej smallint)
+		insert into @oddzialy
+		select
+			PckPicoID,
+			PSaID,
+			coalesce(Dok_kntNumer,0),
+			PcK_LimitKrObs,
+			PcK_NrCenyDomyslnej
+		from cdn.POS_OddzialyDoEksportu(@PointOfSaleId, @rowVersion)
+		join cdn.PicoKonfig on PckCentrumID = PcK_CentrumID
+		left join CDN.DokDefinicje on Dok_FrsId = PckCentrumID and Dok_GIDTyp=2034
+		
+	   declare @knt table(KntGidnumer int,kntGUID nvarchar(41),KntLp int, juzNieWysylany int, PckPicoID int)
+	   insert into @knt select distinct kntgidnumer,kntGUID,min(KntLp),min(juzNieWysylany), min(PicoId) from @oddzialy cross apply cdn.POS_KntDoEksportu(PsaId,@rowVersion) group by kntgidnumer,kntGUID
+	   
+	   insert into cdn.PicoLog( PcL_PcKID, PcL_ObiTyp, PcL_ObiNumer, PcL_ObiektID, PcL_ObiektGUID, PcL_ObiektTyp) 
+	   select PicoId, 32, KntGidNumer, KntGidNumer, kntGUID, 32 FROM @knt cross join @oddzialy
+	   WHERE juzNieWysylany = 0 AND not exists((select* from cdn.PicoLog where PcL_ObiektTyp=32 AND PcL_ObiNumer=kntgidnumer and PcL_PcKID=PicoId))
+	 
+		select
+		Knt.Knt_GUID as [@GUID],
+		Knt.Knt_Akronim as [@Code],
+		case when Knt.Knt_Typ &amp; @maskaDostawca &lt;&gt; 0 AND Knt.Knt_Typ &amp; @maskaOdbiorca &lt;&gt; 0 then 0 when Knt.Knt_Typ &amp; @maskaOdbiorca &lt;&gt; 0 then 1 when Knt.Knt_Typ &amp; @maskaDostawca &lt;&gt; 0 then 2 end as [@Kind],
+		'false' as [@CanGetLowestPrice], --CO TO?
+		case when Knt.Knt_Cena = 0 OR k.juzNieWysylany = 1 then PcKNrCenyDomyslnej else Knt.Knt_Cena end as [@DefaultPriceTypeId],
+		0 as [@Points],  -- Knt_Punkty TYP SIĘ NIE ZGADZA
+		case when k.juzNieWysylany = 0 AND Knt.Knt_Archiwalny = 0 AND Knt.Knt_BlokadaTransakcji = 0 then 'true' else 'false' end as [@IsActive],
+		CASE WHEN DomyslnyKnt = Knt.knt_gidnumer THEN 'True' ELSE 'False' END as [@IsDefault],
+		'false' as [@IsInternal],
+		'true' as [@IsVisible],
+		'true' as [@CanBeModified],
+		DATEADD(second,Knt.Knt_LastModL,convert(datetime,'01-01-1990',105)) as [@ModificationDate],
+		case	when (select Kon_Wartosc from CDN.Konfig where Kon_Numer = 9964) = 0 and Knt.Knt_KnPParam = 1 and PcKLimitKrObs  = 1
+				then Plat.kntGUID
+				when (select Kon_Wartosc from CDN.Konfig where Kon_Numer = 9964) = 1  and Knt.Knt_AkwNumer &lt;&gt; 0 and PcKLimitKrObs   = 1
+				then Akw.kntGUID else null end as [@CreditLimitCustomerGUID], 
+		case when Knt.Knt_LimitTerminowy = 0 then 'true' when PcKLimitKrObs   = 0 then 'true' else 'false' end as [@IsCreditLimitUnlimited],
+		Knt.Knt_FormaPl as [@DefaultPaymentFormId],
+		Knt.Knt_LimitOkres as [@DefaultPaymentDays],
+		'false' as [@HasEOMPayment],
+		0 as [@EOMPaymentCorrectByDays],
+		Knt.Knt_ExpoKraj-1 as [@Type],
+		case when Knt.Knt_Anonim = 1 then 'true' else 'false' end as [@IsAnonymized],
+		'false' as [@CanUseReverseCharge],
+		(
+			select 
+			Knt.Knt_GUIDdane as [@GUID],
+			'true' as [@IsActive],
+			CASE WHEN Knt.knt_gidnumer = 0 THEN 'JEDNORAZOWY' ELSE RTRIM( case when Knt.Knt_Status=2 then Knt.knt_nazwa1+' '+Knt.knt_nazwa2 else coalesce(nullif(Knt.knt_nazwa1,'')+' ','')+coalesce(nullif(Knt.knt_nazwa2+' ',''),'')+coalesce(nullif(Knt.knt_nazwa3,''),'')end
+			) END as [@Name],
+			ISNULL(KnO_Opis,'') as [@Description],
+			RTRIM(Knt.Knt_Nip) as [@TIN],
+			ISNULL(kpc_id,0) as [@TINCountryId],
+			Knt.Knt_Pesel as [@NIN],
+			case when Knt.Knt_Status=2 then 'true' else 'false' end as [@IsRetail],
+			Knt.Knt_OrganWydajacy as [@IdentityDocumentIssuingAuthority],
+			Knt.Knt_DokumentTozsamosci as [@IdentityDocumentNumber],
+			DATEADD(second,Knt.Knt_LastModL,convert(datetime,'01-01-1990',105)) as [@ModificationDate],
+			Knt.Knt_Regon as [@EIN],
+			--case when PATINDEX('%  %',reverse(Knt_nazwa1)) &lt;&gt; 0 AND Knt_Status=2 then SUBSTRING(Knt_nazwa1,1,len(Knt_nazwa1) - PATINDEX('%  %',reverse(Knt_nazwa1))+1) else null end as [@FirstName],
+			--case when PATINDEX('%  %',reverse(Knt_nazwa1)) &lt;&gt; 0 AND Knt_Status=2 then SUBSTRING(Knt_nazwa1,len(Knt_nazwa1) - PATINDEX('%  %',reverse(Knt_nazwa1))+1,len(Knt_nazwa1)) else null end as [@LastName]
+			case when Knt.Knt_Status=2 then Knt.knt_nazwa1 else null end as [@FirstName],
+			case when Knt.Knt_Status=2 then Knt.knt_nazwa2 else null end as [@LastName]
+			-- as [@DateOfBirth], --NULL
+			-- as [@TitleId] --NULL		
+			for xml path('CustomerData'), root('CustomerData'), type
+			)
+			--select  Akw.Knt_GIDNumer, plat.Knt_GIDNumer, knt.Knt_GIDNumer, knt.Knt_KnPParam,Knt.Knt_KnPNumer,KNT.Knt_GIDNumer, plat.Knt_GIDNumer,Plat.Knt_GIDNumer,KntGidnumer,juzNieWysylany
+			from @knt k
+			join @oddzialy on PckPicoID = PicoId
+		join cdn.Kntkarty Knt on Knt_GIDNumer = KntGidNumer
+		LEFT JOIN CDN.KntOpisy ON KnO_KntNumer = Knt_GIDNumer
+		LEFT JOIN CDN.KrajeCelne ON Knt_Kraj = KPC_Kod
+		LEFT JOIN @knt Plat ON Knt.Knt_KnPNumer = Plat.KntGidnumer and Knt.Knt_KnPTyp=32 AND Knt.Knt_KnPNumer &lt;&gt; 0 AND Plat.juzNieWysylany = 0
+		LEFT JOIN @knt Akw ON Knt.Knt_AkwNumer = Akw.KntGidnumer and Knt.Knt_AkwTyp=32 AND Akw.juzNieWysylany = 0
+		where k.KntLp between (@packageNumber-1)*@packageSize+1 and @packageNumber*@packageSize
+		for xml path('Customer')
+	SET NOCOUNT OFF;	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

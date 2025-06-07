@@ -1,0 +1,338 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="ProdOkresyOdDo"></A><PRE>
+          <FONT SIZE="2"><I>/* ProdOkresyOdDo */</I><BR>
+CREATE FUNCTION CDN.ProdOkresyOdDo(@ObiTyp int,@ObiNumer int,@ObiNumery varchar(8000),@CzasOd int,@CzasDo int,@Typ tinyint,@SposobDostawy int, @PominKolejneOkresy tinyint = 0)
+
+returns @okresy table ( Id int identity(1,1), Obiekt int, Od int, Do int, Przerwa int, Okres smallint, TypOkr tinyint,
+	Dni tinyint, Dostepny tinyint, Priorytet smallint, Zrd int, CzasDostawy int, TypDnia int, RodzajPracy int, POKId int)
+as
+begin
+
+set @CzasOd=case when @CzasOd&lt;93890 then 86400*(@CzasOd-69035) else @CzasOd end
+set @CzasDo=case when @CzasDo&lt;93890 then 86400*(@CzasDo-69035+1) else @CzasDo end
+
+if @ObiNumer&gt;0 set @ObiNumery=convert(varchar,@ObiNumer)+','+isnull(@ObiNumery,'')
+
+if @Typ &amp; 8 &gt; 0
+	insert into @okresy (Obiekt,Od,Do,Przerwa,Okres,TypOkr,Dni,Dostepny,Priorytet,Zrd,CzasDostawy,TypDnia,RodzajPracy,POKId)
+	select distinct Num, @CzasOd, @CzasDo, 0, 0, 0, 0, 1, -2, 0, 0, 0, 0, 0
+	from CDN.Str2List(@ObiNumery)
+
+if @ObiTyp = 14337
+begin
+	-- Okresy aktywne i tło niedostępne dla okresów dostępnych
+	insert into @okresy (Obiekt,Od,Do,Przerwa,Okres,TypOkr,Dni,Dostepny,Priorytet,Zrd,CzasDostawy,TypDnia,RodzajPracy,POKId)
+	select POB_Id, case when Okr=0 and POK_DataOd&lt;44180 then -2147483647
+		when Okr=0 then 86400*(POK_DataOd-69035) else POK_OkresOd end,
+		case when Okr=0 and POK_DataDo&gt;93889 then @CzasDo when Okr=0 then 86400*(POK_DataDo-69034)
+		else POK_OkresDo end, POK_CzasPrzerwy*Okr, POK_Okres*Okr, POK_TypOkresu*Okr, POK_Dni*Okr, POK_Dostepny*Okr,
+		case when Okr=0 then -1 else POK_PriorytetOkresu end, 0, Okr*POK_CzasDostawy, Okr*POK_TypDnia,
+		Okr*POK_RodzajPracy, (2*Okr-1)*POK_Id
+	from CDN.Str2List(@ObiNumery)
+	inner join CDN.ProdObiekty on POB_Id=Num
+	left outer join CDN.PrcKarty on Prc_GIDTyp=POB_ObiTyp and Prc_GIDNumer=POB_ObiNumer
+	inner join CDN.ProdOkresy on POK_Typ &amp; @Typ &gt; 0 and
+		(  (POK_ObiTyp=14337 and POK_ObiNumer=POB_Id)
+		or (POK_ObiTyp=14339 and POK_ObiNumer=POB_Kalendarz)
+		or (POB_Kalendarz=-1 and POK_ObiTyp=POB_ObiTyp and POK_ObiNumer=POB_ObiNumer)
+		or (POB_Kalendarz=-1 and POK_ObiTyp=14339 and POK_ObiNumer=Prc_PKAId)
+		or (POK_ObiTyp=0 and POK_ObiNumer=0) )
+		and POK_DataOd&lt;=(@CzasDo/86400 + 69035) and (@CzasOd/86400 + 69035)&lt;=POK_DataDo
+		and (POK_SposobDostawy=@SposobDostawy or @SposobDostawy&lt;0)
+	inner join (select 1 Okr union all select 0) L on Okr = 1 or (@Typ &amp; 8 &gt; 0 and POK_Dostepny &gt; 0)
+	group by POB_Id,POK_Id,POK_DataOd,POK_DataDo,POK_OkresOd,POK_OkresDo,POK_CzasPRzerwy,POK_Okres,POK_TypOkresu,
+		POK_Dni,POK_Dostepny,POK_PriorytetOkresu,L.Okr,POK_CzasDostawy,POK_TypDnia,POK_RodzajPracy,POK_Id
+	order by POB_Id, POK_Id, L.Okr
+end
+else if @ObiTyp in (944,2978,2979,2980,2981)
+begin
+	-- Okresy aktywne i tło niedostępne dla okresów dostępnych
+	insert into @okresy (Obiekt,Od,Do,Przerwa,Okres,TypOkr,Dni,Dostepny,Priorytet,Zrd,CzasDostawy,TypDnia,RodzajPracy,POKId)
+	select Prc_GIDNumer, case when Okr=0 and POK_DataOd&lt;44180 then -2147483647
+		when Okr=0 then 86400*(POK_DataOd-69035) else POK_OkresOd end,
+		case when Okr=0 and POK_DataDo&gt;93889 then @CzasDo when Okr=0 then 86400*(POK_DataDo-69034)
+		else POK_OkresDo end, POK_CzasPrzerwy*Okr, POK_Okres*Okr, POK_TypOkresu*Okr, POK_Dni*Okr, POK_Dostepny*Okr,
+		case when Okr=0 then -1 else POK_PriorytetOkresu end, 0, Okr*POK_CzasDostawy, Okr*POK_TypDnia, 
+		Okr*POK_RodzajPracy, (2*Okr-1)*POK_Id
+	from CDN.Str2List(@ObiNumery)
+	left outer join CDN.Wyplaty on WPL_Id=Num and @ObiTyp in (2978,2979,2980,2981)
+	inner join CDN.PrcKarty on Prc_GIDNumer=isnull(WPL_OsoNumer,Num)
+	left outer join CDN.OsoUmowy on OsU_OsoNumer=Prc_GIDNumer and OsU_TypUmowy=1
+		and @CzasDo/86400 + 69035 between OsU_DataOd and OsU_DataDo
+	inner join CDN.ProdOkresy on POK_Typ &amp; @Typ &gt; 0 and
+		(  (POK_ObiTyp=944 and POK_ObiNumer=Prc_GIDNumer)
+		or (POK_ObiTyp=14339 and POK_ObiNumer=Prc_PKAId)
+		or (POK_ObiTyp=14339 and POK_ObiNumer=OsU_Harmonogram)
+		or (POK_ObiTyp=0 and POK_ObiNumer=0) )
+		and POK_DataOd&lt;=(@CzasDo/86400 + 69035) and (@CzasOd/86400 + 69035)&lt;=POK_DataDo
+		and (POK_SposobDostawy=@SposobDostawy or @SposobDostawy&lt;0)
+	inner join (select 1 Okr union all select 0) L on Okr = 1 or (@Typ &amp; 8 &gt; 0 and POK_Dostepny &gt; 0)
+	group by Prc_GIDNumer,POK_Id,POK_DataOd,POK_DataDo,POK_OkresOd,POK_OkresDo,POK_CzasPrzerwy,POK_Okres,
+		POK_TypOkresu,POK_Dni,POK_Dostepny,POK_PriorytetOkresu,L.Okr,POK_CzasDostawy,POK_TypDnia,POK_RodzajPracy
+	order by Prc_GIDNumer, POK_Id, L.Okr
+end
+else if @ObiTyp = 14339
+begin
+	-- Okresy aktywne i tło niedostępne dla okresów dostępnych
+	insert into @okresy (Obiekt,Od,Do,Przerwa,Okres,TypOkr,Dni,Dostepny,Priorytet,Zrd,CzasDostawy,TypDnia,RodzajPracy,POKId)
+	select Num, case when Okr=0 and POK_DataOd&lt;44180 then -2147483647
+		when Okr=0 then 86400*(POK_DataOd-69035) else POK_OkresOd end,
+		case when Okr=0 and POK_DataDo&gt;93889 then @CzasDo when Okr=0 then 86400*(POK_DataDo-69034)
+		else POK_OkresDo end, POK_CzasPrzerwy*Okr, POK_Okres*Okr, POK_TypOkresu*Okr, POK_Dni*Okr, POK_Dostepny*Okr,
+		case when Okr=0 then -1 else POK_PriorytetOkresu end, 0, Okr*POK_CzasDostawy, Okr*POK_TypDnia, 
+		Okr*POK_RodzajPracy, (2*Okr-1)*POK_Id
+	from CDN.Str2List(@ObiNumery)
+	inner join CDN.ProdOkresy on POK_Typ &amp; @Typ &gt; 0
+		and ( (POK_ObiTyp=14339 and POK_ObiNumer=Num) or (POK_ObiTyp=0 and POK_ObiNumer=0) )
+		and POK_DataOd&lt;=(@CzasDo/86400 + 69035) and (@CzasOd/86400 + 69035)&lt;=POK_DataDo
+		and (POK_SposobDostawy=@SposobDostawy or @SposobDostawy&lt;0)
+	inner join (select 1 Okr union all select 0) L on Okr = 1 or (@Typ &amp; 8 &gt; 0 and POK_Dostepny &gt; 0)
+	group by Num,POK_Id,POK_DataOd,POK_DataDo,POK_OkresOd,POK_OkresDo,POK_CzasPrzerwy,POK_Okres,POK_TypOkresu,
+		POK_Dni,POK_Dostepny,POK_PriorytetOkresu,L.Okr,POK_CzasDostawy,POK_TypDnia,POK_RodzajPracy
+	order by Num, POK_Id, L.Okr
+end
+else if @ObiTyp = 0
+begin
+	-- Tło dostępne w okresie @DataOd @DataDo
+	if @Typ &amp; 8 &gt; 0
+		insert into @okresy (Obiekt,Od,Do,Przerwa,Okres,TypOkr,Dni,Dostepny,Priorytet,Zrd,CzasDostawy,TypDnia,RodzajPracy,POKId)
+		values (0, @CzasOd, @CzasDo, 0, 0, 0, 0, 1, -2, 0, 0, 0, 0, 0)
+
+	-- Okresy aktywne i tło niedostępne dla okresów dostępnych
+	insert into @okresy (Obiekt,Od,Do,Przerwa,Okres,TypOkr,Dni,Dostepny,Priorytet,Zrd,CzasDostawy,TypDnia,RodzajPracy,POKId)
+	select 0, case when Okr=0 and POK_DataOd&lt;44180 then -2147483647
+		when Okr=0 then 86400*(POK_DataOd-69035) else POK_OkresOd end,
+		case when Okr=0 and POK_DataDo&gt;93889 then @CzasDo when Okr=0 then 86400*(POK_DataDo-69034)
+		else POK_OkresDo end, POK_CzasPrzerwy*Okr, POK_Okres*Okr, POK_TypOkresu*Okr, POK_Dni*Okr, POK_Dostepny*Okr,
+		case when Okr=0 then -1 else POK_PriorytetOkresu end, 0, POK_CzasDostawy,POK_TypDnia,POK_RodzajPracy,POK_Id
+	from CDN.ProdOkresy
+	inner join (select 1 Okr union all select 0) L on Okr = 1 or (@Typ &amp; 8 &gt; 0 and POK_Dostepny &gt; 0)
+	where POK_Typ &amp; @Typ &gt; 0 and POK_ObiTyp=0 and POK_ObiNumer=0
+		and POK_DataOd&lt;=(@CzasDo/86400 + 69035) and (@CzasOd/86400 + 69035)&lt;=POK_DataDo
+		and (POK_SposobDostawy=@SposobDostawy or @SposobDostawy&lt;0)
+	group by POK_Id,POK_DataOd,POK_DataDo,POK_OkresOd,POK_OkresDo,POK_CzasPrzerwy,POK_Okres,POK_TypOkresu,
+		POK_Dni,POK_Dostepny,POK_PriorytetOkresu,L.Okr,POK_CzasDostawy,POK_TypDnia,POK_RodzajPracy
+	order by POK_Id, L.Okr
+end
+
+
+IF @PominKolejneOkresy = 0
+begin
+insert into @okresy (Obiekt,Od,Do,Przerwa,Okres,TypOkr,Dni,Dostepny,Priorytet,Zrd,CzasDostawy,TypDnia,RodzajPracy,POKId)
+select Obiekt,
+	datediff(s,'19900101',case TypOkr	when 0 then dateadd(day,Przes,Od)
+										when 1 then dateadd(day,Num,dateadd(week,Przes,Od))
+										when 2 then dateadd(month,Przes,Od)
+										when 3 then dateadd(year,Przes,Od) else Od end) Od,
+	datediff(s,'19900101',case TypOkr	when 0 then dateadd(day,Przes,Do)
+										when 1 then dateadd(day,Num,dateadd(week,Przes,Do))
+										when 2 then dateadd(month,Przes,Do)
+										when 3 then dateadd(year,Przes,Do) else Do end) Do,
+	Przerwa, Okres, TypOkr, Dni, Dostepny, Priorytet, 0, CzasDostawy, TypDnia, RodzajPracy, POKId
+from (
+	select Id, Obiekt, dateadd(s,Od,'19900101') Od, Przerwa, Okres, TypOkr, Dni, Dostepny, Priorytet, case when
+		TypOkr=1 and Do-Od&gt;86400 then dateadd(s,Od+(Do-Od)%86400,'19900101') else dateadd(s,Do,'19900101') end Do,
+		case TypOkr when 0 then Okres*(datediff(day,dateadd(s,Do,'19900101'),dateadd(s,@CzasOd,'19900101'))/Okres+1)
+					when 1 then Okres*(datediff(week,dateadd(s,Od,'19900101'),dateadd(s,@CzasOd,'19900101'))/Okres-1)
+					when 2 then Okres*datediff(month,dateadd(s,Do,'19900101'),dateadd(s,@CzasOd,'19900101'))/Okres
+					when 3 then Okres*datediff(year,dateadd(s,Do,'19900101'),dateadd(s,@CzasOd,'19900101'))/Okres
+					else 0 end Przes,CzasDostawy,TypDnia,RodzajPracy,POKId
+	from @okresy
+	where Okres&gt;0
+) O
+left outer join CDN.Str2List('0,1,2,3,4,5,6') on TypOkr=1
+	and power(2,(Num+datediff(day,'18001228',dateadd(week,Przes,Od))+6)%7) &amp; Dni &gt; 0
+order by Obiekt, Id
+while @@rowcount&gt;0
+begin
+	insert into @okresy (Obiekt,Od,Do,Przerwa,Okres,TypOkr,Dni,Dostepny,Priorytet,Zrd,CzasDostawy,TypDnia,RodzajPracy,POKId)
+	select O.Obiekt, O.Od, O.Do, O.Przerwa, O.Okres, O.TypOkr, O.Dni, O.Dostepny,
+		O.Priorytet, 0, O.CzasDostawy,O.TypDnia,O.RodzajPracy,O.POKId
+	from (
+		select Id, Obiekt, Przerwa, Okres, TypOkr, Dni, Dostepny, Priorytet,
+			datediff(s,'19900101',case TypOkr when 0 then dateadd(day,Okres,dateadd(s,Od,'19900101'))
+						when 1 then dateadd(week,Okres,dateadd(s,Od,'19900101'))
+						when 2 then dateadd(month,Okres,dateadd(s,Od,'19900101'))
+						when 3 then case when dateadd(year,Okres,dateadd(s,Od,'19900101')) &gt; '20580101' then '20580101' else dateadd(year,Okres,dateadd(s,Od,'19900101')) end
+						else dateadd(s,Od,'19900101') end) Od,
+			datediff(s,'19900101',case TypOkr when 0 then dateadd(day,Okres,dateadd(s,Do,'19900101'))
+						when 1 then dateadd(week,Okres,dateadd(s,Do,'19900101'))
+						when 2 then dateadd(month,Okres,dateadd(s,Do,'19900101'))
+						when 3 then case when dateadd(year,Okres,dateadd(s,Do,'19900101')) &gt; '20580101' then '20580101' else dateadd(year,Okres,dateadd(s,Do,'19900101')) end
+						else dateadd(s,Do,'19900101') end) Do,CzasDostawy,TypDnia,RodzajPracy,POKId
+		from @okresy
+		where Okres&gt;0
+	) O
+	left outer join @okresy J on J.Obiekt=O.Obiekt and J.Od=O.Od and J.Do=O.Do and J.POKId=O.POKId
+	where J.Obiekt is null and O.Od&lt;=@CzasDo and O.Do&gt;@CzasOd - 14 * 86400
+	order by O.Obiekt, O.Id
+end
+end
+else
+begin
+WITH okresy AS (
+select Obiekt,
+	datediff(s,'19900101',case TypOkr	when 0 then dateadd(day,Przes,Od)
+										when 1 then dateadd(day,Num,dateadd(week,Przes,Od))
+										when 2 then dateadd(month,Przes,Od)
+										when 3 then dateadd(year,Przes,Od) else Od end) Od,
+	datediff(s,'19900101',case TypOkr	when 0 then dateadd(day,Przes,Do)
+										when 1 then dateadd(day,Num,dateadd(week,Przes,Do))
+										when 2 then dateadd(month,Przes,Do)
+										when 3 then dateadd(year,Przes,Do) else Do end) Do,
+	Przerwa, Okres, TypOkr, Dni, Dostepny, Priorytet, 0 Zrd, CzasDostawy, TypDnia, RodzajPracy, POKId
+from (
+	select Id, Obiekt, dateadd(s,Od,'19900101') Od, Przerwa, Okres, TypOkr, Dni, Dostepny, Priorytet, case when
+		TypOkr=1 and Do-Od&gt;86400 then dateadd(s,Od+(Do-Od)%86400,'19900101') else dateadd(s,Do,'19900101') end Do,
+		case TypOkr when 0 then Okres*(datediff(day,dateadd(s,Do,'19900101'),dateadd(s,@CzasOd,'19900101'))/Okres)
+					when 1 then Okres*(datediff(week,dateadd(s,Od,'19900101'),dateadd(s,@CzasOd,'19900101'))/Okres-1)
+					when 2 then Okres*datediff(month,dateadd(s,Do,'19900101'),dateadd(s,@CzasOd,'19900101'))/Okres
+					when 3 then Okres*datediff(year,dateadd(s,Do,'19900101'),dateadd(s,@CzasOd,'19900101'))/Okres
+					else 0 end Przes,CzasDostawy,TypDnia,RodzajPracy,POKId
+	from @okresy
+	where Okres&gt;0
+) O
+left outer join CDN.Str2List('0,1,2,3,4,5,6') on TypOkr=1
+	and power(2,(Num+datediff(day,'18001228',dateadd(week,Przes,Od))+6)%7) &amp; Dni &gt; 0
+union all
+
+		select  Obiekt,
+			datediff(s,'19900101',case TypOkr when 0 then dateadd(day,Okres,dateadd(s,Od,'19900101'))
+						when 1 then dateadd(week,Okres,dateadd(s,Od,'19900101'))
+						when 2 then dateadd(month,Okres,dateadd(s,Od,'19900101'))
+						when 3 then case when dateadd(year,Okres,dateadd(s,Od,'19900101')) &gt; '20580101' then '20580101' else dateadd(year,Okres,dateadd(s,Od,'19900101')) end
+						else dateadd(s,Od,'19900101') end) Od,
+			datediff(s,'19900101',case TypOkr when 0 then dateadd(day,Okres,dateadd(s,Do,'19900101'))
+						when 1 then dateadd(week,Okres,dateadd(s,Do,'19900101'))
+						when 2 then dateadd(month,Okres,dateadd(s,Do,'19900101'))
+						when 3 then case when dateadd(year,Okres,dateadd(s,Do,'19900101')) &gt; '20580101' then '20580101' else dateadd(year,Okres,dateadd(s,Do,'19900101')) end
+						else dateadd(s,Do,'19900101') end) Do,
+						 Przerwa, Okres, TypOkr, Dni, Dostepny, Priorytet, 0 Zr,CzasDostawy,TypDnia,RodzajPracy,POKId
+		from okresy O
+		where Okres&gt;0 AND O.Od&lt;@CzasDo and O.Do&lt;@CzasDo --  14 * 86400 
+	
+)
+insert into @okresy (Obiekt,Od,Do,Przerwa,Okres,TypOkr,Dni,Dostepny,Priorytet,Zrd,CzasDostawy,TypDnia,RodzajPracy,POKId)
+select * from okresy
+OPTION (MAXRECURSION 3000)
+end
+
+
+delete @okresy from @okresy
+inner join CDN.ProdOkresy on POK_Id=POKId
+where Do&lt;@CzasOd or @CzasDo&lt;Od or (TypOkr=1 and power(2,(Od/86400)%7) &amp; Dni = 0)
+	or Do/86400+69035&lt;POK_DataOd or (Od+1)/86400+69035&gt;POK_DataDo or (Od/86400&lt;@CzasOd/86400 and Do-Od&lt;86399)
+update @okresy set Od=@CzasOd where Od&lt;@CzasOd
+update @okresy set Do=@CzasDo where Do&gt;@CzasDo and (@Typ&amp;15&lt;&gt;4 or Do-Od&gt;86399)
+
+delete O from @okresy O
+left outer join @Okresy N on N.Obiekt=O.Obiekt and N.Priorytet&gt;O.Priorytet and (
+	N.Od/86400=O.Od/86400 or (O.Od between N.Od and N.Do and N.Do-N.Od&gt;86399) )
+where @Typ=4 and N.Obiekt is not null
+
+update U
+set TypDnia=O.TypDnia
+from (
+	select O.Id, min(I.TypDnia) TypDnia
+	from @okresy O
+	inner join @Okresy I on I.Obiekt=O.Obiekt and I.Od/86400=O.Od/86400 and I.Id&lt;&gt;O.Id
+	group by O.Id
+) O
+inner join @okresy U on U.Id=O.Id
+where @Typ&amp;15=4
+
+declare @rows int, @cycle int
+set @rows = 1 set @cycle=0
+while @rows&gt;0 and @cycle&lt;10000
+begin
+	set @cycle = @cycle+1	
+
+	-- Dzielenie wg min
+	insert into @okresy (Obiekt,Od,Do,Przerwa,Okres,TypOkr,Dni,Dostepny,Priorytet,Zrd,CzasDostawy,TypDnia,RodzajPracy,POKId)
+	select Obiekt, case Num when 1 then Od else Wew end, case Num when 1 then Wew else Do end, 
+		Przerwa, Okres, TypOkr, Dni, Dostepny, Priorytet, Id, CzasDostawy, TypDnia, RodzajPracy, POKId
+	from (
+		select O.Obiekt, O.Od, min(W.Od) Wew, O.Do, O.Przerwa, O.Okres, O.TypOkr, O.Dni, O.Dostepny,
+			O.Priorytet, O.Id, O.CzasDostawy, O.TypDnia, O.RodzajPracy, O.POKId
+		from @okresy O
+		inner join @okresy W on O.Obiekt=W.Obiekt and O.Od&lt;W.Od and W.Od&lt;O.Do
+			and (W.Priorytet&gt;O.Priorytet or (W.Priorytet=O.Priorytet and W.Dostepny&lt;O.Dostepny) or
+				(W.Priorytet=O.Priorytet and W.Dostepny=O.Dostepny and W.POKId&gt;O.POKId) or
+				(W.Priorytet=O.Priorytet and W.Dostepny=O.Dostepny and W.POKId=O.POKId and W.Id&gt;O.Id))
+		group by O.Obiekt,O.Od,O.Do,O.Przerwa,O.Okres,O.TypOkr,O.Dni,O.Dostepny,
+			O.Priorytet,O.Id,O.CzasDostawy,O.TypDnia,O.RodzajPracy,O.POKId
+	) O
+	cross join (select 1 Num union all select 2) L
+	set @rows = @rows + @@rowcount
+
+	-- Dzielenie wg max
+	insert into @okresy (Obiekt,Od,Do,Przerwa,Okres,TypOkr,Dni,Dostepny,Priorytet,Zrd,CzasDostawy,TypDnia,RodzajPracy,POKId)
+	select Obiekt, case Num when 1 then Od else Wew end, case Num when 1 then Wew else Do end, 
+		Przerwa, Okres, TypOkr, Dni, Dostepny, Priorytet, Id, CzasDostawy, TypDnia, RodzajPracy, POKId
+	from (
+		select O.Obiekt, O.Od, max(W.Do) Wew, O.Do, O.Przerwa, O.Okres, O.TypOkr, O.Dni,
+			O.Dostepny, O.Priorytet, O.Id, O.CzasDostawy, O.TypDnia, O.RodzajPracy, O.POKId
+		from @okresy O
+		inner join @okresy W on O.Obiekt=W.Obiekt and O.Od&lt;W.Do and W.Do&lt;O.Do
+			and (W.Priorytet&gt;O.Priorytet or (W.Priorytet=O.Priorytet and W.Dostepny&lt;O.Dostepny) or
+				(W.Priorytet=O.Priorytet and W.Dostepny=O.Dostepny and W.POKId&gt;O.POKId) or
+				(W.Priorytet=O.Priorytet and W.Dostepny=O.Dostepny and W.POKId=O.POKId and W.Id&gt;O.Id))
+		group by O.Obiekt,O.Od,O.Do,O.Przerwa,O.Okres,O.TypOkr,O.Dni,O.Dostepny,
+			O.Priorytet,O.Id,O.CzasDostawy,O.TypDnia,O.RodzajPracy,O.POKId
+	) O
+	cross join (select 1 Num union all select 2) L
+	set @rows = @rows + @@rowcount
+
+	-- Skracanie końców
+	update U set Od = isnull(NOd,Od), Do = isnull(NDo,Do)
+	from (
+		select O.Id, NOd, min(W.Od) NDo
+		from (
+			select O.Id, O.Obiekt, O.Od, O.Do, O.Priorytet, O.Dostepny, O.POKId, O.TypDnia, max(W.Do) NOd
+			from @okresy O
+			left outer join @okresy W on O.Obiekt=W.Obiekt and O.Od between W.Od and W.Do
+				and (W.Priorytet&gt;O.Priorytet or (W.Priorytet=O.Priorytet and W.Dostepny&lt;O.Dostepny) or
+					(W.Priorytet=O.Priorytet and W.Dostepny=O.Dostepny and W.POKId&gt;O.POKId) or
+					(W.Priorytet=O.Priorytet and W.Dostepny=O.Dostepny and W.POKId=O.POKId and W.Id&gt;O.Id)
+				or (W.TypDnia&gt;O.TypDnia and W.Od/86400&lt;O.Od/86400))
+			group by O.Id, O.Obiekt, O.Od, O.Do, O.Priorytet, O.Dostepny, O.POKId, O.TypDnia
+		) O
+		left outer join @okresy W on O.Obiekt=W.Obiekt and O.Do between W.Od and W.Do
+			and (W.Priorytet&gt;O.Priorytet or (W.Priorytet=O.Priorytet and W.Dostepny&lt;O.Dostepny) or
+				(W.Priorytet=O.Priorytet and W.Dostepny=O.Dostepny and W.POKId&gt;O.POKId) or
+				(W.Priorytet=O.Priorytet and W.Dostepny=O.Dostepny and W.POKId=O.POKId and W.Id&gt;O.Id))
+			and not (W.TypDnia&gt;O.TypDnia and W.Od/86400&gt;O.Od/86400)
+		group by O.Id, NOd
+	) O
+	inner join @okresy U on U.Id=O.Id and (Od&lt;&gt;NOd or Do&lt;&gt;NDo)
+	set @rows = @@rowcount
+
+	-- Usuwanie nadpisanych, skróconych do zera, podzielonych lub poza zakresem
+	delete O
+	from @okresy O
+	left outer join @okresy W on O.Obiekt=W.Obiekt and W.Od&lt;=O.Od and O.Do&lt;=W.Do and W.Id&lt;&gt;O.Id
+		and (W.Priorytet&gt;O.Priorytet or (W.Priorytet=O.Priorytet and W.Dostepny&lt;O.Dostepny) or 
+			(W.Priorytet=O.Priorytet and W.Dostepny=O.Dostepny and W.POKId&gt;O.POKId) or
+			(W.Priorytet=O.Priorytet and W.Dostepny=O.Dostepny and W.POKId=O.POKId and W.Id&gt;O.Id))
+	left outer join @okresy Z on Z.Zrd=O.Id
+	where O.Od&gt;=O.Do or W.Id is not null or Z.Id is not null or O.Do&lt;@CzasOd or @CzasDo&lt;O.Od
+end
+
+return
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

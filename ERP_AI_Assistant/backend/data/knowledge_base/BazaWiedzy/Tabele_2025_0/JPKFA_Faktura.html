@@ -1,0 +1,129 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="JPKFA_Faktura"></A><PRE>
+          <FONT SIZE="2"><I>/* JPKFA_Faktura */</I><BR>
+create PROCEDURE CDN.JPKFA_Faktura
+(
+	@arg_okres_od		int,			--początek okresu za jaki dane mają być zaczytane. 
+	@arg_okres_do		int,			--koniec okresu za jaki dane mają być zaczytane.
+	@arg_okres_rodzaj	tinyint,		--Przy czym użytkownik może określić, która data będzie wykorzystana (data wystawienia, data sprzedaży, data wpływu itd.).
+										--1 Data wystawienia (sprzedaż, zakup)
+										--2 Data sprzedaży (sprzedaż)
+										--3 Data wpływu (zakup)
+										--4 Data ujęcia w deklaracji VAT / Dla FAI data wpływu
+										--5 Data księgowania
+										--6 Data księgowania + Bufor
+	@arg_okres_rodzaj_Nazwa	varchar(30), --jesli @arg_okres_rodzaj=0 to można wprowadzać po nazwie
+	@arg_waluta			varchar(3),		--Waluta nagłówka dokumentu
+	@typFaktury			varchar(4),		--ZAK/SPR
+	@ZwracajWiersze		tinyint,		-- zwracaj/nie zwracaj wierszy faktury 1/0
+	@PONNumer			int=0,			--gidNumer JPK
+	@BezTabeliTymczasowej tinyint=0		--zwroc dane bez zakladania tabeli tymczasowej
+	)
+AS
+BEGIN
+set nocount on
+
+IF @typFaktury = 'SPR'
+	exec CDN.JPKFA_Faktura_SPR @arg_okres_od,@arg_okres_do,@arg_okres_rodzaj,@arg_okres_rodzaj_nazwa,@arg_waluta,@ZwracajWiersze,@PONNumer
+ELSE IF @typFaktury = 'SPR2'
+	exec CDN.JPKFA_Faktura_SPR2 @arg_okres_od,@arg_okres_do,@arg_okres_rodzaj,@arg_okres_rodzaj_nazwa,@arg_waluta,@ZwracajWiersze,@PONNumer
+ELSE IF @typFaktury = 'ZAK' and @arg_okres_rodzaj_Nazwa &lt;&gt; 'Nie pobieraj'
+	exec CDN.JPKFA_Faktura_ZAK @arg_okres_od,@arg_okres_do,@arg_okres_rodzaj,@arg_okres_rodzaj_nazwa,@arg_waluta,@ZwracajWiersze,@PONNumer
+ELSE
+
+BEGIN
+declare @tabelaZAK nvarchar(max) = 'CREATE TABLE ##tmpJPKFA_ZAK_' + convert(nvarchar(10),@PONNumer) + '(
+	jpk_P_1			int,
+	jpk_P_2A		nvarchar(256),
+	jpk_P_3A		nvarchar(256),
+	jpk_P_3B		nvarchar(256),
+	jpk_P_3C		nvarchar(256),
+	jpk_P_3D		nvarchar(256),
+	jpk_P_4A		nvarchar(256),	
+	jpk_P_4B		nvarchar(20),
+	jpk_P_5A		nvarchar(256),
+	jpk_P_5B		nvarchar(20),
+	jpk_P_6			int,
+	jpk_P_13_1		DECIMAL(18,2),
+	jpk_P_14_1		DECIMAL(18,2),
+	jpk_P_13_2		DECIMAL(18,2),
+	jpk_P_14_2		DECIMAL(18,2),
+	jpk_P_13_3		DECIMAL(18,2),
+	jpk_P_14_3		DECIMAL(18,2),	
+	jpk_P_13_4		DECIMAL(18,2),
+	jpk_P_14_4		DECIMAL(18,2),
+	jpk_P_13_5		DECIMAL(18,2), 	
+	jpk_P_14_5		DECIMAL(18,2),
+	jpk_P_13_6		DECIMAL(18,2),
+	jpk_P_13_7		DECIMAL(18,2),
+	jpk_P_15		DECIMAL(18,2),
+	jpk_P_16		NVARCHAR(5),--zawsze false
+	jpk_P_17		NVARCHAR(5),--zawsze false
+	jpk_P_18		NVARCHAR(5),
+	jpk_P_19		NVARCHAR(5),
+	jpk_P_19A		nvarchar(256),
+	jpk_P_19B		nvarchar(256),
+	jpk_P_19C		nvarchar(256),
+	jpk_P_20		NVARCHAR(5),
+	jpk_P_20A		NVARCHAR(256),
+	jpk_P_20B		NVARCHAR(256),
+	jpk_P_21		NVARCHAR(5),
+	jpk_P_21A		NVARCHAR(256),
+	jpk_P_21B		NVARCHAR(256),
+	jpk_P_21C		NVARCHAR(256),
+	jpk_P_22A		INT,
+	jpk_P_22B		NVARCHAR(256),
+	jpk_P_22C		NVARCHAR(256),
+	jpk_P_23		NVARCHAR(5),
+	jpk_P_106E_2	NVARCHAR(5),
+	jpk_P_106E_3	NVARCHAR(5),
+	jpk_P_106E_3A	NVARCHAR(256),
+	jpk_RodzajFaktury		nvarchar(7),
+	jpk_PrzyczynaKorekty	nvarchar(256),
+	jpk_NrFaKorygowanej		nvarchar(256),
+	jpk_OkresFaKorygowanej	nvarchar(256),
+	jpk_ZALZaplata			DECIMAL(18,2),
+	jpk_ZALPodatek			DECIMAL(18,2),
+	jpk_gidnumer			int,
+	jpk_gidtyp				int,
+	jpk_typFaktury			varchar(3),
+	jpk_SpiNumer			int,
+			jpk_P_2B	nvarchar(256),
+			jpk_P_7		nvarchar(256),
+			jpk_P_8A	nvarchar(256),
+			jpk_P_8B	decimal(18,2),
+			jpk_P_9A	decimal(18,2),
+			jpk_P_9B	decimal(18,2),
+			jpk_P_10	decimal(18,2),
+			jpk_P_11	decimal(18,2),
+			jpk_P_11A	decimal(18,2),
+			jpk_P_12	nvarchar(2),
+			jpk_Wiersz_gidnumer	int,
+			jpk_Wiersz_gidtyp		int,
+			jpk_Wiersz_gidlp		int,
+			Wiersz_spityp			int,
+			Wiersz_spinumer		int,
+			CzySpinacz			tinyint
+	)'
+
+exec sp_executesql @tabelaZAK
+END
+
+set nocount off
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,258 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[IMALL_ImportAtrybutow]"></A><PRE>
+          <FONT SIZE="2"><I>/* [IMALL_ImportAtrybutow] */</I><BR>
+CREATE  PROCEDURE [CDN].[IMALL_ImportAtrybutow]
+ @XML XML
+ AS
+SET NOCOUNT ON
+
+CREATE TABLE #Errors
+(
+	Blad	VARCHAR(512)
+)
+
+DECLARE @index                  INT,
+		@max_index              INT,
+        @buffer_size			INT,
+        @xml_buffer             XML,
+        @xml_tmp                XML
+        
+DECLARE @Atk_Nazwa				VARCHAR(250),
+		@Atk_TypM				INT,
+		@AtK_Id					INT, 
+		@AtK_IdM				INT,
+		@AtK_Format				VARCHAR(20),
+		@Atk_ZListy				SMALLINT,
+		@Atk_Zamkniety			SMALLINT,
+		@Atk_KatIDM				INT
+		
+		
+DECLARE @Opis                   VARCHAR(512),
+		@IloscWierszy			INT,
+		@ATOLp					INT,
+		@FirmaID				INT,
+		@Kat_Name				VARCHAR(100),
+		@Kat_ID					INT,
+		@Aktywny				INT
+
+SET	@Atk_Nazwa		= '';
+SET	@Atk_TypM		= 0;
+SET @AtK_Id			= 0;
+SET	@AtK_IdM		= 0;
+SET	@Atk_KatIDM		= 0;
+SET @Opis           = '';
+SET @IloscWierszy	= 0;
+SET @ATOLp			= 0;
+SET @Kat_Name		= '';
+SET @Kat_ID			= 0;
+
+SELECT @FirmaID = CDN.GIDFirma();
+SET @XML = @xml.query('/Attributes/Attribute')
+SELECT  @index = 0,
+                @max_index = CAST(CAST(@xml.query ('count(Attribute)') AS VARCHAR(20)) AS INT),
+                @buffer_size = 200
+
+	WHILE @index &lt; @max_index
+    BEGIN
+		SET XACT_ABORT ON;
+
+		BEGIN TRY
+			BEGIN TRANSACTION;
+			IF @index % @buffer_size = 0
+				SET @xml_buffer = ( SELECT @xml.query('Attribute[position()&gt; sql:variable("@index") and position() &lt;= sql:variable("@index") + sql:variable("@buffer_size") ] ')  )
+			SET @xml_tmp = ( SELECT @xml_buffer.query('Attribute[position()= (sql:variable("@index") mod sql:variable("@buffer_size")) + 1 ] ')  )
+			SELECT
+				@AtK_Nazwa			= ATK.Attribute.value('@Name','VARCHAR(250)'),
+				@Atk_TypM			= ATK.Attribute.value('@Type','INT'),
+				@Atk_IdM			= ATK.Attribute.value('@ID','INT'),
+				@Atk_KatIDM			= ATK.Attribute.value('@Cat','INT'),
+				@Aktywny			= ATK.Attribute.value('@Active','INT'),
+				@Atk_Zamkniety		= ATK.Attribute.value('@NonPredefinedValues','INT')
+			FROM @xml_tmp.nodes('Attribute') AS ATK(Attribute)	
+			
+			SET @Kat_Name = '';
+			SELECT @Kat_Name = ISNULL('['+[CDN].[PobierzSciezkeKatGrupyTwr](KGT_Id)+']','') FROM CDN.KatGrupyTwr WHERE KGT_IdM = @Atk_KatIDM
+			SET @AtK_Id = 0
+			SELECT @AtK_Id = Atk_ID FROM CDN.AtrybutyKlasy WHERE Atk_OddZrdId = @Atk_IdM OR Atk_Nazwa = @Atk_Nazwa+@Kat_Name
+			IF @AtK_Id = 0 AND @Aktywny = 1
+			BEGIN
+				SELECT @AtK_Id = ISNULL(MAX(Atk_Id),0)+1 FROM CDN.AtrybutyKlasy WITH (NOLOCK)
+				INSERT INTO CDN.AtrybutyKlasy(
+					[AtK_ID]
+					,[AtK_Typ]
+					,[AtK_Nazwa]
+					,[AtK_Opis]
+					,[AtK_Format]
+					,[AtK_ZListy]
+					,[AtK_Zamknieta]
+					,[AtK_Wymagany]
+					,[AtK_Controlling]
+					,[AtK_Automat]
+					,[AtK_Nieaktywny]
+					,[AtK_SQL]
+					,[AtK_Historia]
+					,[AtK_Domyslna]
+					,[AtK_DomyslnaAPI]
+					,[AtK_DomTyp]
+					,[AtK_DomFirma]
+					,[AtK_DomNumer]
+					,[AtK_DomLp]
+					,[AtK_DomAPITyp]
+					,[AtK_DomApiFirma]
+					,[AtK_DomAPINumer]
+					,[AtK_DomAPILp]
+					,[AtK_DomyslnaSQL]
+					,[AtK_DomyslnaAPISQL]
+					,[AtK_TypDom]
+					,[AtK_TypDomApi]
+					,[AtK_CharSet]
+					,[AtK_OptimaId]
+					,[AtK_Okresowe]
+					,[AtK_Wielowart]
+					,[AtK_ReadOnly]
+					,[AtK_iZam]
+					,[AtK_eSklep]
+					,[AtK_CzasModyfikacji]
+					,[AtK_MOBMPrawa]
+					,[AtK_MOBSPrawa]
+					,[AtK_PRACPrawa]
+					,[AtK_OddZrdID]
+					,[AtK_iMall])
+				VALUES(
+					@AtK_Id
+					,CASE WHEN @Atk_TypM = 4 THEN 1 ELSE 4 END
+					,@Atk_Nazwa+@Kat_Name
+					,''					-- Atk_Opis
+					,'@s100'			-- Atk_Format
+					,1					-- Atk_ZListy
+					,CASE @Atk_Zamkniety WHEN 1 THEN 0 ELSE 1 END -- Atk_Zamkniety
+					,1					-- Atk_Wymagany
+					,0					-- Atk_Controlling
+					,0					-- Atk_Automat
+					,0					-- Atk_Nieaktywny
+					,''					-- Atk_SQL
+					,0					-- Atk_Historia
+					,''					-- Atk_Domyslna
+					,''					-- Atk_DomyslnaAPI
+					,0					-- Atk_DomTyp
+					,0					-- Atk_DomFirma
+					,0					-- Atk_DomNumer
+					,0					-- Atk_DomLp
+					,0					-- Atk_DomAPITyp
+					,0					-- Atk_DomAPIFirma
+					,0					-- Atk_DomAPINumer
+					,0					-- Atk_DomAPILp
+					,''					-- Atk_DomyslnaSQL
+					,''					-- Atk_DomyslnaAPISQL					
+					,0					-- Atk_TypDom
+					,0					-- Atk_TypDomAPI
+					,238				-- Atk_CharSet
+					,0					-- Atk_OptimaId
+					,0					-- Atk_Okresowe
+					,0					-- Atk_Wielowart
+					,0					-- Atk_ReadOnly
+					,0					-- Atk_iZam
+					,0					-- Atk_eSklep
+					,datediff(s,convert(datetime,'1990-01-01',120),getdate())	-- Atk_CzasModyfikacji
+					,0					-- Atk_MOBMPrawa
+					,0					-- Atk_MOBSPrawa
+					,0					-- Atk_PRACPrawa
+					,@Atk_IdM			-- Atk_OddZrdID
+					,1)					-- Atk_iMall
+				-- Udostępnienie klasy atrybutu dla obiektu [iMall24].[Kategoria] oraz [iMall24].[Kategoria].[Towar]
+ 				SET @ATOLp = 0
+                SELECT @ATOLp = (ISNULL(MAX(AtO_Lp),0)+10) FROM CDN.AtrybutyObiekty WHERE AtO_AtkID = @AtK_Id
+                INSERT INTO CDN.AtrybutyObiekty ([AtO_GIDTyp],[AtO_Element],[AtO_AtkID],[AtO_Lp],[AtO_Wymagany]
+					,[AtO_Automat],[AtO_ReadOnly],[AtO_ATZID],[AtO_Akcja],[Ato_Online])
+                VALUES (5056,0,@AtK_Id,@ATOLp,1
+					,0,0,0,-1,0)
+						
+                SELECT @ATOLp = @ATOLp + 10
+                INSERT INTO CDN.AtrybutyObiekty ([AtO_GIDTyp],[AtO_Element],[AtO_AtkID],[AtO_Lp],[AtO_Wymagany]
+					,[AtO_Automat],[AtO_ReadOnly],[AtO_ATZID],[AtO_Akcja],[Ato_Online])
+                VALUES (16,1,@AtK_Id,@ATOLp,1
+						,0,0,0,-1,0)
+				-- /Udostępnienie klasy atrybutu dla obiektu [iMall24].[Kategoria] oraz [iMall24].[Kategoria].[Towar]
+				
+				-- Podpięcie klasy atrybutu pod kategorię towarową z iMall24
+				SET @Kat_ID = 0
+				SELECT @Kat_ID = ISNULL(KGT_Id,0) FROM CDN.KatGrupyTwr WHERE KGT_IdM = @Atk_KatIDM
+				IF @Kat_ID &lt;&gt; 0
+				BEGIN
+				INSERT INTO CDN.Atrybuty([Atr_ObiTyp],[Atr_ObiFirma],[Atr_ObiNumer],[Atr_ObiLp],[Atr_ObiSubLp]
+					,[Atr_AtkId],[Atr_Wartosc],[Atr_AtrTyp],[Atr_AtrFirma],[Atr_AtrNumer]
+					,[Atr_AtrLp],[Atr_AtrSubLp],[Atr_OptimaId],[Atr_Grupujacy])
+				VALUES(5056,@FirmaID,@Kat_ID,0,0
+					,@AtK_Id,'',0,0,0
+					,0,0,0,0)
+				END
+				-- /Podpięcie klasy atrybutu pod kategorię towarową z iMall24
+				SET @IloscWierszy = @IloscWierszy + 1
+			END
+			ELSE
+			BEGIN
+				-- odświeżamy
+				IF @Aktywny = 1 AND @AtK_Id &gt; 0 
+				BEGIN 
+					IF EXISTS
+					(
+						SELECT * FROM CDN.AtrybutyKlasy
+						WHERE Atk_Id = @AtK_Id 
+							AND AtK_Nazwa &lt;&gt; @Atk_Nazwa+@Kat_Name
+							AND [AtK_Typ] &lt;&gt; CASE WHEN @Atk_TypM = 4 THEN 1 ELSE 4 END
+							AND [AtK_Zamknieta] &lt;&gt; CASE @Atk_Zamkniety WHEN 1 THEN 0 ELSE 1 END
+					)
+					BEGIN
+						UPDATE CDN.AtrybutyKlasy
+						SET [AtK_Typ] = CASE WHEN @Atk_TypM = 4 THEN 1 ELSE 4 END
+							,[AtK_Nazwa] = @Atk_Nazwa+@Kat_Name
+							,[AtK_Zamknieta] = CASE @Atk_Zamkniety WHEN 1 THEN 0 ELSE 1 END
+							,[Atk_CzasModyfikacji] = datediff(s,convert(datetime,'1990-01-01',120),getdate())
+						WHERE Atk_Id = @AtK_Id
+						SET @IloscWierszy = @IloscWierszy + 1
+					END
+				END
+				ELSE
+				BEGIN
+						UPDATE CDN.AtrybutyKlasy
+						SET [AtK_Typ] = CASE WHEN @Atk_TypM = 4 THEN 1 ELSE 4 END
+							,[AtK_Nazwa] = @Atk_Nazwa+@Kat_Name
+							,[AtK_Zamknieta] = CASE @Atk_Zamkniety WHEN 1 THEN 0 ELSE 1 END
+							,[Atk_CzasModyfikacji] = datediff(s,convert(datetime,'1990-01-01',120),getdate())
+							,Atk_OddZrdID = @Atk_IdM
+						WHERE Atk_Id = @AtK_Id
+						SET @IloscWierszy = @IloscWierszy + 1
+				END
+			END
+			COMMIT TRANSACTION;
+		END TRY
+		BEGIN CATCH
+			IF XACT_STATE() &lt;&gt; 0
+				ROLLBACK TRANSACTION;
+				INSERT INTO #Errors(Blad) VALUES ('Błąd podczas dodawania atrybutu o ID='+ CAST(@Atk_IdM AS VARCHAR(20)) + ': ' + CDN.Log_SzczegolyBledu(ERROR_NUMBER(),ERROR_PROCEDURE(),ERROR_LINE(),ERROR_MESSAGE()))
+		END CATCH
+		SET @index = @index + 1
+	END
+	IF EXISTS(SELECT * FROM #Errors)
+	  SELECT #Errors.Blad AS Blad,  '' AS Informacja FROM #Errors
+	ELSE
+	  SELECT '' AS Blad, 'Ilość zaimportowanych klas atrybutów: '+ CAST(@IloscWierszy AS VARCHAR(10)) AS Informacja
+	DROP TABLE #Errors
+RETURN 0
+SET NOCOUNT OFF
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

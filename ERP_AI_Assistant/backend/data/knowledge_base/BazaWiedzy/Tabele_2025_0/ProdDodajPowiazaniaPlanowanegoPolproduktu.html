@@ -1,0 +1,149 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="ProdDodajPowiazaniaPlanowanegoPolproduktu"></A><PRE>
+          <FONT SIZE="2"><I>/* ProdDodajPowiazaniaPlanowanegoPolproduktu */</I><BR>
+CREATE PROCEDURE CDN.ProdDodajPowiazaniaPlanowanegoPolproduktu @PCZId INT, @PZAId INT,@PCZPartia int = 0, @PPCPartia INT = 0, @NiePlanujWPartiach TINYINT = 0, @PolprodPartia INT = 0, @OsobnePartie tinyint = 0
+AS
+begin
+
+	declare @IloscPotrzebna decimal(11,4)
+	declare @IloscBrakujaca decimal(11,4)
+	declare @IloscWolnaDoZwiazania decimal(11,4)
+	declare @WytworzonyPP int, @PlanowanyPP INT
+	declare @OperacjaPolproduktySurowceID int
+	declare @OperacjaPolproduktyWytworzoneID int
+
+ 
+	declare @ilosciPowiazane table(PZAId INT, Ilosc DECIMAL(11,4))
+
+	declare powiazania_cursor cursor fast_forward for
+	select PolproduktySurowce.PZA_Ilosc-isnull(PPPlanowanyIlosc,0) IloscPotrzebna,
+	PolproduktyWytworzone.PZA_Ilosc-sum(isnull(PPWykonany.PZP_Ilosc,0))-isnull(ZwiazaneProdZasoby.ZwiazanaIlosc,0)-sum(isnull(ZwiazaneDok.Ilosc,0)) IloscDoZwiazania,
+	           PolproduktyWytworzone.PZA_ID WytworzonyPP,PolproduktySurowce.PZA_Id PlanowanyPP,
+	           Operacja.PCZ_Id OperacjaPolproduktySurowceID,
+	           case when CzynnosciPolproduktyWytworzone.PCZ_Realizuje &lt;&gt; 0 then CzynnosciPolproduktyWytworzone.PCZ_Realizuje else CzynnosciPolproduktyWytworzone.PCZ_Id end OperacjaPolproduktyWytworzoneID
+    from cdn.ProdZasoby PolproduktySurowce
+        join cdn.ProdCzynnosci Operacja on Operacja.PCZ_Id = PolproduktySurowce.PZA_Czynnosc AND Operacja.PCZ_PZEPartia = @PCZPartia
+        join cdn.ProdProcesy Proces on Proces.PPC_Id = Operacja.PCZ_Proces --AND Proces.PPC_PZEPartia = @PPCPartia
+        join cdn.ProdTechnologiaZasoby TechPolproduktySurowce on TechPolproduktySurowce.PTZ_ID = PZA_TechnologiaZasob
+		join CDN.ProdTechnologiaCzynnosci TechSur on TechPolproduktySurowce.PTZ_TechnologiaCzynnosc = TechSur.PTC_Id
+        join cdn.ProdTechnologiaZasoby TechPolproduktyWytworzone on TechPolproduktyWytworzone.PTZ_ID = TechPolproduktySurowce.PTZ_TechnologiaZasob
+		join CDN.ProdTechnologiaCzynnosci TechWytw on TechPolproduktyWytworzone.PTZ_TechnologiaCzynnosc = TechWytw.PTC_Id
+		join cdn.ProdTechnologiaCzynnosci PTCPolprod ON PTCPolprod.PTC_Id = TechPolproduktyWytworzone.PTZ_TechnologiaCzynnosc
+        left join cdn.ProdZasoby PolproduktyWytworzone on PolproduktyWytworzone.PZA_TechnologiaZasob = TechPolproduktyWytworzone.PTZ_Id AND 
+			(PolproduktyWytworzone.PZA_TypZasobu = 0 OR PolproduktyWytworzone.PZA_Planowany = 1)
+        left join cdn.ProdCzynnosci CzynnosciPolproduktyWytworzone on CzynnosciPolproduktyWytworzone.PCZ_ID = PolproduktyWytworzone.PZA_Czynnosc 
+			AND (@PCZPartia IN(CzynnosciPolproduktyWytworzone.PCZ_PZEPartia,0) OR ((PTCPolprod.PTC_NiePlanujWPartiachGdyNastOpeWPartiach = 1 OR @NiePlanujWPartiach = 1) AND CzynnosciPolproduktyWytworzone.PCZ_PZEPartia = 0))		
+        left join cdn.ProdProcesy ProcesyPolproduktyWytworzone on ProcesyPolproduktyWytworzone.PPC_Id = CzynnosciPolproduktyWytworzone.PCZ_Proces AND 
+			(@PPCPartia in(ProcesyPolproduktyWytworzone.PPC_PZEPartia,0) OR PTCPolprod.PTC_NiePlanujWPartiachGdyNastOpeWPartiach = 1 OR @NiePlanujWPartiach = 1)
+        left join cdn.ProdZlecenia ZleceniaPolproduktyWytworzone on ZleceniaPolproduktyWytworzone.PZL_Id = ProcesyPolproduktyWytworzone.PPC_Zlecenie
+        left join cdn.ProdZwiazanePolprodukty PPWykonany on PPWykonany.PZP_PZAIDWykonany = PolproduktyWytworzone.PZA_ID
+        left join
+        (
+                select sum(isnull(PZP_Ilosc,0)) PPPlanowanyIlosc,PZP_PZAIDPlanowany
+                from cdn.ProdZwiazanePolprodukty
+                group by PZP_PZAIDPlanowany
+        ) PPPlanowany on PPPlanowany.PZP_PZAIDPlanowany = PolproduktySurowce.PZA_ID
+        left join
+        (
+                select sum(isnull(PZA_Ilosc,0)) ZwiazanaIlosc,PZA_Zasob from cdn.ProdZasoby
+                group by PZA_Zasob
+        ) ZwiazaneProdZasoby on ZwiazaneProdZasoby.PZA_Zasob = PolproduktyWytworzone.PZA_Id
+        left join
+        (select sum(isnull(Kor.Trs_Ilosc,0)) Ilosc,oryg.TrS_ZlcNumer from cdn.TrasElem ORYG LEFT JOIN CDN.TraSElem Kor on Kor.TrS_ZwrNumer = ORYG.TrS_GIDNumer
+                and  Kor.TrS_ZwrLp = ORYG.TrS_GIDLp AND Kor.TrS_SubZwrLp = ORYG.TrS_SubGIDLp where Oryg.Trs_ZlcTyp = 14346 group by oryg.Trs_ZlcNumer
+        ) ZwiazaneDok on ZwiazaneDok.TrS_ZlcNumer = PolproduktyWytworzone.PZA_Id
+        where PolproduktySurowce.PZA_Czynnosc = @PCZId AND (PolproduktySurowce.PZA_Id = @PZAId OR @PZAId IS NULL) AND TechPolproduktySurowce.PTZ_TypZasobu = 1 and TechPolproduktySurowce.PTZ_TechnologiaZasob &gt; 0
+        and (
+                 (TechPolproduktyWytworzone.PTZ_ZrodloZasobu = 0 and ProcesyPolproduktyWytworzone.PPC_ID = Proces.PPC_Id) or
+                 (TechPolproduktyWytworzone.PTZ_ZrodloZasobu = 1 and ProcesyPolproduktyWytworzone.PPC_Zlecenie = Proces.PPC_Zlecenie) or
+                 (TechPolproduktyWytworzone.PTZ_ZrodloZasobu = 2 and ProcesyPolproduktyWytworzone.PPC_Oddzial = Proces.PPC_Oddzial) or
+                 TechPolproduktyWytworzone.PTZ_ZrodloZasobu = 3
+                )
+        and PolproduktySurowce.PZA_Ilosc-isnull(PPPlanowanyIlosc,0) &gt; 0 AND ZleceniaPolproduktyWytworzone.PZL_DataZamkniecia = 0
+		AND ((TechPolproduktyWytworzone.PTZ_ZrodloZasobu &gt; 1 AND ((@PolprodPartia &gt; 0 AND EXISTS(SELECT 1 FROM CDN.ProdZwiazane JOIN CDN.ProdZlecElem ON PZE_Id = PZW_DokNumer AND PZW_DokTyp =  14348
+		WHERE PZW_PolprodPartia = @PolprodPartia AND (PZW_PTZPartia = PolproduktySurowce.PZA_TechnologiaZasob OR @OsobnePartie = 0) AND PZE_Zlecenie = ZleceniaPolproduktyWytworzone.PZL_Id)) 
+			OR (@PolprodPartia = 0 AND CzynnosciPolproduktyWytworzone.PCZ_PolprodPartia &lt;= 0))) OR TechPolproduktyWytworzone.PTZ_ZrodloZasobu &lt;=1 OR TechSur.PTC_Technologia = TechWytw.PTC_Technologia )
+        group by PolproduktySurowce.PZA_Ilosc,PolproduktySurowce.PZA_ID,PolproduktyWytworzone.PZA_Ilosc,PolproduktyWytworzone.PZA_Id, Operacja.PCZ_Id, CzynnosciPolproduktyWytworzone.PCZ_Id,PPPlanowanyIlosc,ZwiazaneProdZasoby.ZwiazanaIlosc,
+                         CzynnosciPolproduktyWytworzone.PCZ_Realizuje,ProcesyPolproduktyWytworzone.PPC_Id,Proces.PPC_Id,ProcesyPolproduktyWytworzone.PPC_Zlecenie,Proces.PPC_Zlecenie
+        having PolproduktyWytworzone.PZA_Ilosc-sum(isnull(PPWykonany.PZP_Ilosc,0))-isnull(ZwiazaneProdZasoby.ZwiazanaIlosc,0)-sum(isnull(ZwiazaneDok.Ilosc,0)) &gt; 0
+        order by
+                   case when ProcesyPolproduktyWytworzone.PPC_Id = Proces.PPC_Id then 0         --takie sortowanie pozwala na preferowanie wiązania z półproduktami z tego samego procesu a następnie z tego samego zlecenia, na koniec pozostają półprodukty z innych zleceń
+                            when ProcesyPolproduktyWytworzone.PPC_Zlecenie = Proces.PPC_Zlecenie then 1
+                                else 2
+                   end,
+                   Operacja.PCZ_ID,PolproduktyWytworzone.PZA_Id,PolproduktyWytworzone.PZA_Ilosc-sum(isnull(PPWykonany.PZP_Ilosc,0))-isnull(ZwiazaneProdZasoby.ZwiazanaIlosc,0)-sum(isnull(ZwiazaneDok.Ilosc,0))
+
+
+        open powiazania_cursor
+        fetch next from powiazania_cursor into @IloscPotrzebna, @IloscWolnaDoZwiazania, @WytworzonyPP, @PlanowanyPP, @OperacjaPolproduktySurowceID, @OperacjaPolproduktyWytworzoneID
+
+        set @IloscBrakujaca = @IloscPotrzebna - isnull((select Ilosc from  @ilosciPowiazane where PZAId = @PlanowanyPP),0)
+
+        set @IloscWolnaDoZwiazania = @IloscWolnaDoZwiazania - isnull((select Ilosc from  @ilosciPowiazane where PZAId = @WytworzonyPP),0)
+
+        while @@FETCH_STATUS = 0 --and @IloscBrakujaca &gt; 0
+        begin
+                if @IloscBrakujaca &gt; 0 and @IloscWolnaDoZwiazania &gt; 0
+                begin
+					if @IloscBrakujaca &lt; @IloscWolnaDoZwiazania
+						set @IloscWolnaDoZwiazania = @IloscBrakujaca
+
+					if not exists(select * from CDN.ProdZwiazanePolprodukty where PZP_PZAIDWykonany = @WytworzonyPP and PZP_PZAIDPlanowany = @PlanowanyPP)
+					begin
+						insert into cdn.ProdZwiazanePolprodukty (PZP_PZAIDWykonany,PZP_PZAIDPlanowany,PZP_Ilosc) values(@WytworzonyPP,@PlanowanyPP,@IloscWolnaDoZwiazania)
+
+						if not exists(select * from @ilosciPowiazane where @WytworzonyPP = PZAId)
+							insert into @ilosciPowiazane(PZAId,Ilosc) values (@WytworzonyPP,@IloscWolnaDoZwiazania)
+						else
+							update @ilosciPowiazane set Ilosc = Ilosc + @IloscWolnaDoZwiazania where PZAId = @WytworzonyPP
+
+						if not exists(select * from @ilosciPowiazane where @PlanowanyPP = PZAId)
+							insert into @ilosciPowiazane(PZAId,Ilosc) values (@PlanowanyPP,@IloscWolnaDoZwiazania)
+						else
+							update @ilosciPowiazane set Ilosc = Ilosc + @IloscWolnaDoZwiazania where PZAId = @PlanowanyPP
+					end
+					else
+					begin
+						update cdn.ProdZwiazanePolprodukty set PZP_Ilosc = PZP_Ilosc + @IloscWolnaDoZwiazania where PZP_PZAIDWykonany = @WytworzonyPP and PZP_PZAIDPlanowany = @PlanowanyPP
+
+						if not exists(select * from @ilosciPowiazane where @WytworzonyPP = PZAId)
+							insert into @ilosciPowiazane(PZAId,Ilosc) values (@WytworzonyPP,@IloscWolnaDoZwiazania)
+						else
+							update @ilosciPowiazane set Ilosc = Ilosc + @IloscWolnaDoZwiazania where PZAId = @WytworzonyPP
+
+						if not exists(select * from @ilosciPowiazane where @PlanowanyPP = PZAId)
+							insert into @ilosciPowiazane(PZAId,Ilosc) values (@PlanowanyPP,@IloscWolnaDoZwiazania)
+						else
+							update @ilosciPowiazane set Ilosc = Ilosc + @IloscWolnaDoZwiazania where PZAId = @PlanowanyPP
+					end
+
+					if not exists(select * from CDN.ProdOperacjePowiazane where POP_PczId = @OperacjaPolproduktySurowceID and POP_PrzedPczId = @OperacjaPolproduktyWytworzoneID)
+                        insert into cdn.ProdOperacjePowiazane(POP_PczId,POP_PrzedPczId) values(@OperacjaPolproduktySurowceID, @OperacjaPolproduktyWytworzoneID)
+				end
+
+				fetch next from powiazania_cursor into @IloscPotrzebna, @IloscWolnaDoZwiazania, @WytworzonyPP, @PlanowanyPP, @OperacjaPolproduktySurowceID, @OperacjaPolproduktyWytworzoneID
+
+				set @IloscBrakujaca = @IloscPotrzebna - isnull((select Ilosc from  @ilosciPowiazane where PZAId = @PlanowanyPP),0)
+
+				set @IloscWolnaDoZwiazania = @IloscWolnaDoZwiazania - isnull((select Ilosc from  @ilosciPowiazane where PZAId = @WytworzonyPP),0)
+			end
+
+			close powiazania_cursor
+			deallocate powiazania_cursor
+		end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

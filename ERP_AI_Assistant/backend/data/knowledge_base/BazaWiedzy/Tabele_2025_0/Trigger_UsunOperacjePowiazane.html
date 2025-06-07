@@ -1,0 +1,183 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="ProdZasoby_UsunOperacjePowiazane"></A><PRE>
+          <FONT SIZE="2"><I>/* ProdZasoby_UsunOperacjePowiazane */</I><BR>
+CREATE TRIGGER CDN.ProdZasoby_UsunOperacjePowiazane
+  ON CDN.ProdZasoby
+  for DELETE
+AS
+begin
+SET NOCOUNT ON	
+
+
+	DECLARE @PZATyp TINYINT, @PZAId int, @PZACzynnosc INT
+	
+	SELECT @PZATyp =d.PZA_TypZasobu,@PZAId = d.PZA_Id, @PZACzynnosc = d.PZA_Czynnosc
+	FROM deleted d
+
+	DECLARE @OperacjePowiazane TABLE(Id INT, PCZId INT, PrzedPCZId INT ,PZAIdWykonany INT,PZAIdPlanowany INT,RealizPCZId INT);
+
+	INSERT INTO @OperacjePowiazane
+	SELECT POP_Id,POP_PczId,POP_PrzedPczId,Planow.PZP_PZAIDWykonany,Planow.PZP_PZAIDPlanowany,NULL 
+	FROM CDN.ProdOperacjePowiazane
+    LEFT JOIN CDN.ProdZwiazanePolprodukty Planow ON Planow.PZP_PZAIDPlanowany = @PZAId
+    LEFT JOIN CDN.ProdCzynnosci CzPlanow ON CzPlanow.PCZ_Id = @PZACzynnosc AND PLANOW.PZP_PZAIDPlanowany IS NOT NULL
+    WHERE POP_PczId IN(@PZACzynnosc,CzPlanow.PCZ_Realizuje);
+
+	INSERT INTO @OperacjePowiazane
+	SELECT POP_Id,POP_PczId,POP_PrzedPczId,WYK.PZP_PZAIDWykonany,Wyk.PZP_PZAIDPlanowany,NULL 
+	FROM CDN.ProdOperacjePowiazane
+    LEFT JOIN CDN.ProdZwiazanePolprodukty Wyk ON Wyk.PZP_PZAIDWykonany = @PZAId
+    LEFT JOIN CDN.ProdCzynnosci CzWyk ON CzWyk.PCZ_Id = @PZACzynnosc AND WYK.PZP_PZAIDWykonany IS NOT NULL
+    WHERE POP_PrzedPczId IN(@PZACzynnosc,CzWyk.PCZ_Realizuje);
+	
+	INSERT INTO @OperacjePowiazane
+	SELECT POP_Id,POP_PczId,POP_PrzedPczId,NULL,NULL,PCZ_Id 
+	FROM CDN.ProdOperacjePowiazane
+    LEFT JOIN CDN.ProdCzynnosci Realiz ON Realiz.PCZ_Id = @PZACzynnosc AND NOT EXISTS(SELECT 1 FROM @OperacjePowiazane)
+    WHERE (Realiz.PCZ_Id IS NOT NULL 
+		AND ((POP_PczId = Realiz.PCZ_Realizuje AND @PZATyp IN (1,2)) OR (POP_PrzedPczId = Realiz.PCZ_Realizuje AND @PZATyp IN (0,4))));
+
+	DELETE FROM @OperacjePowiazane
+	WHERE EXISTS(
+		SELECT 1 FROM CDN.ProdZwiazanePolprodukty ZP_I
+		JOIN CDN.ProdCzynnosci Planow_I ON PczId IN (Planow_I.PCZ_Realizuje,Planow_I.PCZ_Id)
+        JOIN CDN.ProdCzynnosci Wyk_I ON PrzedPczId IN(Wyk_I.PCZ_Id, Wyk_I.PCZ_Realizuje)
+        JOIN CDN.ProdZasoby ZasP_I ON ZasP_I.PZA_Czynnosc = Planow_I.PCZ_Id
+        JOIN CDN.ProdZasoby ZasW_I ON ZasW_I.PZA_Czynnosc = Wyk_I.PCZ_Id
+        WHERE ZasP_I.PZA_Id = ZP_I.PZP_PZAIDPlanowany AND ZasW_I.PZA_Id = ZP_I.PZP_PZAIDWykonany
+                                        AND (((ZP_I.PZP_PZAIDPlanowany &lt;&gt; PZAIDPlanowany AND PZAIDPlanowany IS NOT NULL
+                                                AND ZP_I.PZP_PZAIDWykonany &lt;&gt; PZAIDWykonany)
+                                        OR (ZP_I.PZP_PZAIDWykonany &lt;&gt; PZAIDWykonany AND PZAIDWykonany IS NOT NULL
+                                                AND ZP_I.PZP_PZAIDPlanowany &lt;&gt; PZAIDPlanowany)) OR RealizPCZId IS NOT NULL)
+	);
+
+	DELETE FROM @OperacjePowiazane
+	WHERE EXISTS(
+		SELECT 1 FROM CDN.ProdCzynnosci Planow_I
+        JOIN CDN.ProdCzynnosci Wyk_I ON PrzedPczId IN(Wyk_I.PCZ_Id,Wyk_I.PCZ_Realizuje)
+        JOIN CDN.ProdZasoby ZasP_I ON ZasP_I.PZA_Czynnosc = Planow_I.PCZ_Id
+        JOIN CDN.ProdZasoby ZasW_I ON ZasW_I.PZA_Czynnosc = Wyk_I.PCZ_Id
+        WHERE Planow_I.PCZ_Realizuje = PczId AND (ZasP_I.PZA_Zasob = ZasW_I.PZA_Id AND ZasP_I.PZA_Zasob &gt; 0 AND
+        ((ZasP_I.PZA_Id &lt;&gt; @PZAId AND @PZATyp IN (1,2)) OR (ZasW_I.PZA_Id &lt;&gt; @PZAId AND @PZATyp IN (0,4))))
+	)
+
+    DELETE FROM CDN.ProdOperacjePowiazane WHERE POP_Id IN (SELECT ID FROM @OperacjePowiazane O);
+
+SET NOCOUNT OFF
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="ProdZasoby_PZAZasobUpdate"></A><PRE>
+          <FONT SIZE="2"><I>/* ProdZasoby_PZAZasobUpdate */</I><BR>
+CREATE TRIGGER CDN.ProdZasoby_PZAZasobUpdate
+  ON CDN.ProdZasoby
+  for INSERT,UPDATE
+AS
+begin
+SET NOCOUNT ON
+	IF UPDATE(PZA_Zasob)
+	BEGIN
+	IF EXISTS(SELECT * FROM inserted WHERE inserted.PZA_Zasob = 0 and inserted.PZA_TypZasobu IN(1,2) and inserted.PZA_Planowany = 0)
+
+	DELETE FROM CDN.ProdOperacjePowiazane WHERE POP_Id IN (
+		SELECT POP_Id FROM inserted
+		JOIN CDN.ProdCzynnosci Realiz ON Realiz.PCZ_Id = inserted.PZA_Czynnosc
+		JOIN CDN.ProdOperacjePowiazane ON POP_PczId = Realiz.PCZ_Realizuje
+		WHERE 
+			NOT EXISTS(SELECT * 
+				FROM CDN.ProdCzynnosci Planow_I
+				JOIN CDN.ProdCzynnosci Wyk_I ON  POP_PrzedPczId IN(Wyk_I.PCZ_Id,Wyk_I.PCZ_Realizuje) 
+				JOIN CDN.ProdZasoby ZasP_I ON ZasP_I.PZA_Czynnosc = Planow_I.PCZ_Id
+				JOIN CDN.ProdZasoby ZasW_I ON ZasW_I.PZA_Czynnosc = Wyk_I.PCZ_Id
+				JOIN CDN.ProdZwiazanePolprodukty ZP_I ON ZasP_I.PZA_Id = ZP_I.PZP_PZAIDPlanowany AND ZasW_I.PZA_Id = ZP_I.PZP_PZAIDWykonany 
+				WHERE ((Planow_I.PCZ_Id = POP_PczId AND Planow_I.PCZ_Realizuje = 0) OR (Planow_I.PCZ_Realizuje = POP_PczId)) 
+				)	
+			AND NOT EXISTS(SELECT * FROM CDN.ProdCzynnosci Planow_I
+				JOIN CDN.ProdCzynnosci Wyk_I ON Wyk_I.PCZ_Realizuje = POP_PrzedPczId
+				JOIN CDN.ProdZasoby ZasP_I ON ZasP_I.PZA_Czynnosc = Planow_I.PCZ_Id
+				JOIN CDN.ProdZasoby ZasW_I ON ZasW_I.PZA_Czynnosc = Wyk_I.PCZ_Id
+				WHERE Planow_I.PCZ_Realizuje = POP_PczId AND  (ZasP_I.PZA_Zasob = ZasW_I.PZA_Id AND ZasP_I.PZA_Zasob &gt; 0 AND ZasP_I.PZA_Id &lt;&gt; inserted.PZA_Id)
+				)
+				
+	)
+	END
+
+SET NOCOUNT OFF
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="ProdZwiazanePolprodukty_UsunOperacjePowiazane"></A><PRE>
+          <FONT SIZE="2"><I>/* ProdZwiazanePolprodukty_UsunOperacjePowiazane */</I><BR>
+CREATE TRIGGER CDN.ProdZwiazanePolprodukty_UsunOperacjePowiazane
+  ON CDN.ProdZwiazanePolprodukty
+  for DELETE
+AS
+begin
+SET NOCOUNT ON
+		DECLARE @PZAPlanowId INT, @PZAWykId INT, @PCZPlanowId INT, @PCZWykId INT
+		SELECT @PZAPlanowId = deleted.PZP_PZAIDPlanowany,@PZAWykId = deleted.PZP_PZAIDWykonany FROM deleted
+
+		DECLARE @Oper TABLE (PCZId INT, PZAId INT)
+
+		INSERT INTO @Oper
+		SELECT CASE WHEN PCZ_Realizuje &gt; 0 THEN PCZ_Realizuje ELSE PCZ_Id END PCZId,PZA_Id
+		FROM CDN.ProdZasoby 
+		JOIN CDN.ProdCzynnosci ON PCZ_Id = PZA_Czynnosc
+		WHERE PZA_Id IN(@PZAPlanowId,@PZAWykId)
+
+		SELECT @PCZPlanowId = PCZId
+		FROM @Oper 
+		WHERE PZAId = @PZAPlanowId
+
+		SELECT @PCZWykId = PCZId
+		FROM @Oper 
+		WHERE PZAId = @PZAWykId
+
+
+		delete from CDN.ProdOperacjePowiazane WHERE POP_Id IN (
+                SELECT POP_Id FROM @Oper
+                JOIN CDN.ProdOperacjePowiazane ON POP_PCZId = @PCZPlanowId AND POP_PrzedPczId = @PCZWykId
+                WHERE  
+					NOT EXISTS(SELECT * FROM CDN.ProdZasoby Planow_I
+						JOIN CDN.ProdCzynnosci CzPlanow_I ON Planow_I.PZA_Czynnosc = CzPlanow_I.PCZ_Id
+                        JOIN CDN.ProdCzynnosci CzWyk_I ON POP_PrzedPczId IN(CzWyk_I.PCZ_Id,CzWyk_I.PCZ_Realizuje)                                       
+                        JOIN CDN.ProdZasoby Wyk_I ON Wyk_I.PZA_Czynnosc = CzWyk_I.PCZ_Id
+                        JOIN CDN.ProdZwiazanePolprodukty ON Planow_I.PZA_Id =PZP_PZAIDPlanowany AND Wyk_I.PZA_Id = PZP_PZAIDWykonany
+                        WHERE ((Planow_I.PZA_Czynnosc = POP_PczId and CzPlanow_I.PCZ_Realizuje = 0) OR (CzPlanow_I.PCZ_Realizuje = POP_PczId))
+							AND Planow_I.PZA_Id &lt;&gt; @PCZPlanowId AND Wyk_I.PZA_Id &lt;&gt; @PZAWykId
+                                )
+					 AND NOT EXISTS (SELECT * FROM CDN.ProdCzynnosci CzPlanow_I
+						JOIN CDN.ProdZasoby Planow_I ON Planow_I.PZA_Czynnosc = CzPlanow_I.PCZ_Id
+						JOIN CDN.ProdCzynnosci CzWyk_I ON  CzWyk_I.PCZ_Realizuje = POP_PrzedPczId
+                        JOIN CDN.ProdZasoby Wyk_I ON Wyk_I.PZA_Czynnosc = CzWyk_I.PCZ_Id
+                        WHERE @PCZPlanowId = POP_PczId AND (Planow_I.PZA_Zasob = Wyk_I.PZA_Id AND Planow_I.PZA_Zasob &gt; 0)
+							AND (Planow_I.PZA_Planowany = 0 AND Wyk_I.PZA_Planowany = 0)
+                                )
+        )
+
+SET NOCOUNT OFF
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

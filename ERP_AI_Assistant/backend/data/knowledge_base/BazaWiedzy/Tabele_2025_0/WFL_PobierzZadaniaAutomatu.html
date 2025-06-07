@@ -1,0 +1,78 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="WFL_PobierzZadaniaAutomatu"></A><PRE>
+          <FONT SIZE="2"><I>/* WFL_PobierzZadaniaAutomatu */</I><BR>
+CREATE PROCEDURE CDN.WFL_PobierzZadaniaAutomatu
+(@NumerAutomatu int, -- numer automatu, który ma wykonywać zadania (id z słownika), w przypadku gdy NumerAutomatu = 0, będą wykonane zadania automatu predefiniowanego 
+ @p_PRCTyp   smallint, -- typ pracownika
+ @p_PRCNumer integer,  -- identyfikator pracownika
+ @p_OPENumer integer)  -- identyfikator operatora
+ 
+AS
+BEGIN
+	SET NOCOUNT ON
+
+	declare @WFZID int
+	declare @WDZID int
+	declare @WFPID int
+	declare @OpiekunSQL varchar(2048)
+	declare @SQL nvarchar(3000)
+
+	if object_id('tempdb..#tmpZadania') is not null
+		drop table #tmpZadania
+
+	create table #tmpZadania (WFZID int, WDZID int, WFPID int, OBITyp int, OBINumer int, OpiTyp int, OpiekunTyp int, OpiekunSQL varchar(2048))
+
+	--insert wszystkich zadań automatu oraz tych które mają ustawionego opiekuna dynamicznego
+	insert into #tmpZadania
+	select distinct TOP 10 WFZ_ID, WDZ_ID, WFZ_WFPID, WFP_OBITyp as OBITyp, WFP_OBINumer as OBINumer,WDO_OpiTyp, WDZ_OpiekunTyp, WDZ_OpiekunSQL
+	from cdn.wf_zadania join CDN.WF_DefZadania on WDZ_WDSID = WFZ_WDSID
+	join CDN.WF_Procesy on WFZ_WFPID = WFP_ID
+	left join cdn.wf_defopiekun on wdo_wdzid = wdz_id
+	where WFZ_Datazamkniecia = 0
+	and WFZ_OPITyp = 12289
+	and wfz_OPINumer = @NumerAutomatu
+	and (wdo_opityp = 12289 or wdz_opiekuntyp &gt; 0)
+	and WFZ_DataRealizacji&lt;= CDN.WFL_PobierzDate(GetDate())
+
+	--ustalenie opiekuna dynamicznego, jeśli jest to automat zadanie zostanie zwrócone do wykonania
+	declare OpiekunCursor cursor for
+	select WFZID,WDZID,WFPID,OpiekunSQL from #tmpZadania where OpiekunTyp &gt; 0
+
+	open OpiekunCursor
+	fetch next from OpiekunCursor into @WFZID,@WDZID,@WFPID,@OpiekunSQL
+	WHILE @@FETCH_STATUS = 0
+	BEGIN
+		set @SQL = 'update #tmpZadania set OpiTyp = O.OpiTyp from ('+@OpiekunSQL+') O where wfzid = @WFZID and wdzid = @WDZID'
+
+		exec sp_executesql @SQL, N'@WFZID int, @WDZID int, @WFPID int', @WFZID = @WFZID, @WDZID = @WDZID, @WFPID = @WFPID
+
+		fetch next from OpiekunCursor into @WFZID,@WDZID,@WFPID,@OpiekunSQL
+	END
+
+	CLOSE OpiekunCursor
+	Deallocate OpiekunCursor
+
+	SET NOCOUNT OFF
+
+	--zwrócenie wszystkich zadań automatu
+	select WFZID WFZ_ID, WDZID WDZ_ID, WFPID WFZ_WFPID, OBITyp, OBINumer from #tmpZadania where OpiTyp = 12289
+
+	drop table #tmpZadania
+
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,243 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="ObliczKontoOpisu"></A><PRE>
+          <FONT SIZE="2"><I>/* ObliczKontoOpisu */</I><BR>
+create procedure CDN.ObliczKontoOpisu @GidNumer_ int
+as
+begin
+
+if not exists(	select owe_gidtyp from ##OpisWymElemTemp 
+		where OWE_KontoOpis is null and owe_gidtyp = 432 and owe_gidnumer = @GidNumer_
+	     ) return(0)
+
+IF NOT EXISTS(SELECT name
+FROM   tempdb..sysobjects
+WHERE  name like '##WyrElemTbl'
+AND   type = 'U')
+BEGIN
+create table ##WyrElemTbl 
+(
+  wyr_id int  
+ ,wyr_GIDNumer int
+ ,wyr_elem varchar(1025) COLLATE Polish_CI_AS
+ ,wyr_wartosc varchar(1025) COLLATE Polish_CI_AS
+ ,wyr_typwymiaru int
+ ,wyr_wartoscost varchar(100) COLLATE Polish_CI_AS
+)
+end
+
+declare @GIDTYP int
+declare @GIDNUMER int
+declare @GIDLP int
+
+declare @WYR varchar(1025)
+declare @WYRELEM varchar(1025)
+declare @id int
+declare @OWE_GIDLP int
+declare @TypWymiaru int
+declare @WYNIK varchar(100)
+declare @Wartosc varchar(1025)
+declare @SQL nvarchar(1025)
+
+DECLARE CurOpisElem CURSOR
+FOR 
+select OWE_ZROTyp, OWE_ZRONumer, OWE_GIDLP, OWE_ZROLp, OWE_KontoDef
+from ##OpisWymElemTemp
+where 	OWE_KontoOpis is null and
+	owe_gidtyp = 432 and
+	owe_gidnumer = @GidNumer_
+
+
+OPEN CurOpisElem
+FETCH NEXT FROM CurOpisElem INTO @GIDTYP, @GIDNUMER, @OWE_GIDLP, @GIDLP, @WYR
+WHILE (@@fetch_status &lt;&gt; -1)
+BEGIN
+ IF (@@fetch_status &lt;&gt; -2)
+ BEGIN
+	delete from ##WyrElemTbl where wyr_GIDNumer = @GidNumer_
+
+	-- podzial wyrazena wejsciowego na tablice elementow, rozdzielenie po znaku '&amp;'
+	set @WYRELEM = @WYR
+	set @id = 0
+	set @WYRELEM = ltrim(rtrim(left(@WYR, case when charindex('&amp;',@WYR)= 0 then len(@WYR) else charindex('&amp;',@WYR)-1 end)))  
+	set @WYR = case when charindex('&amp;',@WYR)=0 then '' else substring(@WYR, charindex('&amp;',@WYR)+1, len(@WYR)) end
+	
+	WHILE (@WYRELEM &lt;&gt; '')
+	BEGIN
+	set @id = @id + 1
+	insert into ##WyrElemTbl(wyr_id, wyr_GIDNumer, wyr_elem, wyr_wartosc, wyr_typwymiaru, wyr_wartoscost)  values
+		(
+		@id, --wyr_id
+		@GidNumer_, --wyr_GIDNumer
+		@WYRELEM, --wyr_elem
+		case --wyr_wartosc
+		when left(@WYRELEM,1) = '''' and right(@WYRELEM,1) = '''' then substring(left(@WYRELEM, len(@WYRELEM)-1), 2, len(@WYRELEM)) 
+		when left(@WYRELEM,14)= 'KontoWymiaru('''then substring(left(@WYRELEM, len(@WYRELEM)-2), 15, len(@WYRELEM))
+		when left(@WYRELEM,1)= '@' 		 then substring(@WYRELEM, 2, len(@WYRELEM))	
+		when left(@WYRELEM,5) = 'SQL(''' and right(@WYRELEM,2) = ''')' 	 then replace(substring(left(@WYRELEM, len(@WYRELEM)-2), 6, len(@WYRELEM)), '''''', '''')
+		else @WYRELEM
+		end,
+		case --wyr_typwymiaru
+		when left(@WYRELEM, 5)  = 'SQL('''  and right(@WYRELEM,2) = ''')'	  then -2
+		when left(@WYRELEM, 1)  = '''' and right(@WYRELEM,1) = ''''		  then -1 
+		when @WYRELEM IN ('KontoWymiaru(''Centrum'')', '@Centrum') 		  then 1  	
+		when @WYRELEM IN ('KontoWymiaru(''Lokalizacja'')', '@Lokalizacja')	  then 2
+		when @WYRELEM IN ('KontoWymiaru(''Kontr. docelowy'')', '@Kontr. docelowy')then 3	
+		when @WYRELEM IN ('KontoWymiaru(''Kategoria'')', '@Kategoria')		  then 4
+		when @WYRELEM IN ('KontoWymiaru(''Projekt'')', '@Projekt')		  then 5
+		when left(@WYRELEM,14) = 'KontoWymiaru(''' OR left(@WYRELEM,1) = '@' 	  then 0 --pozostale wymiary uzytkownika
+		when left(@WYRELEM, 5)  = 'SQL('''  					  then -200 --nieparsowalny SQL 
+		else -100 --nieznane wyrazenie 
+		end,
+		'' -- wyr_wartoscost
+		)   
+	  
+	set @WYRELEM = ltrim(rtrim(left(@WYR, case when charindex('&amp;',@WYR)= 0 then len(@WYR) else charindex('&amp;',@WYR)-1 end)))  
+	set @WYR = case when charindex('&amp;',@WYR)=0 then '' else substring(@WYR, charindex('&amp;',@WYR)+1, len(@WYR)) end
+	END
+	----------------------------------------------------------------------------------------------------
+	-- obliczanie segmentow konta (kolumna wyr_wartoscost)
+	set @id = 1
+	WHILE (@id &lt;=(select isnull(count(*), 0) from ##WyrElemTbl where wyr_GIDNumer = @GidNumer_) )
+	BEGIN
+	select @Wartosc = wyr_wartosc, @TypWymiaru = wyr_TypWymiaru from ##WyrElemTbl  where wyr_id = @id and wyr_GIDNumer = @GidNumer_
+
+	-- obliczanie wartosci wyrazen SQL
+	if @TypWymiaru = -2 
+		begin
+		set @SQL = 'update ##WyrElemTbl set wyr_wartoscost = (' + @Wartosc + ') where wyr_id = ' + cast(@id as varchar(100)) + 'and wyr_GIDNumer = ' + cast(@GidNumer_ as varchar(100))
+		execute @SQL = sp_executesql @SQL
+		if (@SQL &lt;&gt; 0) --jesli update sie nie udal to zamiast konta wprowadzamy znak % 
+		  update ##WyrElemTbl  
+		  set wyr_wartoscost = '%'
+		  where wyr_id = @id and wyr_GIDNumer = @GidNumer_
+		end
+	if @TypWymiaru = -200 
+		begin --dla nieznanego SQLa zamiast konta wprowadzamy znak % 
+		  update ##WyrElemTbl  
+		  set wyr_wartoscost = '%'
+		  where wyr_id = @id and wyr_GIDNumer = @GidNumer_
+		end
+	-- przepisanie stringow 
+	else if @TypWymiaru = -1 
+		update ##WyrElemTbl  set wyr_wartoscost = wyr_wartosc where wyr_id = @id and wyr_GIDNumer = @GidNumer_
+	-- wymiary uzytkownika
+	else if @TypWymiaru = 0 
+		update ##WyrElemTbl  
+		set wyr_wartoscost = 	(select isnull(max(case when ows_element &lt;&gt; '' then ows_element else WYM.wmr_konto end), '')
+			     		from cdn.opiswymselem 
+					join cdn.wymiary WYM on 
+					ows_wmrid = WYM.wmr_id
+					join cdn.wymiary PAR on 
+					PAR.wmr_id = WYM.wmr_rootid
+					where PAR.wmr_nazwa = @Wartosc and ows_typwymiaru = 0 and 
+				 		ows_gidtyp = @GIDTYP and ows_gidnumer = @GIDNUMER and ows_gidlp = @GIDLP
+					) 
+		where wyr_id = @id and wyr_GIDNumer = @GidNumer_
+
+	-- centrum
+	else if @TypWymiaru = 1 
+		update ##WyrElemTbl  
+		set wyr_wartoscost = 	(select isnull(max(frs_konto), '')
+			     		from cdn.opiswymselem 
+					join cdn.frmstruktura on 
+					ows_wmrid = frs_id
+					where ows_typwymiaru = 1 and 
+				 		ows_gidtyp = @GIDTYP and ows_gidnumer = @GIDNUMER and ows_gidlp = @GIDLP
+					) 
+		where wyr_id = @id and wyr_GIDNumer = @GidNumer_
+	-- lokalizacja
+	else if @TypWymiaru = 2 
+		update ##WyrElemTbl  
+		set wyr_wartoscost = 	(select isnull(max(slw_konto), '')
+			     		from cdn.opiswymselem 
+					join cdn.slowniki on 
+					ows_wmrid = slw_id
+					where ows_typwymiaru = 2 and 
+				 		ows_gidtyp = @GIDTYP and ows_gidnumer = @GIDNUMER and ows_gidlp = @GIDLP
+					) 
+		where wyr_id = @id and wyr_GIDNumer = @GidNumer_
+	-- kontrahent docelowy ?????
+	/*
+	else if @TypWymiaru = 3 
+		update ##WyrElemTbl  
+		set wyr_wartoscost = 	(select isnull(max(knt_kontoodbiorcy), '')
+			     		from cdn.opiswymselem 
+					join cdn.kntkarty on 
+					ows_wmrid = knt_gidnumer
+					where ows_typwymiaru = 3 and 
+				 		ows_gidtyp = @GIDTYP and ows_gidnumer = @GIDNUMER and ows_gidlp = @GIDLP
+					) 
+		where wyr_id = @id and wyr_GIDNumer = @GidNumer_
+	*/
+	-- kategoria
+	else if @TypWymiaru = 4 
+		update ##WyrElemTbl  
+		set wyr_wartoscost = 	(select isnull(max(case when ows_element &lt;&gt; '' then ows_element else WYM.wmr_konto end), '')
+			     		from cdn.opiswymselem 
+					join cdn.wymiary WYM on 
+					ows_wmrid = WYM.wmr_id
+					where ows_typwymiaru = 4 and 
+				 		ows_gidtyp = @GIDTYP and ows_gidnumer = @GIDNUMER and ows_gidlp = @GIDLP
+					) 
+		where wyr_id = @id and wyr_GIDNumer = @GidNumer_
+	-- projekt
+	else if @TypWymiaru = 5 
+		update ##WyrElemTbl  
+		set wyr_wartoscost = 	(select isnull(max(prj_konto), '')
+			     		from cdn.opiswymselem 
+					join cdn.prjstruktura on 
+					ows_wmrid = prj_id
+					where ows_typwymiaru = 5 and 
+				 		ows_gidtyp = @GIDTYP and ows_gidnumer = @GIDNUMER and ows_gidlp = @GIDLP
+					) 
+		where wyr_id = @id and wyr_GIDNumer = @GidNumer_
+
+
+	set @id = @id + 1
+	END
+
+	----------------------------------------------------------------------------------------------------
+	--skladanie wyniku
+	set @id = 1
+	set @WYNIK = ''
+	WHILE (@id &lt;=(select isnull(count(*), 0) from ##WyrElemTbl where wyr_GIDNumer = @GidNumer_ ) )
+	BEGIN
+	select @Wartosc = wyr_WartoscOst from ##WyrElemTbl  where wyr_id = @id and wyr_GIDNumer = @GidNumer_
+	set @WYNIK = @WYNIK + @Wartosc
+	set @id = @id + 1
+	END
+
+	----------------------------------------------------------------------------------------------------
+	--uzupełnianie wyliczonej wartosci konta
+	update ##OpisWymElemTemp
+	set OWE_KontoOpis = @WYNIK
+	where 	OWE_GIDLP= @OWE_GIDLP 
+
+ END
+ FETCH NEXT FROM CurOpisElem INTO @GIDTYP, @GIDNUMER, @OWE_GIDLP, @GIDLP, @WYR
+END
+
+CLOSE CurOpisElem
+DEALLOCATE CurOpisElem
+
+end 
+ --&lt;
+GO
+
+GRANT EXECUTE ON CDN.ObliczKontoOpisu TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

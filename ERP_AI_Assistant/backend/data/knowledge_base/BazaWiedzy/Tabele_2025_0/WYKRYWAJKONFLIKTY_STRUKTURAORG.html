@@ -1,0 +1,153 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="WykrywajKonflikty_StrukturaOrg"></A><PRE>
+          <FONT SIZE="2"><I>/* WykrywajKonflikty_StrukturaOrg */</I><BR>
+CREATE PROCEDURE CDN.WykrywajKonflikty_StrukturaOrg
+@SourceName  VARCHAR(255),
+@SourceDatabase  VARCHAR(255),
+@SameServer	TINYINT
+AS
+BEGIN
+
+DECLARE @sql varchar(max)
+DECLARE @sqlJoinOptima varchar(max)
+	
+IF EXISTS (SELECT * FROM TEMPDB..SYSOBJECTS WHERE ID = OBJECT_ID('TEMPDB..##KONFLIKTY2') AND TYPE = 'U')
+    DROP TABLE ##KONFLIKTY2
+
+CREATE TABLE ##KONFLIKTY2(	
+	OPTIMAID INT, 
+	OPTIMAKOD VARCHAR(40), 
+	OPTIMANAZWA VARCHAR(255),
+	OPTIMARODZIC INT,
+	OptimaLokID INT,
+	OptimaNieaktywny INT,
+	Optimakonto varchar(40),
+	XLOptimaID INT,
+	XLID INT, XLNUMER INT, 
+	XLKOD VARCHAR(40), 
+	XLNAZWA VARCHAR(255), 
+	XLRODZIC INT, 
+	XLRODZICOPTIMAID INT,
+	XLOptimaLokID INT,
+	XLAktywny INT,
+	XLKonto varchar(40)
+	) 
+
+TRUNCATE TABLE ##KONFLIKTY
+	
+	IF @SameServer = 0 
+		SET @sqlJoinOptima = ' full join ##KONFLIKTYstrorgOpt on '
+	ELSE
+		SET @sqlJoinOptima = ' full join ['+@SourceName+'].['+@SourceDatabase+'].CDN.DZIALYVIEW on '
+
+SELECT @sql = 
+'	
+insert into ##KONFLIKTY2
+select  
+isnull(DV_DZLID,0) as OptimaID, 
+	isnull(DV_DZLKOD,'''') OptimaKod, 
+	isnull(DV_DZLNazwa,'''') as OptimaNazwa,
+	case 
+		when isnull(DV_DZLParentID,0)=3
+		then 0
+		else isnull(DV_DZLParentID,0)
+	end as OptimaRodzic,
+	case 
+		when isnull(DV_DZLLokID,1)=1
+		then 0
+		else DV_DZLLokID
+	end as OptimaLokID,
+	isnull(DV_DZLNieaktywny,0) as OptimaNieaktywny,
+	isnull(DV_DZLkonto,'''') as OptimaKonto,
+	isnull(a.FRS_OptimaID,0) as XLOptimaID, 
+	isnull(a.FRS_ID,0) as XLID, 
+	isnull(a.FRS_GidNumer,0) as XLNumer,
+	isnull(a.FRS_Nazwa,'''') as XLNazwa,
+	isnull(a.FRS_Opis,'''') as XLNazwa,	
+	case when isnull(a.FRS_GRONUMER,0)=2 then 0 else isnull(a.FRS_GRONUMER,0) end as XLRODZIC, 	
+    ISNULL(b.FRS_OPTIMAID,0) as XLRodzicOptimaID,
+	isnull((select SLW_OptimaID from CDN.Slowniki join CDN.SlownikiStruktura on SLS_Predefiniowany=52 and SLW_SLSID=SLS_ID where SLW_ID=a.FRS_GIDNumer),0) as    
+    XLLokOptimaID,
+    isnull(a.FRS_AktywnyDo,0) as XLAktywny,
+    isnull(a.frs_konto,'''') as XlKonto
+from 
+(select * from cdn.FrmStruktura where FRS_GIDTYP=-4272 and frs_warstwa=2 and FRS_StrTyp=1001) as a 
+      left join CDN.FrmStruktura b on 
+      b.FRS_GIDNUMER=a.FRS_GRONUMER and b.FRS_GIDTYP=-4272 and b.frs_warstwa=2 and b.frs_strtyp=1001
+' + @sqlJoinOptima + ' 
+a.FRS_OptimaID = DV_DZLID
+ and
+(case when isnull(DV_DZLParentID,0)=3
+ then 0
+ else isnull(DV_DZLParentID,0) end) =  ISNULL(b.FRS_OPTIMAID,0);		
+
+ ;with XL as(
+		select R.OptimaID as OptimaID,R.OptimaKod as OptimaKod,R.OPTIMANAZWA as OPTIMANAZWA,R.OptimaRodzic as OptimaRodzic,R.OptimaLokID as OptimaLokID, 
+		R.OptimaNieaktywny as OptimaNieaktywny,R.Optimakonto as Optimakonto, R.XLOPTIMAID as XLOPTIMAID,R.xlid as xlid,R.XLNumer as XLNumer,R.xlkod as xlkod,
+		R.XLNazwa as XLNazwa,R.xlrodzic as xlrodzic,R.XLRodzicOptimaID as XLRodzicOptimaID,R.XLOptimaLokID as XLOptimaLokID, R.XLAktywny as XLAktywny,R.XLKonto as XLKonto, 
+		1 as level from ##konflikty2 R 
+		where R.XLRodzic = 0 and R.XLID &lt;&gt; 0 and R.OPTIMAID = 0
+		UNION ALL
+		select D.OptimaID as OptimaID,D.OptimaKod as OptimaKod,D.OPTIMANAZWA as OPTIMANAZWA,D.OptimaRodzic as OptimaRodzic,D.OptimaLokID as OptimaLokID, 
+		D.OptimaNieaktywny as OptimaNieaktywny,D.Optimakonto as Optimakonto, D.XLOPTIMAID as XLOPTIMAID,D.xlid as xlid,D.XLNumer as XLNumer,D.xlkod as xlkod,
+		D.XLNazwa as XLNazwa,D.xlrodzic as xlrodzic,D.XLRodzicOptimaID as XLRodzicOptimaID,D.XLOptimaLokID as XLOptimaLokID, D.XLAktywny as XLAktywny,D.XLKonto as XLKonto,
+		level + 1 as level from ##konflikty2 D join XL on D.XLRodzic = XL.XLID
+		where D.XLRodzic &lt;&gt; 0 and D.XLID &lt;&gt; 0 and D.OPTIMAID = 0 
+		)
+		insert into ##KONFLIKTY
+		select OptimaID,OptimaKod,OPTIMANAZWA,OptimaRodzic,OptimaLokID,OptimaNieaktywny,Optimakonto,XLOPTIMAID,xlid,XLNumer,xlkod,XLNazwa,xlrodzic,XLRodzicOptimaID,
+		XLOptimaLokID,XLAktywny,XLKonto from XL order by XL.level;
+		
+		;with Optima as(
+		select R.OptimaID as OptimaID,R.OptimaKod as OptimaKod,R.OPTIMANAZWA as OPTIMANAZWA,R.OptimaRodzic as OptimaRodzic,R.OptimaLokID as OptimaLokID, 
+		R.OptimaNieaktywny as OptimaNieaktywny,R.Optimakonto as Optimakonto, R.XLOPTIMAID as XLOPTIMAID,R.xlid as xlid,R.XLNumer as XLNumer,R.xlkod as xlkod,
+		R.XLNazwa as XLNazwa,R.xlrodzic as xlrodzic,R.XLRodzicOptimaID as XLRodzicOptimaID,R.XLOptimaLokID as XLOptimaLokID, R.XLAktywny as XLAktywny,R.XLKonto as XLKonto,
+		1 as level from ##konflikty2 R 
+		where R.OptimaRodzic = 0 and R.OptimaID &lt;&gt; 0 and R.XLID = 0		
+		UNION ALL
+		select D.OptimaID as OptimaID,D.OptimaKod as OptimaKod,D.OPTIMANAZWA as OPTIMANAZWA,D.OptimaRodzic as OptimaRodzic,D.OptimaLokID as OptimaLokID, 
+		D.OptimaNieaktywny as OptimaNieaktywny,D.Optimakonto as Optimakonto, D.XLOPTIMAID as XLOPTIMAID,D.xlid as xlid,D.XLNumer as XLNumer,D.xlkod as xlkod,
+		D.XLNazwa as XLNazwa,D.xlrodzic as xlrodzic,D.XLRodzicOptimaID as XLRodzicOptimaID,D.XLOptimaLokID as XLOptimaLokID, D.XLAktywny as XLAktywny,D.XLKonto as XLKonto,
+		level + 1 as level from ##konflikty2 D join Optima on D.OptimaRodzic = Optima.OptimaID
+		where D.OptimaRodzic &lt;&gt; 0 and D.OptimaID &lt;&gt; 0 and D.XLID = 0
+		)
+		insert into ##KONFLIKTY
+		select OptimaID,OptimaKod,OPTIMANAZWA,OptimaRodzic,OptimaLokID,OptimaNieaktywny,Optimakonto,XLOPTIMAID,xlid,XLNumer,xlkod,XLNazwa,xlrodzic,XLRodzicOptimaID,
+		XLOptimaLokID,XLAktywny,XLKonto from Optima order by Optima.level;
+
+		;with XLOptima as(
+		select R.OptimaID as OptimaID,R.OptimaKod as OptimaKod,R.OPTIMANAZWA as OPTIMANAZWA,R.OptimaRodzic as OptimaRodzic,R.OptimaLokID as OptimaLokID, 
+		R.OptimaNieaktywny as OptimaNieaktywny,R.Optimakonto as Optimakonto, R.XLOPTIMAID as XLOPTIMAID,R.xlid as xlid,R.XLNumer as XLNumer,R.xlkod as xlkod,
+		R.XLNazwa as XLNazwa,R.xlrodzic as xlrodzic,R.XLRodzicOptimaID as XLRodzicOptimaID,R.XLOptimaLokID as XLOptimaLokID, R.XLAktywny as XLAktywny,R.XLKonto as XLKonto,
+		1 as level from ##konflikty2 R 
+		where R.XLRodzic = 0 and R.XLID &lt;&gt; 0 AND R.OptimaID &lt;&gt; 0
+		UNION ALL
+		select D.OptimaID as OptimaID,D.OptimaKod as OptimaKod,D.OPTIMANAZWA as OPTIMANAZWA,D.OptimaRodzic as OptimaRodzic,D.OptimaLokID as OptimaLokID, 
+		D.OptimaNieaktywny as OptimaNieaktywny,D.Optimakonto as Optimakonto, D.XLOPTIMAID as XLOPTIMAID,D.xlid as xlid,D.XLNumer as XLNumer,D.xlkod as xlkod,
+		D.XLNazwa as XLNazwa,D.xlrodzic as xlrodzic,D.XLRodzicOptimaID as XLRodzicOptimaID,D.XLOptimaLokID as XLOptimaLokID, D.XLAktywny as XLAktywny,D.XLKonto as XLKonto,
+		level + 1 as level from ##konflikty2 D join XLOptima on D.XLRodzic = XLOptima.XLID
+		where D.XLRodzic &lt;&gt; 0 and D.XLID &lt;&gt; 0 AND D.OptimaID &lt;&gt; 0
+		)
+		insert into ##KONFLIKTY
+		select OptimaID,OptimaKod,OPTIMANAZWA,OptimaRodzic,OptimaLokID,OptimaNieaktywny,Optimakonto,XLOPTIMAID,xlid,XLNumer,xlkod,XLNazwa,xlrodzic,XLRodzicOptimaID,XLOptimaLokID,
+		XLAktywny,XLKonto from XLOptima order by XLOptima.level;
+  '
+EXEC(@sql)
+
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

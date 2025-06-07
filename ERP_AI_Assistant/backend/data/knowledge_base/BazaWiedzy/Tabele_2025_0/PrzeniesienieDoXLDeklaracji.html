@@ -1,0 +1,203 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="PrzeniesienieDoXLDeklaracji"></A><PRE>
+          <FONT SIZE="2"><I>/* PrzeniesienieDoXLDeklaracji */</I><BR>
+CREATE PROCEDURE CDN.PrzeniesienieDoXLDeklaracji
+@TylkoOstatnieDeklaracje TINYINT
+AS
+BEGIN
+
+	DECLARE @DKN_ID INTEGER
+	DECLARE @DKN_RokMies	INTEGER
+	DECLARE @DKN_Rok		INTEGER
+	DECLARE @DKN_Miesiac		SMALLINT
+	DECLARE @DKN_ProgramID		INT
+	DECLARE @DKN_XL		TINYINT
+	DECLARE @DKN_TypDeklar SMALLINT 
+	DECLARE @DKN_Wersja TINYINT
+	DECLARE @DKN_Identyfikator INTEGER
+	DECLARE @DKN_TS_Zal DATETIME
+	DECLARE @DKN_Znacznik		VARCHAR(1)
+	DECLARE @lLastRokMies	INTEGER
+	DECLARE @lLastTypDekl SMALLINT 
+
+	DECLARE @DKD_Numer INTEGER 
+	DECLARE @DKD_KwotaL DECIMAL(15,2)
+	DECLARE @DKD_KwotaM DECIMAL(15,2)
+	DECLARE @DKD_Nazwa  VARCHAR(100)
+	DECLARE @DKD_Opis   VARCHAR(100)
+	DECLARE @DKD_DKNID  INTEGER 
+
+	DECLARE @MaxDDnID INTEGER
+	DECLARE @MaxDdeID INTEGER
+
+	SELECT @MaxDDnID = isnull(max(DDN_ID),0) FROM CDN.DtsDeklaracjeNag
+	SELECT @MaxDdeID = isnull(max(DDE_ID),0) FROM CDN.DtsDeklaracjeElem
+	SELECT @lLastRokMies = 0
+	IF @TylkoOstatnieDeklaracje = 1 
+	BEGIN
+		DECLARE CursorForDDN CURSOR LOCAL FAST_FORWARD READ_ONLY FOR 
+		SELECT 	[DKN_ID],
+				[DKN_XL],
+				[DKN_PROGRAMID],				
+				[DKN_TYPDEKLAR],
+				[DKN_ROKMIES],
+				[DKN_WERSJA],
+				[DKN_IDENTYFIKATOR],
+				[DKN_TS_Zal]
+		FROM CDN.##DtsTempOptimaDeklNag
+		ORDER BY DKN_RokMies ASC, DKN_Identyfikator ASC
+	END
+	ELSE
+	BEGIN
+		DECLARE CursorForDDN CURSOR LOCAL FAST_FORWARD READ_ONLY FOR 
+		SELECT 	[DKN_ID],
+				[DKN_XL],
+				[DKN_PROGRAMID],				
+				[DKN_TYPDEKLAR],
+				[DKN_ROKMIES],
+				[DKN_WERSJA],
+				[DKN_IDENTYFIKATOR],
+				[DKN_TS_Zal]
+		FROM CDN.##DtsTempOptimaDeklNag
+		ORDER BY DKN_RokMies asc, DKN_Identyfikator DESC
+	END
+
+	OPEN CursorForDDN
+    WHILE 1 = 1 
+	BEGIN
+			FETCH NEXT FROM CursorForDDN INTO
+											@DKN_ID,
+											@DKN_XL,
+											@DKN_PROGRAMID,				
+											@DKN_TYPDEKLAR,
+											@DKN_ROKMIES,
+											@DKN_WERSJA,
+											@DKN_IDENTYFIKATOR,
+											@DKN_TS_Zal
+											
+			IF @@FETCH_STATUS &lt;&gt; 0 
+				 BREAK 
+
+			IF (@TylkoOstatnieDeklaracje = 0  OR  
+			   (@TylkoOstatnieDeklaracje = 1 AND (@lLastRokMies &lt;&gt; @DKN_RokMies OR @lLastTypDekl &lt;&gt; @DKN_TypDeklar)))
+			BEGIN	
+				SELECT @MaxDDnID = @MaxDDnID + 1
+
+				INSERT INTO [CDN].[DtsDeklaracjeNag]
+						   ([DDN_ID]
+						   ,[DDN_ProgramId]
+						   ,[DDN_XL]
+						   ,[DDN_TypDeklar]
+						   ,[DDN_RokMiesiac]
+						   ,[DDN_Identyfikator]
+						   ,[DDN_Wersja]
+						   ,[DDN_DkNId]
+						   ,[DDN_TStamp])
+					 VALUES
+						   (@MaxDDnID
+						   ,@DKN_PROGRAMID
+						   ,@DKN_XL
+						   ,@DKN_TYPDEKLAR
+						   ,@DKN_ROKMIES
+						   ,@DKN_IDENTYFIKATOR
+						   ,@DKN_WERSJA
+						   ,@DKN_ID
+						   ,cast(@DKN_TS_Zal as INTEGER))
+
+				IF @@ERROR &lt;&gt; 0
+				BEGIN
+					RAISERROR('614:Błąd dodawania rekordu do DtsDeklaracjeNag', 16, 1) 
+				END	
+
+				DECLARE CursorForDDE CURSOR LOCAL FAST_FORWARD READ_ONLY FOR 
+				SELECT 	[DKD_Numer],
+						[DKD_KwotaL],				
+						[DKD_KwotaM],
+						[DKD_Nazwa],
+						[DKD_Opis]
+				FROM CDN.##DtsTempOptimaDeklKwoty
+				WHERE DKD_DKNID = @DKN_ID
+
+				OPEN CursorForDDE
+				WHILE 1 = 1 
+				BEGIN
+					FETCH NEXT FROM CursorForDDE INTO
+										@DKD_Numer,
+										@DKD_KwotaL,				
+										@DKD_KwotaM,
+										@DKD_Nazwa,
+										@DKD_Opis
+
+					IF @@FETCH_STATUS &lt;&gt; 0 
+						 BREAK 
+
+					SELECT @MaxDDeID = @MaxDDeID + 1
+
+					IF @DKD_Numer = 54900 AND @DKN_TypDeklar = 3 
+						SELECT @DKD_Numer = 1
+					ELSE IF @DKD_Numer = 55000 AND @DKN_TypDeklar = 3 
+						SELECT @DKD_Numer = 2
+					ELSE IF @DKD_Numer = 55100 AND @DKN_TypDeklar = 3 AND @DKN_WERSJA &lt;19 --tylko dla starszych wersji --kwota do wyplaty
+                        SELECT @DKD_Numer = 3
+					ELSE IF @DKD_Numer = 55102 AND @DKN_TypDeklar = 3 --kwota do wyplaty
+                        SELECT @DKD_Numer = 3
+                     ELSE IF @DKD_Numer = 55101 AND @DKN_TypDeklar = 3
+						SELECT @DKD_Numer = 4 
+					ELSE IF @DKD_Numer = 150041 AND @DKN_TypDeklar = 6 
+						SELECT @DKD_Numer = 1
+					ELSE IF @DKD_Numer = 150042 AND @DKN_TypDeklar = 6 
+						SELECT @DKD_Numer = 2
+					ELSE IF @DKD_Numer = 150043 AND @DKN_TypDeklar = 6   AND @DKN_WERSJA &lt;16 --tylko dla starszych wersji --kwota do wyplaty				
+						SELECT @DKD_Numer = 3					
+				   ELSE IF @DKD_Numer = 150181  AND @DKN_TypDeklar = 6  --kwota do wyplaty
+						SELECT @DKD_Numer = 3
+				   ELSE IF @DKD_Numer = 150180  AND @DKN_TypDeklar = 6  
+						SELECT @DKD_Numer = 4
+				   ELSE IF (@DKD_Numer = 150043 AND @DKN_TypDeklar = 6  AND @DKN_WERSJA &gt;=16) OR (@DKD_Numer = 55100 AND @DKN_TypDeklar = 3 AND @DKN_WERSJA &gt;=19) 
+						CONTINUE -- aby nie pobierać poprzednich pól dla nowych wersji deklaracji 
+								
+					INSERT INTO [CDN].[DtsDeklaracjeElem]
+							   ([DDE_Id]
+							   ,[DDE_DdNId]
+							   ,[DDE_Pozycja]
+							   ,[DDE_KwotaL]
+							   ,[DDE_KwotaM]
+							   ,[DDE_Nazwa]
+							   ,[DDE_Opis])
+						 VALUES
+							   (@MaxDDeID
+							   ,@MaxDDnID
+							   ,@DKD_Numer
+							   ,@DKD_KwotaL
+							   ,@DKD_KwotaM
+							   ,@DKD_Nazwa
+							   ,@DKD_Opis)
+
+					IF @@ERROR &lt;&gt; 0
+					BEGIN
+						RAISERROR('615:Błąd dodawania rekordu do DtsDeklaracjeElem', 16, 1) 
+					END				
+				END
+				CLOSE CursorForDDE
+				DEALLOCATE CursorForDDE
+		END
+	END
+	CLOSE CursorForDDN
+    DEALLOCATE CursorForDDN
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

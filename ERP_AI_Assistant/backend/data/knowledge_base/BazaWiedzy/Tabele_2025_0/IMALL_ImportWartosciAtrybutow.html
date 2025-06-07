@@ -1,0 +1,98 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[IMALL_ImportWartosciAtrybutow]"></A><PRE>
+          <FONT SIZE="2"><I>/* [IMALL_ImportWartosciAtrybutow] */</I><BR>
+CREATE  PROCEDURE [CDN].[IMALL_ImportWartosciAtrybutow]
+ @XML XML
+ AS
+SET NOCOUNT ON
+
+CREATE TABLE #Errors
+(
+	Blad	VARCHAR(512)
+)
+
+DECLARE @index                  INT,
+		@max_index              INT,
+        @buffer_size			INT,
+        @xml_buffer             XML,
+        @xml_tmp                XML
+        
+DECLARE @Atk_Id					INT,
+		@AtK_IdM				INT,
+		@AtW_IdM				INT,
+		@AtW_Nazwa				VARCHAR(200),
+		@Aktywny				INT
+	
+		
+DECLARE @Opis                   VARCHAR(512),
+		@IloscWierszy			INT,
+		@FirmaID				INT
+
+SELECT	@FirmaID = CDN.GIDFirma()
+		,@IloscWierszy = 0;
+
+SET @XML = @xml.query('for $vals in /AttributeValues/Values
+					   for $val in $vals/Value
+					   return 
+					   &lt;Value AttrID="{$vals/@AttrID}"&gt;
+						{$val/@*}
+					   &lt;/Value&gt;')
+SELECT  @index = 0,
+                @max_index = CAST(CAST(@xml.query ('count(Value)') AS VARCHAR(20)) AS INT),
+                @buffer_size = 200
+
+	WHILE @index &lt; @max_index
+    BEGIN
+		SET XACT_ABORT ON;
+
+		BEGIN TRY
+			BEGIN TRANSACTION;
+			IF @index % @buffer_size = 0
+				SET @xml_buffer = ( SELECT @xml.query('Value[position()&gt; sql:variable("@index") and position() &lt;= sql:variable("@index") + sql:variable("@buffer_size") ] ')  )
+			SET @xml_tmp = ( SELECT @xml_buffer.query('Value[position()= (sql:variable("@index") mod sql:variable("@buffer_size")) + 1 ] ')  )
+			SELECT
+				@AtK_IdM = ATW.Val.value('@AttrID','INT'),
+				@AtW_IdM = ATW.Val.value('@ID','INT'),
+				@AtW_Nazwa = ATW.Val.value('@Name','VARCHAR(200)'),
+				@Aktywny = ATW.Val.value('@Active','INT')
+			FROM @xml_tmp.nodes('Value') AS ATW(Val)
+			
+			INSERT INTO CDN.AtrybutyWartosci(AtW_AtKId, AtW_Wartosc, AtW_OddZrdID)
+			SELECT TOP 1 AtK_ID, @AtW_Nazwa, @AtW_IdM
+			FROM CDN.AtrybutyKlasy 
+			WHERE AtK_OddZrdID = @AtK_IdM AND @Aktywny = 1
+				  AND NOT EXISTS(SELECT * FROM AtrybutyWartosci A WHERE A.AtW_Wartosc = @AtW_Nazwa AND A.AtW_AtKId = AtK_ID)
+			
+			SET @IloscWierszy = @IloscWierszy + @@ROWCOUNT
+			COMMIT TRANSACTION;
+		END TRY
+		BEGIN CATCH
+			IF XACT_STATE() &lt;&gt; 0
+				ROLLBACK TRANSACTION;
+				INSERT INTO #Errors(Blad) VALUES ('Błąd podczas dodawania wartości atrybutu o ID='+ CAST(@AtW_IdM AS VARCHAR(20)) + ': ' + CDN.Log_SzczegolyBledu(ERROR_NUMBER(),ERROR_PROCEDURE(),ERROR_LINE(),ERROR_MESSAGE()))
+		END CATCH
+		SET @index = @index + 1
+	END
+	IF EXISTS(SELECT * FROM #Errors)
+	  SELECT #Errors.Blad AS Blad, '' AS Informacja FROM #Errors
+	ELSE
+	  SELECT '' AS Blad, 'Ilość zaimportowanych wartości atrybutów: '+ CAST(@IloscWierszy AS VARCHAR(10)) AS Informacja
+	DROP TABLE #Errors
+RETURN 0
+SET NOCOUNT OFF
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

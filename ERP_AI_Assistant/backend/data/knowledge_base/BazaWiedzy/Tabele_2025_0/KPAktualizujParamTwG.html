@@ -1,0 +1,113 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="KPAktualizujParamTwG"></A><PRE>
+          <FONT SIZE="2"><I>/* KPAktualizujParamTwG */</I><BR>
+CREATE PROCEDURE CDN.KPAktualizujParamTwG
+(
+	@p_KPNId		INTEGER,		--Identyfikator konfiguracji produktu
+	@p_TwGTyp		SMALLINT,		--GidTyp grupy towarowej
+	@p_TwGNumer		INTEGER,		--GidNumer grupy towarowej
+	@p_PokazBledy	TINYINT=1,			--Czy pokazywać błędy 
+	@Wynik			INTEGER OUTPUT
+	/*
+		0 : Operacja zakończona sukcesem (zwrócono ID nowej konfiguracji)
+		-11 : Wystąpił błąd podczas usuwania parametrów różnicujących konfiguratory.
+		-12 : Wystąpił błąd podczas dodawania aktualnych parametrów różnicujących konfiguratory.
+		Inne &lt;0	: Błąd z podrzędnej procedury/funkcji wywoływanej wewnątrz tej metody
+	*/			
+)
+AS
+BEGIN
+
+	/* Początek transakcja */
+	DECLARE @TranCount INTEGER
+	SELECT @TranCount=@@TRANCOUNT;
+	IF @TranCount&gt;0 
+		SAVE TRANSACTION Tran_KPAktualizujParamTwG;
+	ELSE 
+		BEGIN TRANSACTION Tran_KPAktualizujParamTwG;
+
+	--Usunięcie aktulnych odpowiedzi
+	DELETE CDN.KonfProdElem WHERE KPE_KPNId=@p_KPNId AND KPE_TypPytania=1
+    IF @@error &lt;&gt; 0 
+    BEGIN
+		IF XACT_STATE()&lt;&gt;0 rollback tran Tran_KPAktualizujParamTwG
+		if @p_PokazBledy=1
+			RAISERROR ('Wystąpił błąd podczas usuwania parametrów różnicujących konfiguratory.', 16, 1)		            
+		SET @Wynik = -11
+        RETURN @Wynik
+    END
+
+	--Dodanie parametrów różnicujących konfiguratory:
+	INSERT INTO CDN.KonfProdElem
+			   (KPE_KPNId
+			   ,KPE_ObiTyp
+			   ,KPE_ObiFirma
+			   ,KPE_ObiNumer
+			   ,KPE_ObiLp
+			   ,KPE_TypPytania
+			   ,KPE_Pozycja
+			   ,KPE_Tresc
+			   ,KPE_AtkId
+			   ,KPE_Odpowiedz
+			   ,KPE_OdpTyp
+			   ,KPE_OdpFirma
+			   ,KPE_OdpNumer
+			   ,KPE_OdpLp
+			   ,KPE_Edycja
+			   ,KPE_Wymagaj
+			   ,KPE_Kopiuj)
+	SELECT		@p_KPNId--KPE_KPNId
+				,PRK_ObiTyp--KPE_ObiTyp
+				,PRK_ObiFirma--KPE_ObiFirma
+				,PRK_ObiNumer--KPE_ObiNumer
+				,PRK_ObiLp--KPE_ObiLp
+				,1--KPE_TypPytania
+				,PRK_Pozycja--KPE_Pozycja
+				,REPLACE(REPLACE(REPLACE(SLW_WartoscS2,'&lt;AtK_Nazwa&gt;',AtK_Nazwa),'&lt;TwG_Nazwa&gt;',TwG_Nazwa),'&lt;TwG_Kod&gt;',TwG_Kod)--KPE_Tresc
+				,PRK_AtkId--KPE_AtkId
+				,''--KPE_Odpowiedz
+			    ,0--KPE_OdpTyp
+			    ,0--KPE_OdpFirma
+			    ,0--KPE_OdpNumer
+			    ,0--KPE_OdpLp
+				,1--PRK_Edycja
+				,1--PRK_Wymagaj
+				,1--PRK_Kopiuj
+		FROM CDN.ParamRozKonf
+		JOIN CDN.AtrybutyKlasy ON AtK_ID=PRK_AtkId
+		JOIN CDN.Slowniki ON SLW_ID=PRK_DefPytId
+		JOIN CDN.TwrGrupy ON TwG_GIDTyp=@p_TwGTyp and TwG_GIDNumer=@p_TwGNumer
+		WHERE PRK_ObiTyp=@p_TwGTyp AND PRK_ObiNumer=@p_TwGNumer
+
+    IF @@error &lt;&gt; 0 
+    BEGIN
+		IF XACT_STATE()&lt;&gt;0 rollback tran Tran_KPAktualizujParamTwG
+		if @p_PokazBledy=1
+			RAISERROR ('Wystąpił błąd podczas dodawania aktualnych parametrów różnicujących konfiguratory.', 16, 1)		            
+		SET @Wynik = -12
+        RETURN @Wynik
+    END
+
+	IF @TranCount=0 COMMIT TRAN Tran_KPAktualizujParamTwG;
+	/* Koniec transakcja */
+
+    --OK:
+	SET @Wynik = 0
+    RETURN @Wynik
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

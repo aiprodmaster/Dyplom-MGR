@@ -1,0 +1,175 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="ProdHistoriaTowaru"></A><PRE>
+          <FONT SIZE="2"><I>/* ProdHistoriaTowaru */</I><BR>
+CREATE FUNCTION CDN.ProdHistoriaTowaru (@TwrNumer INT,@TypElementu TINYINT)
+RETURNS @Zlecenia TABLE (
+  TypElementu SMALLINT,
+  DataWystawienia INT,
+  NumerDok VARCHAR(50),
+  StatusDok VARCHAR(60),
+  Ilosc	DECIMAL(15,4),
+  Zrealizowano DECIMAL(15,4),
+  KolorDok INT,
+  Proces VARCHAR(40),
+  Operacja VARCHAR(40),
+  KntTyp SMALLINT,
+  KntNumer INT,
+  FrsId INT,
+  DokNumer INT
+)
+AS
+BEGIN
+	DECLARE @ElementyZlecen INT,@MaterialyNaOper SMALLINT,@MaterialyNaReal SMALLINT,
+	@ProduktyNaOper SMALLINT,@ProduktyNaReal SMALLINT
+	
+	SET @ElementyZlecen = 1
+	SET @MaterialyNaOper = 2
+	SET @MaterialyNaReal = 4
+	SET @ProduktyNaOper = 8
+	SET @ProduktyNaReal = 16
+	
+	IF @TypElementu&amp;@ElementyZlecen = @ElementyZlecen
+	BEGIN
+		INSERT INTO @Zlecenia 
+			SELECT @ElementyZlecen,PZL_DataWystawienia,
+			CASE WHEN PZL_PrjId = 0 THEN CDN.NumerDokumentu(14343,0,14343,PZL_Numer,PZL_Rok,PZL_Seria,PZL_Miesiac)
+			ELSE CDN.NumerDokumentu(14350,0,14350,PZL_Numer,PZL_Rok,PZL_Seria,PZL_Miesiac)END,PZL_Status,PZE_Ilosc,
+				(SELECT ISNULL(SUM(TrS_Ilosc),0) 
+					from CDN.ProdLinki
+					INNER JOIN CDN.ProdZasoby ON PZA_Id = PLK_ObiNumer AND PLK_ObiTyp = 14346 AND PZA_TwrTyp &gt; 0
+					INNER JOIN CDN.TraSElem  ON Trs_ZlcNumer = Pza_Id AND Trs_ZlcTyp = 14346
+					INNER JOIN Cdn.TraElem on TrE_GIDTyp=TrS_GIDTyp AND TrE_GIDNumer=TrS_GIDNumer AND TrE_GIDLp=TrS_GIDLp
+						Where PLK_PZEId = PZE_Id AND TrE_twrNumer = Pza_TwrNumer AND PZL_ID = PZA_PZLId AND TrS_GIDTyp = 1617),
+				0,'','',PZL_KntTyp,PZL_KntNumer,PZL_FrsId,PZL_Id
+			FROM CDN.ProdZlecenia
+			INNER JOIN CDN.ProdZlecElem ON PZL_Id = PZE_Zlecenie			
+			WHERE PZE_TwrNumer = @TwrNumer
+	END
+	IF @TypElementu&amp;@MaterialyNaOper = @MaterialyNaOper OR @TypElementu&amp;@ProduktyNaOper = @ProduktyNaOper
+	BEGIN
+		INSERT INTO @Zlecenia
+			SELECT CASE WHEN Rez_GIDTyp = 2576 THEN @MaterialyNaOper ELSE @ProduktyNaOper END,PZL_DataWystawienia,
+				CASE WHEN PZL_PrjId = 0 THEN CDN.NumerDokumentu(14343,0,14343,PZL_Numer,PZL_Rok,PZL_Seria,PZL_Miesiac)
+			ELSE CDN.NumerDokumentu(14350,0,14350,PZL_Numer,PZL_Rok,PZL_Seria,PZL_Miesiac)END,PZL_Status,
+				Rez_Ilosc-Rez_Zrealizowano,Rez_Zrealizowano,1,PTE_Kod,PTC_Kod,PZL_KntTyp,PZL_KntNumer,PZL_FrsId,PZL_Id
+			FROM Cdn.ProdZlecenia
+			INNER JOIN Cdn.ProdProcesy on PZL_ID = PPC_Zlecenie
+			INNER JOIN CDN.ProdTechnologia ON PPC_Technologia = PTE_Id
+			INNER JOIN Cdn.ProdCzynnosci c on PPC_Id = c.PCZ_Proces
+			INNER JOIN Cdn.ProdTechnologiaCzynnosci on c.Pcz_TechnologiaCzynnosc= Ptc_Id
+			LEFT JOIN Cdn.Rezerwacje on Rez_ZrdTyp = 14345 and Rez_ZrdNumer = c.Pcz_Id AND Rez_TwrNumer = @TwrNumer
+			WHERE Rez_TwrNumer = @TwrNumer AND 
+				(@TypElementu&amp;@MaterialyNaOper = @MaterialyNaOper OR Rez_GIDTyp &lt;&gt; 2576) 
+				AND (@TypElementu&amp;@ProduktyNaOper = @ProduktyNaOper OR Rez_GIDTyp &lt;&gt; 2592)
+			
+			IF @TypElementu&amp;@MaterialyNaOper = @MaterialyNaOper
+			BEGIN
+				INSERT INTO @Zlecenia					
+					SELECT @MaterialyNaOper,PZL_DataWystawienia,
+					CASE WHEN PZL_PrjId = 0 THEN CDN.NumerDokumentu(14343,0,14343,PZL_Numer,PZL_Rok,PZL_Seria,PZL_Miesiac)
+						ELSE CDN.NumerDokumentu(14350,0,14350,PZL_Numer,PZL_Rok,PZL_Seria,PZL_Miesiac)END,
+						PZL_Status,0,Trs_Ilosc,0,PTE_Kod,PTC_Kod,PZL_KntTyp,PZL_KntNumer,PZL_FrsId,PZL_Id
+					FROM Cdn.ProdZlecenia
+					INNER JOIN Cdn.ProdProcesy on PZL_ID = PPC_Zlecenie
+					INNER JOIN CDN.ProdTechnologia ON PPC_Technologia = PTE_Id
+					INNER JOIN Cdn.ProdCzynnosci c on PPC_Id = c.PCZ_Proces
+					INNER JOIN Cdn.ProdTechnologiaCzynnosci on c.Pcz_TechnologiaCzynnosc= Ptc_Id
+					INNER JOIN  Cdn.TrasElem on Trs_ZlcTyp = 14345 and Trs_ZlcNumer =  c.Pcz_Id
+					INNER JOIN Cdn.TraNag ON TrN_GIDNumer=TrS_GIDNumer and Trn_Stan in (3,5)
+					INNER JOIN Cdn.TraElem ON TrE_GIDNumer=TrS_GIDNumer AND TrE_GIDLp=TrS_GIDLp
+					WHERE TrE_TwrNumer = @TwrNumer
+			END
+			INSERT INTO @Zlecenia
+				SELECT CASE WHEN PTZ_TypZasobu &lt;&gt; 0 AND PTZ_TypZasobu &lt;&gt; 4 THEN @MaterialyNaOper ELSE @ProduktyNaOper END,PZL_DataWystawienia,
+				CASE WHEN PZL_PrjId = 0 THEN CDN.NumerDokumentu(14343,0,14343,PZL_Numer,PZL_Rok,PZL_Seria,PZL_Miesiac)
+					ELSE CDN.NumerDokumentu(14350,0,14350,PZL_Numer,PZL_Rok,PZL_Seria,PZL_Miesiac)END,PZL_Status,
+					PZA_Ilosc,0,0,PTE_Kod,PTC_Kod,PZL_KntTyp,PZL_KntNumer,PZL_FrsId,PZL_Id FROM CDN.ProdZlecenia
+				INNER JOIN CDN.ProdProcesy ON PZL_Id = PPC_Zlecenie
+				INNER JOIN CDN.ProdTechnologia ON PPC_Technologia = PTE_Id
+				INNER JOIN CDN.ProdCzynnosci ON PPC_Id = PCZ_Proces
+				INNER JOIN CDN.ProdTechnologiaCzynnosci ON PCZ_TechnologiaCzynnosc = PTC_Id
+				INNER JOIN CDN.ProdZasoby ON PZA_Czynnosc = PCZ_Id AND PZA_TwrTyp &gt;0 AND PZA_Planowany = 1
+				INNER JOIN CDN.ProdTechnologiaZasoby ON PZA_TechnologiaZasob = PTZ_Id
+				WHERE PZA_TwrNumer = @TwrNumer 
+				AND ((@TypElementu&amp;@MaterialyNaOper = @MaterialyNaOper AND PTZ_TypZasobu &lt;&gt; 0 AND PTZ_TypZasobu &lt;&gt; 4) 
+					OR (@TypElementu&amp;@ProduktyNaOper = @ProduktyNaOper AND PTZ_TypZasobu IN(0,4)))
+			 
+	END
+	
+	IF @TypElementu&amp;@MaterialyNaReal = @MaterialyNaReal
+	BEGIN
+		INSERT @Zlecenia
+		SELECT TypElem,PZL_DataWystawienia,NrDok,PZL_Status,PZA_Ilosc,Zrealizowano,
+			CASE WHEN PZA_Zasob &lt;&gt; 0 AND PZA_Ilosc = Zrealizowano THEN 0 ELSE Kolor END,PTE_Kod,PTC_Kod,PZL_KntTyp,PZL_KntNumer,PZL_FrsId,PZL_Id
+			FROM (SELECT @MaterialyNaReal TypElem,PZL_DataWystawienia,
+				CASE WHEN PZL_PrjId = 0 THEN CDN.NumerDokumentu(14343,0,14343,PZL_Numer,PZL_Rok,PZL_Seria,PZL_Miesiac)
+			ELSE CDN.NumerDokumentu(14350,0,14350,PZL_Numer,PZL_Rok,PZL_Seria,PZL_Miesiac)END NrDok,
+				PZL_Status, PZA_Ilosc,	
+				CASE WHEN Z.PZA_Zasob &lt;&gt; 0 THEN SUM(ISNULL(Z.PZA_Ilosc,0))ELSE 
+				(SELECT ISNULL(SUM(TrS_Ilosc),0) from CDN.TraSElem T
+							INNER JOIN Cdn.TraElem on TrE_GIDTyp=T.TrS_GIDTyp AND TrE_GIDNumer=T.TrS_GIDNumer AND TrE_GIDLp=T.TrS_GIDLp
+							WHERE T.TrS_ZlcTyp=14346 and T.TrS_ZlcNumer=Pza_Id and  TrE_twrNumer = Pza_TwrNumer) END Zrealizowano,
+				SUM(CASE WHEN ISNULL(TrN_Stan,0) IN (3,5) THEN 0 ELSE 1 END) Kolor,PTE_Kod,PTC_Kod,PZL_KntTyp,PZL_KntNumer,PZL_FrsId,PZL_Id,
+				PZA_Zasob
+			FROM Cdn.ProdZlecenia 
+			INNER JOIN Cdn.ProdProcesy on PZL_ID = PPC_Zlecenie
+			INNER JOIN CDN.ProdTechnologia ON PPC_Technologia = PTE_Id
+			INNER JOIN Cdn.ProdCzynnosci on PPC_Id = PCZ_Proces 
+			INNER JOIN Cdn.ProdTechnologiaCzynnosci PT on Pcz_TechnologiaCzynnosc= PT.Ptc_Id 
+			INNER JOIN Cdn.ProdZasoby Z on PZA_czynnosc = Pcz_Id and PZA_TwrTyp &gt; 0 and Pza_TypZasobu&lt;&gt;0 AND PZA_TypZasobu &lt;&gt; 4
+			LEFT OUTER JOIN Cdn.TrasElem TE on TE.Trs_ZlcTyp = 14346  and TE.Trs_ZlcNumer = Pza_Id 
+			LEFT OUTER JOIN CDN.TraNag ON TrN_GIDNumer = TE.TrS_GIDNumer 
+			WHERE PZA_TwrNumer = @TwrNumer AND PZA_Planowany = 0
+			GROUP BY PZA_Id,PZA_Zasob,PZL_Numer,PZL_Rok,PZL_Miesiac,PZL_Seria,PTE_Kod,PTC_Kod,PZL_DataWystawienia,PZL_Status,
+				PZL_KntTyp,PZL_KntNumer,PZL_FrsId,PZL_Id,PZA_Ilosc,PZL_PrjId,PZA_TwrNumer) A
+	END
+	
+	IF @TypElementu&amp;@ProduktyNaReal = @ProduktyNaReal
+	BEGIN
+		INSERT @Zlecenia
+			SELECT TypElem,PZL_DataWystawienia,NrDok,PZL_Status,PZA_Ilosc,Zrealizowano,
+			CASE WHEN Polprod &lt;&gt; 0 AND PZA_Ilosc = Zrealizowano THEN 0 ELSE Kolor END,PTE_Kod,PTC_Kod,PZL_KntTyp,PZL_KntNumer,
+			PZL_FrsId,PZL_Id
+			FROM(SELECT @ProduktyNaReal TypElem,PZL_DataWystawienia,
+				CASE WHEN PZL_PrjId = 0 THEN CDN.NumerDokumentu(14343,0,14343,PZL_Numer,PZL_Rok,PZL_Seria,PZL_Miesiac)
+					ELSE CDN.NumerDokumentu(14350,0,14350,PZL_Numer,PZL_Rok,PZL_Seria,PZL_Miesiac)END NrDok,PZL_Status,PZA_Ilosc,
+				CASE WHEN Z.PZA_TypZasobu=0 then 
+				(SELECT ISNULL(SUM(TrS_Ilosc),0) from CDN.TraSElem T
+						INNER JOIN Cdn.TraElem on TrE_GIDTyp=T.TrS_GIDTyp AND TrE_GIDNumer=T.TrS_GIDNumer AND TrE_GIDLp=T.TrS_GIDLp
+						Where T.TrS_ZlcTyp=14346 and T.TrS_ZlcNumer=Z.Pza_Id AND TrE_twrNumer = Z.Pza_TwrNumer) + 
+					ISNULL((SELECT SUM(S.PZA_Ilosc) 
+						FROM CDN.ProdZasoby S WHERE S.PZA_Zasob=Z.PZA_Id),0) WHEN Z.Pza_Zasob &lt;&gt; 0 THEN SUM(Z.PZA_Ilosc) ELSE 0 END Zrealizowano,
+				SUM(CASE WHEN ISNULL(TrN_Stan,0) IN (3,5) THEN 0 ELSE 1 END) Kolor,
+				PTE_Kod,PTC_Kod,PZL_KntTyp,PZL_KntNumer,PZL_FrsId,PZL_Id,
+				CASE WHEN EXISTS(SELECT * FROM CDN.ProdZasoby SP WHERE SP.PZA_Zasob = Z.PZA_ID) THEN 1 ELSE 0 END Polprod
+			FROM CDN.ProdZlecenia
+			INNER JOIN Cdn.ProdProcesy on PZL_ID = PPC_Zlecenie
+			INNER JOIN CDN.ProdTechnologia ON PPC_Technologia = PTE_Id
+			INNER JOIN Cdn.ProdCzynnosci c on PPC_Id = c.PCZ_Proces 
+			INNER JOIN Cdn.ProdTechnologiaCzynnosci PT on c.Pcz_TechnologiaCzynnosc= PT.Ptc_Id  
+			INNER JOIN Cdn.ProdZasoby Z on Z.PZA_czynnosc = c.Pcz_Id and Z.PZA_TwrTyp &gt; 0 and Z.Pza_TypZasobu IN(0,4)
+			LEFT OUTER JOIN Cdn.TrasElem TE on TE.Trs_ZlcTyp = 14346  and TE.Trs_ZlcNumer = Pza_Id 
+			LEFT OUTER JOIN CDN.TraNag ON TrN_GIDNumer = TE.TrS_GIDNumer 
+			WHERE PZA_TwrNumer = @TwrNumer AND PZA_Planowany = 0
+			GROUP BY PZA_Id,PZL_Numer,PZL_Rok,PZL_Miesiac,PZL_Seria,PTE_Kod,PTC_Kod,PZL_DataWystawienia,PZA_Zasob,PZA_TypZasobu,
+				PZL_Status,PZL_KntTyp,PZL_KntNumer,PZL_FrsId,PZL_Id,PZA_Ilosc,PZL_PrjId,Z.PZA_TwrNumer) P
+	END
+	
+	RETURN
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

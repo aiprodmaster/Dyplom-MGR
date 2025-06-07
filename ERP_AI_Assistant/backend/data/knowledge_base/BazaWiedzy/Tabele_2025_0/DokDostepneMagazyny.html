@@ -1,0 +1,642 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="DokDostepneMagazyny"></A><PRE>
+          <FONT SIZE="2"><I>/* DokDostepneMagazyny */</I><BR>
+CREATE FUNCTION CDN.DokDostepneMagazyny (
+	@lFrsId INT,
+	@lFrsIdW INT,
+	@lTypDok SMALLINT,
+	@lZrdTyp SMALLINT,
+	@lZrdNumer INT,
+	@lFrSIDZrd INT,
+	@lTypDokZrd SMALLINT
+	)
+RETURNS @Tablica TABLE (
+	Mag_GIDTyp SMALLINT,
+	Mag_GIDFirma INT,
+	Mag_GIDNumer INT,
+	Mag_GIDLp SMALLINT,
+	Mag_Kod VARCHAR(30),
+	Mag_Wewnetrzny SMALLINT
+	)
+	-- =============================================
+	-- Funkcja zwracająca listę dostępnych magazynów dla danego miejsca w strukturze
+	-- firmy i rodzaju dokumentu.
+	-- Zwracana lista jest częscią wspólną listy magazynów przypisanych do danego typu dokumentu
+	-- a listą magaynów dostępnych w danym węźle
+	--
+	-- Parametry:
+	-- @lFrSID   -	identfikator miejsca w strukturze firmy ( gdy 0 - warunek na magazyny
+	--		w węźle pomijany)
+	-- @lFrSIDW   -	identfikator miejsca w strukturze firmy właściciela dokumentu( gdy 0 - warunek na magazyny
+	--		w węźle pomijany
+	-- @lTypDok  -	typ dokumentu (gdy 0 - warunek pomijany)
+	-- w przypadku gdy oba parametry zerowe to zwracana lista magazynów z CDN.Magazyny
+	--
+	-- @lZrdTyp    - GIDTyp dokumentu źródłowego
+	-- @lZrdTyp    - GIDNumer dokumentu źródłowego
+	-- @lFrsIDZrd  - FrsID dokumentu źródłowego
+	-- @lTypDokZrd - typ dokumentu źródłowego
+	-- Trzy z ostatnich parametrów służą do zawężenia listy dostępnych magazynów o dostępne
+	-- na dokumencie źródłowym. @lZrdTyp i @lZrdNumer mają wyższy priorytet niż @lTypDokZrd
+	-- i w tej wersji dotyczą GIDu rezerwacji dokumentu źródłowego
+	-- Jeśli parametry zerowe to ignorowane
+	--
+	-- Utworzono: 2003.03.13 Krzysztof Klimek
+	-- Modyfikacje
+	--		2003.04.02 Krzysztof Klimek ( @lZrdTyp, @lZrdNumer, @lTypDokZrd)
+	--      2003.04.04 KK ( wlaczenie obslugi, gdy lTypDok=0 i lFrsId&lt;&gt;0
+	--	2003.05.16 KK (dodanie obsługi dla parametrów FRSID=1 lub FRSIDW=1 - wtedy tak samo dla wartosci 0)
+	-- v3.1	
+	--	2003.10.28 KK - dla zamówień wewnętrznych powinny byc brane magazyny z definicji ZW dla Roota (TID:51798)
+AS
+BEGIN
+	DECLARE @lFrsID_Oryg INT
+	DECLARE @IleSprawdzen INT
+	DECLARE @lDokumentZrd INT -- 0- brak, 1-wg GIDu rezerwacji, 2- wg TypDokZrd
+
+	SET @lFrSID_Oryg = @lFrSID
+	SET @lDokumentZrd = 0
+	SET @lTypDok = (
+			SELECT CDN.DokDokumentDefiniowany(@lTypDok)
+			)
+
+	--IF @lTypDok = 0  -- nie obslugujemy definicji2003.03,
+	--   SET  @lFrSID = 0
+	--IF ( @lTypDok &lt;&gt;0 )
+	BEGIN
+		IF (@lTypDok = 9473)
+			SET @lFrsID = 1 -- TID:51798
+		SET @lFrSId = (
+				SELECT CDN.DokWezelRzeczywistyMag(@lFrSID)
+				)
+
+		IF (
+				@lFrSID = @lFrSIDW
+				OR @lFrSID_Oryg = @lFrSIDW
+				OR @lFrSIDW = 0
+				)
+		BEGIN
+			SET @IleSprawdzen = 1
+			SET @lFrsIDW = @lFrSID -- KK 2003.05.28
+				--	   	IF 	(@lFrsIDW = 1) 
+				--			set @lFrsIDW = 0
+		END
+		ELSE
+		BEGIN
+			SET @lFrSIDW = (
+					SELECT CDN.DokWezelrzeczywistyMag(@lFrSIDW)
+					)
+
+			IF (
+					@lFrSIDW = @lFrSID
+					OR @lFrSID = 0
+					OR @lFrSIDW = 0
+					)
+				SET @IleSprawdzen = 1
+			ELSE
+				SET @IleSprawdzen = 2
+		END
+	END
+
+	--  KK:20030516 
+	IF (
+			@lFrsId = 0
+			AND @lFrSIDW &gt; 0
+			)
+	BEGIN
+		SET @lFrsID = @lFrSIDW
+		SET @lFrsIDW = 0
+	END
+
+	--IF (@lFrSID &lt;&gt; 0 and @lTypDok&lt;&gt;0)
+	IF (@lTypDok &lt;&gt; 0) -- KK:20030516
+	BEGIN
+		IF (
+				(
+					@lZrdTyp = 2576
+					OR @lZrdTyp = 2592
+					)
+				AND @lZrdNumer &lt;&gt; 0
+				)
+			SET @lDokumentZrd = 1
+		ELSE
+		BEGIN
+			SET @lZrdTyp = 0
+			SET @lZrdNumer = 0
+
+			IF (
+					@lTypDokZrd &lt;&gt; 0
+					AND @lFrSIDZrd &lt;&gt; 0
+					)
+			BEGIN
+				SET @lTypDokZrd = (
+						SELECT CDN.DokDokumentDefiniowany(@lTypDokZrd)
+						)
+
+				IF (@lTypDokZrd &lt;&gt; 0)
+				BEGIN
+					SET @lFrSIDZrd = (
+							SELECT CDN.DokWezelrzeczywistyMag(@lFrSIDZrd)
+							)
+					--			   IF (@lFrsIDZrd&lt;&gt;0)
+					SET @lDokumentZrd = 2
+				END
+			END
+		END
+	END
+
+	-- SET @lFrSIdW = ( select CDN.DokwezelrzeczywistyMag(@lFrSIDW)  )
+	IF (
+			@lFrSID &lt;&gt; 0
+			AND @lTypDok &lt;&gt; 0
+			)
+	BEGIN
+		IF (@lDokumentZrd = 0)
+			IF (@IleSprawdzen = 2)
+				INSERT INTO @Tablica
+				SELECT asd.Mag_GIDTyp,
+					asd.Mag_GIDFirma,
+					asd.Mag_GIDNumer,
+					asd.Mag_GIDLp,
+					asd.Mag_Kod,
+					asd.Mag_Wewnetrzny
+				FROM CDN.Magazyny as asd,--pg sql tego wymaga
+					CDN.DokDefinicje,
+					CDN.DokRelacje,
+					CDN.FrmObiekty FRM1,
+					CDN.FrmObiekty FRM2
+				WHERE Dok_FrSID = 1
+					AND Dok_GIDTyp = @lTypDok
+					AND Dok_ID = DoR_ID
+					AND DoR_MsTyp = 208
+					AND DoR_MsNumer = asd.Mag_GIDNumer
+					AND FRM1.Fro_FRMID = @lFrsID
+					AND FRM1.Fro_GIDTyp = 208
+					AND FRM1.Fro_GIDNumer = asd.Mag_GIDNumer
+					AND FRM2.Fro_FRMID = @lFrsIDW
+					AND FRM2.Fro_GIDTyp = 208
+					AND FRM2.Fro_GIDNumer = asd.Mag_GIDNumer
+			ELSE
+				INSERT INTO @Tablica
+				SELECT asd.Mag_GIDTyp,
+					asd.Mag_GIDFirma,
+					asd.Mag_GIDNumer,
+					asd.Mag_GIDLp,
+					asd.Mag_Kod,
+					asd.Mag_Wewnetrzny
+				FROM CDN.Magazyny as asd,
+					CDN.DokDefinicje,
+					CDN.DokRelacje,
+					CDN.FrmObiekty
+				WHERE Dok_FrSID = 1
+					AND Dok_GIDTyp = @lTypDok
+					AND Dok_ID = DoR_ID
+					AND DoR_MsTyp = 208
+					AND DoR_MsNumer = asd.Mag_GIDNumer
+					AND Fro_FRMID = @lFrsID
+					AND Fro_GIDTyp = 208
+					AND Fro_GIDNumer = asd.Mag_GIDNumer
+		ELSE IF (@lDokumentZrd = 1) -- dodatkowo wg GIDu rezerwacji
+			IF (@IleSprawdzen = 2)
+				INSERT INTO @Tablica
+				SELECT asd.Mag_GIDTyp,
+					asd.Mag_GIDFirma,
+					asd.Mag_GIDNumer,
+					asd.Mag_GIDLp,
+					asd.Mag_Kod,
+					asd.Mag_Wewnetrzny
+				FROM CDN.Magazyny as asd,
+					CDN.DokDefinicje,
+					CDN.DokRelacje,
+					CDN.FrmObiekty FRM1,
+					CDN.FrmObiekty FRM2,
+					CDN.RezMagazyny
+				WHERE Dok_FrSID = 1
+					AND Dok_GIDTyp = @lTypDok
+					AND Dok_ID = DoR_ID
+					AND DoR_MsTyp = 208
+					AND DoR_MsNumer = asd.Mag_GIDNumer
+					AND FRM1.Fro_FRMID = @lFrsID
+					AND FRM1.Fro_GIDTyp = 208
+					AND FRM1.Fro_GIDNumer = asd.Mag_GIDNumer
+					AND FRM2.Fro_FRMID = @lFrsIDW
+					AND FRM2.Fro_GIDTyp = 208
+					AND FRM2.Fro_GIDNumer = asd.Mag_GIDNumer
+					AND ReM_RezTyp = @lZrdTyp
+					AND ReM_RezNumer = @lZrdNumer
+					AND ReM_MagNumer = asd.Mag_GIDNumer
+			ELSE
+				INSERT INTO @Tablica
+				SELECT asd.Mag_GIDTyp,
+					asd.Mag_GIDFirma,
+					asd.Mag_GIDNumer,
+					asd.Mag_GIDLp,
+					asd.Mag_Kod,
+					asd.Mag_Wewnetrzny
+				FROM CDN.Magazyny as asd,
+					CDN.DokDefinicje,
+					CDN.DokRelacje,
+					CDN.FrmObiekty,
+					CDN.RezMagazyny
+				WHERE Dok_FrSID = 1
+					AND Dok_GIDTyp = @lTypDok
+					AND Dok_ID = DoR_ID
+					AND DoR_MsTyp = 208
+					AND DoR_MsNumer = asd.Mag_GIDNumer
+					AND Fro_FRMID = @lFrsID
+					AND Fro_GIDTyp = 208
+					AND Fro_GIDNumer = asd.Mag_GIDNumer
+					AND ReM_RezTyp = @lZrdTyp
+					AND ReM_RezNumer = @lZrdNumer
+					AND ReM_MagNumer = asd.Mag_GIDNumer
+		ELSE -- wg typu dokumentu źródłowego
+		IF (@lFrsIDZrd = 0)
+			IF (@IleSprawdzen = 2)
+				INSERT INTO @Tablica
+				SELECT asd.Mag_GIDTyp,
+					asd.Mag_GIDFirma,
+					asd.Mag_GIDNumer,
+					asd.Mag_GIDLp,
+					asd.Mag_Kod,
+					asd.Mag_Wewnetrzny
+				FROM CDN.Magazyny as asd,
+					CDN.DokDefinicje Dok1,
+					CDN.DokRelacje Dor1,
+					CDN.FrmObiekty FRM1,
+					CDN.FrmObiekty FRM2,
+					CDN.DokDefinicje Dok2,
+					CDN.DokRelacje Dor2
+				WHERE Dok1.Dok_FrSID = 1
+					AND Dok1.Dok_GIDTyp = @lTypDok
+					AND Dok1.Dok_ID = Dor1.DoR_ID
+					AND Dor1.DoR_MsTyp = 208
+					AND Dor1.DoR_MsNumer = asd.Mag_GIDNumer
+					AND FRM1.Fro_FRMID = @lFrsID
+					AND FRM1.Fro_GIDTyp = 208
+					AND FRM1.Fro_GIDNumer = asd.Mag_GIDNumer
+					AND FRM2.Fro_FRMID = @lFrsIDW
+					AND FRM2.Fro_GIDTyp = 208
+					AND FRM2.Fro_GIDNumer = asd.Mag_GIDNumer
+					AND Dok2.Dok_FrSID = 1
+					AND Dok2.Dok_GIDTyp = @lTypDokZrd
+					AND Dok2.Dok_ID = Dor2.DoR_ID
+					AND Dor2.DoR_MsTyp = 208
+					AND Dor2.DoR_MsNumer = asd.Mag_GIDNumer
+			ELSE
+				INSERT INTO @Tablica
+				SELECT asd.Mag_GIDTyp,
+					asd.Mag_GIDFirma,
+					asd.Mag_GIDNumer,
+					asd.Mag_GIDLp,
+					asd.Mag_Kod,
+					asd.Mag_Wewnetrzny
+				FROM CDN.Magazyny as asd,
+					CDN.DokDefinicje Dok1,
+					CDN.DokRelacje Dor1,
+					CDN.FrmObiekty Frm1,
+					CDN.DokDefinicje Dok2,
+					CDN.DokRelacje Dor2
+				WHERE Dok1.Dok_FrSID = 1
+					AND Dok1.Dok_GIDTyp = @lTypDok
+					AND Dok1.Dok_ID = Dor1.DoR_ID
+					AND Dor1.DoR_MsTyp = 208
+					AND Dor1.DoR_MsNumer = asd.Mag_GIDNumer
+					AND FRM1.Fro_FRMID = @lFrsID
+					AND FRM1.Fro_GIDTyp = 208
+					AND FRM1.Fro_GIDNumer = asd.Mag_GIDNumer
+					AND Dok2.Dok_FrSID = 1
+					AND Dok2.Dok_GIDTyp = @lTypDokZrd
+					AND Dok2.Dok_ID = Dor2.DoR_ID
+					AND Dor2.DoR_MsTyp = 208
+					AND Dor2.DoR_MsNumer = asd.Mag_GIDNumer
+		ELSE IF (@IleSprawdzen = 2)
+			INSERT INTO @Tablica
+			SELECT asd.Mag_GIDTyp,
+				asd.Mag_GIDFirma,
+				asd.Mag_GIDNumer,
+				asd.Mag_GIDLp,
+				asd.Mag_Kod,
+				asd.Mag_Wewnetrzny
+			FROM CDN.Magazyny as asd,
+				CDN.DokDefinicje Dok1,
+				CDN.DokRelacje Dor1,
+				CDN.FrmObiekty FRM1,
+				CDN.FrmObiekty FRM2,
+				CDN.DokDefinicje Dok2,
+				CDN.DokRelacje Dor2,
+				CDN.FrmObiekty FRM3
+			WHERE Dok1.Dok_FrSID = 1
+				AND Dok1.Dok_GIDTyp = @lTypDok
+				AND Dok1.Dok_ID = Dor1.DoR_ID
+				AND Dor1.DoR_MsTyp = 208
+				AND Dor1.DoR_MsNumer = asd.Mag_GIDNumer
+				AND FRM1.Fro_FRMID = @lFrsID
+				AND FRM1.Fro_GIDTyp = 208
+				AND FRM1.Fro_GIDNumer = asd.Mag_GIDNumer
+				AND FRM2.Fro_FRMID = @lFrsIDW
+				AND FRM2.Fro_GIDTyp = 208
+				AND FRM2.Fro_GIDNumer = asd.Mag_GIDNumer
+				AND FRM3.Fro_FRMID = @lFrsIDZrd
+				AND FRM3.Fro_GIDTyp = 208
+				AND FRM3.Fro_GIDNumer = asd.Mag_GIDNumer
+				AND Dok2.Dok_FrSID = 1
+				AND Dok2.Dok_GIDTyp = @lTypDokZrd
+				AND Dok2.Dok_ID = Dor2.DoR_ID
+				AND Dor2.DoR_MsTyp = 208
+				AND Dor2.DoR_MsNumer = asd.Mag_GIDNumer
+		ELSE
+			INSERT INTO @Tablica
+			SELECT asd.Mag_GIDTyp,
+				asd.Mag_GIDFirma,
+				asd.Mag_GIDNumer,
+				asd.Mag_GIDLp,
+				asd.Mag_Kod,
+				asd.Mag_Wewnetrzny
+			FROM CDN.Magazyny as asd,
+				CDN.DokDefinicje Dok1,
+				CDN.DokRelacje Dor1,
+				CDN.FrmObiekty Frm1,
+				CDN.DokDefinicje Dok2,
+				CDN.DokRelacje Dor2,
+				CDN.FrmObiekty FRM3
+			WHERE Dok1.Dok_FrSID = 1
+				AND Dok1.Dok_GIDTyp = @lTypDok
+				AND Dok1.Dok_ID = Dor1.DoR_ID
+				AND Dor1.DoR_MsTyp = 208
+				AND Dor1.DoR_MsNumer = asd.Mag_GIDNumer
+				AND FRM1.Fro_FRMID = @lFrsID
+				AND FRM1.Fro_GIDTyp = 208
+				AND FRM1.Fro_GIDNumer = asd.Mag_GIDNumer
+				AND FRM3.Fro_FRMID = @lFrsIDZrd
+				AND FRM3.Fro_GIDTyp = 208
+				AND FRM3.Fro_GIDNumer = asd.Mag_GIDNumer
+				AND Dok2.Dok_FrSID = 1
+				AND Dok2.Dok_GIDTyp = @lTypDokZrd
+				AND Dok2.Dok_ID = Dor2.DoR_ID
+				AND Dor2.DoR_MsTyp = 208
+				AND Dor2.DoR_MsNumer = asd.Mag_GIDNumer
+	END
+	ELSE
+	BEGIN
+		IF (
+				@lFrSID &lt;&gt; 0
+				AND @lTypDok = 0
+				)
+		BEGIN
+			IF (@IleSprawdzen = 2)
+			BEGIN
+				INSERT INTO @Tablica
+				SELECT asd.Mag_GIDTyp,
+					asd.Mag_GIDFirma,
+					asd.Mag_GIDNumer,
+					asd.Mag_GIDLp,
+					asd.Mag_Kod,
+					asd.Mag_Wewnetrzny
+				FROM CDN.Magazyny as asd,
+					CDN.FrmObiekty FRM1,
+					CDN.FrmObiekty FRM2
+				WHERE FRM1.Fro_FRMID = @lFrsID
+					AND FRM1.Fro_GIDTyp = 208
+					AND FRM1.Fro_GIDNumer = asd.Mag_GIDNumer
+					AND FRM2.Fro_FRMID = @lFrsIDW
+					AND FRM2.Fro_GIDTyp = 208
+					AND FRM2.Fro_GIDNumer = asd.Mag_GIDNumer
+			END
+			ELSE
+			BEGIN
+				INSERT INTO @Tablica
+				SELECT asd.Mag_GIDTyp,
+					asd.Mag_GIDFirma,
+					asd.Mag_GIDNumer,
+					asd.Mag_GIDLp,
+					asd.Mag_Kod,
+					asd.Mag_Wewnetrzny
+				FROM CDN.Magazyny as asd,
+					CDN.FrmObiekty
+				WHERE Fro_FRMID = @lFrsID
+					AND Fro_GIDTyp = 208
+					AND Fro_GIDNumer = asd.Mag_GIDNumer
+			END
+		END
+		ELSE
+		BEGIN
+			IF @lFrSID = 0
+				AND @lTypDok &lt;&gt; 0
+			BEGIN
+				IF (@lDokumentZrd = 0)
+				BEGIN
+					INSERT INTO @Tablica
+					SELECT asd.Mag_GIDTyp,
+						asd.Mag_GIDFirma,
+						asd.Mag_GIDNumer,
+						asd.Mag_GIDLp,
+						asd.Mag_Kod,
+						asd.Mag_Wewnetrzny
+					FROM CDN.Magazyny as asd,
+						CDN.DokDefinicje,
+						CDN.DokRelacje
+					WHERE Dok_FrSID = 1
+						AND Dok_GIDTyp = @lTypDok
+						AND Dok_ID = DoR_ID
+						AND DoR_MsTyp = 208
+						AND DoR_MsNumer = asd.Mag_GIDNumer
+				END
+				ELSE
+				BEGIN
+					IF (@lDokumentZrd = 1) -- dodatkowo wg GIDu rezerwacji
+					BEGIN
+						INSERT INTO @Tablica
+						SELECT asd.Mag_GIDTyp,
+							asd.Mag_GIDFirma,
+							asd.Mag_GIDNumer,
+							asd.Mag_GIDLp,
+							asd.Mag_Kod,
+							asd.Mag_Wewnetrzny
+						FROM CDN.Magazyny as asd,
+							CDN.DokDefinicje,
+							CDN.DokRelacje,
+							CDN.RezMagazyny
+						WHERE Dok_FrSID = 1
+							AND Dok_GIDTyp = @lTypDok
+							AND Dok_ID = DoR_ID
+							AND DoR_MsTyp = 208
+							AND DoR_MsNumer = asd.Mag_GIDNumer
+							AND ReM_RezTyp = @lZrdTyp
+							AND ReM_RezNumer = @lZrdNumer
+							AND ReM_MagNumer = asd.Mag_GIDNumer
+					END
+					ELSE -- wg typu dokumentu źródłowego
+					BEGIN
+						IF (@lFrSIDZrd = 0)
+						BEGIN
+							INSERT INTO @Tablica
+							SELECT asd.Mag_GIDTyp,
+								asd.Mag_GIDFirma,
+								asd.Mag_GIDNumer,
+								asd.Mag_GIDLp,
+								asd.Mag_Kod,
+								asd.Mag_Wewnetrzny
+							FROM CDN.Magazyny as asd,
+								CDN.DokDefinicje Dok1,
+								CDN.DokRelacje Dor1,
+								CDN.DokDefinicje Dok2,
+								CDN.DokRelacje Dor2
+							WHERE Dok1.Dok_FrSID = 1
+								AND Dok1.Dok_GIDTyp = @lTypDok
+								AND Dok1.Dok_ID = Dor1.DoR_ID
+								AND Dor1.DoR_MsTyp = 208
+								AND Dor1.DoR_MsNumer = asd.Mag_GIDNumer
+								AND Dok2.Dok_FrSID = 1
+								AND Dok2.Dok_GIDTyp = @lTypDokZrd
+								AND Dok2.Dok_ID = Dor2.DoR_ID
+								AND Dor2.DoR_MsTyp = 208
+								AND Dor2.DoR_MsNumer = asd.Mag_GIDNumer
+						END
+						ELSE
+						BEGIN
+							INSERT INTO @Tablica
+							SELECT asd.Mag_GIDTyp,
+								asd.Mag_GIDFirma,
+								asd.Mag_GIDNumer,
+								asd.Mag_GIDLp,
+								asd.Mag_Kod,
+								asd.Mag_Wewnetrzny
+							FROM CDN.Magazyny as asd,
+								CDN.DokDefinicje Dok1,
+								CDN.DokRelacje Dor1,
+								CDN.DokDefinicje Dok2,
+								CDN.DokRelacje Dor2,
+								CDN.FrmObiekty
+							WHERE Dok1.Dok_FrSID = 1
+								AND Dok1.Dok_GIDTyp = @lTypDok
+								AND Dok1.Dok_ID = Dor1.DoR_ID
+								AND Dor1.DoR_MsTyp = 208
+								AND Dor1.DoR_MsNumer = asd.Mag_GIDNumer
+								AND Dok2.Dok_FrSID = 1
+								AND Dok2.Dok_GIDTyp = @lTypDokZrd
+								AND Dok2.Dok_ID = Dor2.DoR_ID
+								AND Dor2.DoR_MsTyp = 208
+								AND Dor2.DoR_MsNumer = asd.Mag_GIDNumer
+								AND Fro_FRMID = @lFrsIDZrd
+								AND Fro_GIDTyp = 208
+								AND Fro_GIDNumer = asd.Mag_GIDNumer
+						END
+					END
+				END
+			END
+			ELSE
+			BEGIN
+				INSERT INTO @Tablica
+				SELECT asd.Mag_GIDTyp,
+					asd.Mag_GIDFirma,
+					asd.Mag_GIDNumer,
+					asd.Mag_GIDLp,
+					asd.Mag_Kod,
+					asd.Mag_Wewnetrzny
+				FROM CDN.Magazyny as asd
+			END
+		END
+	END
+
+	RETURN
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="DokDostepneMagazynyWgKonfig"></A><PRE>
+          <FONT SIZE="2"><I>/* DokDostepneMagazynyWgKonfig */</I><BR>
+CREATE FUNCTION CDN.DokDostepneMagazynyWgKonfig (
+	@lFrsId INT,
+	@lFrsIdW INT,
+	@lDokTyp SMALLINT,
+	@lZrdTyp SMALLINT,
+	@lZrdNumer INT,
+	@lFrSIDZrd INT,
+	@lDokTypZrd SMALLINT,
+	@UzywajMagLinki TINYINT = NULL
+	)
+RETURNS @TablicaWgKonfig TABLE (
+	Mag_GIDTyp SMALLINT,
+	Mag_GIDFirma INT,
+	Mag_GIDNumer INT,
+	Mag_GIDLp SMALLINT,
+	Mag_Kod VARCHAR(30),
+	Mag_Wewnetrzny SMALLINT
+	)
+AS
+BEGIN
+	DECLARE @lFrsID_Oryg INT
+
+	SET @lFrSID_Oryg = @lFrSID
+
+	IF (@lDokTyp = 9473)
+		SET @lFrsID = 1 -- TID:51798
+
+	IF (
+			@lFrSID = @lFrSIDW
+			OR @lFrSID_Oryg = @lFrSIDW
+			OR @lFrSIDW = 0
+			)
+	BEGIN
+		SET @lFrsIDW = @lFrSID -- KK 2003.05.28
+	END
+
+	IF coalesce(@UzywajMagLinki,(select case when kon_wartosc = '1' then 1 else 0 end from cdn.konfig where kon_numer = 9852 and kon_lp = 0)) = 1
+		IF @lFrSIDZrd &lt;&gt; 0
+			INSERT INTO @TablicaWgKonfig
+			SELECT dostepne.Mag_GIDTyp,
+				dostepne.Mag_GIDFirma,
+				dostepne.Mag_GIDNumer,
+				dostepne.Mag_GIDLp,
+				dostepne.Mag_Kod,
+				dostepne.Mag_Wewnetrzny
+			FROM CDN.DokDostepneMagazynyLinkiZrd(@lFrSID, @lFrSIDW, CDN.DokDokumentDefiniowany(@lDokTyp), @lFrSIDZrd, @lDokTypZrd) as dostepne
+		ELSE IF @lZrdTyp &lt;&gt; 0
+			INSERT INTO @TablicaWgKonfig
+			SELECT dostepne.Mag_GIDTyp,
+				dostepne.Mag_GIDFirma,
+				dostepne.Mag_GIDNumer,
+				dostepne.Mag_GIDLp,
+				dostepne.Mag_Kod,
+				dostepne.Mag_Wewnetrzny
+			FROM CDN.DokDostepneMagazynyLinkiRez(@lFrSID, @lFrSIDW, CDN.DokDokumentDefiniowany(@lDokTyp), @lZrdTyp, @lZrdNumer) as dostepne
+		ELSE
+			INSERT INTO @TablicaWgKonfig
+			SELECT dostepne.Mag_GIDTyp,
+				dostepne.Mag_GIDFirma,
+				dostepne.Mag_GIDNumer,
+				dostepne.Mag_GIDLp,
+				dostepne.Mag_Kod,
+				dostepne.Mag_Wewnetrzny
+			FROM CDN.DokDostepneMagazynyLinki(@lFrSID, @lFrSIDW, CDN.DokDokumentDefiniowany(@lDokTyp)) as dostepne
+	ELSE
+		INSERT INTO @TablicaWgKonfig
+		SELECT dostepne.Mag_GIDTyp,
+			dostepne.Mag_GIDFirma,
+			dostepne.Mag_GIDNumer,
+			dostepne.Mag_GIDLp,
+			dostepne.Mag_Kod,
+			dostepne.Mag_Wewnetrzny
+		FROM CDN.DokDostepneMagazyny(@lFrsId, @lFrsIdW, @lDokTyp, @lZrdTyp, @lZrdNumer, @lFrSIDZrd, @lDokTypZrd) as dostepne -- pg sql wymaga nazwy
+
+	RETURN
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

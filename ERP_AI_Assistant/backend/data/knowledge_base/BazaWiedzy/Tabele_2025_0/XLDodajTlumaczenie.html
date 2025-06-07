@@ -1,0 +1,290 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[XLDodajTlumaczenie]"></A><PRE>
+          <FONT SIZE="2"><I>/* [XLDodajTlumaczenie] */</I><BR>
+CREATE PROCEDURE [CDN].[XLDodajTlumaczenie]
+@Typ					smallint, -- typ obiektu do którego dodajemy tłumaczenie
+@Numer					int, -- numer obiektu do którego dodajemy tłumaczenie
+@Lp						smallint, -- lp obiektu do którego dodajemy tłumaczenie
+@JezykId				int, -- identyfikator języka dla którego dodajemy tłumaczenie
+@Kod					varchar(255), -- tłumaczenie kodu w odpowiednim języku
+@Nazwa					varchar(255), -- tłumaczenie nazwy w odpowiednim języku
+@Opis					varchar(255), -- tłumaczenie opisu w odpowiednim języku
+
+@IgnorujBledy			tinyint = NULL -- by nie robiło raiserror przy błędzie
+
+AS
+declare @Blad			tinyint
+declare @FirmaId				int
+
+SET NOCOUNT ON
+BEGIN TRAN
+set @FirmaId  =  CDN.GIDFirma()
+
+if @JezykId is null or @JezykId = 0 or not exists(select * from CDN.SlownikiStruktura join CDN.Slowniki on SLW_SLSId=SLS_Id where SLW_Aktywny=1 and SLS_Predefiniowany=95 and SLW_ID=@JezykId)
+	begin
+        rollback tran
+        if @IgnorujBledy is null
+			raiserror('Błędny identyfikator języka - (-1)',16,1)
+        return -1
+	end
+	
+if @Typ = 16 /*Typ_Twr*/
+	if not exists(select * from CDN.TwrKarty where Twr_GIDNumer=@Numer) select @Blad=1 else select @Lp=0
+else if @Typ = -16 /*Typ_Grp*/
+	if not exists(select * from CDN.TwrGrupy where TwG_GIDNumer=@Numer) select @Blad=1 else select @Lp=0
+else if @Typ = 14416 /*Typ_AtrybutKlasa*/
+	if not exists(select * from CDN.AtrybutyKlasy where AtK_ID=@Numer) select @Blad=1 else select @Lp=0
+else if @Typ = 14417 /*Typ_AtrybutWartosc*/
+	if not exists(select * from CDN.AtrybutyWartosci where AtW_ID=@Numer) select @Blad=1 else select @Lp=0
+else
+	begin
+        rollback tran
+        if @IgnorujBledy is null
+			raiserror('Błędny typ obiektu - (-2)',16,1)
+        return -2
+	end
+
+if @Blad is not null and @Blad&gt;0	
+	begin
+        rollback tran
+        if @IgnorujBledy is null
+			raiserror('Błędny numer obiektu - (-3)',16,1)
+        return -3
+	end
+
+if @Typ = 16 /*Typ_Twr*/
+	begin
+		select @Kod = ''
+			
+		if @Nazwa is null or @Nazwa=''
+			begin
+				rollback tran
+				if @IgnorujBledy is null
+					raiserror('Tłumaczenie nazwy jest wymagane dla danego obiektu - (-4)',16,1)
+				return -4
+			end		
+		else if exists(select * from CDN.Tlumaczenia where TLM_Jezyk=@JezykId and TLM_Lp=@Lp and TLM_Numer=@Numer and TLM_Pole=2 and TLM_Typ=@Typ)
+			begin
+				rollback tran
+				if @IgnorujBledy is null
+					raiserror('Istnieje tłumaczenie nazwy dla danego obiektu - (-5)',16,1)
+				return -5
+			end		
+		else					
+			begin
+				INSERT INTO [CDN].[Tlumaczenia]
+				([TLM_Typ],[TLM_Numer],[TLM_Lp],[TLM_Pole],[TLM_Jezyk],[TLM_Tekst])
+				VALUES
+				(@Typ,@Numer,@Lp,2,@JezykId,@Nazwa)
+				if @@error &lt;&gt; 0
+					begin
+						rollback tran
+						if @IgnorujBledy is null
+								raiserror ('Błąd podczas dodawania tłumaczenia nazwy - (-33)', 16, 1)
+						return -33
+					end
+			end
+
+		if @Opis is not null and @Opis&lt;&gt;'' 
+			begin
+				if not exists(select * from CDN.TwrOpisy where TwO_TwrNumer=@Numer and TwO_TwrLp=@Lp and TwO_Jezyk=@JezykId)
+				--if not exists(select * from CDN.Tlumaczenia where TLM_Jezyk=@JezykId and TLM_Lp=@Lp and TLM_Numer=@Numer and TLM_Pole=3 and TLM_Typ=@Typ)
+					begin
+						--INSERT INTO [CDN].[Tlumaczenia]
+						--([TLM_Typ],[TLM_Numer],[TLM_Lp],[TLM_Pole],[TLM_Jezyk],[TLM_Tekst])
+						--VALUES
+						--(@Typ,@Numer,@Lp,3,@JezykId,@Opis)
+						INSERT INTO [CDN].[TwrOpisy]
+						([TwO_TwrTyp],[TwO_TwrFirma],[TwO_TwrNumer],[TwO_TwrLp],[TwO_Typ],[TwO_Jezyk],[TwO_Opis],[TwO_CzasModyfikacji])
+						VALUES
+						(16,@FirmaId,@Numer,@Lp,0,@JezykId,@Opis,DATEDIFF(s,CONVERT(datetime,'1990-01-01',120),CONVERT(datetime,GETDATE(),120)))						
+						if @@error &lt;&gt; 0
+							begin
+								rollback tran
+								if @IgnorujBledy is null
+										raiserror ('Błąd podczas dodawania tłumaczenia opisu - (-34)', 16, 1)
+								return -34
+							end
+					end
+				else
+					begin
+						rollback tran
+						if @IgnorujBledy is null
+							raiserror('Istnieje tłumaczenie opisu dla danego obiektu - (-6)',16,1)
+						return -6
+					end
+			end			
+	end	
+else 
+if @Typ = -16 /*Typ_Grp*/
+	begin
+		select @Opis = ''
+			
+		if @Kod is null or @Kod=''
+			begin
+				rollback tran
+				if @IgnorujBledy is null
+					raiserror('Tłumaczenie kodu jest wymagane dla danego obiektu - (-7)',16,1)
+				return -7
+			end		
+		else if exists(select * from CDN.Tlumaczenia where TLM_Jezyk=@JezykId and TLM_Lp=@Lp and TLM_Numer=@Numer and TLM_Pole=1 and TLM_Typ=@Typ)
+			begin
+				rollback tran
+				if @IgnorujBledy is null
+					raiserror('Istnieje tłumaczenie kodu dla danego obiektu - (-8)',16,1)
+				return -8
+			end		
+		else					
+			begin
+				INSERT INTO [CDN].[Tlumaczenia]
+				([TLM_Typ],[TLM_Numer],[TLM_Lp],[TLM_Pole],[TLM_Jezyk],[TLM_Tekst])
+				VALUES
+				(@Typ,@Numer,@Lp,1,@JezykId,@Kod)
+				if @@error &lt;&gt; 0
+					begin
+						rollback tran
+						if @IgnorujBledy is null
+								raiserror ('Błąd podczas dodawania tłumaczenia kodu - (-35)', 16, 1)
+						return -35
+					end
+			end
+			
+		if @Nazwa is null or @Nazwa=''
+			begin
+				rollback tran
+				if @IgnorujBledy is null
+					raiserror('Tłumaczenie nazwy jest wymagane dla danego obiektu - (-4)',16,1)
+				return -4
+			end		
+		else if exists(select * from CDN.Tlumaczenia where TLM_Jezyk=@JezykId and TLM_Lp=@Lp and TLM_Numer=@Numer and TLM_Pole=2 and TLM_Typ=@Typ)
+			begin
+				rollback tran
+				if @IgnorujBledy is null
+					raiserror('Istnieje tłumaczenie nazwy dla danego obiektu - (-5)',16,1)
+				return -5
+			end		
+		else					
+			begin
+				INSERT INTO [CDN].[Tlumaczenia]
+				([TLM_Typ],[TLM_Numer],[TLM_Lp],[TLM_Pole],[TLM_Jezyk],[TLM_Tekst])
+				VALUES
+				(@Typ,@Numer,@Lp,2,@JezykId,@Nazwa)
+				if @@error &lt;&gt; 0
+					begin
+						rollback tran
+						if @IgnorujBledy is null
+								raiserror ('Błąd podczas dodawania tłumaczenia nazwy - (-33)', 16, 1)
+						return -33
+					end
+			end
+	end
+else 
+if @Typ = 14416 /*Typ_AtrybutKlasa*/
+	begin
+		select @Kod = ''
+			
+		if @Nazwa is null or @Nazwa=''
+			begin
+				rollback tran
+				if @IgnorujBledy is null
+					raiserror('Tłumaczenie nazwy jest wymagane dla danego obiektu - (-4)',16,1)
+				return -4
+			end		
+		else if exists(select * from CDN.Tlumaczenia where TLM_Jezyk=@JezykId and TLM_Lp=@Lp and TLM_Numer=@Numer and TLM_Pole=2 and TLM_Typ=@Typ)
+			begin
+				rollback tran
+				if @IgnorujBledy is null
+					raiserror('Istnieje tłumaczenie nazwy dla danego obiektu - (-5)',16,1)
+				return -5
+			end		
+		else					
+			begin
+				INSERT INTO [CDN].[Tlumaczenia]
+				([TLM_Typ],[TLM_Numer],[TLM_Lp],[TLM_Pole],[TLM_Jezyk],[TLM_Tekst])
+				VALUES
+				(@Typ,@Numer,@Lp,2,@JezykId,@Nazwa)
+				if @@error &lt;&gt; 0
+					begin
+						rollback tran
+						if @IgnorujBledy is null
+								raiserror ('Błąd podczas dodawania tłumaczenia nazwy - (-33)', 16, 1)
+						return -33
+					end
+			end
+
+		if @Opis is not null and @Opis&lt;&gt;'' and not exists(select * from CDN.Tlumaczenia where TLM_Jezyk=@JezykId and TLM_Lp=@Lp and TLM_Numer=@Numer and TLM_Pole=3 and TLM_Typ=@Typ)
+		begin
+			INSERT INTO [CDN].[Tlumaczenia]
+			([TLM_Typ],[TLM_Numer],[TLM_Lp],[TLM_Pole],[TLM_Jezyk],[TLM_Tekst])
+			VALUES
+			(@Typ,@Numer,@Lp,3,@JezykId,@Opis)
+			if @@error &lt;&gt; 0
+				begin
+					rollback tran
+					if @IgnorujBledy is null
+							raiserror ('Błąd podczas dodawania tłumaczenia opisu - (-34)', 16, 1)
+					return -34
+				end
+		end
+		else
+			begin
+				rollback tran
+				if @IgnorujBledy is null
+					raiserror('Istnieje tłumaczenie opisu dla danego obiektu - (-6)',16,1)
+				return -6
+			end	
+	end	
+else 
+if @Typ = 14417 /*Typ_AtrybutWartosc*/
+	begin
+		select @Kod = '', @Opis =''
+			
+		if @Nazwa is null or @Nazwa=''
+			begin
+				rollback tran
+				if @IgnorujBledy is null
+					raiserror('Tłumaczenie nazwy jest wymagane dla danego obiektu - (-4)',16,1)
+				return -4
+			end		
+		else if exists(select * from CDN.Tlumaczenia where TLM_Jezyk=@JezykId and TLM_Lp=@Lp and TLM_Numer=@Numer and TLM_Pole=2 and TLM_Typ=@Typ)
+			begin
+				rollback tran
+				if @IgnorujBledy is null
+					raiserror('Istnieje tłumaczenie nazwy dla danego obiektu - (-5)',16,1)
+				return -5
+			end		
+		else					
+			begin
+				INSERT INTO [CDN].[Tlumaczenia]
+				([TLM_Typ],[TLM_Numer],[TLM_Lp],[TLM_Pole],[TLM_Jezyk],[TLM_Tekst])
+				VALUES
+				(@Typ,@Numer,@Lp,2,@JezykId,@Nazwa)
+				if @@error &lt;&gt; 0
+					begin
+						rollback tran
+						if @IgnorujBledy is null
+								raiserror ('Błąd podczas dodawania tłumaczenia nazwy - (-33)', 16, 1)
+						return -33
+					end
+			end
+	end
+
+COMMIT TRAN 
+SET NOCOUNT OFF
+RETURN 1
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

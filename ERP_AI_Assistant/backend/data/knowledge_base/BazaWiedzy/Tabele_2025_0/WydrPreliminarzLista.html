@@ -1,0 +1,1085 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="WydrPreliminarzLista"></A><PRE>
+          <FONT SIZE="2"><I>/* WydrPreliminarzLista */</I><BR>
+CREATE PROCEDURE CDN.WydrPreliminarzLista( 
+@CDN_PrelFiltr1 VARCHAR(4000), 
+@CDN_PrelFiltr2 VARCHAR(8000), 
+@CDN_Dzisiaj INT, 
+@CDN_DniZwloki INT, 
+@CDN_WgSpodziewanegoTerminu INT = 0, 
+@CDN_bDataRozliczenia bit=0, 
+@CDN_DataRozliczenia int=0, 
+@CDN_sRozJoin varchar(4000)='', 
+@CDN_sDZKJoin varchar(4000)='', 
+@CDN_sHaving varchar(4000)='',
+@CDN_ListaDT tinyint = 0, -- czy pokazywac dekrety z zakladki KPD
+@CDN_DTStronaDT int = 0,
+@CDN_DTStronaCT int = 0,
+@CDN_DTDziennik varchar(100) = '',
+@CDN_DTRodzaj varchar(100) = '',
+@CDN_FiltrKsiegowanieDT varchar(8000),
+@CDN_FiltrKsiegowanieDTDst varchar(8000),
+@CDN_PowZDostawamiDokSprz varchar(8000),
+@CDN_PowZDostawami tinyint = 0,
+@CDN_KorektaPodDochData int = 0
+
+,@CDN_PrelFiltr2_2k VARCHAR(8000)=''		-- dodatkowe zmienne, ponieważ PrintMaganer przekazuje łańcuchy długości max 2048 (tutaj zmienne na 8000 na wszelki wypadek)
+,@CDN_PrelFiltr3_2k VARCHAR(8000)=''
+,@CDN_PrelFiltr4_2k VARCHAR(8000)=''
+,@CDN_PrelFiltr5_2k VARCHAR(8000)=''
+,@CDN_PrelFiltr6_500 VARCHAR(8000)=''
+
+)AS
+
+
+
+DECLARE @Fields VARCHAR(max);
+DECLARE @Fields0 VARCHAR(max);
+DECLARE @Fields2 VARCHAR(max);
+DECLARE @Fields3 VARCHAR(max);
+DECLARE @Select VARCHAR(max);
+declare @GroupFields varchar(max)
+declare @sDniZwloki varchar(1000)
+DECLARE @Termin VARCHAR(50);
+DECLARE @KorektyMinus char(1);
+declare @CDN_Filtr varchar(max)
+
+declare @cFiltrDT varchar(100)
+DECLARE @sSelectDT VARCHAR(max);
+declare @WalutaSys varchar(3)
+
+
+if @CDN_PowZDostawamiDokSprz = ''
+	set @CDN_PowZDostawamiDokSprz = '0'
+	
+
+
+SELECT @WalutaSys = KON_Wartosc FROM CDN.Konfig with(nolock) WHERE KON_Numer = 211
+
+/*if isnull(@CDN_PrelFiltr2,'') = ''
+	set @CDN_Filtr = @CDN_PrelFiltr1
+else
+	set @CDN_Filtr = @CDN_PrelFiltr1 + @CDN_PrelFiltr2*/
+
+set @CDN_Filtr = left(@CDN_PrelFiltr1, len(@CDN_PrelFiltr1)-1)
+
+
+
+
+if isnull(@CDN_PrelFiltr2_2k,'') &lt;&gt; ''	
+	--set @CDN_Filtr = ltrim(rtrim(@CDN_PrelFiltr1)) + ltrim(rtrim(@CDN_PrelFiltr2_2k))
+	set @CDN_Filtr = @CDN_Filtr + left(@CDN_PrelFiltr2_2k, len(@CDN_PrelFiltr2_2k)-1)
+	
+if isnull(@CDN_PrelFiltr3_2k,'') &lt;&gt; ''
+	--set @CDN_Filtr = ltrim(rtrim(@CDN_Filtr)) + ltrim(rtrim(@CDN_PrelFiltr3_2k))
+	set @CDN_Filtr = @CDN_Filtr+left(@CDN_PrelFiltr3_2k, Len(@CDN_PrelFiltr3_2k)-1)
+
+if isnull(@CDN_PrelFiltr4_2k,'') &lt;&gt; ''
+	--set @CDN_Filtr = ltrim(rtrim(@CDN_Filtr)) + ltrim(rtrim(@CDN_PrelFiltr4_2k))
+	set @CDN_Filtr = @CDN_Filtr+left(@CDN_PrelFiltr4_2k, Len(@CDN_PrelFiltr4_2k)-1)
+	
+if isnull(@CDN_PrelFiltr5_2k,'') &lt;&gt; ''
+	--set @CDN_Filtr = ltrim(rtrim(@CDN_Filtr)) + ltrim(rtrim(@CDN_PrelFiltr5_2k))
+	set @CDN_Filtr = @CDN_Filtr+left(@CDN_PrelFiltr5_2k, Len(@CDN_PrelFiltr5_2k)-1)
+	
+if isnull(@CDN_PrelFiltr6_500,'') &lt;&gt; ''
+	--set @CDN_Filtr = ltrim(rtrim(@CDN_Filtr)) + ltrim(rtrim(@CDN_PrelFiltr6_500))
+	set @CDN_Filtr = @CDN_Filtr+left(@CDN_PrelFiltr6_500, Len(@CDN_PrelFiltr6_500)-1)
+
+
+
+
+SELECT @KorektyMinus= CASE WHEN ISNULL(KON_Wartosc,0)=1 THEN '1' ELSE '0' END FROM CDN.Konfig WHERE KON_Numer=2085;
+
+SET @Fields = 'PRLV_GIDTyp, PRLV_GIDNumer, PRLV_GIDLp, PRLV_SpiTyp, PRLV_SpiNumer, PRLV_SpiLp, PRLV_Dokument, PRLV_DokumentObcy, PRLV_Kwota, PRLV_KwotaPLN, PRLV_Pozostaje, PRLV_PozostajePLN, PRLV_NaleznosciZobowiazania, PRLV_PrzychodyRozchody, PRLV_Data, PRLV_Termin, PRLV_SpodziewanyTermin, PRLV_Rozliczony, PRLV_Waluta, PRLV_Rejestr, '+
+              'PRLV_KntTyp, PRLV_KntNumer, PRLV_Akronim, PRLV_Nazwa1, PRLV_Nazwa2, PRLV_Nazwa3, PRLV_Miasto, '+
+              'PODV_GIDTyp, PODV_GIDNumer, PODV_Akronim, PODV_Nazwa1, PODV_Nazwa2, PODV_Nazwa3, PODV_Miasto, '+
+              'PRLV_Zaksiegowano, PRLV_Bufor';
+
+SET @Fields0 =                  'CASE WHEN PRLV_PrzychodyRozchody&lt;&gt;0 THEN CASE WHEN PRLV_Kwota&gt;=0 THEN CASE PRLV_PrzychodyRozchody WHEN 1 THEN 0 ELSE PRLV_Kwota END ELSE CASE WHEN 1='+@KorektyMinus+' THEN CASE PRLV_PrzychodyRozchody WHEN 1 THEN 0 ELSE PRLV_Kwota END ELSE CASE PRLV_PrzychodyRozchody WHEN 1 THEN -(PRLV_Kwota) ELSE 0 END END END ELSE CASE WHEN 1='+@KorektyMinus+' AND PRLV_GIDTyp NOT IN(7680,7681,7682,7683,7684,4144,4145) THEN CASE WHEN PRLV_GIDTyp &amp; 512 &lt;&gt; 0 AND PRLV_GIDTyp NOT IN(2002,2010)  AND PRLV_NaleznosciZobowiazania=2 THEN -(PRLV_Kwota) ELSE CASE WHEN PRLV_GIDTyp &amp; 512 &lt;&gt; 0 AND PRLV_GIDTyp NOT IN(2002,2010)  AND PRLV_NaleznosciZobowiazania=1 THEN PRLV_Kwota ELSE 0 END END ELSE CASE WHEN PRLV_NaleznosciZobowiazania=1 THEN PRLV_Kwota ELSE 0 END END END PRLV_N1';
+SET @Fields0 = @Fields0 + ',' + 'CASE WHEN PRLV_PrzychodyRozchody&lt;&gt;0 THEN CASE WHEN PRLV_Kwota&gt;=0 THEN CASE PRLV_PrzychodyRozchody WHEN 2 THEN 0 ELSE PRLV_Kwota END ELSE CASE WHEN 1='+@KorektyMinus+' THEN CASE PRLV_PrzychodyRozchody WHEN 2 THEN 0 ELSE PRLV_Kwota END ELSE CASE PRLV_PrzychodyRozchody WHEN 2 THEN -(PRLV_Kwota) ELSE 0 END END END ELSE CASE WHEN 1='+@KorektyMinus+' AND PRLV_GIDTyp NOT IN(7680,7681,7682,7683,7684,4144,4145) THEN CASE WHEN (PRLV_GIDTyp &amp; 512 = 0 OR  PRLV_GIDTyp     IN(2002,2010)) AND PRLV_NaleznosciZobowiazania=1 THEN -(PRLV_Kwota) ELSE CASE WHEN (PRLV_GIDTyp &amp; 512 = 0 OR  PRLV_GIDTyp     IN(2002,2010)) AND PRLV_NaleznosciZobowiazania=2 THEN PRLV_Kwota ELSE 0 END END ELSE CASE WHEN PRLV_NaleznosciZobowiazania=2 THEN PRLV_Kwota ELSE 0 END END END PRLV_Z1';
+
+
+if not (@CDN_bDataRozliczenia&lt;&gt;0 and @CDN_DataRozliczenia&lt;&gt;0)
+begin	
+	set @Fields2 = REPLACE( @Fields0, 'PRLV_N1', 'PRLV_KwotaNaleznosc' );
+	set @Fields2 = REPLACE( @Fields2, 'PRLV_Z1', 'PRLV_KwotaZobowiazanie' );
+	
+	SET @Fields2 = @Fields2 + ',' + REPLACE( @Fields0, 'PRLV_Kwota', 'PRLV_Pozostaje' );
+	set @Fields2 = REPLACE( @Fields2, 'PRLV_N1', 'PRLV_PozostajeNaleznosc' );
+	set @Fields2 = REPLACE( @Fields2, 'PRLV_Z1', 'PRLV_PozostajeZobowiazanie' );
+	
+	SET @Fields2 = @Fields2 + ',' + REPLACE( @Fields0, 'PRLV_Kwota', 'PRLV_KwotaPLN' ) 
+	set @Fields2 = REPLACE( @Fields2, 'PRLV_N1', 'PRLV_KwotaPLNNaleznosc' );
+	set @Fields2 = REPLACE( @Fields2, 'PRLV_Z1', 'PRLV_KwotaPLNZobowiazanie' );
+	
+	SET @Fields2 = @Fields2 + ',' + REPLACE( @Fields0, 'PRLV_Kwota', 'PRLV_PozostajePLN' );
+	set @Fields2 = REPLACE( @Fields2, 'PRLV_N1', 'PRLV_PozostajePLNNaleznosc' );
+	set @Fields2 = REPLACE( @Fields2, 'PRLV_Z1', 'PRLV_PozostajePLNZobowiazanie' );	
+end
+else
+begin
+	--SET @Fields2 = @Fields0 + ',' + REPLACE( @Fields0, 'PRLV_Kwota', 'PRLV_Kwota-SIGN(PRLV_Kwota)*SUM(isnull(ROZ_Kwota,0))' );
+	--SET @Fields2 = @Fields2 + ',' + REPLACE( @Fields0, 'PRLV_Kwota', 'PRLV_KwotaPLN' ) + ',' + REPLACE( @Fields0, 'PRLV_Kwota', 'PRLV_KwotaPLN-SIGN(PRLV_Kwota)*SUM(isnull(ROZ_KwotaPLN,0))' );
+	
+	
+	set @Fields2 = REPLACE( @Fields0, 'PRLV_N1', 'PRLV_KwotaNaleznosc' );
+	set @Fields2 = REPLACE( @Fields2, 'PRLV_Z1', 'PRLV_KwotaZobowiazanie' );
+	
+	SET @Fields2 = @Fields2 + ',' + REPLACE( @Fields0, 'PRLV_Kwota', 'PRLV_Kwota-SIGN(PRLV_Kwota)*SUM(isnull(ROZ_Kwota,0))' );
+	set @Fields2 = REPLACE( @Fields2, 'PRLV_N1', 'PRLV_PozostajeNaleznosc' );
+	set @Fields2 = REPLACE( @Fields2, 'PRLV_Z1', 'PRLV_PozostajeZobowiazanie' );
+	
+	SET @Fields2 = @Fields2 + ',' + REPLACE( @Fields0, 'PRLV_Kwota', 'PRLV_KwotaPLN' ) 
+	set @Fields2 = REPLACE( @Fields2, 'PRLV_N1', 'PRLV_KwotaPLNNaleznosc' );
+	set @Fields2 = REPLACE( @Fields2, 'PRLV_Z1', 'PRLV_KwotaPLNZobowiazanie' );
+	
+	SET @Fields2 = @Fields2 + ',' + REPLACE( @Fields0, 'PRLV_Kwota', 'PRLV_KwotaPLN-SIGN(PRLV_Kwota)*SUM(isnull(ROZ_KwotaPLN,0))' );
+	set @Fields2 = REPLACE( @Fields2, 'PRLV_N1', 'PRLV_PozostajePLNNaleznosc' );
+	set @Fields2 = REPLACE( @Fields2, 'PRLV_Z1', 'PRLV_PozostajePLNZobowiazanie' );	
+	
+end
+set @Fields3 = 'PRLV_KwotaNaleznosc,PRLV_KwotaZobowiazanie,PRLV_PozostajeNaleznosc,PRLV_PozostajeZobowiazanie,PRLV_KwotaPLNNaleznosc,PRLV_KwotaPLNZobowiazanie,PRLV_PozostajePLNNaleznosc,PRLV_PozostajePLNZobowiazanie'	
+
+
+set @GroupFields = @Fields + ',PRLV_Kwota, PRLV_KwotaPLN, PRLV_Pozostaje, PRLV_PozostajePLN'
+
+
+IF @CDN_WgSpodziewanegoTerminu = 1
+  SET @Termin = 'PRLV_SpodziewanyTermin'
+ELSE
+  SET @Termin = 'PRLV_Termin'
+
+
+
+set @sDniZwloki = '0'
+
+if (@CDN_bDataRozliczenia&lt;&gt;0 and @CDN_DataRozliczenia&lt;&gt;0)
+begin
+	IF @CDN_DniZwloki &lt;&gt; 0
+		set @sDniZwloki = ' MAX(CASE PRLV_PrzychodyRozchody WHEN 0 THEN CDN.DniZwloki(ROZ_DataRozliczenia, ' + @Termin + ', ' + CAST(@CDN_DataRozliczenia AS VARCHAR(7)) + ', PRLV_Rozliczony) ELSE 0 END) '
+
+
+	set @Select = 'SELECT ' + @Fields + ', ' + @sDniZwloki + ' PRLV_DniZwloki, ' + @Fields2 + ' , SUM(isnull(ROZ_KwotaPLN,0)) ROZ_KwotaPLN' +
+				  ' into #tmpPrlv ' + 
+				  'FROM CDN.PreliminarzView LEFT OUTER JOIN CDN.PodmiotyView PG ON PRLV_KNTTyp=PG.PODV_GIDTyp AND PRLV_KNTNumer=PG.PODV_GIDNumer ' +
+				  'LEFT OUTER JOIN CDN.Tranag tn ' +
+				  'ON PRLV_GIDTyp = tn.TrN_GIDTyp AND PRLV_GIDNumer = tn.TrN_GIDNumer ' +
+				  'LEFT OUTER JOIN ' +
+				  '(SELECT R2_Dok1Typ AS ROZ_TrpTyp, R2_Dok1Numer AS ROZ_TrpNumer, R2_Dok1Lp AS ROZ_TrpLp, R2_DataRozliczenia AS ROZ_DataRozliczenia, R2_KwotaWal1 ROZ_Kwota, R2_KwotaSys + case when R2_RKStrona = 1 then R2_RK else 0 end ROZ_KwotaPLN ' +
+				  'FROM CDN.Rozliczenia ' +
+				  'WHERE R2_Wycena = 0 and R2_Dok2Typ &lt;&gt; 435 ' +
+				  'UNION ALL ' +
+				  'SELECT R2_Dok2Typ AS ROZ_TrpTyp, R2_Dok2Numer AS ROZ_TrpNumer, R2_Dok2Lp AS ROZ_TrpLp, R2_DataRozliczenia AS ROZ_DataRozliczenia, R2_KwotaWal2 ROZ_Kwota, R2_KwotaSys + case when R2_RKStrona = 2 then R2_RK else 0 end ROZ_KwotaPLN ' +
+				  'FROM CDN.Rozliczenia ' +
+				  'WHERE R2_Wycena = 0 and R2_Dok1Typ &lt;&gt; 435 ' +
+				  ') AS r2 ' +
+				  'ON PRLV_GIDTyp = r2.ROZ_TrpTyp AND PRLV_GIDNumer = r2.ROZ_TrpNumer AND PRLV_GIDLp = r2.ROZ_TrpLp ' +
+				  @CDN_sRozJoin + ' '+
+				  @CDN_sDZKJoin + ' ' +
+				  'WHERE ' + @CDN_Filtr + ' GROUP BY ' + @GroupFields + case when @CDN_sHaving&lt;&gt;'' then ' HAVING ' else '' end + @CDN_sHaving + ' ORDER BY PRLV_Dokument'
+end				  
+else
+	set @Select = 'SELECT ' + @Fields + ',0 PRLV_DniZwloki,' + @Fields2 + ' ,0 ROZ_KwotaPLN into #tmpPrlv ' + ' FROM CDN.PreliminarzView LEFT OUTER JOIN CDN.PodmiotyView PG ON PRLV_KNTTyp=PG.PODV_GIDTyp AND PRLV_KNTNumer=PG.PODV_GIDNumer ' +
+	' ' + @CDN_sDZKJoin + ' LEFT OUTER JOIN CDN.Tranag tn ON PRLV_GIDTyp = tn.TrN_GIDTyp AND PRLV_GIDNumer = tn.TrN_GIDNumer WHERE ' +@CDN_Filtr+ ' ORDER BY PRLV_Dokument'
+
+
+    
+
+
+
+  
+  if @CDN_DTStronaDT = 0 or @CDN_DTStronaCT = 0
+  begin
+      if @CDN_DTStronaDT = 1
+          set @cFiltrDT = 'dt.DT_DC=1'      
+          
+      if @CDN_DTStronaCT = 1
+          set @cFiltrDT = 'dt.DT_DC=2'
+ end
+      
+  
+
+  if @CDN_DTDziennik &lt;&gt; ''
+  begin
+      if @cFiltrDT = 1
+          set @cFiltrDT = @cFiltrDT + ' AND '
+      
+      set @cFiltrDT = @cFiltrDT + 'dt.DT_Dziennik=''' + @CDN_DTDziennik + ''''
+  end
+
+  if @CDN_DTRodzaj &lt;&gt; 'Zapisy+korekty'
+  begin
+      if @cFiltrDT &lt;&gt; ''
+          set @cFiltrDT = @cFiltrDT + ' AND '
+      
+      if @CDN_DTRodzaj = 'Korekty'      
+          set @cFiltrDT = @cFiltrDT + 'dzk.DZK_Typ=1'
+      else
+          set @cFiltrDT = @cFiltrDT + 'dzk.DZK_Typ=0'
+      
+  end
+
+/*
+  if @CDN_bZobowiazaniaPowZDostawami=1
+  begin
+    set @CDN_cFiltrKsiegowanie = Replace(@CDN_cFiltrKsiegowanie, 'PRLV_GIDTyp', 'fztrs.trs_gidtyp' )
+    set @CDN_cFiltrKsiegowanie = Replace(@CDN_cFiltrKsiegowanie,  'PRLV_GIDNumer', 'fztrs.trs_gidnumer')
+  end
+*/
+                
+set @Select = @Select + --mapowanie do aplikacji
+			'; with prlvSum as (' +
+            ' select 0 ID, PRLV_GIDTyp, PRLV_GIDNumer, PRLV_GIDLp, PRLV_SPITyp, PRLV_SpiNumer' +
+                ' ,sum(case when TRP_Typ=1 then 1 else -1 end * TRP_KwotaSys) PRLV_SumKwotaSys' +
+                ' ,PRLV_KwotaPLN PRLV_KwotaSys' +
+                ' ,PRLV_KwotaPLN TRP_KwotaSys' +
+                ' ,PRLV_PozostajePLN TRP_PozostajeSys' +
+                ' ,PRLV_Waluta TRP_Waluta, PRLV_Rozliczony TRP_Rozliczona' +
+                ' ,PRLV_Termin' +
+                ' ,PRLV_Dokument Dokument' +
+                ' ,max(case when trn_gidtyp is null then 0 else trn_trntyp end) trn_trntyp' +
+                ' ,PRLV_DokumentObcy trn_DokumentObcy' +
+                ' ,PRLV_Data' +
+                ' ,max(0) TRNBrutto' + 
+                ' ,ROZ_KwotaPLN SumRozSys' + 
+                ' ,PRLV_PozostajePLNZobowiazanie TRP_PozostajeRozSys' +
+            ' from #tmpPRLV' +
+                ' join cdn.TraPlat' +
+                    ' on PRLV_GIDTyp=TRP_GIDTyp and PRLV_GIDNumer=TRP_GIDNumer' + 
+                ' left join cdn.TraNag SpiTrn' +
+                    ' on TRP_GIDTyp=Trn_GIDTyp and TRP_GIDNumer=Trn_GIDNumer' +
+            ' where PRLV_naleznosciZobowiazania=2' +
+            ' group by PRLV_GIDTyp, PRLV_GIDNumer, PRLV_GIDLp, PRLV_SPITyp, PRLV_SpiNumer' +                
+                ' ,PRLV_KwotaPLN ' +
+                ' ,PRLV_KwotaPLN ' +
+                ' ,PRLV_PozostajePLN ' +
+                ' ,PRLV_Waluta, PRLV_Rozliczony ' +
+                ' ,PRLV_Termin' +
+                ' ,PRLV_Dokument ' +                
+                ' ,PRLV_DokumentObcy ' +
+                ' ,PRLV_Data' +                
+                ' ,ROZ_KwotaPLN ' + 
+                ' ,PRLV_PozostajePLNZobowiazanie) ' +            
+            ' ,prlvTTV as (' +
+            ' select *' +
+            ' from prlvSum' +                
+            ' )'
+
+
+set @Select = @Select +
+		' ,_prlvDst as (' +
+        ' select' +
+                ' PRLV_GIDTyp,PRLV_GIDNumer,PRLV_GIDLp' +
+                ' ,PRLV_SpiTyp,PRLV_SpiNumer' +
+                ' ,TRP_KwotaSys, trp_PozostajeSys, PRLV_Termin, TRP_Waluta,TRP_Rozliczona' +
+                ' ,Dokument' +
+                ' ,trn_trntyp' +
+                ' ,trn_dokumentObcy' +
+                ' ,PRLV_Data' +
+                ' ,PRLV_SumKwotaSys' +
+                ' ,sumRozSys, TRP_PozostajeRozSys' +
+                ' ,trs_dstnumer' +
+                ' ,trs_orgnumer, trs_orglp, trs_suborglp' +
+        ' from (' +
+            ' select' +
+                ' prlvSum.*' +
+                ' ,trs_dstnumer, trs_gidnumer, trs_gidlp, trs_subgidlp' +
+                ' ,trs_orgnumer, trs_orglp, trs_suborglp' +
+            ' from prlvSum' +
+                ' join cdn.tranag' +
+                    ' on PRLV_GIDTyp=trn_gidtyp and PRLV_GIDNumer=trn_gidnumer' +
+                ' join cdn.Traselem' +
+                    ' on trn_gidnumer = trs_gidnumer' +
+            ' union all' +
+            ' select' +
+                ' prlvSum.*' +
+                ' ,trs_dstnumer, trs_gidnumer, trs_gidlp, trs_subgidlp' +
+                ' ,trs_orgnumer, trs_orglp, trs_suborglp' +
+            ' from prlvSum' +
+                ' join cdn.tranag' +
+                    ' on PRLV_GIDTyp=trn_Spityp and PRLV_GIDNumer=trn_Spinumer and trn_spinumer&lt;&gt;trn_gidnumer' +
+                ' join cdn.Traselem' +
+                    ' on trn_gidnumer = trs_gidnumer' +
+            ' ) a' +
+        ' group by' +
+                ' PRLV_GIDTyp,PRLV_GIDNumer,PRLV_GIDLp' +
+                ' ,PRLV_SpiTyp,PRLV_SpiNumer' +
+                ' ,TRP_KwotaSys, trp_PozostajeSys, PRLV_Termin, TRP_Waluta,TRP_Rozliczona' +
+                ' ,Dokument' +
+                ' ,trn_trntyp' +
+                ' ,trn_dokumentObcy' +
+                ' ,PRLV_Data' +
+                ' ,PRLV_SumKwotaSys' +
+                ' ,sumRozSys, TRP_PozostajeRozSys' +
+                ' ,trs_dstnumer' +
+                ' ,trs_orgnumer, trs_orglp, trs_suborglp' +
+        ' )' +
+        ' ,prlvDst as (' +
+        ' select' +
+                ' PRLV_GIDTyp,PRLV_GIDNumer,PRLV_GIDLp' +
+                ' ,PRLV_SpiTyp,PRLV_SpiNumer' +
+                ' ,TRP_KwotaSys, trp_PozostajeSys, PRLV_Termin, TRP_Waluta,TRP_Rozliczona' +
+                ' ,Dokument' +
+                ' ,trn_trntyp' +
+                ' ,trn_dokumentObcy' +
+                ' ,PRLV_Data' +
+                ' ,PRLV_SumKwotaSys' +
+                ' ,sumRozSys, TRP_PozostajeRozSys' +
+                ' ,TrsDst.trs_dstnumer' +
+                ' ,TrsDst.trs_OrgNumer, TrsDst.trs_OrgLp, TrsDst.trs_SubOrgLp' +
+        ' from _prlvDst' +
+            ' join cdn.TrasElem TrsDst' +
+                ' on _prlvDst.trs_orgnumer=TrsDst.trs_orgnumer and _prlvDst.trs_orglp=TrsDst.trs_orglp and _prlvDst.trs_suborglp=TrsDst.trs_suborglp' +
+        ' group by' +
+                ' PRLV_GIDTyp,PRLV_GIDNumer,PRLV_GIDLp' +
+                ' ,PRLV_SpiTyp,PRLV_SpiNumer' +
+                ' ,TRP_KwotaSys, trp_PozostajeSys, PRLV_Termin, TRP_Waluta,TRP_Rozliczona' +
+                ' ,Dokument' +
+                ' ,trn_trntyp' +
+                ' ,trn_dokumentObcy' +
+                ' ,PRLV_Data' +
+                ' ,PRLV_SumKwotaSys' +
+                ' ,sumRozSys, TRP_PozostajeRozSys' +
+                ' ,TrsDst.trs_dstnumer' +
+                ' ,TrsDst.trs_OrgNumer, TrsDst.trs_OrgLp, TrsDst.trs_SubOrgLp' +
+        ' )' +
+        '' +
+        ' ,_Dst as (' + 
+        ' SELECT' +
+            ' prlvdst.PRLV_GIDTyp,prlvdst.PRLV_GIDNumer,prlvdst.PRLV_GIDLp' +
+            ' ,prlvdst.PRLV_SpiTyp,prlvdst.PRLV_SpiNumer' +
+            ' ,prlvdst.TRP_KwotaSys, prlvdst.trp_PozostajeSys, prlvdst.PRLV_Termin, prlvdst.TRP_Waluta,prlvdst.TRP_Rozliczona' +
+            ' ,prlvdst.Dokument' +
+            ' ,prlvdst.trn_trntyp' +
+            ' ,prlvdst.trn_dokumentObcy' +
+            ' ,prlvdst.PRLV_Data' +
+            ' ,prlvdst.PRLV_SumKwotaSys' +
+            ' ,prlvdst.sumRozSys, prlvdst.TRP_PozostajeRozSys' +
+            ' ,kortrs.trs_Gidnumer' +
+            ' ,prlvdst.trs_dstnumer' +
+            ' ,prlvdst.trs_OrgNumer, prlvdst.trs_OrgLp, prlvdst.trs_SubOrgLp' +
+        ' from prlvdst' +
+            ' join CDN.TraSElem AS kortrs' +
+                ' ON PrlvDst.trs_OrgNumer = kortrs.trs_OrgNumer AND PrlvDst.trs_OrgLp = kortrs.trs_OrgLp AND PrlvDst.trs_SubOrgLp = kortrs.trs_SubOrgLp' +
+        ' group by' +
+            ' prlvdst.PRLV_GIDTyp,prlvdst.PRLV_GIDNumer,prlvdst.PRLV_GIDLp' +
+            ' ,prlvdst.PRLV_SpiTyp,prlvdst.PRLV_SpiNumer' +
+            ' ,prlvdst.TRP_KwotaSys, prlvdst.trp_PozostajeSys, prlvdst.PRLV_Termin, prlvdst.TRP_Waluta, prlvdst.TRP_Rozliczona' +
+            ' ,prlvdst.Dokument' +
+            ' ,prlvdst.trn_trntyp' +
+            ' ,prlvdst.trn_dokumentObcy' +
+            ' ,prlvdst.PRLV_Data' +
+            ' ,prlvdst.PRLV_SumKwotaSys' +
+            ' ,prlvdst.sumRozSys, prlvdst.TRP_PozostajeRozSys' +
+            ' ,prlvdst.trs_dstnumer' +
+            ' ,prlvdst.trs_OrgNumer, prlvdst.trs_OrgLp, prlvdst.trs_SubOrgLp' +
+            ' ,kortrs.trs_Gidnumer' +
+        ')' +
+        '' +
+        ' ,Dst as (' +
+        ' SELECT' +
+            ' _Dst.PRLV_GIDTyp,_Dst.PRLV_GIDNumer,_Dst.PRLV_GIDLp' +
+            ' ,_Dst.PRLV_SpiTyp,_Dst.PRLV_SpiNumer' +
+            ' ,_Dst.TRP_KwotaSys, _Dst.trp_PozostajeSys, _Dst.PRLV_Termin, _Dst.TRP_Waluta,_Dst.TRP_Rozliczona' +
+            ' ,_Dst.Dokument' +
+            ' ,_Dst.trn_trntyp' +
+            ' ,_Dst.trn_dokumentObcy' +
+            ' ,_Dst.PRLV_Data' +
+            ' ,_Dst.PRLV_SumKwotaSys' +
+            ' ,_Dst.sumRozSys, _Dst.TRP_PozostajeRozSys' +
+            ' ,_Dst.trs_dstnumer' +
+            ' ,_Dst.trs_OrgNumer, _Dst.trs_OrgLp, _Dst.trs_SubOrgLp' +
+            ' ,kortrp.TrP_GIDTyp KorTrpTyp, kortrp.TrP_GIDNumer KorTrpNumer, kortrp.TrP_GIDLp KorTrpLp, CASE WHEN kortrp.trp_typ = 1 THEN 1 ELSE - 1 END * kortrp.TrP_KwotaSys AS KorTrpKwotaSys' +
+            ' ,korTrpTrn.TrN_DataMag' +
+        ' from _Dst ' +
+            ' JOIN CDN.TraNag AS korTrn' +
+                ' ON _Dst.TrS_GIDNumer = korTrn.TrN_GIDNumer' +
+            ' JOIN CDN.TraNag AS korTrpTrn' +
+                ' ON korTrn.TrN_SpiNumer = korTrpTrn.TrN_GIDNumer AND korTrpTrn.TrN_SpiNumer = 0' +
+            ' JOIN CDN.TraPlat AS kortrp' +
+                ' ON korTrpTrn.TrN_GIDTyp = kortrp.TrP_GIDTyp AND korTrpTrn.TrN_GIDNumer = kortrp.TrP_GIDNumer' +
+        ' group by' +
+            ' _Dst.PRLV_GIDTyp,_Dst.PRLV_GIDNumer,_Dst.PRLV_GIDLp' +
+            ' ,_Dst.PRLV_SpiTyp,_Dst.PRLV_SpiNumer' +
+            ' ,_Dst.TRP_KwotaSys, _Dst.trp_PozostajeSys, _Dst.PRLV_Termin, _Dst.TRP_Waluta, _Dst.TRP_Rozliczona' +
+            ' ,_Dst.Dokument' +
+            ' ,_Dst.trn_trntyp' +
+            ' ,_Dst.trn_dokumentObcy' +
+            ' ,_Dst.PRLV_Data' +
+            ' ,_Dst.PRLV_SumKwotaSys' +
+            ' ,_Dst.sumRozSys, _Dst.TRP_PozostajeRozSys' +
+            ' ,_Dst.trs_dstnumer' +
+            ' ,_Dst.trs_OrgNumer, _Dst.trs_OrgLp, _Dst.trs_SubOrgLp' +
+            ' ,kortrp.TrP_GIDTyp, kortrp.TrP_GIDNumer, kortrp.TrP_GIDLp, kortrp.trp_typ, kortrp.TrP_KwotaSys' +
+            ' ,korTrpTrn.TrN_DataMag' +
+        ' UNION ALL' +
+        ' SELECT' +
+            ' _Dst.PRLV_GIDTyp,_Dst.PRLV_GIDNumer,_Dst.PRLV_GIDLp' +
+            ' ,_Dst.PRLV_SpiTyp,_Dst.PRLV_SpiNumer' +
+            ' ,_Dst.TRP_KwotaSys, _Dst.trp_PozostajeSys, _Dst.PRLV_Termin, _Dst.TRP_Waluta, _Dst.TRP_Rozliczona' +
+            ' ,_Dst.Dokument' +
+            ' ,_Dst.trn_trntyp' +
+            ' ,_Dst.trn_dokumentObcy' +
+            ' ,_Dst.PRLV_Data' +
+            ' ,_Dst.PRLV_SumKwotaSys' +
+            ' ,_Dst.sumRozSys, _Dst.TRP_PozostajeRozSys' +
+            ' ,_Dst.trs_dstnumer' +
+            ' ,_Dst.trs_OrgNumer, _Dst.trs_OrgLp, _Dst.trs_SubOrgLp' +
+            ' ,kortrp.TrP_GIDTyp, kortrp.TrP_GIDNumer, kortrp.TrP_GIDLp, CASE WHEN kortrp.trp_typ = 1 THEN 1 ELSE - 1 END * kortrp.TrP_KwotaSys ' +
+            ' ,korTrpTrn.TrN_DataMag' +
+        ' FROM _Dst' +
+            ' JOIN CDN.TraNag AS korTrpTrn' +
+                ' ON _Dst.TrS_GIDNumer = korTrpTrn.TrN_GIDNumer' +
+            ' JOIN CDN.TraPlat AS kortrp' +
+                ' ON korTrpTrn.TrN_GIDTyp = kortrp.TrP_GIDTyp AND korTrpTrn.TrN_GIDNumer = kortrp.TrP_GIDNumer' +
+        ' group by' +
+            ' _Dst.PRLV_GIDTyp,_Dst.PRLV_GIDNumer,_Dst.PRLV_GIDLp' +
+            ' ,_Dst.PRLV_SpiTyp,_Dst.PRLV_SpiNumer' +
+            ' ,_Dst.TRP_KwotaSys, _Dst.trp_PozostajeSys, _Dst.PRLV_Termin, _Dst.TRP_Waluta, _Dst.TRP_Rozliczona' +
+            ' ,_Dst.Dokument' +
+            ' ,_Dst.trn_trntyp' +
+            ' ,_Dst.trn_dokumentObcy' +
+            ' ,_Dst.PRLV_Data' +
+            ' ,_Dst.PRLV_SumKwotaSys' +
+            ' ,_Dst.sumRozSys, _Dst.TRP_PozostajeRozSys' +
+            ' ,_Dst.trs_dstnumer' +
+            ' ,_Dst.trs_OrgNumer, _Dst.trs_OrgLp, _Dst.trs_SubOrgLp' +
+            ' ,kortrp.TrP_GIDTyp, kortrp.TrP_GIDNumer, kortrp.TrP_GIDLp, kortrp.trp_typ, kortrp.TrP_KwotaSys' +
+            ' ,korTrpTrn.TrN_DataMag' +
+        ' )' +
+        '' +
+        ' ,fsDst as (' +
+        ' select' +
+            ' PRLV_GIDTyp, PRLV_GIDNumer, PRLV_GIDLp, PRLV_SPITyp, PRLV_SPINumer, trp_kwotaSys, trp_PozostajeSys, PRLV_Termin, TRP_Waluta' +
+            ' ,Dokument' +
+            ' ,dst.trn_trntyp' +
+            ' ,dst.trn_dokumentObcy' +
+            ' ,dst.PRLV_data' +
+            ' ,dst.PRLV_SumKwotaSys' +
+            ' ,sumRozSys, TRP_PozostajeRozSys' +
+            ' ,dst.trs_dstnumer' +
+            ' ,dst.trs_orgnumer, dst.trs_orglp, dst.trs_suborglp' + 
+            ' ,sum(dst.KorTrpKwotaSys) as SumTRPKwota' +
+            ' ,case when (TRP_PozostajeRozSys/case when sum(dst.KorTrpKwotaSys)=0 then 1 else sum(dst.KorTrpKwotaSys) end)&gt;=1.0 then 1 else (TRP_PozostajeRozSys/case when sum(dst.KorTrpKwotaSys)=0 then 1 else sum(dst.KorTrpKwotaSys) end) end as PrlvDstWsp' +
+            ' ,case when (trp_kwotaSys/case when sum(dst.KorTrpKwotaSys)=0 then 1 else sum(dst.KorTrpKwotaSys) end)&gt;=1.0 then 1 else (trp_kwotaSys/case when sum(dst.KorTrpKwotaSys)=0 then 1 else sum(dst.KorTrpKwotaSys) end) end as PrlvDstWsp2' + 
+            ' ,max(trn_data2) trn_data2' +
+            ' ,fstrs.trs_gidtyp Fstrsgidtyp, fstrs.trs_gidnumer Fstrsgidnumer, fstrs.trs_gidlp Fstrsgidlp, fstrs.trs_SubGIDLp fstrsSubLp' +
+        ' from Dst' +
+            ' join cdn.trasElem fstrs' +
+                ' on dst.trs_dstnumer = fstrs.trs_dstnumer and dst.trs_dstnumer &lt;&gt; 0' +
+            ' join cdn.traelem fstre' +
+                ' on fstrs.trs_gidnumer = fstre.tre_gidnumer and fstrs.trs_gidlp = fstre.tre_gidlp' +
+            ' join cdn.tranag fstrn' +
+                ' on fstre.tre_gidnumer = fstrn.trn_gidnumer' +
+        ' where dst.trn_datamag &lt;= case when fstrn.trn_data2&lt;fstrn.trn_data3 then fstrn.trn_data2 else fstrn.trn_data3 end' +
+            ' and fstrs.trs_gidtyp in ('+@CDN_PowZDostawamiDokSprz+')' +
+        ' group by PRLV_GIDTyp, PRLV_GIDNumer, PRLV_GIDLp, PRLV_SPITyp, PRLV_SPINumer, trp_kwotaSys, trp_PozostajeSys, PRLV_Termin, TRP_Waluta' +
+                ' ,Dokument' +
+                ' ,dst.trn_trntyp' +
+                ' ,dst.trn_dokumentObcy' +
+                ' ,dst.PRLV_data' +
+                ' ,dst.PRLV_SumKwotaSys' +
+                ' ,sumRozSys, TRP_PozostajeRozSys' +
+                ' ,dst.trs_dstnumer' +
+                ' ,dst.trs_orgnumer, dst.trs_orglp, dst.trs_suborglp' + 
+                ' ,fstrs.trs_gidtyp, fstrs.trs_gidnumer, fstrs.trs_gidlp, fstrs.trs_SubGIDLp' +
+        ' )' +
+        '' +
+        ' ,FsDT as (' +
+        ' select' +
+            ' PRLV_GIDTyp, PRLV_GIDNumer, PRLV_GIDLp, PRLV_SPITyp, PRLV_SPINumer, trp_kwotaSys, trp_PozostajeSys, PRLV_Termin, TRP_Waluta' +
+            ' ,Dokument' +
+            ' ,fsDst.trn_trntyp' +
+            ' ,fsDst.trn_dokumentObcy' +
+            ' ,fsDst.PRLV_data' +
+            ' ,fsDst.PRLV_SumKwotaSys' +
+            ' ,sumRozSys, TRP_PozostajeRozSys' +
+            ' ,fsDst.trs_dstnumer' +
+            ' ,fsDst.trs_orgnumer, fsDst.trs_orglp, fsDst.trs_suborglp' + 
+            ' ,SumTRPKwota' +
+            ' ,PrlvDstWsp' +
+            ' ,PrlvDstWsp2' +
+            ' ,fsDst.trn_data2' +
+            ' ,CDN.NumerDokumentu(SpiTrn.TrN_GIDTyp, SpiTrn.TrN_SpiTyp,SpiTrn.TrN_TrnTyp,SpiTrn.TrN_TrnNumer,SpiTrn.TrN_TrNRok,SpiTrn.Trn_TrnSeria,SpiTrn.TrN_TrnMiesiac) DokumentDst' +
+            ' ,SpiTrn.trn_dokumentObcy DokumentObcyDst' +
+            ' ,SUM(case when dt.dt_walutaObca=0 then ZPZ_Kwota else 0 end) sumZPZKwota' +
+            ' ,SUM(case when dt.dt_walutaObca=1 then ZPZ_KwotaWal else 0 end) sumZPZKwotaWal' +
+            ' ,SUM(case when dt.dt_walutaObca=0 then ZPZ_Kwota else 0 end)*PrlvDstWsp as KPDKwotaDT' + 
+            ' ,SUM(case when dt.dt_walutaObca=0 then ZPZ_Kwota else 0 end)*PrlvDstWsp2 as KPDKwotaDTDlaTRP' + 
+            ' ,0 as KPDKwotaTRS' +             
+            ' ,0 as IloscPozycjiNaDekret' + 
+            ' ,cdn.NumerDekretu(dzk.DZK_Bufor, dzk.DZK_Dziennik, dzk.DZK_Rok, dzk.DZK_Miesiac, dzk.DZK_RMNumer, 0, dzk.DZK_Prosty,dzk.DZK_OkrSymbol) Numer' +
+            ' ,cdn.NumerDekretu(dzk.DZK_Bufor, dzk.DZK_Dziennik, dzk.DZK_Rok, dzk.DZK_Miesiac, dzk.DZK_RMNumer, del.DEL_Pozycja, dzk.DZK_Prosty,dzk.DZK_OkrSymbol) NumerDEL' +
+            ' ,dzk.DZK_Dziennik, del.Del_Pozycja Pozycja, dzk.DZK_Typ, dzk.DZK_Opis, del.DEL_Opis ' +
+            ' ,dt.DT_GIDNumer, dt.DT_GIDLp, dt.DT_DC, dt.DT_DataDekr' +
+            ' ,max(case when dt.dt_walutaObca=0 then dt.DT_Konto else '''' end) DT_Konto, max(case when dt.dt_walutaObca=1 then dt.DT_Konto else '''' end) DT_KontoWal' +
+            ' ,max(case when dt.dt_walutaObca=0 then dt.DT_KKSNumer else 0 end) DT_KKSNumer, max(case when dt.dt_walutaObca=1 then dt.DT_KKSNumer else 0 end) DT_KKSNumerWal' +
+            ' ,max(case when dt.dt_walutaObca=0 then dt.DT_Kwota else convert(decimal(19,2),0.0) end) DT_Kwota, max(case when dt.dt_walutaObca=1 then dt.DT_Kwota else convert(decimal(19,2),0.0) end) DT_KwotaWal' +
+            ' ,max(case when dt.dt_walutaObca=0 then dt.DT_KursKwota else convert(decimal(21,2),0.0) end) DT_KursL, max(case when dt.dt_walutaObca=1 then dt.DT_KursKwota else convert(decimal(21,2),1) end) DT_KursM' +
+            ' ,max(case when dt.dt_walutaObca=0 then dt.DT_Waluta else '''' end) DT_Waluta, max(case when dt.dt_walutaObca=1 then dt.DT_Waluta else '''' end) DT_WalutaWal' +
+            ' ,max(isnull(KKS_GIDNumer,0)) KKS_GIDNumer' +
+        ' from fsDst' +
+            ' join cdn.ZrodlaPozycje zpz' +
+                ' on zpz.ZPZ_TRNTyp=fstrsGIDTyp and zpz.ZPZ_TRNNumer=fstrsGIDNumer and zpz.ZPZ_TRNLp=fstrsGIDLp and zpz.ZPZ_TRNSubLp=fstrsSubLp and zpz.ZPZ_TabID=2' +
+            ' join cdn.Dekrety dt' +
+                ' on zpz.ZPZ_DTNumer=dt.DT_GIDNumer and zpz.ZPZ_DTLp=dt.DT_GIDLp' +
+            ' left join cdn.Konta' +
+                ' on dt.dt_kksnumer=kks_gidnumer and KKS_KKZDKKSNumer&lt;&gt;0' +
+            ' join cdn.DziennikElem del' +
+                ' on dt.dt_gidnumer = del_gidnumer and dt.dt_gidlp=del_gidlp' +
+            ' join cdn.dziennik dzk' +
+                ' on del_gidnumer=dzk_gidnumer' +
+            ' join cdn.Zrodla' +
+                ' on dzk_gidnumer=zro_dtnumer and zro_dttyp=432 and zro_dtlp=0 and zro_trnlp=0' +
+            ' join cdn.TraNag SpiTrn' +
+                ' on zro_trntyp=SpiTrn.trn_gidtyp and zro_trnnumer=SpiTrn.trn_gidNumer' + 
+        ' where ' + 
+            ' dt.dt_DataDekr &gt;= ' + convert(varchar,@CDN_KorektaPodDochData) +                    
+                    case when @CDN_FiltrKsiegowanieDTDst&lt;&gt;'' then ' AND ' + @CDN_FiltrKsiegowanieDTDst else '' end + case when @cFiltrDT&lt;&gt;'' then ' AND ' + @cFiltrDT else '' end +
+        ' group by PRLV_GIDTyp, PRLV_GIDNumer, PRLV_GIDLp, PRLV_SPITyp, PRLV_SPINumer, trp_kwotaSys, trp_PozostajeSys, PRLV_Termin, TRP_Waluta' +
+                ' ,Dokument' +
+                ' ,fsdst.trn_trntyp' +
+                ' ,fsdst.trn_dokumentObcy' +
+                ' ,fsdst.PRLV_data' +
+                ' ,fsdst.PRLV_SumKwotaSys' +
+                ' ,sumRozSys, TRP_PozostajeRozSys' +
+                ' ,fsdst.trs_dstnumer' +
+                ' ,fsdst.trs_orgnumer, fsdst.trs_orglp, fsdst.trs_suborglp' + 
+                ' ,SumTRPKwota' +
+                ' ,PrlvDstWsp' +
+                ' ,PrlvDstWsp2' +
+                ' ,fsDst.trn_data2' +
+                ' ,SpiTrn.TrN_GIDTyp, SpiTrn.TrN_SpiTyp,SpiTrn.TrN_TrnTyp,SpiTrn.TrN_TrnNumer,SpiTrn.TrN_TrNRok,SpiTrn.Trn_TrnSeria,SpiTrn.TrN_TrnMiesiac' +
+                ' ,SpiTrn.trn_dokumentObcy' +
+                ' ,dzk.DZK_Bufor, dzk.DZK_Dziennik, dzk.DZK_Rok, dzk.DZK_Miesiac, dzk.DZK_RMNumer, del.DEL_Pozycja, dzk.DZK_Prosty, dzk.DZK_OkrSymbol' +
+                ' ,dzk.DZK_Typ, dzk.DZK_Opis, del.DEL_Opis' +
+                ' ,dt.DT_GIDNumer, dt.DT_GIDLp, dt.DT_DC, dt.DT_DataDekr' + 
+        ' )'
+
+
+/*
+select Dokument, DokumentObcy, Numer, DataDekr, Pozycja, KontoDT, KontoCT, KwotaDT, KwotaCT,' +
+            ' sum(KwotaDT) over (Partition by GIDNumer) SumKwotaDT,' +
+            ' sum(KwotaCT) over (Partition by GIDNumer) SumKwotaCT,' +
+            ' Waluta, Typ, DZKOpis, DELOpis, GIDNumer, GIDLp,' +
+            ' sum(KwotaDTBezKPD) over (Partition by GIDNumer) SumKwotaDTBezKPD,' +
+            ' sum(KwotaCTBezKPD) over (Partition by GIDNumer) SumKwotaCTBezKPD,' +
+            ' TRPGIDTyp, TRPGIDNumer' + 
+*/
+
+set @Select = @Select + 
+			',DT as (' +
+			' select Dst, Dokument, DokumentObcy, Numer, DataDekr, Pozycja, KontoDT, KontoCT, KwotaDT, KwotaCT,' +
+            ' sum(KwotaDT) over (Partition by PRLV_GIDTyp, PRLV_GIDNumer, PRLV_GIDLp, GIDNumer) SumKwotaDT,' +
+            ' sum(KwotaCT) over (Partition by PRLV_GIDTyp, PRLV_GIDNumer, PRLV_GIDLp, GIDNumer) SumKwotaCT,' +
+            ' Waluta, Typ, DZKOpis, DELOpis, GIDNumer, GIDLp,' +
+            ' sum(KwotaDTBezKPD) over (Partition by GIDNumer) SumKwotaDTBezKPD,' +
+            ' sum(KwotaCTBezKPD) over (Partition by GIDNumer) SumKwotaCTBezKPD,' +
+            ' PRLV_GIDTyp PRLVGIDTyp, PRLV_GIDNumer PRLVGIDNumer, PRLV_GIDLp PRLVGIDLp' +
+            ' from (' +
+                    ' select 0 Dst, case when not SpiTrn.Trn_GidTyp is null then CDN.NumerDokumentu(SpiTrn.TrN_GIDTyp, SpiTrn.TrN_SpiTyp,SpiTrn.TrN_TrnTyp,SpiTrn.TrN_TrnNumer,SpiTrn.TrN_TrNRok,SpiTrn.Trn_TrnSeria,SpiTrn.TrN_TrnMiesiac) else fztrn.Dokument end Dokument,' +
+                            ' case when not SpiTrn.Trn_GidTyp is null then SpiTrn.trn_DokumentObcy else fztrn.trn_DokumentObcy end DokumentObcy,' +
+                            ' cdn.NumerDekretu(DZK_Bufor, DZK_Dziennik, DZK_Rok, DZK_Miesiac, DZK_RMNumer, DEL_Pozycja, DZK_Prosty,DZK_OkrSymbol) Numer,' +
+                            ' max(DT_DataDekr) DataDekr,' +
+                            ' Del_Pozycja Pozycja,' +
+                            ' max(case when DT_DC=1 then DT_Konto else '''' end) KontoDT,' +
+                            ' max(case when DT_DC=2 then DT_Konto else '''' end) KontoCT,' +
+                            ' convert(decimal(15,2),(PRLV_KwotaSys/PRLV_SumKwotaSys)*max(sign(DT_Kwota))*sum(case when DT_DC=1 then case when Avista=0 then abs(ZPZKwota) else abs(DT_Kwota) end else 0 end)) KwotaDT,' +
+                            ' convert(decimal(15,2),(PRLV_KwotaSys/PRLV_SumKwotaSys)*max(sign(DT_Kwota))*sum(case when DT_DC=2 then case when Avista=0 then abs(ZPZKwota) else abs(DT_Kwota) end else 0 end)) KwotaCT,' +
+                            ' max(DT_Waluta) Waluta,' +
+                            ' DZK_Typ Typ,' +
+                            ' DZK_Opis DZKOpis,' +
+                            ' DEL_Opis DELOpis,' +
+                            ' DEL_GIDNumer GIDNumer,' +
+                            ' DEL_GIDLp GIDLp,' +
+                            ' 0.00 KwotaDTBezKPD,' +
+                            ' 0.00 KwotaCTBezKPD,' +
+                            ' PRLV_GIDTyp, PRLV_GIDNumer, PRLV_GIDLp' +
+                    ' from' +
+                            ' (' +
+                            ' select zro_dtnumer dtnumer, 0 dtlp, 0 ZPZKwota, 0 ZPZKwotaWal, 1 Avista, PRLVSum.*' +
+                            ' from PRLVSum' +
+                                ' join cdn.Zrodla' +
+                                    ' on PRLV_GidTyp=Zro_trntyp and PRLV_gidnumer=zro_trnnumer' +
+                                        ' and zro_trnlp=0 and ZRO_DTTyp=432 and ZRO_DTLp=0' +
+                                ' left join cdn.ZrodlaPozycje' +
+                                    ' on PRLV_GidTyp=zpz_trntyp and PRLV_gidnumer=zpz_trnnumer and zpz_TabID=2' +
+                            ' where 1=1 and trn_trntyp = 12' + --&amp;e_SPR_nTrNTypAvistaZ+
+                                        ' and zpz_trntyp is null' +
+                            ' union all' +
+                            ' select zpz_dtnumer, zpz_dtlp, zpz_kwota, zpz_kwotaWal, 0, PRLVTTV.*' +
+                            ' from PRLVTTV' +
+                              ' join cdn.ZrodlaPozycje' +
+                                  ' on PRLV_GidTyp=zpz_trntyp and PRLV_gidnumer=zpz_trnnumer and zpz_TabID=2' +
+                            ' union all' +
+                            ' select zpz_dtnumer, zpz_dtlp, zpz_kwota, zpz_kwotaWal, 0, PRLVSum.*' +
+                            ' from PRLVSum' +
+                              ' join cdn.TraNag' +
+                                  ' on PRLV_GidTyp=Trn_SpiTyp and PRLV_gidnumer=Trn_SpiNumer and trn_gidnumer&lt;&gt;trn_spinumer' +
+                              ' join cdn.ZrodlaPozycje' +
+                                  ' on trn_GIDTyp=zpz_trntyp and trn_GIDNumer=zpz_trnnumer and zpz_TabID=2' +
+                            ' ) fztrn' +                      
+                            ' join cdn.DziennikElem del' +
+                                ' on dtnumer = del_gidnumer and (fztrn.Avista=0 and dtlp=del_gidlp or fztrn.Avista=1)' +
+                            ' join cdn.dekrety dt' +
+                                ' on del_gidnumer = dt_gidnumer and del_gidlp = dt_gidlp and dt_walutaobca = 0' +
+                            ' join cdn.dziennik dzk' +
+                                ' on del_gidnumer=dzk_gidnumer' +
+                            ' join cdn.Konta' +
+                                ' on dt_kksnumer = kks_gidnumer and KKS_KKZDKKSNumer&lt;&gt;0' +
+                            ' join cdn.Zrodla' +
+                                ' on dzk_gidnumer=zro_dtnumer and zro_dttyp=432 and zro_dtlp=0 and zro_trnlp=0' +
+                            ' left join cdn.TraNag SpiTrn' +
+                                ' on zro_trntyp=trn_gidtyp and zro_trnnumer=trn_gidnumer' +
+                    ' where 1=1' + case when @CDN_FiltrKsiegowanieDT&lt;&gt;'' then ' AND ' + @CDN_FiltrKsiegowanieDT else '' end + case when @cFiltrDT&lt;&gt;'' then ' AND ' + @cFiltrDT else '' end +
+                            ' and dt.dt_DataDekr &gt;= ' + convert(varchar,@CDN_KorektaPodDochData) +
+                    ' group by PRLV_GIDTyp, PRLV_GIDNumer, PRLV_GIDLp, PRLV_KwotaSys, PRLV_SumKwotaSys,' +
+                            ' case when not SpiTrn.Trn_GidTyp is null then CDN.NumerDokumentu(SpiTrn.TrN_GIDTyp, SpiTrn.TrN_SpiTyp,SpiTrn.TrN_TrnTyp,SpiTrn.TrN_TrnNumer,SpiTrn.TrN_TrNRok,SpiTrn.Trn_TrnSeria,SpiTrn.TrN_TrnMiesiac) else fztrn.Dokument end,' +
+                            ' case when not SpiTrn.Trn_GidTyp is null then SpiTrn.trn_DokumentObcy else fztrn.trn_DokumentObcy end,' +
+                            ' DZK_Bufor, DZK_Dziennik, DZK_Rok, DZK_Miesiac, DZK_RMNumer, DZK_Prosty, DZK_OkrSymbol, dzk_typ, DZK_Opis, del_gidnumer, del_gidlp, del_pozycja, del_opis' +
+                   case when @CDN_PowZDostawami=0 then '' else
+                    ' union all' +
+                    ' select 1 Dst, DokumentDst,' + -------powiazane z dostawami
+                            ' FsDT.DokumentObcyDst DokumentObcy,' +
+                            ' FsDT.Numer,' +
+                            ' FsDT.DT_DataDekr,' +
+                            ' FsDT.Pozycja Pozycja,' +
+                            ' max(case when FsDT.DT_DC=1 then FsDT.DT_Konto else '''' end) KontoDT,' +
+                            ' max(case when FsDT.DT_DC=2 then FsDT.DT_Konto else '''' end) KontoCT,' +
+                            ' convert(decimal(15,2),sum(case when FsDT.DT_DC=1 then FsDT.KPDKwotaDTDlaTRP else 0 end)) KwotaDT,' +
+                            ' convert(decimal(15,2),sum(case when FsDT.DT_DC=2 then FsDT.KPDKwotaDTDlaTRP else 0 end)) KwotaCT,' +
+                            ' case when max(case when FsDT.DT_WalutaWal&lt;&gt;'''' then FsDT.DT_WalutaWal else '''' end)='''' then ''' + @WalutaSys + ''' else max(case when FsDT.DT_WalutaWal&lt;&gt;'''' then FsDT.DT_WalutaWal else '''' end) end Waluta,' +
+                            ' FsDT.DZK_Typ Typ,' +
+                            ' FsDT.DZK_Opis DZKOpis,' +
+                            ' FsDT.DEL_Opis DELOpis,' +
+                            ' FsDT.DT_GIDNumer GIDNumer,' +
+                            ' FsDT.DT_GIDLp GIDLp,' +
+                            ' 0.00 KwotaDTBezKPD,' +
+                            ' 0.00 KwotaCTBezKPD,' +
+                            ' PRLV_GIDTyp, PRLV_GIDNumer, PRLV_GIDLp' +
+                     ' from' +
+                            ' FsDT' +
+                     ' where FsDT.KKS_GIDNumer&lt;&gt;0' +
+                     ' group by' +
+                            ' PRLV_GIDTyp, PRLV_GIDNumer, PRLV_GIDLp,' +
+                            ' DokumentDst,' +
+                            ' FsDT.DokumentObcyDst,' +
+                            ' FsDT.DT_GIDNumer,' +
+                            ' FsDT.DT_DataDekr,' +
+                            ' FsDT.DZK_Opis,' +
+                            ' FsDT.DZK_Typ,' +
+                            ' FsDT.DT_GIDLp,' +
+                            ' FsDT.Pozycja,' +
+                            ' FsDT.DEL_Opis,' +
+                            ' FsDT.Numer' end +
+                    ') a' +
+            ' union all' +
+            ' select Dst, Dokument, DokumentObcy, Numer, DataDekr, Pozycja, KontoDT, KontoCT, KwotaDT, KwotaCT,' +
+            ' sum(KwotaDT) over (Partition by PRLV_GIDTyp, PRLV_GIDNumer, PRLV_GIDLp, GIDNumer) SumKwotaDT,' +
+            ' sum(KwotaCT) over (Partition by PRLV_GIDTyp, PRLV_GIDNumer, PRLV_GIDLp, GIDNumer) SumKwotaCT,' +
+            ' Waluta, Typ, DZKOpis, DELOpis, GIDNumer, GIDLp,' +
+            ' sum(KwotaDTBezKPD) over (Partition by GIDNumer) SumKwotaDTBezKPD,' +
+            ' sum(KwotaCTBezKPD) over (Partition by GIDNumer) SumKwotaCTBezKPD,' +
+            ' PRLV_GIDTyp, PRLV_GIDNumer, PRLV_GIDLp' +
+            ' from (' +
+                    ' select 0 Dst, Dokument,' +
+                            ' trn_DokumentObcy DokumentObcy,' +
+                            ' cdn.NumerDekretu(DZK_Bufor, DZK_Dziennik, DZK_Rok, DZK_Miesiac, DZK_RMNumer, DEL_Pozycja, DZK_Prosty,DZK_OkrSymbol) Numer,' +
+                            ' max(DT_DataDekr) DataDekr,' +
+                            ' Del_Pozycja Pozycja,' +
+                            ' max(case when DT_DC=1 then DT_Konto else '''' end) KontoDT,' +
+                            ' max(case when DT_DC=2 then DT_Konto else '''' end) KontoCT,' +
+                            ' min(sign(DT_Kwota))*max(case when DT_DC=1 then abs(DT_Kwota) else 0 end) KwotaDT,' +
+                            ' min(sign(DT_Kwota))*max(case when DT_DC=2 then abs(DT_Kwota) else 0 end) KwotaCT,' +
+                            ' max(DT_Waluta) Waluta,' +
+                            ' DZK_Typ Typ,' +
+                            ' DZK_Opis DZKOpis,' +
+                            ' DEL_Opis DELOpis,' +
+                            ' DEL_GIDNumer GIDNumer,' +
+                            ' DEL_GIDLp GIDLp,' +
+                            ' min(sign(DT_Kwota))*sum(case when DT_DC=1 and KKS_TypKonta&lt;&gt;7 then abs(DT_Kwota) else 0 end) KwotaDTBezKPD,' +
+							' min(sign(DT_Kwota))*sum(case when DT_DC=2 and KKS_TypKonta&lt;&gt;7 then abs(DT_Kwota) else 0 end) KwotaCTBezKPD,' +
+                            ' PRLV_GIDTyp, PRLV_GIDNumer, PRLV_GIDLp' +
+                    ' from prlvSum' +
+                        ' join cdn.KPDZrodla' +
+                            ' on kpd_trptyp=PRLV_GIDTyp and kpd_trpnumer=PRLV_GIDNumer and kpd_trplp=PRLV_GIDLp' +
+                        ' join cdn.dziennik dzk' +
+                            ' on kpd_dzknumer=dzk_gidnumer' +
+                        ' join cdn.DziennikElem' +
+                            ' on dzk_gidnumer = del_gidnumer' +
+                        ' join cdn.dekrety dt' +
+                            ' on del_gidnumer = dt_gidnumer and del_gidlp = dt_gidlp and dt_walutaobca = 0' +
+                        ' join cdn.Konta' +
+	                        ' on dt.dt_kksnumer = kks_gidnumer' +
+                    ' where DZK_Typ in (1,2)' + case when @cFiltrDT&lt;&gt;'' then ' AND ' + @cFiltrDT else '' end +
+                    ' group by PRLV_GIDTyp, PRLV_GIDNumer, PRLV_GIDLp, Dokument,' +
+                            ' trn_DokumentObcy, DZK_Bufor, DZK_Dziennik, DZK_Rok, DZK_Miesiac, DZK_RMNumer, DZK_Prosty, DZK_OkrSymbol, dzk_typ, DZK_Opis, DZK_SumaDT, DZK_SumaCT, del_gidnumer, del_gidlp, del_pozycja, del_opis' +
+                    ') b' +
+            ')'
+
+if @CDN_ListaDT = 1	or 1=1
+	set @Select = @Select + ' SELECT ' + @Fields + ', PRLV_DniZwloki, ' + @Fields3 + ' ,DT.*' + 
+				' from #tmpPRLV' +
+					' join DT' +
+						' on PRLV_GIDTyp=DT.PRLVGIDTyp and PRLV_GIDNumer=DT.PRLVGIDNumer and PRLV_GIDLp=DT.PRLVGIDLp' +
+            ' order by PRLV_GIDTyp, PRLV_GIDNumer, PRLV_GIDLp, Typ, Dst, GIDNumer, Pozycja' +
+            '; Drop table #tmpPRLV'
+else
+	set @Select = @Select + ' SELECT ' + @Fields + ', PRLV_DniZwloki, ' + @Fields3 + ' ' + 
+				' from #tmpPRLV' +
+            ' order by PRLV_GIDTyp, PRLV_GIDNumer, PRLV_GIDLp' +
+            '; Drop table #tmpPRLV'
+
+
+
+
+
+
+
+  --set @sSelectDT = 'select Dokument, DokumentObcy, Numer, DataDekr, Pozycja, KontoDT, KontoCT, KwotaDT, KwotaCT,' +
+  --          ' sum(KwotaDT) over (Partition by GIDNumer) SumKwotaDT,' +
+  --          ' sum(KwotaCT) over (Partition by GIDNumer) SumKwotaCT,' +
+  --          ' Waluta, Typ, DZKOpis, DELOpis, GIDNumer, GIDLp,' +
+  --          ' sum(KwotaDTBezKPD) over (Partition by GIDNumer) SumKwotaDTBezKPD,' +
+  --          ' sum(KwotaCTBezKPD) over (Partition by GIDNumer) SumKwotaCTBezKPD,' +
+  --          ' TRPGIDTyp, TRPGIDNumer' + 
+  --          ' from (' +
+  --          ' select CDN.NumerDokumentu(SpiTrn.TrN_GIDTyp, SpiTrn.TrN_SpiTyp,SpiTrn.TrN_TrnTyp,SpiTrn.TrN_TrnNumer,SpiTrn.TrN_TrNRok,SpiTrn.Trn_TrnSeria,SpiTrn.TrN_TrnMiesiac) Dokument,' +
+  --                  ' SpiTrn.Trn_DokumentObcy DokumentObcy,' +
+  --                  ' cdn.NumerDekretu(DZK_Bufor, DZK_Dziennik, DZK_Rok, DZK_Miesiac, DZK_RMNumer, 0, DZK_Prosty,DZK_OkrSymbol) Numer,' +
+  --                  ' max(DT_DataDekr) DataDekr,' +
+  --                  ' Del_Pozycja Pozycja,' +
+  --                  ' max(case when DT_DC=1 then DT_Konto else '''' end) KontoDT,' +
+  --                  ' max(case when DT_DC=2 then DT_Konto else '''' end) KontoCT,' +
+  --                  ' min(sign(DT_Kwota))*max(case when DT_DC=1 then abs(DT_Kwota) else 0 end) KwotaDT,' +
+  --                  ' min(sign(DT_Kwota))*max(case when DT_DC=2 then abs(DT_Kwota) else 0 end) KwotaCT,' +
+  --                  ' max(DT_Waluta) Waluta,' +
+  --                  ' DZK_Typ Typ,' +
+  --                  ' DZK_Opis DZKOpis,' +
+  --                  ' DEL_Opis DELOpis,' +
+  --                  ' DEL_GIDNumer GIDNumer,' +
+  --                  ' DEL_GIDLp GIDLp,' +
+  --                  ' 0 KwotaDTBezKPD,' + 
+  --                  ' 0 KwotaCTBezKPD,' + 
+  --                  case when @CDN_bZobowiazaniaPowZDostawami = 0 then 
+		--				' SpiTrn.trn_gidtyp TRPGIDTyp, SpiTrn.trn_gidNumer TRPGIDNumer' 
+  --                  else
+		--				' fztrn.trn_gidtyp TRPGIDTyp, fztrn.trn_gidNumer TRPGIDNumer'
+  --                  end +
+  --          ' from ' +                       
+  --          case when @CDN_bZobowiazaniaPowZDostawami = 0 then 
+		--		'cdn.TraNag SpiTrn' 
+  --          else                                       
+  --                  'cdn.TraNag fztrn' +
+  --                  ' join cdn.TraSElem fztrs' +
+  --                      ' on fztrn.TrN_GIDNumer = fztrs.TrS_GIDNumer' +
+  --                  ' join cdn.TraSElem fstrs' +
+  --                      ' on fztrs.Trs_DstNumer=fstrs.Trs_DstNumer' +
+  --                  ' join cdn.TraNag fstrn' +
+  --                      ' on fstrs.Trs_GIDNumer=fstrn.trn_gidnumer' +
+  --                  ' join cdn.TraNag Spitrn' +
+  --                      ' on ((fstrn.TrN_SpiNumer=Spitrn.trn_gidnumer))'
+  --           end +                       
+                        
+  --                  ' join cdn.Zrodla' +
+  --                      ' on SpiTrn.trn_gidtyp=zro_trntyp and SpiTrn.trn_gidnumer=zro_trnnumer and zro_trnlp=0' +
+  --                  ' join cdn.dziennik dzk' +
+  --                      ' on zro_dttyp=dzk_gidtyp and zro_dtnumer=dzk_gidnumer and zro_dtlp=0' +
+  --                  ' join cdn.DziennikElem' +
+  --                      ' on dzk_gidnumer = del_gidnumer' +
+  --                  ' join cdn.dekrety dt' +
+  --                      ' on del_gidnumer = dt_gidnumer and del_gidlp = dt_gidlp and dt_walutaobca = 0' +
+  --                  ' join cdn.Konta' +
+  --                      ' on dt_kksnumer = kks_gidnumer and KKS_KKZDKKSNumer&lt;&gt;0' +
+  --           ' where SpiTrn.trN_gidtyp in (' + @CDN_cPowZDostawamiDokSprz + ')' +                                              
+		--	 case when @CDN_cFiltrKsiegowanie &lt;&gt; '' then ' AND ' + @CDN_cFiltrKsiegowanie else '' end + 
+  --           case when @cFiltrDT &lt;&gt; '' then ' AND ' + @cFiltrDT else '' end +
+  --          ' group by SpiTrn.TrN_GIDTyp, SpiTrn.TrN_SpiTyp,SpiTrn.TrN_TrnTyp,SpiTrn.TrN_TrnNumer,SpiTrn.TrN_TrNRok,SpiTrn.Trn_TrnSeria,SpiTrn.TrN_TrnMiesiac,' +
+  --                  ' SpiTrn.Trn_DokumentObcy,' + 
+  --                  case when @CDN_bZobowiazaniaPowZDostawami = 0 then 
+		--				' SpiTrn.trn_gidtyp , SpiTrn.trn_gidNumer ' 
+  --                  else
+		--				' fztrn.trn_gidtyp , fztrn.trn_gidNumer ' 
+  --                  end +
+  --                  ' DZK_Bufor, DZK_Dziennik, DZK_Rok, DZK_Miesiac, DZK_RMNumer, DZK_Prosty, dzk_typ, DZK_Opis, del_gidnumer, del_gidlp, del_pozycja, del_opis, KKS_TypKonta' +            
+  --          ' union all' +
+  --          ' select CDN.NumerDokumentu(SpiTrn.TrN_GIDTyp, SpiTrn.TrN_SpiTyp,SpiTrn.TrN_TrnTyp,SpiTrn.TrN_TrnNumer,SpiTrn.TrN_TrNRok,SpiTrn.Trn_TrnSeria,SpiTrn.TrN_TrnMiesiac) Dokument,' +
+  --                  ' SpiTrn.Trn_DokumentObcy DokumentObcy,' +
+  --                  ' cdn.NumerDekretu(DZK_Bufor, DZK_Dziennik, DZK_Rok, DZK_Miesiac, DZK_RMNumer, 0, DZK_Prosty) Numer,' +
+  --                  ' max(DT_DataDekr) DataDekr,' +
+  --                  ' Del_Pozycja Pozycja,' +
+  --                  ' max(case when DT_DC=1 then DT_Konto else '''' end) KontoDT,' +
+  --                  ' max(case when DT_DC=2 then DT_Konto else '''' end) KontoCT,' +
+  --                  ' min(sign(DT_Kwota))*max(case when DT_DC=1 then abs(DT_Kwota) else 0 end) KwotaDT,' +
+  --                  ' min(sign(DT_Kwota))*max(case when DT_DC=2 then abs(DT_Kwota) else 0 end) KwotaCT,' +
+  --                  ' max(DT_Waluta) Waluta,' +
+  --                  ' DZK_Typ Typ,' +
+  --                  ' DZK_Opis DZKOpis,' +
+  --                  ' DEL_Opis DELOpis,' +
+  --                  ' DEL_GIDNumer GIDNumer,' +
+  --                  ' DEL_GIDLp GIDLp,' +
+  --                  ' 0 KwotaDTBezKPD,' + 
+  --                  ' 0 KwotaCTBezKPD,' + 
+  --                  case when @CDN_bZobowiazaniaPowZDostawami = 0 then 
+		--				' SpiTrn.trn_gidtyp , SpiTrn.trn_gidNumer '
+  --                  else
+		--				' fztrn.trn_gidtyp , fztrn.trn_gidNumer ' 
+  --                  end + 
+  --          ' from ' +                       
+  --          case when @CDN_bZobowiazaniaPowZDostawami = 0 then 
+		--		'cdn.TraNag SpiTrn' 
+  --          else                                       
+  --                  'cdn.TraNag fztrn' +
+  --                  ' join cdn.TraSElem fztrs' +
+  --                      ' on fztrn.TrN_GIDNumer = fztrs.TrS_GIDNumer' +
+  --                  ' join cdn.TraSElem fstrs' +
+  --                      ' on fztrs.Trs_DstNumer=fstrs.Trs_DstNumer' +
+  --                  ' join cdn.TraNag fstrn' +
+  --                      ' on fstrs.Trs_GIDNumer=fstrn.trn_gidnumer' +
+  --                  ' join cdn.TraNag Spitrn' +                        
+  --                      ' on ((fstrn.TrN_GIDNumer=Spitrn.trn_gidnumer))'
+  --           end +                                               
+  --                  ' join cdn.Zrodla' +
+  --                      ' on SpiTrn.trn_gidtyp=zro_trntyp and SpiTrn.trn_gidnumer=zro_trnnumer and zro_trnlp=0' +
+  --                  ' join cdn.dziennik dzk' +
+  --                      ' on zro_dttyp=dzk_gidtyp and zro_dtnumer=dzk_gidnumer and zro_dtlp=0' +
+  --                  ' join cdn.DziennikElem' +
+  --                      ' on dzk_gidnumer = del_gidnumer' +
+  --                  ' join cdn.dekrety dt' +
+  --                      ' on del_gidnumer = dt_gidnumer and del_gidlp = dt_gidlp and dt_walutaobca = 0' +
+  --                  ' join cdn.Konta' +
+  --                      ' on dt_kksnumer = kks_gidnumer and KKS_KKZDKKSNumer&lt;&gt;0' +
+  --           ' where SpiTrn.trN_gidtyp in (' + @CDN_cPowZDostawamiDokSprz + ')' + 
+		--	 case when @CDN_cFiltrKsiegowanie &lt;&gt; '' then ' AND ' + @CDN_cFiltrKsiegowanie else '' end + 
+  --           case when @cFiltrDT &lt;&gt; '' then ' AND ' + @cFiltrDT else '' end +
+  --          ' group by SpiTrn.TrN_GIDTyp, SpiTrn.TrN_SpiTyp,SpiTrn.TrN_TrnTyp,SpiTrn.TrN_TrnNumer,SpiTrn.TrN_TrNRok,SpiTrn.Trn_TrnSeria,SpiTrn.TrN_TrnMiesiac,' +
+  --                  ' SpiTrn.Trn_DokumentObcy,' + 
+  --                  case when @CDN_bZobowiazaniaPowZDostawami = 0 then 
+		--				' SpiTrn.trn_gidtyp , SpiTrn.trn_gidNumer '
+  --                  else
+		--				' fztrn.trn_gidtyp , fztrn.trn_gidNumer ' 
+  --                  end + 
+  --                  ' DZK_Bufor, DZK_Dziennik, DZK_Rok, DZK_Miesiac, DZK_RMNumer, DZK_Prosty, dzk_typ, DZK_Opis, del_gidnumer, del_gidlp, del_pozycja, del_opis, KKS_TypKonta' +                                
+  --          ' union all' +
+  --          ' select CDN.NumerDokumentu(SpiTrn.TrN_GIDTyp, SpiTrn.TrN_SpiTyp,SpiTrn.TrN_TrnTyp,SpiTrn.TrN_TrnNumer,SpiTrn.TrN_TrNRok,SpiTrn.Trn_TrnSeria,SpiTrn.TrN_TrnMiesiac) Dokument,' +
+  --                  ' SpiTrn.Trn_DokumentObcy DokumentObcy,' +
+  --                  ' cdn.NumerDekretu(DZK_Bufor, DZK_Dziennik, DZK_Rok, DZK_Miesiac, DZK_RMNumer, 0, DZK_Prosty) Numer,' +
+  --                  ' max(DT_DataDekr) DataDekr,' +
+  --                  ' Del_Pozycja Pozycja,' +
+  --                  ' max(case when DT_DC=1 then DT_Konto else '''' end) KontoDT,' +
+  --                  ' max(case when DT_DC=2 then DT_Konto else '''' end) KontoCT,' +
+  --                  ' min(sign(DT_Kwota))*max(case when DT_DC=1 then abs(DT_Kwota) else 0 end) KwotaDT,' +
+  --                  ' min(sign(DT_Kwota))*max(case when DT_DC=2 then abs(DT_Kwota) else 0 end) KwotaCT,' +
+  --                  ' max(DT_Waluta) Waluta,' +
+  --                  ' DZK_Typ Typ,' +
+  --                  ' DZK_Opis DZKOpis,' +
+  --                  ' DEL_Opis DELOpis,' +
+  --                  ' DEL_GIDNumer GIDNumer,' +
+  --                  ' DEL_GIDLp GIDLp,' +
+  --                  ' 0 KwotaDTBezKPD,' + 
+  --                  ' 0 KwotaCTBezKPD,' + 
+  --                  case when @CDN_bZobowiazaniaPowZDostawami = 0 then 
+		--				' SpiTrn.trn_gidtyp , SpiTrn.trn_gidNumer '
+  --                  else
+		--				' fztrn.trn_Spityp , fztrn.trn_SpiNumer ' 
+  --                  end + 
+  --          ' from ' +                       
+  --          case when @CDN_bZobowiazaniaPowZDostawami = 0 then 
+		--		'cdn.TraNag SpiTrn' 
+  --          else                                       
+  --                  'cdn.TraNag fztrn' +
+  --                  ' join cdn.TraSElem fztrs' +
+  --                      ' on fztrn.TrN_GIDNumer = fztrs.TrS_GIDNumer' +
+  --                  ' join cdn.TraSElem fstrs' +
+  --                      ' on fztrs.Trs_DstNumer=fstrs.Trs_DstNumer' +
+  --                  ' join cdn.TraNag fstrn' +
+  --                      ' on fstrs.Trs_GIDNumer=fstrn.trn_gidnumer' +
+  --                  ' join cdn.TraNag Spitrn' +
+  --                      ' on ((fstrn.TrN_SpiNumer=Spitrn.trn_gidnumer))'                        
+  --           end +                                               
+  --                  ' join cdn.Zrodla' +
+  --                      ' on SpiTrn.trn_gidtyp=zro_trntyp and SpiTrn.trn_gidnumer=zro_trnnumer and zro_trnlp=0' +
+  --                  ' join cdn.dziennik dzk' +
+  --                      ' on zro_dttyp=dzk_gidtyp and zro_dtnumer=dzk_gidnumer and zro_dtlp=0' +
+  --                  ' join cdn.DziennikElem' +
+  --                      ' on dzk_gidnumer = del_gidnumer' +
+  --                  ' join cdn.dekrety dt' +
+  --                      ' on del_gidnumer = dt_gidnumer and del_gidlp = dt_gidlp and dt_walutaobca = 0' +
+  --                  ' join cdn.Konta' +
+  --                      ' on dt_kksnumer = kks_gidnumer and KKS_KKZDKKSNumer&lt;&gt;0' +
+  --           ' where SpiTrn.trN_gidtyp in (' + @CDN_cPowZDostawamiDokSprz + ')' +
+		--	 case when @CDN_cFiltrKsiegowanie &lt;&gt; '' then ' AND ' + @CDN_cFiltrKsiegowanie else '' end + 
+  --           case when @cFiltrDT &lt;&gt; '' then ' AND ' + @cFiltrDT else '' end +
+  --          ' group by SpiTrn.TrN_GIDTyp, SpiTrn.TrN_SpiTyp,SpiTrn.TrN_TrnTyp,SpiTrn.TrN_TrnNumer,SpiTrn.TrN_TrNRok,SpiTrn.Trn_TrnSeria,SpiTrn.TrN_TrnMiesiac,' +
+  --                  ' SpiTrn.Trn_DokumentObcy,' + 
+  --                  case when @CDN_bZobowiazaniaPowZDostawami = 0 then 
+		--				' SpiTrn.trn_gidtyp , SpiTrn.trn_gidNumer '
+  --                  else
+		--				' fztrn.trn_spityp , fztrn.trn_spiNumer ' 
+  --                  end + 
+  --                  ' DZK_Bufor, DZK_Dziennik, DZK_Rok, DZK_Miesiac, DZK_RMNumer, DZK_Prosty, dzk_typ, DZK_Opis, del_gidnumer, del_gidlp, del_pozycja, del_opis, KKS_TypKonta' +     
+  --          ' union all' +
+  --          ' select CDN.NumerDokumentu(SpiTrn.TrN_GIDTyp, SpiTrn.TrN_SpiTyp,SpiTrn.TrN_TrnTyp,SpiTrn.TrN_TrnNumer,SpiTrn.TrN_TrNRok,SpiTrn.Trn_TrnSeria,SpiTrn.TrN_TrnMiesiac) Dokument,' +
+  --                  ' SpiTrn.Trn_DokumentObcy DokumentObcy,' +
+  --                  ' cdn.NumerDekretu(DZK_Bufor, DZK_Dziennik, DZK_Rok, DZK_Miesiac, DZK_RMNumer, 0, DZK_Prosty) Numer,' +
+  --                  ' max(DT_DataDekr) DataDekr,' +
+  --                  ' Del_Pozycja Pozycja,' +
+  --                  ' max(case when DT_DC=1 then DT_Konto else '''' end) KontoDT,' +
+  --                  ' max(case when DT_DC=2 then DT_Konto else '''' end) KontoCT,' +
+  --                  ' min(sign(DT_Kwota))*max(case when DT_DC=1 then abs(DT_Kwota) else 0 end) KwotaDT,' +
+  --                  ' min(sign(DT_Kwota))*max(case when DT_DC=2 then abs(DT_Kwota) else 0 end) KwotaCT,' +
+  --                  ' max(DT_Waluta) Waluta,' +
+  --                  ' DZK_Typ Typ,' +
+  --                  ' DZK_Opis DZKOpis,' +
+  --                  ' DEL_Opis DELOpis,' +
+  --                  ' DEL_GIDNumer GIDNumer,' +
+  --                  ' DEL_GIDLp GIDLp,' +
+  --                  ' 0 KwotaDTBezKPD,' + 
+  --                  ' 0 KwotaCTBezKPD,' + 
+  --                  case when @CDN_bZobowiazaniaPowZDostawami = 0 then 
+		--				' SpiTrn.trn_gidtyp , SpiTrn.trn_gidNumer '
+  --                  else
+		--				' fztrn.trn_Spityp , fztrn.trn_SpiNumer ' 
+  --                  end + 
+  --          ' from ' +                       
+  --          case when @CDN_bZobowiazaniaPowZDostawami = 0 then 
+		--		'cdn.TraNag SpiTrn' 
+  --          else                                       
+  --                  'cdn.TraNag fztrn' +
+  --                  ' join cdn.TraSElem fztrs' +
+  --                      ' on fztrn.TrN_GIDNumer = fztrs.TrS_GIDNumer' +
+  --                  ' join cdn.TraSElem fstrs' +
+  --                      ' on fztrs.Trs_DstNumer=fstrs.Trs_DstNumer' +
+  --                  ' join cdn.TraNag fstrn' +
+  --                      ' on fstrs.Trs_GIDNumer=fstrn.trn_gidnumer' +
+  --                  ' join cdn.TraNag Spitrn' +                        
+  --                      ' on ((fstrn.TrN_GIDNumer=Spitrn.trn_gidnumer))'
+  --           end +                                               
+  --                  ' join cdn.Zrodla' +
+  --                      ' on SpiTrn.trn_gidtyp=zro_trntyp and SpiTrn.trn_gidnumer=zro_trnnumer and zro_trnlp=0' +
+  --                  ' join cdn.dziennik dzk' +
+  --                      ' on zro_dttyp=dzk_gidtyp and zro_dtnumer=dzk_gidnumer and zro_dtlp=0' +
+  --                  ' join cdn.DziennikElem' +
+  --                      ' on dzk_gidnumer = del_gidnumer' +
+  --                  ' join cdn.dekrety dt' +
+  --                      ' on del_gidnumer = dt_gidnumer and del_gidlp = dt_gidlp and dt_walutaobca = 0' +
+  --                  ' join cdn.Konta' +
+  --                      ' on dt_kksnumer = kks_gidnumer and KKS_KKZDKKSNumer&lt;&gt;0' +
+  --           ' where SpiTrn.trN_gidtyp in (' + @CDN_cPowZDostawamiDokSprz + ')' + 
+		--	 case when @CDN_cFiltrKsiegowanie &lt;&gt; '' then ' AND ' + @CDN_cFiltrKsiegowanie else '' end + 
+  --           case when @cFiltrDT &lt;&gt; '' then ' AND ' + @cFiltrDT else '' end +
+  --          ' group by SpiTrn.TrN_GIDTyp, SpiTrn.TrN_SpiTyp,SpiTrn.TrN_TrnTyp,SpiTrn.TrN_TrnNumer,SpiTrn.TrN_TrNRok,SpiTrn.Trn_TrnSeria,SpiTrn.TrN_TrnMiesiac,' +
+  --                  ' SpiTrn.Trn_DokumentObcy,' + 
+  --                  case when @CDN_bZobowiazaniaPowZDostawami = 0 then 
+		--				' SpiTrn.trn_gidtyp , SpiTrn.trn_gidNumer '
+  --                  else
+		--				' fztrn.trn_spityp , fztrn.trn_spiNumer ' 
+  --                  end + 
+  --                  ' DZK_Bufor, DZK_Dziennik, DZK_Rok, DZK_Miesiac, DZK_RMNumer, DZK_Prosty, dzk_typ, DZK_Opis, del_gidnumer, del_gidlp, del_pozycja, del_opis, KKS_TypKonta' +                    
+  --          ') a' +
+  --          ' union all' +
+  --          ' select CDN.NumerDokumentu(TrN_GIDTyp, TrN_SpiTyp,TrN_TrnTyp,TrN_TrnNumer,TrN_TrNRok,Trn_TrnSeria,TrN_TrnMiesiac) Dokument,' +
+  --                  ' Trn_DokumentObcy DokumentObcy,' +
+  --                  ' cdn.NumerDekretu(DZK_Bufor, DZK_Dziennik, DZK_Rok, DZK_Miesiac, DZK_RMNumer, 0, DZK_Prosty) Numer,' +
+  --                  ' max(DT_DataDekr) DataDekr,' +
+  --                  ' Del_Pozycja Pozycja,' +
+  --                  ' max(case when DT_DC=1 then DT_Konto else '''' end) KontoDT,' +
+  --                  ' max(case when DT_DC=2 then DT_Konto else '''' end) KontoCT,' +
+  --                  ' min(sign(DT_Kwota))*sum(case when DT_DC=1 then abs(DT_Kwota) else 0 end) KwotaDT,' +
+  --                  ' min(sign(DT_Kwota))*sum(case when DT_DC=2 then abs(DT_Kwota) else 0 end) KwotaCT,' +
+  --                  ' DZK_SumaDT,' +
+  --                  ' DZK_SumaCT,' +
+  --                  ' max(DT_Waluta) Waluta,' +
+  --                  ' DZK_Typ Typ,' +
+  --                  ' DZK_Opis DZKOpis,' +
+  --                  ' DEL_Opis DELOpis,' +
+  --                  ' DEL_GIDNumer GIDNumer,' +
+  --                  ' DEL_GIDLp GIDLp,' +                    
+  --                  ' min(sign(DT_Kwota))*sum(case when DT_DC=1 and KKS_TypKonta&lt;&gt;7 then abs(DT_Kwota) else 0 end) KwotaDTBezKPD,' +
+  --                  ' min(sign(DT_Kwota))*sum(case when DT_DC=2 and KKS_TypKonta&lt;&gt;7 then abs(DT_Kwota) else 0 end) KwotaCTBezKPD' +
+  --                  ' TRN_GIDTyp, TRN_GIDNumer' + 
+  --          ' from cdn.TraNag' +
+  --              ' join cdn.TraPlat' +
+  --                  ' on trn_gidtyp=trp_gidtyp and trn_gidnumer=trp_gidnumer' +
+  --              ' join cdn.KPDZrodla' +
+  --                  ' on trp_gidtyp=kpd_trptyp and trp_gidnumer=kpd_trpnumer and trp_gidlp=kpd_trplp' +
+  --              ' join cdn.dziennik dzk' +
+  --                  ' on kpd_dzknumer=dzk_gidnumer' +
+  --              ' join cdn.DziennikElem' +
+  --                  ' on dzk_gidnumer = del_gidnumer' +
+  --              ' join cdn.dekrety dt' +
+  --                  ' on del_gidnumer = dt_gidnumer and del_gidlp = dt_gidlp and dt_walutaobca = 0' +
+  --              ' join cdn.Konta' +
+  --                      ' on dt.dt_kksnumer = kks_gidnumer' +
+  --          ' where DZK_Typ=1 ' + 
+  --          case when @cFiltrDT &lt;&gt; '' then ' AND ' + @cFiltrDT else '' end +            
+  --          ' group by TrN_GIDTyp, TrN_SpiTyp,TrN_TrnTyp,TrN_TrnNumer,TrN_TrNRok,Trn_TrnSeria,TrN_TrnMiesiac,' +
+  --                  ' Trn_DokumentObcy, DZK_Bufor, DZK_Dziennik, DZK_Rok, DZK_Miesiac, DZK_RMNumer, DZK_Prosty, dzk_typ, DZK_Opis, DZK_SumaDT, DZK_SumaCT, del_gidnumer, del_gidlp, del_pozycja, del_opis, dt_walutaobca'
+
+
+
+exec( @Select  );
+
+
+
+/*select 0 PRLV_GIDTyp, 0 PRLV_GIDNumer,0 PRLV_GIDLp, 0 PRLV_SpiTyp,0 PRLV_SpiNumer, 0 PRLV_SpiLp, '11111111112222222222333333333344444444445555555555' PRLV_Dokument
+  ,'11111111112222222222333333333344444444445555555555' PRLV_DokumentObcy,0.00 PRLV_Kwota,0.00 PRLV_KwotaPLN,0.00 PRLV_Pozostaje, 0.00 PRLV_PozostajePLN
+  , 0.00 PRLV_NaleznosciZobowiazania, 0.00 PRLV_PrzychodyRozchody, 0.00 PRLV_Data, 0 PRLV_Termin, 0  PRLV_SpodziewanyTermin,  0 PRLV_Rozliczony
+  , '11111' PRLV_Waluta
+  ,'11111111112222222222333333333344444444445555555555' PRLV_Rejestr, 0  PRLV_KntTyp,  0 PRLV_KntNumer
+  ,'11111111112222222222333333333344444444445555555555' PRLV_Akronim
+  ,'11111111112222222222333333333344444444445555555555' PRLV_Nazwa1
+  ,'11111111112222222222333333333344444444445555555555' PRLV_Nazwa2
+  ,'11111111112222222222333333333344444444445555555555' PRLV_Nazwa3
+  ,'11111111112222222222333333333344444444445555555555' PRLV_Miasto, 0  PODV_GIDTyp, 0  PODV_GIDNumer
+  ,'11111111112222222222333333333344444444445555555555' PODV_Akronim
+  ,'11111111112222222222333333333344444444445555555555' PODV_Nazwa1
+  ,'11111111112222222222333333333344444444445555555555' PODV_Nazwa2
+  ,'11111111112222222222333333333344444444445555555555' PODV_Nazwa3
+  ,'11111111112222222222333333333344444444445555555555' PODV_Miasto
+  , 0  PRLV_Zaksiegowano, 0  PRLV_Bufor, 0 PRLV_DniZwloki,  0.00  PRLV_KwotaNaleznosc
+  , 0.00  PRLV_KwotaZobowiazanie
+  , 0.00 PRLV_PozostajeNaleznosc
+  , 0.00  PRLV_PozostajeZobowiazanie
+  , 0.00 PRLV_KwotaPLNNaleznosc
+  , 0.00  PRLV_KwotaPLNZobowiazanie
+  , 0.00  PRLV_PozostajePLNNaleznosc
+  , 0.00 PRLV_PozostajePLNZobowiazanie
+	  , 0 Dst  
+      , '11111111112222222222333333333344444444445555555555' Dokument
+      , '11111111112222222222333333333344444444445555555555' DokumentObcy
+      , '11111111112222222222333333333344444444445555555555' Numer
+      , 0 DataDekr, 0 Pozycja
+      , '123456789012345678901234567890' KontoDT, '123456789012345678901234567890' KontoCT
+      , 0.00 KwotaDT, 0.00 KwotaCT,
+            , 0.00 SumKwotaDT
+            , 0.00 SumKwotaCT
+            , '12345' Waluta, 0 Typ
+            , '11111111112222222222333333333344444444445555555555' DZKOpis
+            , '11111111112222222222333333333344444444445555555555' DELOpis
+            , 0.00 SumKwotaDTBezKPD
+            , 0.00 SumKwotaCTBezKPD
+            , 0 GIDNumer, 0 GIDLp
+            , 0 PRLVGIDTyp, 0 PRLVGIDNumer, 0 PRLVGIDLp
+      
+      
+*/
+
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

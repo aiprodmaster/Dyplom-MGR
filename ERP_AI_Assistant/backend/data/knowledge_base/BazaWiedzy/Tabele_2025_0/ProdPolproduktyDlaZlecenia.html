@@ -1,0 +1,115 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="ProdPolproduktyDlaZlecenia"></A><PRE>
+          <FONT SIZE="2"><I>/* ProdPolproduktyDlaZlecenia */</I><BR>
+CREATE FUNCTION [CDN].ProdPolproduktyDlaZlecenia(@PZLId VARCHAR(8000),@TypPolproduktu TINYINT)
+RETURNS @Polprodukty TABLE(
+PZLId INT,
+PTZId INT,
+Planowana DECIMAL(15,4),
+Zrealizowana DECIMAL(15,4),
+ZwiazanaPlan DECIMAL(15,4),
+ZwiazanaRealiz DECIMAL(15,4),
+ZwiazanaDok DECIMAL(15,4),
+MozliweDoZwiazProd DECIMAL(15,4),
+WszystkieProd DECIMAL(15,4),
+KlasaCechy INT,
+Cecha VARCHAR(255),
+IdWzorcaNrPartii INT
+)
+AS 
+BEGIN
+IF @TypPolproduktu = 1
+BEGIN
+	INSERT INTO @Polprodukty
+	SELECT PZL_Id,PTZ_Id,SUM(Planowana) Planowana,SUM(Zrealizowana) Zrealizowana,SUM(ZwiazanaPlan) ZwiazanaPlan,SUM(ZwiazanaZasob) ZwiazanaZasob,
+	SUM(ZwiazanaDok) ZwiazanaDok,MozliweDoZwiaz,WszystkieProd,PZA_KlasaCechy,PZA_Cecha, PZA_IdWzorcaNrPartii
+	FROM(
+		SELECT PZL_Id,PTZO.PTZ_Id,
+		CASE WHEN PZA_Planowany = 1 THEN SUM(PZA_Ilosc) ELSE 0 END Planowana,CASE WHEN PZA_Planowany = 1 THEN 0 ELSE SUM(PZA_Ilosc) END Zrealizowana, 
+		CASE WHEN PZA_Zasob &lt;&gt; 0 THEN SUM(PZA_Ilosc) ELSE 0 END ZwiazanaZasob, SUM(ISNULL(ZwiazaneProd.PZP_Ilosc,0)) ZwiazanaPlan, SUM(ISNULL(ZwiazaneDok.TrS_Ilosc,0)) ZwiazanaDok,
+		(SELECT SUM(PZA_Ilosc) - 
+				(ISNULL(SUM(ISNULL(ZwiazaneProd.PZP_Ilosc,0)),0) + ISNULL(SUM(ISNULL(ZwiazaneDok.Trs_Ilosc,0)),0) + ISNULL(SUM(ISNULL(ZwiazaneZas.Zwiazana,0)),0)) IloscPolprodDoZwiaz 
+			FROM CDN.ProdTechnologiaZasoby PTZP
+			JOIN CDN.ProdZasoby PZAP ON PZAP.PZA_TechnologiaZasob = PTZP.PTZ_ID
+			LEFT JOIN CDN.ProdCzynnosci CP ON PZAP.PZA_Czynnosc = PCZ_Id
+			LEFT JOIN 
+				(SELECT PZP_PZAIDWykonany,SUM(PZP_Ilosc) PZP_Ilosc FROM CDN.ProdZwiazanePolprodukty GROUP BY PZP_PZAIDWykonany) ZwiazaneProd ON PZP_PZAIDWykonany = PZAP.PZA_Id
+			LEFT JOIN 
+				(SELECT SUM(TrS_Ilosc) Trs_Ilosc,TrS_ZlcNumer FROM CDN.TraSElem WHERE TrS_ZlcTyp = 14346 GROUP BY TrS_ZlcNumer) 
+				ZwiazaneDok ON ZwiazaneDok.TrS_ZlcNumer = PZAP.PZA_Id
+			LEFT JOIN 
+				(SELECT PZA_Zasob,SUM(PZA_Ilosc) Zwiazana FROM CDN.ProdZasoby WHERE PZA_Zasob &lt;&gt; 0 GROUP BY PZA_Zasob) 
+				ZwiazaneZas ON ZwiazaneZas.PZA_Zasob = PZAP.PZA_Id 
+			WHERE PTZP.PTZ_Id = PTZO.PTZ_TechnologiaZasob AND ((PTZP.PTZ_ZrodloZasobu = 0 and CP.PCZ_Proces = C.PCZ_Proces) or
+					(PTZP.PTZ_ZrodloZasobu = 1 and CP.PCZ_PZLId = PZL_Id) or
+					(PTZP.PTZ_ZrodloZasobu = 2 and (CP.PCZ_Oddzial=0 or CP.PCZ_Oddzial=PZL_Oddzial)) or
+					PTZP.PTZ_ZrodloZasobu = 3))  MozliweDoZwiaz,	
+			(SELECT SUM(PZA_Ilosc) - 
+				(ISNULL(SUM(ISNULL(ZwiazaneProd.PZP_Ilosc,0)),0) + ISNULL(SUM(ISNULL(ZwiazaneDok.Trs_Ilosc,0)),0) + ISNULL(SUM(ISNULL(ZwiazaneZas.Zwiazana,0)),0)) IloscPolprodDoZwiaz 
+			FROM CDN.ProdZasoby PZAP 
+			LEFT JOIN CDN.ProdCzynnosci ON PZAP.PZA_Czynnosc = PCZ_Id
+			LEFT JOIN 
+				(SELECT PZP_PZAIDWykonany,SUM(PZP_Ilosc) PZP_Ilosc FROM CDN.ProdZwiazanePolprodukty GROUP BY PZP_PZAIDWykonany) ZwiazaneProd ON PZP_PZAIDWykonany = PZAP.PZA_Id
+			LEFT JOIN 
+				(SELECT SUM(TrS_Ilosc) Trs_Ilosc,TrS_ZlcNumer FROM CDN.TraSElem WHERE TrS_ZlcTyp = 14346 GROUP BY TrS_ZlcNumer) 
+				ZwiazaneDok ON ZwiazaneDok.TrS_ZlcNumer = PZAP.PZA_Id
+			LEFT JOIN 
+				(SELECT PZA_Zasob,SUM(PZA_Ilosc) Zwiazana FROM CDN.ProdZasoby WHERE PZA_Zasob &lt;&gt; 0 GROUP BY PZA_Zasob) 
+				ZwiazaneZas ON ZwiazaneZas.PZA_Zasob = PZAP.PZA_Id WHERE PZAP.PZA_TechnologiaZasob = PTZO.PTZ_TechnologiaZasob
+			) WszystkieProd,PZA_KlasaCechy,PZA_Cecha, PZA_IdWzorcaNrPartii
+		FROM Cdn.ProdZlecenia
+		INNER JOIN Cdn.ProdCzynnosci c on C.PCZ_PZLId = PZL_Id
+		INNER JOIN CDN.ProdZasoby ON PZA_Czynnosc = PCZ_Id AND PZA_TypZasobu IN (1,2)
+		INNER JOIN CDN.ProdTechnologiaZasoby PTZO ON PZA_TechnologiaZasob = PTZO.PTZ_Id AND PTZO.PTZ_TechnologiaZasob &lt;&gt; 0 AND PTZO.PTZ_TypZasobu IN (1,2)
+		LEFT JOIN CDN.TwrKarty ON Twr_GIDNumer = PTZO.PTZ_TwrNumer AND PTZO.PTZ_TwrTyp = 16
+		LEFT JOIN 
+			(SELECT PZP_PZAIDPlanowany,SUM(PZP_Ilosc) PZP_Ilosc FROM CDN.ProdZwiazanePolprodukty GROUP BY PZP_PZAIDPlanowany) ZwiazaneProd ON PZP_PZAIDPlanowany = PZA_Id
+		LEFT JOIN 
+			(SELECT SUM(TrS_Ilosc) Trs_Ilosc,TrS_ZlcNumer FROM CDN.TraSElem WHERE TrS_ZlcTyp = 14346 GROUP BY TrS_ZlcNumer) 
+			ZwiazaneDok ON ZwiazaneDok.TrS_ZlcNumer = PZA_Id
+		WHERE Pzl_Id IN(SELECT Num FROM CDN.Str2List(@PZLId))
+		GROUP BY PZL_Id,PTZO.PTZ_Id,PTZO.PTZ_TechnologiaZasob,PZA_Planowany,PZA_Zasob,PZL_Oddzial,PTZ_Jednostka,C.PCZ_Proces,PZA_KlasaCechy,PZA_Cecha, PZA_IdWzorcaNrPartii) Zasoby
+	GROUP BY PZL_Id,PTZ_Id,MozliweDoZwiaz,WszystkieProd,PZA_KlasaCechy,PZA_Cecha, PZA_IdWzorcaNrPartii
+END
+ELSE
+BEGIN
+	INSERT INTO @Polprodukty
+	SELECT PZL_Id,PTZ_Id,SUM(Planowana) Planowana,SUM(Zrealizowana) Zrealizowana,SUM(ZwiazanaPlan) ZwiazanaPlan,SUM(ZwiazanaRealiz) ZwiazanaRealiz,SUM(ZwiazanaDok) ZwiazanaDok,0,0,0,'',0
+	FROM(
+		SELECT c.PCZ_PZLId PZL_Id,PTZO.PTZ_Id,
+		CASE WHEN PZA_Planowany = 1 THEN SUM(PZA_Ilosc) ELSE 0 END Planowana,CASE WHEN PZA_Planowany = 1 THEN 0 ELSE SUM(PZA_Ilosc) END Zrealizowana, 
+		SUM(ISNULL(ZwiazaneProd.PZP_Ilosc,0))ZwiazanaPlan,SUM(ISNULL(ZwiazaneDok.TrS_Ilosc,0)) ZwiazanaDok,SUM(ISNULL(ZasobyRealiz.Ilosc,0)) ZwiazanaRealiz
+		FROM Cdn.ProdCzynnosci c
+		INNER JOIN CDN.ProdZasoby ON PZA_Czynnosc = PCZ_Id AND PZA_TypZasobu IN (0,2)
+		INNER JOIN CDN.ProdTechnologiaZasoby PTZO ON PZA_TechnologiaZasob = PTZO.PTZ_Id AND PTZO.PTZ_TypZasobu = 0
+		LEFT JOIN CDN.TwrKarty ON Twr_GIDNumer = PTZO.PTZ_TwrNumer AND PTZO.PTZ_TwrTyp = 16
+		LEFT JOIN 
+			(SELECT PZP_PZAIDWykonany,SUM(PZP_Ilosc) PZP_Ilosc FROM CDN.ProdZwiazanePolprodukty GROUP BY PZP_PZAIDWykonany) ZwiazaneProd ON PZP_PZAIDWykonany = PZA_Id
+		LEFT JOIN 
+			(SELECT SUM(TrS_Ilosc) Trs_Ilosc,TrS_ZlcNumer FROM CDN.TraSElem WHERE TrS_ZlcTyp = 14346 GROUP BY TrS_ZlcNumer) 
+			ZwiazaneDok ON ZwiazaneDok.TrS_ZlcNumer = PZA_Id
+		LEFT JOIN
+			(SELECT S.PZA_Zasob PZA_Zas,SUM(S.PZA_Ilosc) Ilosc FROM CDN.ProdZasoby S WHERE S.PZA_Zasob &lt;&gt; 0 GROUP BY S.PZA_Zasob) ZasobyRealiz ON ZasobyRealiz.PZA_Zas = PZA_Id
+		WHERE C.PCZ_PZLId IN(SELECT Num FROM CDN.Str2List(@PZLId)) AND EXISTS(SELECT 1 FROM CDN.ProdTechnologiaZasoby Z WHERE Z.PTZ_TechnologiaZasob = PTZO.PTZ_Id) 
+		GROUP BY C.PCZ_PZLId,PTZO.PTZ_Id,PTZO.PTZ_TechnologiaZasob,PZA_Planowany,PZA_Zasob,PTZ_Jednostka) Zasoby
+	GROUP BY PZL_Id,PTZ_Id
+
+END
+	RETURN
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

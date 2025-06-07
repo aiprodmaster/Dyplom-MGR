@@ -1,0 +1,134 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="PreliminarzLista"></A><PRE>
+          <FONT SIZE="2"><I>/* PreliminarzLista */</I><BR>
+CREATE PROCEDURE CDN.PreliminarzLista( @CDN_PrelFiltr1 VARCHAR(4000), @CDN_PrelFiltr2 VARCHAR(4000), @CDN_Dzisiaj INT, @CDN_DniZwloki INT, @CDN_WgSpodziewanegoTerminu INT = 0, @CDN_bDataRozliczenia bit=0, @CDN_DataRozliczenia int=0, @CDN_sRozJoin varchar(4000)='', @CDN_sDZKJoin varchar(4000)='', @CDN_sHaving varchar(4000)='')AS
+DECLARE @Fields VARCHAR(max);
+DECLARE @Fields0 VARCHAR(max);
+DECLARE @Fields2 VARCHAR(max);
+DECLARE @Select VARCHAR(max);
+declare @GroupFields varchar(max)
+declare @sDniZwloki varchar(1000)
+DECLARE @Termin VARCHAR(50);
+DECLARE @KorektyMinus char(1);
+declare @CDN_Filtr varchar(max)
+
+
+if isnull(@CDN_PrelFiltr2,'') = ''
+	set @CDN_Filtr = left(@CDN_PrelFiltr1, len(@CDN_PrelFiltr1)-1)
+else
+	set @CDN_Filtr = left(@CDN_PrelFiltr1, len(@CDN_PrelFiltr1)-1) + left(@CDN_PrelFiltr2, len(@CDN_PrelFiltr2)-1)
+
+
+
+SELECT @KorektyMinus= CASE WHEN ISNULL(KON_Wartosc,0)=1 THEN '1' ELSE '0' END FROM CDN.Konfig WHERE KON_Numer=2085;
+
+SET @Fields = 'PRLV_GIDTyp, PRLV_GIDNumer, PRLV_GIDLp, PRLV_SpiTyp, PRLV_SpiNumer, PRLV_SpiLp, PRLV_Dokument, PRLV_DokumentObcy, PRLV_Kwota, PRLV_KwotaPLN, PRLV_Pozostaje, PRLV_PozostajePLN, PRLV_NaleznosciZobowiazania, PRLV_PrzychodyRozchody, PRLV_Data, PRLV_Termin, PRLV_SpodziewanyTermin, PRLV_Rozliczony, PRLV_Waluta, PRLV_Rejestr, '+
+              'PRLV_KntTyp, PRLV_KntNumer, PRLV_Akronim, PRLV_Nazwa1, PRLV_Nazwa2, PRLV_Nazwa3, PRLV_Miasto, '+
+              'PG.PODV_GIDTyp, PG.PODV_GIDNumer, PG.PODV_Akronim, PG.PODV_Nazwa1, PG.PODV_Nazwa2, PG.PODV_Nazwa3, PG.PODV_Miasto, '+
+              'PRLV_Zaksiegowano, PRLV_Bufor';
+
+SET @Fields0 =                  'CASE WHEN PRLV_PrzychodyRozchody&lt;&gt;0 THEN CASE WHEN PRLV_Kwota&gt;=0 THEN CASE PRLV_PrzychodyRozchody WHEN 1 THEN 0 ELSE PRLV_Kwota END ELSE CASE WHEN 1='+@KorektyMinus+' THEN CASE PRLV_PrzychodyRozchody WHEN 1 THEN 0 ELSE PRLV_Kwota END ELSE CASE PRLV_PrzychodyRozchody WHEN 1 THEN -(PRLV_Kwota) ELSE 0 END END END ELSE CASE WHEN 1='+@KorektyMinus+' AND PRLV_GIDTyp NOT IN(7680,7681,7682,7683,7684,4144,4145) THEN CASE WHEN PRLV_GIDTyp &amp; 512 &lt;&gt; 0 AND PRLV_GIDTyp NOT IN(2002,2010)  AND PRLV_NaleznosciZobowiazania=2 THEN -(PRLV_Kwota) ELSE CASE WHEN PRLV_GIDTyp &amp; 512 &lt;&gt; 0 AND PRLV_GIDTyp NOT IN(2002,2010)  AND PRLV_NaleznosciZobowiazania=1 THEN PRLV_Kwota ELSE 0 END END ELSE CASE WHEN PRLV_NaleznosciZobowiazania=1 THEN PRLV_Kwota ELSE 0 END END END PRLV_N1';
+SET @Fields0 = @Fields0 + ',' + 'CASE WHEN PRLV_PrzychodyRozchody&lt;&gt;0 THEN CASE WHEN PRLV_Kwota&gt;=0 THEN CASE PRLV_PrzychodyRozchody WHEN 2 THEN 0 ELSE PRLV_Kwota END ELSE CASE WHEN 1='+@KorektyMinus+' THEN CASE PRLV_PrzychodyRozchody WHEN 2 THEN 0 ELSE PRLV_Kwota END ELSE CASE PRLV_PrzychodyRozchody WHEN 2 THEN -(PRLV_Kwota) ELSE 0 END END END ELSE CASE WHEN 1='+@KorektyMinus+' AND PRLV_GIDTyp NOT IN(7680,7681,7682,7683,7684,4144,4145) THEN CASE WHEN (PRLV_GIDTyp &amp; 512 = 0 OR  PRLV_GIDTyp     IN(2002,2010)) AND PRLV_NaleznosciZobowiazania=1 THEN -(PRLV_Kwota) ELSE CASE WHEN (PRLV_GIDTyp &amp; 512 = 0 OR  PRLV_GIDTyp     IN(2002,2010)) AND PRLV_NaleznosciZobowiazania=2 THEN PRLV_Kwota ELSE 0 END END ELSE CASE WHEN PRLV_NaleznosciZobowiazania=2 THEN PRLV_Kwota ELSE 0 END END END PRLV_Z1';
+
+
+if not (@CDN_bDataRozliczenia&lt;&gt;0 and @CDN_DataRozliczenia&lt;&gt;0)
+begin	
+	set @Fields2 = REPLACE( @Fields0, 'PRLV_N1', 'PRLV_KwotaNaleznosc' );
+	set @Fields2 = REPLACE( @Fields2, 'PRLV_Z1', 'PRLV_KwotaZobowiazanie' );
+	
+	SET @Fields2 = @Fields2 + ',' + REPLACE( @Fields0, 'PRLV_Kwota', 'PRLV_Pozostaje' );
+	set @Fields2 = REPLACE( @Fields2, 'PRLV_N1', 'PRLV_PozostajeNaleznosc' );
+	set @Fields2 = REPLACE( @Fields2, 'PRLV_Z1', 'PRLV_PozostajeZobowiazanie' );
+	
+	SET @Fields2 = @Fields2 + ',' + REPLACE( @Fields0, 'PRLV_Kwota', 'PRLV_KwotaPLN' ) 
+	set @Fields2 = REPLACE( @Fields2, 'PRLV_N1', 'PRLV_KwotaPLNNaleznosc' );
+	set @Fields2 = REPLACE( @Fields2, 'PRLV_Z1', 'PRLV_KwotaPLNZobowiazanie' );
+	
+	SET @Fields2 = @Fields2 + ',' + REPLACE( @Fields0, 'PRLV_Kwota', 'PRLV_PozostajePLN' );
+	set @Fields2 = REPLACE( @Fields2, 'PRLV_N1', 'PRLV_PozostajePLNNaleznosc' );
+	set @Fields2 = REPLACE( @Fields2, 'PRLV_Z1', 'PRLV_PozostajePLNZobowiazanie' );	
+end
+else
+begin
+	--SET @Fields2 = @Fields0 + ',' + REPLACE( @Fields0, 'PRLV_Kwota', 'PRLV_Kwota-SIGN(PRLV_Kwota)*SUM(isnull(ROZ_Kwota,0))' );
+	--SET @Fields2 = @Fields2 + ',' + REPLACE( @Fields0, 'PRLV_Kwota', 'PRLV_KwotaPLN' ) + ',' + REPLACE( @Fields0, 'PRLV_Kwota', 'PRLV_KwotaPLN-SIGN(PRLV_Kwota)*SUM(isnull(ROZ_KwotaPLN,0))' );
+	
+	
+	set @Fields2 = REPLACE( @Fields0, 'PRLV_N1', 'PRLV_KwotaNaleznosc' );
+	set @Fields2 = REPLACE( @Fields2, 'PRLV_Z1', 'PRLV_KwotaZobowiazanie' );
+	
+	SET @Fields2 = @Fields2 + ',' + REPLACE( @Fields0, 'PRLV_Kwota', 'PRLV_Kwota-SIGN(PRLV_Kwota)*SUM(isnull(ROZ_Kwota,0))' );
+	set @Fields2 = REPLACE( @Fields2, 'PRLV_N1', 'PRLV_PozostajeNaleznosc' );
+	set @Fields2 = REPLACE( @Fields2, 'PRLV_Z1', 'PRLV_PozostajeZobowiazanie' );
+	
+	SET @Fields2 = @Fields2 + ',' + REPLACE( @Fields0, 'PRLV_Kwota', 'PRLV_KwotaPLN' ) 
+	set @Fields2 = REPLACE( @Fields2, 'PRLV_N1', 'PRLV_KwotaPLNNaleznosc' );
+	set @Fields2 = REPLACE( @Fields2, 'PRLV_Z1', 'PRLV_KwotaPLNZobowiazanie' );
+	
+	SET @Fields2 = @Fields2 + ',' + REPLACE( @Fields0, 'PRLV_Kwota', 'PRLV_KwotaPLN-SIGN(PRLV_Kwota)*SUM(isnull(ROZ_KwotaPLN,0))' );
+	set @Fields2 = REPLACE( @Fields2, 'PRLV_N1', 'PRLV_PozostajePLNNaleznosc' );
+	set @Fields2 = REPLACE( @Fields2, 'PRLV_Z1', 'PRLV_PozostajePLNZobowiazanie' );	
+	
+end
+	
+
+
+set @GroupFields = @Fields + ',PRLV_Kwota, PRLV_KwotaPLN, PRLV_Pozostaje, PRLV_PozostajePLN'
+
+
+IF @CDN_WgSpodziewanegoTerminu = 1
+  SET @Termin = 'PRLV_SpodziewanyTermin'
+ELSE
+  SET @Termin = 'PRLV_Termin'
+
+
+
+set @sDniZwloki = '0'
+
+if (@CDN_bDataRozliczenia&lt;&gt;0 and @CDN_DataRozliczenia&lt;&gt;0)
+begin
+	IF @CDN_DniZwloki &lt;&gt; 0
+		set @sDniZwloki = ' MAX(CASE PRLV_PrzychodyRozchody WHEN 0 THEN CDN.DniZwloki(ROZ_DataRozliczenia, ' + @Termin + ', ' + CAST(@CDN_DataRozliczenia AS VARCHAR(7)) + ', PRLV_Rozliczony) ELSE 0 END) '
+
+
+	set @Select = 'SELECT ' + @Fields + ', ' + @sDniZwloki + ' PRLV_DniZwloki, ' + @Fields2 + ' ' +
+				  'FROM CDN.PreliminarzView LEFT OUTER JOIN CDN.PodmiotyView PG ON PRLV_KNTTyp=PG.PODV_GIDTyp AND PRLV_KNTNumer=PG.PODV_GIDNumer ' +
+				  'LEFT OUTER JOIN CDN.Tranag tn ' +
+				  'ON PRLV_GIDTyp = tn.TrN_GIDTyp AND PRLV_GIDNumer = tn.TrN_GIDNumer ' +
+				  'LEFT OUTER JOIN ' +
+				  '(SELECT R2_Dok1Typ AS ROZ_TrpTyp, R2_Dok1Numer AS ROZ_TrpNumer, R2_Dok1Lp AS ROZ_TrpLp, R2_DataRozliczenia AS ROZ_DataRozliczenia, R2_KwotaWal1 ROZ_Kwota, R2_KwotaSys + case when R2_RKStrona = 1 then R2_RK else 0 end ROZ_KwotaPLN ' +
+				  'FROM CDN.Rozliczenia ' +
+				  'WHERE R2_Wycena = 0 and R2_Dok2Typ &lt;&gt; 435 ' +
+				  'UNION ALL ' +
+				  'SELECT R2_Dok2Typ AS ROZ_TrpTyp, R2_Dok2Numer AS ROZ_TrpNumer, R2_Dok2Lp AS ROZ_TrpLp, R2_DataRozliczenia AS ROZ_DataRozliczenia, R2_KwotaWal2 ROZ_Kwota, R2_KwotaSys + case when R2_RKStrona = 2 then R2_RK else 0 end ROZ_KwotaPLN ' +
+				  'FROM CDN.Rozliczenia ' +
+				  'WHERE R2_Wycena = 0 and R2_Dok1Typ &lt;&gt; 435 ' +
+				  ') AS r2 ' +
+				  'ON PRLV_GIDTyp = r2.ROZ_TrpTyp AND PRLV_GIDNumer = r2.ROZ_TrpNumer AND PRLV_GIDLp = r2.ROZ_TrpLp ' +
+				  @CDN_sRozJoin + ' '+
+				  @CDN_sDZKJoin + ' ' +
+				  'WHERE ' + @CDN_Filtr + ' GROUP BY ' + @GroupFields + case when @CDN_sHaving&lt;&gt;'' then ' HAVING ' else '' end + @CDN_sHaving + ' ORDER BY PRLV_Dokument'
+end				  
+else
+	set @Select = 'SELECT ' + @Fields + ',0 PRLV_DniZwloki,' + @Fields2 + ' FROM CDN.PreliminarzView LEFT OUTER JOIN CDN.PodmiotyView PG ON PRLV_KNTTyp=PG.PODV_GIDTyp AND PRLV_KNTNumer=PG.PODV_GIDNumer ' +
+	' ' + @CDN_sDZKJoin + ' LEFT OUTER JOIN CDN.Tranag tn ON PRLV_GIDTyp = tn.TrN_GIDTyp AND PRLV_GIDNumer = tn.TrN_GIDNumer WHERE ' +@CDN_Filtr+ ' ORDER BY PRLV_Dokument'
+
+
+
+exec( @Select  );
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

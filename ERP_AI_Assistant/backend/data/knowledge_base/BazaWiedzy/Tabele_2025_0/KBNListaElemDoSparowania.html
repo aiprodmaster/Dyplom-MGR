@@ -1,0 +1,143 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[KBNListaElemDoSparowania]"></A><PRE>
+          <FONT SIZE="2"><I>/* [KBNListaElemDoSparowania] */</I><BR>
+create function [CDN].[KBNListaElemDoSparowania](@_GidTyp smallint,@_KBNId integer,@_DataOd integer,@_DataDo integer,@_WybraneSer tinyint=0)
+returns @table table(
+  utwtyp smallint,            -- pozycja wynikająca z/"utworzona" na dokumencie o GID Typ
+  utwnumer int,               -- pozycja wynikająca z/"utworzona" na dokumencie o GID Numer
+  utwlp smallint,			  -- pozycja wynikająca z/"utworzona" na dokumencie o GID Lp
+  orgtyp smallint,            -- pobrane z trs_orgtyp
+  orgnumer int,               -- pobrane z trs_orgnumer
+  orglp smallint,             -- pobrane z trs_orglp	
+  zwrtyp smallint,            -- pobrane z trs_zwrtyp
+  zwrnumer int,               -- pobrane z trs_zwrnumer
+  zwrlp smallint,             -- pobrane z trs_zwrlp
+  twrnumer int,               -- twr_gidnumer
+  kod varchar(40),            -- kod towaru
+  nazwa varchar(255),         -- nazwa towaru
+  ilosc decimal(11,4),		  -- ilosc 
+  jm varchar(8),			  -- jednostka 
+  koszt decimal(15,4),        -- koszt
+  magnumer int,				  -- mag GIDNumer
+  magkod varchar(10),		  -- mag kod
+  korzatw smallint			  -- czy zatwierdzone są wszystkie korekty: 1 - tak, 0 - nie
+  )
+as
+begin
+	declare @tabletmp table(
+	  utwtyp smallint,            -- pozycja wynikająca z/"utworzona" na dokumencie o GID Typ
+	  utwnumer int,               -- pozycja wynikająca z/"utworzona" na dokumencie o GID Numer
+	  utwlp smallint,			  -- pozycja wynikająca z/"utworzona" na dokumencie o GID Lp
+	  utwsublp smallint,		  -- pozycja wynikająca z/"utworzona" na dokumencie o GID SubLp
+	  orgtyp smallint,            -- pobrane z trs_orgtyp
+	  orgnumer int,               -- pobrane z trs_orgnumer
+	  orglp smallint,             -- pobrane z trs_orglp
+	  orgsublp smallint,		  -- pobrane z trs_suborglp	
+	  zwrtyp smallint,            -- pobrane z trs_zwrtyp
+	  zwrnumer int,               -- pobrane z trs_zwrnumer
+	  zwrlp smallint,             -- pobrane z trs_zwrlp
+	  zwrsublp smallint,          -- pobrane z trs_subzwrlp
+	  twrnumer int,               -- twr_gidnumer
+	  kod varchar(40),            -- kod towaru
+	  nazwa varchar(255),         -- nazwa towaru
+	  ilosc decimal(11,4),		  -- ilosc 
+	  jm varchar(8),			  -- jednostka 
+	  koszt decimal(15,4),        -- koszt
+	  magnumer int,				  -- mag GIDNumer
+	  magkod varchar(10),		  -- mag Kod
+	  korzatw smallint			  -- czy zatwierdzone są wszystkie korekty: 1 - tak, 0 - nie
+	  )
+
+	-- elementy z dokumentów, które mają korekty
+    declare @DokumentyZKor table (
+        Lp int identity(1,1),
+        GidTyp smallint,
+        GidNumer int,
+        ZwrTyp smallint,
+        ZwrNumer int,
+        Poziom int,
+		KorZatw smallint
+    );
+	
+	with DrzewoDokZKor as (
+	 	select TrN_GidTyp GidTyp, TrN_GIDNumer GidNumer, TrN_ZwrTyp ZwrTyp, TrN_ZwrNumer ZwrNumer, 1 as KorZatw, 1 Poziom
+		from cdn.TraNag
+		left join cdn.MagNag on TrN_GidNumer=MaN_ZrdNumer
+		join cdn.InwMag on (@_GidTyp=1617 and (MaN_GIDNumer=InM_PMNumer or TrN_GIDNumer=InM_PWNumer)) 
+								or (@_GidTyp=1616 and (MaN_GIDNumer=InM_WMNumer or TrN_GIDNumer=InM_RWNumer))
+		where  TrN_GIDTyp in (@_GidTyp) 
+					and TrN_Stan&gt;3 and TrN_Stan&lt;6 -- dokumenty wyjęte z bufora i które nie zostały anulowane
+					and TrN_Data2&gt;=@_DataOd and TrN_Data2&lt;=@_DataDo
+					and (@_WybraneSer=0 or TrN_TrNSeria in (select KBNS_SerNazwa from cdn.KBNSerie where KBNS_KBNNId=@_KBNId) ) 
+
+		union all
+
+		select TrN_GidTyp, TrN_GidNumer, TrN_ZwrTyp, TrN_ZwrNumer, case when TrN_Stan&lt;3 then 0 else 1 end, Poziom+1 Poziom
+		from cdn.TraNag
+		join DrzewoDokZKor on TrN_ZwrNumer = GidNumer 
+		where  not TrN_GidTyp in(@_GidTyp)  --dopóki nie wrócimy do @_gidTyp
+		and TrN_Stan&lt;6
+	)
+	insert into @DokumentyZKor(GidTyp,GidNumer,ZwrTyp,ZwrNumer,Poziom,KorZatw)
+	select GidTyp,GidNumer,ZwrTyp,ZwrNumer,Poziom,KorZatw from DrzewoDokZKor
+
+	declare @i int=1;
+	declare @maxPoziom int;
+	select @maxPoziom=isnull(max(Poziom),1) from @DokumentyZKor
+
+	while @i&lt;=@maxPoziom
+	begin
+		merge @tabletmp as t
+		using (select distinct TrS_GidTyp, TrS_GidNumer, TrS_GidLp, TrS_SubGidLp,
+								TrS_OrgTyp, TrS_OrgNumer, TrS_OrgLp, TrS_SubOrgLp,
+								TrS_ZwrTyp, TrS_ZwrNumer, TrS_ZwrLp, TrS_SubZwrLp,
+								Twr_GidNumer, Twr_Kod, Twr_Nazwa, Twr_Jm, 
+								TrS_Ilosc, TrS_KosztKsiegowy, TrE_Cena,
+								TrS_MagNumer, Mag_Kod, KorZatw
+                from cdn.TraSElem
+				join cdn.TraElem on TrS_GidNumer=TrE_GidNumer and TrE_GidLp=TrS_GidLp 								
+				join cdn.TraNag org on TrS_OrgNumer = org.TrN_GidNumer 				
+				join cdn.TwrKarty on TrE_TwrNumer=Twr_GidNumer
+				join cdn.Magazyny on TrS_MagNumer=MAG_GIDNumer
+				join @DokumentyZKor on GidNumer = TrS_GidNumer				
+				where Poziom=@i and MAG_Zablokowany&lt;&gt;21 
+					and TrS_MagNumer in (select KBNM_MagNumer from cdn.KBNMagazyny where KBNM_KBNNId=@_KBNId) -- lub dowolny mag
+					) as s on t.utwNumer=s.TrS_ZwrNumer and t.utwLp=s.TrS_ZwrLp and t.utwSublp = s.TrS_SubZwrLp and s.Trs_GidLp&gt;0
+		when matched and t.ilosc+s.TrS_Ilosc=0 then
+			delete
+		when matched then
+			update set ilosc=t.ilosc+s.TrS_Ilosc
+						,koszt = (case when @i=@maxPoziom and s.KorZatw=0 then (t.ilosc+s.TrS_Ilosc) * s.TrE_Cena else t.koszt+s.TrS_KosztKsiegowy end)
+		when not matched then
+			insert(utwTyp,utwNumer,utwLp,utwsublp, orgTyp,orgNumer,orgLp,orgsublp, zwrTyp,zwrNumer,zwrLp,zwrsublp, 
+					twrNumer,kod,nazwa,jm,ilosc,koszt,magnumer,magkod,korzatw)
+			values(TrS_GidTyp,TrS_GidNumer,TrS_GidLp,TrS_SubGidLp, TrS_OrgTyp,TrS_OrgNumer,TrS_OrgLp, TrS_SubOrgLp, 
+					TrS_ZwrTyp,TrS_ZwrNumer,TrS_ZwrLp,TrS_SubZwrLp, Twr_GidNumer, Twr_Kod, Twr_Nazwa,Twr_Jm,
+					TrS_Ilosc,case when @i=@maxPoziom and s.KorZatw=0 then s.TrS_Ilosc * s.TrE_Cena else s.TrS_KosztKsiegowy end,
+					TrS_magnumer,MAG_Kod,KorZatw);
+		set @i=@i+1
+	end	
+
+	insert into @table(utwTyp,utwNumer,utwLp,orgTyp,orgNumer,orgLp,zwrTyp,zwrNumer,zwrLp,twrNumer,kod,nazwa,ilosc,jm,koszt,magnumer,magkod,korzatw)
+		select utwTyp,utwNumer,utwLp,orgTyp,orgNumer,orgLp,zwrTyp,zwrNumer,zwrLp,twrNumer,kod,nazwa,sum(ilosc),jm,sum(koszt),magnumer,magKod,korzatw
+		from @tabletmp
+		group by utwTyp,utwNumer,utwLp,orgTyp,orgNumer,orgLp,zwrTyp,zwrNumer,zwrLp,twrNumer,kod,nazwa,jm,round(koszt/ilosc,4),magnumer,magKod,korzatw
+
+return
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

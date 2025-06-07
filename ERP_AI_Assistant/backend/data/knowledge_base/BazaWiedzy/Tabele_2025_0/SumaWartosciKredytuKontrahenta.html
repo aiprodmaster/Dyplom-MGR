@@ -1,0 +1,196 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="SumaWartosciKredytuKontrahenta"></A><PRE>
+          <FONT SIZE="2"><I>/* SumaWartosciKredytuKontrahenta */</I><BR>
+CREATE FUNCTION CDN.SumaWartosciKredytuKontrahenta (
+	@p_timestamp INT
+	, @p_KntNumer INT
+	, @p_UwzglDokBezPlat TINYINT
+	, @p_UwzglZam TINYINT
+	, @p_UwzglSaldoKntGlownego TINYINT = 1
+	, @p_DokNumer INT = 0
+	, @p_DokTyp INT = 0
+	)
+	-- Funkcja zwraca sume wartosci nierozliczonych płatności i zapisów kasowych
+	-- 
+	-- Format wyniku: 
+	-- Wartosc 
+	-- 
+	-- Wersja 3.1   23.09.2003  Nomad
+	-- Wersja 9.0   10.11.2008  MF
+	--dodane parametry:
+	--@p_UwzglDokBezPlat
+	--@p_UwzgZam
+	--usunięty parametr
+	--@p_KntFirma
+	-- Wersja 10.5 17.03.2011 GZ
+	-- dodano nowy parametr @p_UwzglSaldoKntGlownego
+	-- Wersja 2017.0 30.09.2016 TS
+	-- projekt: Limit kredytu przypisany do zamówienia - nie uwzględnanie dokumentów wygenerowanych z zamówien z limitem celowym
+	-- Wersja 2017.1 27.04.2017 TS
+	-- optymalizacja: przeniesienie funkcji skalarnej CzyJestLimitCelowy z whera do kolumny
+	-- projekt: Wyślwietlanie limitu celowego zamówień na oknie wykorzystanie limitu - @p_DokNumer wartość -1
+	-- dodanie @p_DokTyp, by ograniczyć sprawdzanie limitu celowego do konkretnego zamówienia
+	--
+	-- Parametry: 
+	-- @p_timestamp				Teraźniejszy timestamp
+	-- @p_KntNumer				Numer kontrahenta dla którego liczymy wartość kredytu
+	-- @p_UwzglDokBezPlat		Czy uwzględniać dokumenty bez płatności (WZ, WZK, PZ, PZK)
+	-- @p_UwzgZam				Czy uwzględniać rezerwacje
+	-- @p_UwzglSaldoKntGlownego Czy uwzględnianiać w wykorzystanym limicie kontrahenta, płatności które powstały do dokumentów
+	-- @p_DokNumer				Numer dokuementu handlowego na podstawie którego zostanie sprawdzone czy liczyć limit celowy zamówien, czy normalnie, wartości specjalne: 0 liczyć zawsze normalnie (płatności nie powiązane z dokumentami powiązanymi z zamówieniami), -1 liczyć zawsze limit celowy zamówień
+	-- @p_DokTyp				960 liczenie dla zamówienia, reszta dla handlowego
+RETURNS VARCHAR(255)
+AS
+BEGIN
+	DECLARE @retval VARCHAR(255);
+	DECLARE @platnosci DECIMAL(28, 4);
+	DECLARE @platnosci_PLT DECIMAL(28, 4);
+	DECLARE @DokBezPlatnosci DECIMAL(28, 4)
+	DECLARE @zapisy DECIMAL(28, 4);
+	DECLARE @Rezerwacje DECIMAL(28, 4);
+	DECLARE @p_pltnumer INT;
+	DECLARE @jestLimitCelowy TINYINT;
+
+	--sprawdzenie czy liczyć kredyt dla limitu celowego czy normalnie	
+	SELECT @jestLimitCelowy = CASE @p_DokNumer
+			WHEN 0
+				THEN 0
+			WHEN - 1
+				THEN 1
+			ELSE CASE 
+					WHEN @p_DokTyp = 960 --zamówienia
+						THEN 1
+					ELSE cdn.CzyJestLimitCelowy(@p_DokNumer, 0, 0)
+					END
+			END
+
+	-- Policzenie sumy płatności dla wskazanego kontrahenta
+	SELECT @platnosci = SUM(sumaplatnosci)
+	FROM (
+		SELECT SUM(platnosci) sumaplatnosci
+		FROM (
+			SELECT CASE TrP_Typ --TFS 155484
+					WHEN 1
+						THEN - TrP_Pozostaje * TrP_KursL / TrP_KursM
+					ELSE TrP_Pozostaje * TrP_KursL / TrP_KursM
+					END platnosci
+				, CASE 
+					WHEN @jestLimitCelowy = 1
+						AND @p_DokNumer &gt; 0
+						AND TrP_JestLimitCelowy = 1 --ERPXL-12839 Nie można wystawić kolejnej faktury do ZS, choć limit jest wystarczający
+						THEN CDN.CzyJestLimitCelowy(@p_DokNumer, @p_DokTyp, TrP_GIDNumer)
+					ELSE TrP_JestLimitCelowy --CDN.CzyJestLimitCelowy(TrP_GIDNumer, 0, 0)
+					END jestLimitCelowy
+				, TrP_Waluta
+				, TrP_NrKursu
+			FROM CDN.TraPlat
+			WHERE TrP_KntTyp = 32
+				AND TrP_KntNumer = @p_kntnumer
+				AND TrP_Rozliczona = 0
+			) aaa
+		WHERE jestLimitCelowy = @jestLimitCelowy
+		GROUP BY TrP_Waluta
+			, TrP_NrKursu
+		) res
+
+	-- /Policzenie sumy płatności ...
+	IF @p_UwzglSaldoKntGlownego = 1 -- [GZ] Milenium XL10.5 pkt 5.6
+	BEGIN
+		-- TID:175418 policzenie płatności dla płatnika wskazanego na kontrahencie
+		-- Pobranie gidnumeru płatnika wybranego na karcie kontrahenta
+		SELECT @p_pltnumer = (
+				CASE 
+					WHEN Knt_KnPParam = 0
+						AND Knt_GIDNumer &lt;&gt; Knt_KnPNumer
+						AND Knt_GIDTyp = Knt_KnPTyp
+						THEN Knt_KnPNumer
+					ELSE Knt_GIDNumer
+					END
+				)
+		FROM cdn.KntKarty(NOLOCK)
+		WHERE Knt_GIDNumer = @p_kntnumer
+
+		-- /Pobranie gidnumeru płatnika wybranego na karcie kontrahenta
+		IF @p_PltNumer &lt;&gt; @p_kntnumer
+		BEGIN
+			SELECT @platnosci_PLT = SUM(sumaplatnosci)
+			FROM (
+				SELECT SUM(platnosci) sumaplatnosci
+				FROM (
+					SELECT CASE TrP_Typ
+							WHEN 1
+								THEN - TrP_Pozostaje * TrP_KursL / TrP_KursM
+							ELSE TrP_Pozostaje * TrP_KursL / TrP_KursM
+							END
+						--ISNULL ... --TFS 155484 wykomentowano licznie po kursie aktualnym
+						AS platnosci
+						, CASE 
+							WHEN @jestLimitCelowy = 1
+								AND @p_DokNumer &gt; 0
+								AND TrP_JestLimitCelowy = 1 --ERPXL-12839 Nie można wystawić kolejnej faktury do ZS, choć limit jest wystarczający
+								THEN CDN.CzyJestLimitCelowy(@p_DokNumer, @p_DokTyp, TrP_GIDNumer)
+							ELSE TrP_JestLimitCelowy --CDN.CzyJestLimitCelowy(TrP_GIDNumer, 0, 0)
+							END jestLimitCelowy
+						, TrP_Waluta
+						, TrP_NrKursu
+					FROM CDN.TraPlat
+					INNER JOIN CDN.TraNag
+						ON TrN_GIDTyp = TrP_GIDTyp
+							AND TrN_GIDNumer = TrP_GIDNumer
+					WHERE TrP_KntTyp = 32
+						AND TrP_KntNumer = @p_PltNumer
+						AND TrP_Rozliczona = 0
+						AND TrN_KntNumer = @p_kntnumer
+					) aaa
+				WHERE jestLimitCelowy = @jestLimitCelowy
+				GROUP BY TrP_Waluta
+					, TrP_NrKursu
+				) AS res
+
+			SET @platnosci = ISNULL(@platnosci, 0) + @platnosci_PLT
+		END
+	END
+
+	-- /TID:175418 policzenie płatności dla płatnika wskazanego na kontrahencie
+	-- Policzenie płatności z dokumentów nie generujących płatności (WZ, WZK, PZ, PZK)
+	IF (@p_UwzglDokBezPlat &gt; 0 AND @jestLimitCelowy = 0)
+		SELECT @DokBezPlatnosci = CDN.SumaDokBezPlatnosci(@p_KntNumer, 0, 0, @p_DokNumer, @jestLimitCelowy)
+	-- /Policzenie płatności z dokumentów nie generujących płatności (WZ, WZK, PZ, PZK)
+
+	-- Policzenie zapisów
+	IF (@jestLimitCelowy = 0) --Bug #391846: Limit dokumentu a saldo płatności
+		SELECT @zapisy = SUM(CASE KaZ_RP WHEN 1 THEN KaZ_Pozostaje * (KaZ_KursL / KaZ_KursM) ELSE - KaZ_Pozostaje * (KaZ_KursL / KaZ_KursM) END)
+		FROM CDN.Zapisy
+		WHERE KaZ_KntTyp = 32
+			AND KaZ_KntNumer = @p_KntNumer
+			AND KaZ_Rozliczony = 0
+	-- /Policzenie zapisów
+
+	-- policzenie rezerwacji
+	IF (
+			@p_UwzglZam &gt; 0
+			AND @jestLimitCelowy = 0
+			)
+		SELECT @Rezerwacje = CDN.LimitKontrahentaZRezerwacji(2576, @p_timestamp, 32, @p_KntNumer, 960, 0, 0, @p_DokNumer, @jestLimitCelowy)
+
+	-- /policzenie rezerwacji
+	SET @retval = ISNULL(@platnosci, 0) + ISNULL(@zapisy, 0) + ISNULL(@DokBezPlatnosci, 0) + ISNULL(@Rezerwacje, 0)
+
+	RETURN @retval
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

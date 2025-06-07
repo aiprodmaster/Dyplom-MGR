@@ -1,0 +1,98 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="XLDodajZalacznik"></A><PRE>
+          <FONT SIZE="2"><I>/* XLDodajZalacznik */</I><BR>
+CREATE PROCEDURE cdn.XLDodajZalacznik
+    @ObiTyp smallint,
+    @ObiNumer int,
+    @ObiLp int,
+    @ObiSubLp smallint,
+    @OpeNumer int,
+    @Dane image,
+    @Nazwa varchar(400)=null,
+    @TypId INT=0,
+    @Rozszerzenie VARCHAR(20)='',
+    @Archiwalny smallint=0,
+    @Systemowa smallint=0, 
+    @Kod VARCHAR(40)=null,
+    @ProcID int=0,
+    @Retail int=1,
+    @DataCzasWyst int=null
+/* ==========================================================================================
+        Błędy:
+        -1 : Wystąpił błąd podczas dodawania załącznika.
+        1 : Wystąpił błąd podczas dodawania załącznika. Podany operator nie występuje w bazie.
+   ========================================================================================== */
+AS
+
+    DECLARE @DBGid int=0
+    DECLARE @DABId int=0
+    DECLARE @DAOId int=0
+
+
+    IF @TypId&lt;0
+    BEGIN
+        select @DBGid=COALESCE(SLW_WartoscL2,0) from cdn.SlownikiStruktura
+        JOIN cdn.Slowniki on SLW_SLSId=SLS_Id
+        where SLS_Predefiniowany=64 AND Slw_Aktywny=1 AND SLW_Predefiniowany=-@TypId
+    END
+
+    DECLARE @TimeStamp INT
+    SET @TimeStamp = DATEDIFF(s,'19900101',GETDATE())
+    IF @DataCzasWyst IS NULL OR @DataCzasWyst = 0 SET @DataCzasWyst = @TimeStamp
+
+    IF NOT EXISTS (SELECT OPE_GIDNumer from cdn.OpeKarty where OPE_GIDNumer=@OpeNumer)
+	BEGIN
+		RAISERROR ('XLDodajZalacznik: Wystąpił błąd podczas dodawania załącznika. Podany operator nie występuje w bazie.', 16, 1)
+		SELECT 1 AS ERROR
+		RETURN 1
+	END	
+
+    BEGIN TRAN
+    BEGIN TRY
+
+    INSERT cdn.DaneBinarne(DAB_Archiwalny,DAB_Nazwa,DAB_Kod,DAB_TypId,DAB_Rozszerzenie,DAB_Systemowa,
+    DAB_Retail,DAB_ProcID,DAB_CzasModyfikacji,DAB_OpeNumer,DAB_Tlumaczenie,DAB_CzasArchiwizacji,
+    DAB_DBGId,DAB_CzasDodania,DAB_OpeNumerD,
+    DAB_Dane
+    )
+    SELECT @Archiwalny,COALESCE(@Nazwa,''),COALESCE(@Kod,@Nazwa,''),@TypId,@Rozszerzenie,@Systemowa,
+    @Retail,@ProcID,@DataCzasWyst,@OpeNumer,0,2000000000,
+    @DBGid,@DataCzasWyst,@OpeNumer,
+    @Dane
+
+    SELECT @DABId=@@IDENTITY
+    DECLARE @sql NVARCHAR(4000) = 'UPDATE cdn.DaneBinarne SET DAB_Tlumaczenie='+CAST(@DABId as VARCHAR(40))+' where DAB_ID='+CAST(@DABId as VARCHAR(40));
+    EXEC(@sql);
+
+
+    INSERT cdn.DaneObiekty(DAO_DABId,DAO_ObiTyp,DAO_ObiNumer,DAO_ObiLp,DAO_ObiSubLp,DAO_Blokada,DAO_Systemowa,DAO_Retail,DAO_Pozycja)
+    SELECT @DABId,@ObiTyp,@ObiNumer,@ObiLp,@ObiSubLp,1,@Systemowa,1,(select isNull(MAX( DAO_pozycja ),0)+ 1 from CDN.DaneObiekty where DAO_ObiNumer = @ObiNumer and  DAO_ObiTyp = @ObiTyp)
+    SELECT @DAOId=@@IDENTITY
+    END TRY
+    BEGIN CATCH
+        ROLLBACK TRAN
+        RAISERROR ('XLDodajZalacznik: Wystąpił błąd podczas dodawania załącznika.', 16, 1)
+		SELECT -1 AS ERROR
+		RETURN -1
+    END CATCH
+
+    COMMIT TRAN
+    
+
+    SELECT @DABId as DAB_ID, @DAOId as DAO_Id
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

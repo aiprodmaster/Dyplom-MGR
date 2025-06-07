@@ -1,0 +1,110 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="XLModyfikujWzorzecWizyt"></A><PRE>
+          <FONT SIZE="2"><I>/* XLModyfikujWzorzecWizyt */</I><BR>
+CREATE PROCEDURE CDN.XLModyfikujWzorzecWizyt
+(
+/* ==========================================================================================
+	SQL API: Procedura serwerowa do modyfikowania wzorca wizyty handlowej
+
+	Dla uproszczenia założono, że jeżeli w systemie zewnętrznym zostanie zmodyfikowany wzorzec wizyty handlowej,
+	to w trakcie modyfikacji jej przez API nie ma potrzeby kontrolowania uprawnień do obiektów, z których on korzysta
+	
+
+	Parametry wejściowe: 
+   ========================================================================================== */
+	@CWWId INT,						-- Identyfikator rekordu
+	@OpeNumer INT,					-- GidNumer operatora, który wykonuje tą operacje
+
+	@Kod VARCHAR(20),				-- Kod wzorca wizyty 
+	@Nazwa VARCHAR(255),			-- Nazwa wzorca wizyty
+	@TypId INT=NULL,				-- Typ wzorca wizyty (wartość ze słownika kategorii)							
+	@CzasRealizacji INT=NULL,		-- Czas Realizacji (w sekundach)  
+	@Archiwalny TINYINT=NULL,		-- Czy wzorzec archiwalny
+	@Opis VARCHAR(1024)=NULL,		-- Opis	
+	@URL VARCHAR(255)=NULL,			-- Adres URL
+	@RodzajeZDefinicji TINYINT=NULL,-- Rodzaje kontrahentów wg definicji Wizyty handlowej (0 - rodzaje kontrahentów mają być sprawdzane wg Wzorcu wizyty; 1 - rodzaje kontrahentów maja być sprawdzani na Definicji dokumentu WH. 
+	@CalyDzien TINYINT=NULL			-- Czy wizyta jest całodzienna (0 - nie, 1 - tak)
+
+/* ==========================================================================================
+	Return:
+	&gt;0 : Operacja zakończona sukcesem
+	-1 : Nie powiodło się modyfikacja w tabeli CDN.CRMWzorceWizyt
+	-2 : Wystąpił błąd podczas edycji wzorca wizyty handlowej. Podany operator nie występuje w bazie.
+	-3 : Wystąpił błąd podczas edycji wzorca wizyty handlowej. Podany typ wzorca nie występuje w bazie bądź nie należy do odpowiedniego słownika.
+	-4 : Nie istnieje wpis w tabeli CDN.CRMWzorceWizyt o podanym identyfikatorze.
+   ========================================================================================== */
+)
+AS
+BEGIN
+
+	DECLARE @TimeStamp INT
+
+	SET @TimeStamp = DATEDIFF(s,'19900101',GETDATE())
+			
+  	UPDATE CWW
+	SET
+		CWW_Kod=IsNull(@Kod,CWW.CWW_Kod)
+		,CWW_Nazwa=IsNull(@Nazwa,CWW.CWW_Nazwa)
+		,CWW_CzasRealizacji=case when IsNull(@CalyDzien,CWW.CWW_CalyDzien)=0 then IsNull(@CzasRealizacji,CWW.CWW_CzasRealizacji) else 0 end
+		,CWW_TypId=CASE WHEN S.SLW_ID is not null and SS.SLS_Predefiniowany=96 
+			THEN S.SLW_ID
+			ELSE CWW.CWW_TypId
+			END
+		,CWW_CzasModyfikacji=@TimeStamp
+		,CWW_CzasModyfikacjiC=@TimeStamp
+		,CWW_CzasArchiwizacji=case when @Archiwalny is null then CWW.CWW_CzasArchiwizacji else (case when @Archiwalny=0 then 0 else @TimeStamp end) end
+		,CWW_OpeNumerM=@OpeNumer
+		,CWW_OpeNumerA=case when @Archiwalny is null then CWW.CWW_OpeNumerA else (case when @Archiwalny=0 then 0 else @OpeNumer end) end
+		,CWW_URL=IsNull(@URL,CWW.CWW_URL)
+		,CWW_Opis=IsNull(@Opis,CWW.CWW_Opis)
+		,CWW_RodzajeZDefinicji=case when @RodzajeZDefinicji=0 then 0 else 1 end--CWW_RodzajeZDefinicji
+		,CWW_CalyDzien=case when @CalyDzien is null then CWW.CWW_CalyDzien else (case when @CalyDzien=0 then 0 else 1 end) end
+
+	FROM cdn.CRMWzorceWizyt as CWW 
+	JOIN CDN.OpeKarty ON Ope_GIDNumer=@OpeNumer
+	LEFT OUTER JOIN CDN.Slowniki S ON S.SLW_ID=@TypId
+	LEFT OUTER JOIN CDN.SlownikiStruktura SS ON SS.SLS_Id=S.SLW_SLSId
+	WHERE CWW_Id=@CWWId
+			
+	IF @@ERROR&lt;&gt;0 BEGIN
+
+		IF NOT EXISTS(SELECT * FROM CDN.OpeKarty WHERE Ope_GIDNumer=@OpeNumer) BEGIN
+			RAISERROR ('Wystąpił błąd podczas modyfikacji wzorca wizyty handlowej. Podany operator nie występuje w bazie.', 16, 1)
+			RETURN -2
+		END				
+
+		IF IsNull(@TypId,0)&lt;&gt;0 AND NOT EXISTS(SELECT * FROM CDN.Slowniki JOIN CDN.SlownikiStruktura ON SLS_Id=SLW_SLSId WHERE SLW_ID=@TypId AND SLS_Predefiniowany=96) BEGIN 
+			RAISERROR ('Wystąpił błąd podczas modyfikacji wzorca wizyty handlowej. Podany typ wzorca nie występuje w bazie bądź nie należy do odpowiedniego słownika.', 16, 1)
+			RETURN -3
+		END
+
+  		IF NOT EXISTS(SELECT * FROM CDN.CRMWzorceWizyt WHERE CWW_Id=@CWWId) BEGIN
+			RAISERROR ('Nie istnieje wpis w tabeli CDN.CRMWzorceWizyt o podanym identyfikatorze.', 16, 1)
+			RETURN -4
+		END
+
+		-- inny powód błędu:						
+		RAISERROR ('Nie powiodło się modyfikacja w tabeli CDN.CRMWzorceWizyt.', 16, 1)
+		RETURN -1
+	END
+	
+	--OK:
+	RETURN 0
+	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

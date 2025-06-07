@@ -1,0 +1,319 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="XLParametryWsp"></A><PRE>
+          <FONT SIZE="2"><I>/* XLParametryWsp */</I><BR>
+Create function cdn.XLParametryWsp()
+Returns tinyint
+AS
+begin	
+	declare @Wersja varchar(4);
+	declare @Wynik tinyint		    	
+	set @Wynik = 2
+	set @Wersja = (select SYS_Wartosc from cdn.systemcdn where sys_id = 3);	
+	if cast(SUBSTRING(@Wersja,1,4) as smallint) &gt;= 2017
+		set @Wynik = 2			
+	else		    
+		set @Wynik = 0
+	
+	return @Wynik
+	
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="XLDodajRoleDB"></A><PRE>
+          <FONT SIZE="2"><I>/* XLDodajRoleDB */</I><BR>
+CREATE PROCEDURE CDN.XLDodajRoleDB(
+@nazwa_serweraXL nvarchar(128),
+@nazwa_bazyXL nvarchar(128),
+@uzytkownik_zdalny nvarchar(128),
+@haslo nvarchar(128)
+) 
+AS
+DECLARE @sql nvarchar(4000)
+DECLARE @params NVARCHAR(4000)
+declare @rolename nvarchar(35) = N'CDNRaport'
+declare @membername nvarchar(35) = @uzytkownik_zdalny
+declare @role4name nvarchar(35) = N'db_owner'
+BEGIN
+
+    --usuwanie uzytkownika z bazy xl'a
+	select @sql = N'USE ['+@nazwa_bazyXL+']; 
+	              if exists(select name from sys.sysusers where name = @uzytkownik_zdalny)   
+				   begin
+				       DROP USER '+@uzytkownik_zdalny+';
+				   end 
+	               '
+    select @params =N'@uzytkownik_zdalny varchar(128)' 
+    EXEC sp_executesql @sql,@params,@uzytkownik_zdalny
+										
+	--nowy uzytkownik w bazie xl'a					
+	select @sql =N'USE ['+@nazwa_bazyXL+'];
+	               CREATE USER ['+@uzytkownik_zdalny+'] FOR LOGIN ['+@uzytkownik_zdalny+'];
+	              '
+    EXEC sp_executesql @sql
+
+	-- --ustawianie ról dla użytkownika na bazie xl'a
+	select @sql = N'USE ['+@nazwa_bazyXL+']; EXEC sp_addrolemember @rolename, @membername'
+	select @params = N'@rolename nvarchar(35), @membername nvarchar(35)'
+	EXEC sp_executesql @sql,@params,@rolename,@membername			
+
+	select @sql = N'USE ['+@nazwa_bazyXL+']; EXEC sp_addrolemember @role4name, @membername'
+	select @params = N'@role4name nvarchar(35), @membername nvarchar(35)'
+	EXEC sp_executesql @sql,@params,@role4name,@membername
+			
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="XLDodajLinkedServer"></A><PRE>
+          <FONT SIZE="2"><I>/* XLDodajLinkedServer */</I><BR>
+CREATE PROCEDURE CDN.XLDodajLinkedServer(
+@sciezka nvarchar(128),
+@nazwa_bazy nvarchar(128),
+@uzytkownik_zdalny nvarchar(128),
+@haslo nvarchar(128)
+) 
+AS
+DECLARE @nazwa_serwera nvarchar(128)= @sciezka+'_Place'
+BEGIN
+         if exists (select srvname from master..sysservers where srvname = @nazwa_serwera)
+			BEGIN
+				EXEC sp_dropserver @nazwa_serwera,'droplogins'
+			END
+
+			--zakladanie nowego linked servera
+			EXEC sp_addlinkedserver @nazwa_serwera, @srvproduct='', @provider=
+			N'SQLOLEDB', @datasrc = @sciezka
+
+			EXEC sp_addlinkedsrvlogin @nazwa_serwera, 'false', NULL, @uzytkownik_zdalny
+			, @haslo
+
+			EXEC master.dbo.sp_serveroption @server=@nazwa_serwera, @optname=N'rpc', @optvalue=N'true'
+			EXEC master.dbo.sp_serveroption @server=@nazwa_serwera, @optname=N'rpc out', @optvalue=N'true'
+			
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="XLAktualizujKonfiguracjeWsp"></A><PRE>
+          <FONT SIZE="2"><I>/* XLAktualizujKonfiguracjeWsp */</I><BR>
+CREATE PROCEDURE CDN.XLAktualizujKonfiguracjeWsp(
+@nazwa_serweraOpt nvarchar(128),
+@nazwa_bazyOpt nvarchar(128),
+@uzytkownik_zdalny nvarchar(128),
+@haslo nvarchar(128)
+) 
+AS
+BEGIN
+DECLARE @nazwa_serweraXL nvarchar(128)
+DECLARE @sciezkaXL nvarchar(4000)
+DECLARE @sciezkaOpt nvarchar(4000)
+declare @nazwa_bazyKonfOpt nvarchar(128)
+DECLARE @sql nvarchar(4000)
+DECLARE @params NVARCHAR(4000)
+declare @retval nvarchar(128)
+declare @provider nvarchar(128)
+declare @srvproduct nvarchar(128)
+declare @droplogins char(10)
+declare @useself nvarchar(8)
+declare @locallogin nvarchar(128)
+declare @optname nvarchar(35)
+declare @optvalue nvarchar(35)
+declare @opt2name nvarchar(35)
+declare @rolename nvarchar(35)
+declare @role2name nvarchar(35)
+declare @role3name nvarchar(35)
+declare @role4name nvarchar(35)
+declare @membername nvarchar(35)
+declare @nazwa_bazyXL nvarchar(128)
+declare @member2name nvarchar(35)
+
+set @sciezkaXL=(select @@SERVERNAME)--(select data_source from sys.servers where server_id = 0)
+select @nazwa_serweraXL = @sciezkaXL+'_Place'
+set @sciezkaOpt = @nazwa_serweraOpt
+set @nazwa_serweraOpt = @sciezkaOpt+'_Place'
+set @provider = N'SQLOLEDB'
+set @srvproduct = ''
+set @droplogins = 'droplogins'
+set @useself = 'false'
+set @locallogin = NULL
+set @optname = N'rpc'
+set @optvalue = N'true'
+set @opt2name = N'rpc out'
+set @rolename = N'CDNRaport'
+set @role2name = N'public'
+set @role3name = N'CDN'
+set @role4name = N'db_owner'
+set @membername = @uzytkownik_zdalny
+set @nazwa_bazyXL = (select DB_NAME())
+set @member2name = N'sysadmin'
+
+BEGIN TRY
+    
+	--dodanie ról na bazie xl'a
+	exec CDN.XLDodajRoleDB @nazwa_serweraXL,@nazwa_bazyXL,@uzytkownik_zdalny,@haslo
+
+	--dodanie linked servera xlowego baza xl
+    exec CDN.XLDodajLinkedServer @sciezkaXL,@nazwa_bazyXL,@uzytkownik_zdalny,@haslo
+
+    if UPPER(LTRIM(@nazwa_serweraOpt)) = UPPER(LTRIM(@nazwa_serweraXL))
+	    begin
+	    		
+		    --usunięcie uzytkownika z bazy konf. optimy 
+			select @sql =N'USE ['+@nazwa_bazyOpt+'];
+			     select @nazwa_bazyKonfOpt = sys_wartosc from cdn.SystemCDN where sys_id = 1002;      
+			'
+			select @params = N'@nazwa_bazyKonfOpt nvarchar(128) output'
+			exec sp_executesql @sql,@params,@nazwa_bazyKonfOpt output
+			
+			--sprawdzenie czy baza istnieje na serwerze
+			set @nazwa_bazyKonfOpt = (SELECT isnull(name,'') FROM master.dbo.sysdatabases WHERE name = @nazwa_bazyKonfOpt)
+            if len(@nazwa_bazyKonfOpt)&gt;0
+            begin  									            
+				select @sql = N'USE ['+@nazwa_bazyKonfOpt+']; 
+							  if exists(select name from sys.sysusers where name = @uzytkownik_zdalny)   
+							   begin
+								   DROP USER '+@uzytkownik_zdalny+';
+							   end 
+							   '
+				select @params =N'@uzytkownik_zdalny varchar(128)' 
+				EXEC sp_executesql @sql,@params,@uzytkownik_zdalny
+													
+				--nowy uzytkownik w bazie konf. optimy						
+				select @sql =N'USE ['+@nazwa_bazyKonfOpt+'];
+							   CREATE USER ['+@uzytkownik_zdalny+'] FOR LOGIN ['+@uzytkownik_zdalny+'];
+							  '
+				EXEC sp_executesql @sql
+
+				 --ustawianie ról dla użytkownika na bazie konf. optimy
+				select @sql = N'USE ['+@nazwa_bazyKonfOpt+']; EXEC sp_addrolemember @rolename, @membername'
+				select @params = N'@rolename nvarchar(35), @membername nvarchar(35)'
+				EXEC sp_executesql @sql,@params,@rolename,@membername
+			end			
+
+			--usuwanie uzytkownika z bazy firmowej optimy
+			select @sql = N'USE ['+@nazwa_bazyOpt+']; 
+			              if exists(select name from sys.sysusers where name = @uzytkownik_zdalny)   
+						   begin
+						       DROP USER '+@uzytkownik_zdalny+';
+						   end 
+			               '
+            select @params =N'@uzytkownik_zdalny varchar(128)' 
+		    EXEC sp_executesql @sql,@params,@uzytkownik_zdalny
+												
+			--nowy uzytkownik w bazie firmowej optimy						
+			select @sql =N'USE ['+@nazwa_bazyOpt+'];
+			               CREATE USER ['+@uzytkownik_zdalny+'] FOR LOGIN ['+@uzytkownik_zdalny+'];
+			              '
+            EXEC sp_executesql @sql
+
+			--ustawianie ról dla użytkownika na bazie firmowej optimy
+			select @sql = N'USE ['+@nazwa_bazyOpt+']; EXEC sp_addrolemember @rolename, @membername'
+			select @params = N'@rolename nvarchar(35), @membername nvarchar(35)'
+			EXEC sp_executesql @sql,@params,@rolename,@membername
+			
+			select @sql = N'USE ['+@nazwa_bazyOpt+']; EXEC sp_addrolemember @role3name, @membername'
+			select @params = N'@role3name nvarchar(35), @membername nvarchar(35)'
+			EXEC sp_executesql @sql,@params,@role3name,@membername
+
+			select @sql = N'USE ['+@nazwa_bazyOpt+']; EXEC sp_addrolemember @role4name, @membername'
+			select @params = N'@role4name nvarchar(35), @membername nvarchar(35)'
+			EXEC sp_executesql @sql,@params,@role4name,@membername
+							
+	    end
+    else
+	    begin			          		    
+		    --zakladanie linked serwera optimowego baza xl
+		    exec CDN.XLDodajLinkedServer @sciezkaOpt,@nazwa_bazyOpt,@uzytkownik_zdalny,@haslo		     
+
+        end
+
+
+END TRY
+BEGIN CATCH
+    DECLARE
+    @ErrorMessage     NVARCHAR(4000),
+    @ErrorSeverity    INT,
+    @ErrorState       INT
+
+  SELECT 
+    @ErrorMessage = ERROR_MESSAGE(),
+    @ErrorSeverity = ERROR_SEVERITY(),
+    @ErrorState = ERROR_STATE();
+
+  RAISERROR(@ErrorMessage,@ErrorSeverity,@ErrorState);
+  
+END CATCH
+
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="XLKontrolaDuplikacjiPracownikow"></A><PRE>
+          <FONT SIZE="2"><I>/* XLKontrolaDuplikacjiPracownikow */</I><BR>
+Create Procedure CDN.XLKontrolaDuplikacjiPracownikow(
+@Pesel nvarchar(11),
+@SourceName  nvarchar(255),
+@SourceDatabase  nvarchar(255),
+@Duplikacja int output
+)
+AS
+begin
+
+begin try
+
+declare @sql nvarchar(4000)
+declare @params nvarchar(4000)
+
+select @sql = 
+		N' 
+		  EXECUTE ['+@SourceName+'].['+@SourceDatabase +'].CDN.[OKontrolaDuplikacjiPracownikow] @Pesel, @Duplikacja output
+		'      
+    SELECT @params =N'@Pesel nVarchar(11),@Duplikacja int output'
+	EXEC sp_executesql @sql, @params, @Pesel, @Duplikacja = @Duplikacja output
+
+end try
+begin catch
+    declare
+    @ErrorMessage     nvarchar(4000),
+    @ErrorSeverity    int,
+    @ErrorState       int
+
+  select 
+    @ErrorMessage=ERROR_MESSAGE(),
+    @ErrorSeverity=ERROR_SEVERITY(),
+    @ErrorState=ERROR_STATE();
+
+  Raiserror(@ErrorMessage,@ErrorSeverity,@ErrorState);
+
+end catch
+
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,162 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="SumaWartosciKredytuKntOddzialuCentrali"></A><PRE>
+          <FONT SIZE="2"><I>/* SumaWartosciKredytuKntOddzialuCentrali */</I><BR>
+CREATE FUNCTION CDN.SumaWartosciKredytuKntOddzialuCentrali (
+	@p_timestamp INT
+	, @p_KntNumer INT
+	, @p_UwzglDokBezPlat TINYINT
+	, @p_UwzglZam TINYINT
+	, @p_UwzglSaldoKntGlownego TINYINT = 1
+	, @p_KntCentrala INT = NULL
+	)
+	-- Funkcja zwraca sume wartosci nierozliczonych płatności i zapisów kasowych dla oddziału centrali
+	-- 
+	-- Format wyniku: 
+	-- Wartosc 
+	-- Wersja 10.5 17.03.2011 GZ
+	-- 
+	-- Parametry: 
+	-- @p_timestamp       Teraźniejszy timestamp
+	-- @p_KntNumer        Numer kontrahenta dla którego liczymy wartość kredytu
+	-- @p_UwzglDokBezPlat Czy uwzględniać dokumenty bez płatności (WZ, WZK, PZ, PZK)
+	-- @p_UwzgZam         Czy uwzględniać rezerwacje
+	-- @p_UwzglSaldoKntGlownego Czy uwzględnianiać w wykorzystanym limicie kontrahenta, płatności które powstały do dokumentów
+	-- @p_KntCentrala	  Czy liczymy wartość limitu dla oddziału centrali, jeżeli tak to przekazywany tutaj jest gidnumer centrali
+RETURNS VARCHAR(255)
+AS
+BEGIN
+	DECLARE @retval VARCHAR(255);
+	DECLARE @platnosci DECIMAL(28, 4);
+	DECLARE @platnosci_PLT DECIMAL(28, 4);
+	DECLARE @DokBezPlatnosci DECIMAL(28, 4)
+	DECLARE @zapisy DECIMAL(28, 4);
+	DECLARE @Rezerwacje DECIMAL(28, 4);
+	DECLARE @p_pltnumer INT;
+
+	IF @p_KntCentrala IS NULL
+		SET @p_KntCentrala = 0
+
+	-- Policzenie sumy płatności dla wskazanego kontrahenta
+	SELECT @platnosci = SUM(sumaplatnosci)
+	FROM (
+		SELECT SUM(CASE TrP_Typ
+					WHEN 1
+						THEN - TrP_Pozostaje
+					ELSE TrP_Pozostaje
+					END) * ISNULL((
+					SELECT TOP 1 WaE_KursL / WaE_KursM
+					FROM CDN.WalElem
+					WHERE WaE_Symbol = TrP_Waluta
+						AND WaE_Lp = TrP_NrKursu
+						AND WaE_KursTS &lt;= @p_timestamp
+					ORDER BY - WaE_KursTS
+					), 1) AS sumaplatnosci
+		FROM CDN.TraPlat
+		LEFT JOIN CDN.TraNag ON TrN_GIDTyp = TrP_GIDTyp
+			AND TrN_GIDNumer = TrP_GIDNumer
+		LEFT JOIN CDN.ZamNag ON TrN_ZaNNumer = ZaN_GIDNumer
+			AND TrN_ZaNTyp = ZaN_GIDTyp
+		WHERE TrP_KntTyp = 32
+			AND TrP_KntNumer = @p_kntnumer
+			AND TrP_Rozliczona = 0
+			AND ISNULL(ZaN_LimitKredytowy, 0) = 0
+		GROUP BY TrP_Waluta
+			, TrP_NrKursu
+		) AS res
+
+	-- /Policzenie sumy płatności ...
+	IF @p_UwzglSaldoKntGlownego = 1 -- [GZ] Milenium XL10.5 pkt 5.6
+	BEGIN
+		-- TID:175418 policzenie płatności dla płatnika wskazanego na kontrahencie
+		-- Pobranie gidnumeru płatnika wybranego na karcie kontrahenta
+		SELECT @p_pltnumer = (
+				CASE 
+					WHEN knt_knpparam = 0
+						AND knt_gidnumer &lt;&gt; knt_knpnumer
+						AND knt_gidtyp = knt_knptyp
+						THEN knt_knpnumer
+					ELSE knt_gidnumer
+					END
+				)
+		FROM cdn.kntkarty(NOLOCK)
+		WHERE knt_gidnumer = @p_kntnumer
+
+		-- /Pobranie gidnumeru płatnika wybranego na karcie kontrahenta
+		IF @p_PltNumer &lt;&gt; @p_kntnumer
+			AND @p_PltNumer &lt;&gt; @p_KntCentrala
+		BEGIN
+			SELECT @platnosci_PLT = SUM(sumaplatnosci)
+			FROM (
+				SELECT SUM(CASE TrP_Typ
+							WHEN 1
+								THEN - TrP_Pozostaje
+							ELSE TrP_Pozostaje
+							END) * ISNULL((
+							SELECT TOP 1 WaE_KursL / WaE_KursM
+							FROM CDN.WalElem
+							WHERE WaE_Symbol = TrP_Waluta
+								AND WaE_Lp = TrP_NrKursu
+								AND WaE_KursTS &lt;= @p_timestamp
+							ORDER BY - WaE_KursTS
+							), 1) AS sumaplatnosci
+				FROM CDN.TraPlat
+				INNER JOIN CDN.TraNag ON TrN_GIDTyp = TrP_GIDTyp
+					AND TrN_GIDNumer = TrP_GIDNumer
+				LEFT JOIN CDN.ZamNag ON TrN_ZaNNumer = ZaN_GIDNumer
+					AND TrN_ZaNTyp = ZaN_GIDTyp
+				WHERE TrP_KntTyp = 32
+					AND TrP_KntNumer = @p_PltNumer
+					AND TrP_Rozliczona = 0
+					AND TrN_KntNumer = @p_kntnumer
+					AND ISNULL(ZaN_LimitKredytowy, 0) = 0
+				GROUP BY TrP_Waluta
+					, TrP_NrKursu
+				) AS res
+
+			SET @platnosci = ISNULL(@platnosci, 0) + @platnosci_PLT
+		END
+	END
+
+	-- /TID:175418 policzenie płatności dla płatnika wskazanego na kontrahencie
+	-- Policzenie płatności z dokumentów nie generujących płatności (WZ, WZK, PZ, PZK)
+	IF (@p_UwzglDokBezPlat &gt; 0)
+		SELECT @DokBezPlatnosci = CDN.SumaDokBezPlatnosci(@p_KntNumer, 0, 0, 0, default)
+
+	-- /Policzenie płatności z dokumentów nie generujących płatności (WZ, WZK, PZ, PZK)
+	-- Policzenie zapisów
+	SELECT @zapisy = SUM(CASE KaZ_RP
+				WHEN 1
+					THEN KaZ_Pozostaje * (KaZ_KursL / KaZ_KursM)
+				ELSE - KaZ_Pozostaje * (KaZ_KursL / KaZ_KursM)
+				END)
+	FROM CDN.Zapisy
+	WHERE KaZ_KntTyp = 32
+		AND KaZ_KntNumer = @p_KntNumer
+		AND KaZ_Rozliczony = 0
+
+	-- /Policzenie zapisów
+	-- policzenie rezerwacji
+	IF (@p_UwzglZam &gt; 0)
+		SELECT @Rezerwacje = CDN.LimitKontrahentaZRezerwacji(2576, @p_timestamp, 32, @p_KntNumer, 960, 0, 0, 0, default)
+
+	-- /policzenie rezerwacji
+	SET @retval = ISNULL(@platnosci, 0) + ISNULL(@zapisy, 0) + ISNULL(@DokBezPlatnosci, 0) + ISNULL(@Rezerwacje, 0)
+
+	RETURN @retval
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

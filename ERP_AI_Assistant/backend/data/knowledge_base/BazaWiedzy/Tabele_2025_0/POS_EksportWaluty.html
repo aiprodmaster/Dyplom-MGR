@@ -1,0 +1,79 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[POS_EksportWaluty]"></A><PRE>
+          <FONT SIZE="2"><I>/* [POS_EksportWaluty] */</I><BR>
+CREATE PROCEDURE [CDN].[POS_EksportWaluty]
+	@RowVersion BIGINT,
+	@PointOfSaleId INT
+AS
+BEGIN
+SET NOCOUNT ON;
+	DECLARE @oddzialy TABLE(CentrumId int, PointOfSaleId int, oddzialBylWyslany int, PsaDataDodania int)
+	INSERT INTO @oddzialy select PcKPicoID, PSaID, oddzialBylWyslany, PSaDataDodania from cdn.POS_OddzialyDoEksportu(@PointOfSaleId, @RowVersion)
+
+	INSERT into cdn.PicoLog([PcL_PcKID], [PcL_ObiTyp], [PcL_ObiNumer], [PcL_TStamp],[PcL_ObiektID]) 
+	select distinct CentrumId,96,pwl_id,DATEDIFF(second, convert(datetime,'01-01-1990',105),convert(datetime, getdate(), 105)),0
+	from @oddzialy
+	cross apply POS_WanDoEksportu(PointOfSaleId, case when @PointOfSaleId is null and oddzialBylWyslany = 0 then 0 else @RowVersion end)
+	join cdn.walnag on WaN_Id = WanID
+	join CDN.picowaluty on WaN_Symbol = Pwl_symbolM AND PwL_PckId = CentrumId
+	WHERE NOT EXISTS (SELECT * FROM cdn.PicoLog WHERE [PcL_PcKID] = CentrumId AND [PcL_ObiTyp] = 96 AND [PcL_ObiNumer] = pwl_id);
+
+	
+	declare @Waluty table ([@Id] int, [@Symbol] nvarchar(50), [@Name] nvarchar(50), [@ExchangeRateId] int, [@ExchangeRateDate] nvarchar(50), [@ExchangeRateNumerator] bigint,
+							[@ExchangeRateDenominator] bigint, [@IsActive] varchar(7), [@IsSystem] varchar(7), [@IsReverseCharge] varchar(7))
+	
+	insert into @Waluty
+	select distinct
+				 WaN_Id [@Id],
+				 WaN_Symbol [@Symbol],
+				 WaN_Nazwa [@Name],
+				 isnull(pwl_id,1) [@ExchangeRateId],
+				 coalesce(CONVERT(nvarchar(50), DATEADD(second,PwL_KursTS,convert(datetime,'01-01-1990',105)), 121),CONVERT(nvarchar(50), getdate(), 121))  [@ExchangeRateDate],  
+				 isnull(CAST(PwL_KursL*POWER(cast(10 AS BIGINT),11-ISNULL(NULLIF(PATINDEX('%[1-9]%',REVERSE(SUBSTRING(cast(PwL_KursL as varchar), CHARINDEX('.',PwL_KursL ) + 1, 1000))),0),11)) AS BIGINT),1) [@ExchangeRateNumerator],
+				 isnull(CAST(PwL_KursM*POWER(cast(10 AS BIGINT),11-ISNULL(NULLIF(PATINDEX('%[1-9]%',REVERSE(SUBSTRING(cast(PwL_KursL as varchar), CHARINDEX('.',PwL_KursL ) + 1, 1000))),0),11)) AS BIGINT),1) [@ExchangeRateDenominator],
+				 case when pwl_id is null and pck_waluta&lt;&gt;WaN_Symbol OR PcK_SprWRoznychWalutach = 0 and pck_waluta &lt;&gt; WaN_Symbol then 'false' else 'true' end [@IsActive],
+				 case when pck_waluta=WaN_Symbol then 'true' else 'false' end [@IsSystem],
+				 'false' as [@IsReverseCharge]
+			 from cdn.walnag
+			 cross join @oddzialy
+			 outer apply cdn.POS_WanDoEksportu(PointOfSaleId,case when @PointOfSaleId is null and oddzialBylWyslany = 0 then 0 else @RowVersion end)
+			 left join CDN.picowaluty on WaN_Symbol = Pwl_symbolM AND PwL_PckId = CentrumId and PwL_TSArchiwizacji = 0
+			 join cdn.PicoKonfig on PcK_PicoID=CentrumId
+			 where WanID is null or WaN_Id = WanID
+	
+	if @PointOfSaleId is null
+	DELETE FROM @Waluty
+		WHERE [@ExchangeRateId] NOT IN
+		(
+		SELECT MIN([@ExchangeRateId])
+		FROM @Waluty
+		GROUP BY [@Symbol],[@Name], [@Id]
+		)
+
+	declare @dataDodaniaOstatniegoStanowiska int = (select max(PsaDataDodania) from @oddzialy where oddzialBylWyslany = 0)
+
+	SELECT (coalesce((select case when @PointOfSaleId is null and @dataDodaniaOstatniegoStanowiska &gt; max(PwL_KursTS) then @dataDodaniaOstatniegoStanowiska else max(PwL_KursTS) end from CDN.picowaluty where pwl_PckId IN (select CentrumId from @oddzialy)), @RowVersion)) AS [@RowVersion]
+		,(
+			select distinct * from @Waluty
+		FOR XML path('Currency')
+			,type
+		)
+	FOR XML path('Currencies')
+	SET NOCOUNT OFF;	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,138 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="OFFLXLSrv_EksportPtwR"></A><PRE>
+          <FONT SIZE="2"><I>/* OFFLXLSrv_EksportPtwR */</I><BR>
+CREATE PROCEDURE CDN.OFFLXLSrv_EksportPtwR
+ @ID INT		 -- ID oddziału
+,@TypExp INT = 0 -- Typ synchronizacji: 0 - różnicowa, 1 - pełna
+AS
+	RAISERROR('Procedura OFFLXLSrv_EksportPtwR nie jest obługiwana na MSSQL 2000',16,1)
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="OFFLXLSrv_EksportPtwR"></A><PRE>
+          <FONT SIZE="2"><I>/* OFFLXLSrv_EksportPtwR */</I><BR>
+CREATE PROCEDURE CDN.OFFLXLSrv_EksportPtwR
+ @ID INT		 -- ID oddziału
+,@TypExp INT = 0 -- Typ synchronizacji: 0 - różnicowa, 1 - pełna
+AS
+
+DECLARE @PcK_TSSynchrPtw	INT
+	   ,@PcK_TSSynchrKntPtw INT
+       ,@PcK_Typ            INT
+
+SELECT  @PcK_TSSynchrPtw = CASE WHEN @TypExp = 0 THEN PcK_TSSynchrPtw ELSE 0 END
+	   ,@PcK_TSSynchrKntPtw = CASE WHEN @TypExp = 0 THEN PcK_TSSynchrKntPtw ELSE 0 END
+       ,@PcK_Typ = PcK_Typ
+FROM CDN.PicoKonfig
+WHERE PcK_PicoID = @ID
+
+/***** Kontrahenci, Adresy *****/
+SELECT PcL_ObiTyp AS [@ObiTyp], CAST(PcL_ObiNumer AS VARCHAR(20)) AS [@ObiNumer], PcL_ObiektID AS [@ObiektID], PcL_ObiektTyp AS [@ObiektTyp]
+FROM   CDN.PicoLog 
+WHERE  PcL_PcKID = @ID AND PcL_TStamp &gt; @PcK_TSSynchrKntPtw AND PcL_ObiTyp IN (32,864,896)
+
+UNION ALL 
+/***** Zamówienia *****/
+SELECT ZaN_GIDTyp, CAST(ZaN_GIDNumer AS VARCHAR(20)), ZaN_OddDokID, 0
+FROM   CDN.ZamNag
+WHERE  ZaN_LastMod &gt; @PcK_TSSynchrPtw 
+       AND ZaN_Stan &gt;= (CASE WHEN @PcK_Typ = 5 THEN 0 ELSE 3 END) AND ZaN_PcKID = @ID
+
+UNION ALL
+
+/***** Usuniete obiekty *****/
+SELECT 0-PcU_ObiTyp , CAST(PcU_ObiNumer AS VARCHAR(20)), CAST(PcU_ObiektID AS VARCHAR(20)), 0-PcU_ObiektTyp
+FROM   CDN.PicoUsuniete
+WHERE  PcU_TSUsuniecia &gt; @PcK_TSSynchrPtw and PcU_Stan = 3
+       AND PcU_ObiTyp in (896, 864) -- usuniete adresy
+
+UNION ALL
+
+/***** Dokumenty *****/
+SELECT TrN_GIDTyp, CAST(TrN_GIDNumer  AS VARCHAR(20)), TrN_OddDokID, 0
+FROM   CDN.TraNag JOIN CDN.FrmStruktura ON TrN_FrsID = FrS_ID
+WHERE  TrN_LastMod &gt; @PcK_TSSynchrPtw AND TrN_Stan&gt;=3 AND TrN_Aktywny=0 
+	   AND CDN.OFFLXL_FrmOddzial(@ID,TrN_FrsID)=1
+
+UNION ALL
+/***** Płatności do dokumentów *****/	   
+SELECT 7684, CAST(TrP_GIDTyp AS VARCHAR(5))+':'+CAST(TrP_GIDNumer AS VARCHAR(10))+':'+CAST(TrP_GIDLp AS VARCHAR(5)), TrP_ZewnetrznyId, 0
+FROM CDN.TraPlat
+	INNER JOIN CDN.TraNag ON TrP_GIDTyp = TrN_GIDTyp AND TrP_GIDNumer = TrN_GIDNumer
+	INNER JOIN CDN.FrmStruktura ON TrN_FrsID = FrS_ID
+WHERE  (TrN_LastMod &gt; @PcK_TSSynchrPtw OR TrP_CzasModyfikacji &gt; @PcK_TSSynchrPtw) AND TrN_Stan&gt;=3 AND TrN_Aktywny=0 
+	   AND CDN.OFFLXL_FrmOddzial(@ID,TrN_FrsID)=1
+
+UNION ALL 
+/***** Raporty *****/
+SELECT KRP_GIDTyp, CAST(KRP_GIDNumer  AS VARCHAR(20)), KRP_ZewnetrznyId, 0
+FROM CDN.Raporty 
+WHERE KRP_DataZamkniecia &gt; 0 -- jesli raport nie dodal sie w calosci jest niezamkniety, nie nalezy wysylac potwierdzenia do Retail
+	AND KRP_ZewnetrznySys = @ID AND KRP_CzasModyfikacji &gt; @PcK_TSSynchrPtw 
+
+UNION ALL 
+/***** Zapisy *****/
+SELECT KAZ_GIDTyp, CAST(KAZ_GIDNumer  AS VARCHAR(20)), KAZ_ZewnetrznyId, 0
+FROM CDN.Raporty 
+JOIN CDN.Zapisy ON KRP_GIDNumer=KAZ_KRPNumer
+WHERE KRP_ZewnetrznySys = @ID AND KRP_CzasModyfikacji &gt; @PcK_TSSynchrPtw 
+
+UNION ALL
+/***** Rozliczenia *****/
+SELECT 433, CAST(R2_ID  AS VARCHAR(20)), R2_ZewnetrznyId, 0
+FROM CDN.Rozliczenia
+LEFT OUTER JOIN CDN.TraNag T1 ON R2_Dok1Typ=T1.TrN_GIDTyp AND R2_Dok1Numer=T1.TrN_GIDNumer 
+LEFT OUTER JOIN CDN.Zapisy Z1 ON R2_Dok1Typ=Z1.KAZ_GIDTyp AND R2_Dok1Numer=Z1.KAZ_GIDNumer 
+WHERE R2_ZewnetrznySys = @ID AND R2_CzasModyfikacji &gt; @PcK_TSSynchrPtw 
+		AND ((R2_Dok1Typ = 784 AND R2_Dok2Typ &lt;&gt; 784) OR (R2_Dok2Typ = 784 AND R2_Dok1Typ &lt;&gt; 784))
+		AND R2_ZewnetrznyTyp = 1
+		
+
+UNION ALL
+/***** Kompensaty *****/
+SELECT PcL_ObiTyp*10, CAST(PcL_ObiNumer AS VARCHAR(20)), PcL_ObiektID, PcL_ObiektTyp
+FROM CDN.PicoLog
+WHERE PcL_PcKID = @ID AND PcL_TStamp &gt; @PcK_TSSynchrPtw AND PcL_ObiTyp IN (434)
+UNION ALL
+SELECT 434, CAST(R2_ID AS VARCHAR(20)), R2_ZewnetrznyId, CASE R2_ZewnetrznyTyp WHEN 2 THEN 7684 WHEN 3 THEN 784 ELSE 0 END
+FROM CDN.Rozliczenia
+LEFT OUTER JOIN CDN.TraPlat T1 ON R2_Dok1Typ=T1.TrP_GIDTyp AND R2_Dok1Numer=T1.TrP_GIDNumer AND R2_Dok1Lp=T1.TrP_GIDLp
+LEFT OUTER JOIN CDN.Zapisy Z1 ON R2_Dok1Typ=Z1.KAZ_GIDTyp AND R2_Dok1Numer=Z1.KAZ_GIDNumer AND R2_Dok1Lp=Z1.KAZ_GIDLp
+WHERE R2_ZewnetrznySys = @ID 
+		AND R2_CzasModyfikacji &gt; @PcK_TSSynchrPtw 
+		AND ((R2_Dok1Typ = 784 AND R2_Dok2Typ = 784) OR (R2_Dok2Typ &lt;&gt; 784 AND R2_Dok1Typ &lt;&gt; 784))
+		AND R2_ZewnetrznyTyp IN  (2,3)
+
+UNION ALL
+/***** Preliminarz płatności ******/
+SELECT 7690, CAST(PRL_GIDNumer AS VARCHAR(20)), PRL_ZewnetrznyID, 0
+FROM CDN.Preliminarz
+WHERE PRL_ZewnetrznyID &gt; 0 AND PRL_ZewnetrznySys = @ID
+UNION ALL
+SELECT PcL_ObiTyp,CAST(PcL_ObiNumer AS VARCHAR(20)), PcL_ObiektID, PcL_ObiektTyp
+FROM CDN.PicoLog
+WHERE PcL_PcKID = @ID AND PcL_ObiTyp = -7690 AND PcL_TStamp &gt; @PcK_TSSynchrPtw 
+FOR XML PATH('PTW'),ROOT('PTWI')
+
+DELETE FROM CDN.PicoUsuniete
+WHERE PcU_TSUsuniecia &gt; @PcK_TSSynchrPtw and PcU_Stan = 3
+      AND PcU_ObiTyp in (896, 864) -- usuniete adresy
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

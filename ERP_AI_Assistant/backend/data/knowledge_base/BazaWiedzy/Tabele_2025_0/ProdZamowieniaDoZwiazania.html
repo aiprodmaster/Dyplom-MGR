@@ -1,0 +1,119 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="ProdZamowieniaDoZwiazania"></A><PRE>
+          <FONT SIZE="2"><I>/* ProdZamowieniaDoZwiazania */</I><BR>
+CREATE FUNCTION CDN.ProdZamowieniaDoZwiazania(@p_Zasob int, @p_IloscBrakuje decimal(11,4),@p_Data int,@p_DataDzis int, @p_Tryb smallint)
+RETURNS @ZamElemZwiaz table(GIDNumer int,
+							GIDLp smallint,
+							Pozycja smallint,
+							Ilosc decimal(11,4), 
+							Termin int, 
+							NumerZam varchar(50),
+							Zasob int,
+							TechnologiaCzynnosc int)
+AS
+BEGIN
+	declare @ZaEGIDNumer int, 
+			@ZaEGIDLp smallint,
+			@ZaEPozycja smallint, 
+			@ZaEIlosc decimal(11,4),
+			@Termin int,
+			@NumerZam varchar(50),
+			@TechnologiaCzynnosc int
+
+	--sprawdzenie czy suma na zamówieniach jest większa lub równa ilości brakującej, jeśli nie to nie ma sensu iść dalej
+	if(not exists(select * from
+				  (
+					select rez_ilosc-rez_zrealizowano-rez_iloscmag-rez_iloscimp-rez_iloscssc-rez_iloscsad Ilosc, sum(isnull(zzl_zwiazanailosc,0)) ZwiazanaIlosc 
+					from cdn.zamelem
+					join cdn.zamnag on zan_gidnumer = zae_gidnumer
+					join cdn.prodtechnologiazasoby on ptz_twrtyp = zae_twrtyp and ptz_twrnumer = zae_twrnumer
+					left join cdn.rezerwacje on rez_zrdtyp = zae_gidtyp and rez_zrdnumer = zae_gidnumer and rez_zrdlp = zae_gidlp
+					left join cdn.zamzamlinki on zzl_zzgidtyp = zae_gidtyp and zzl_zzgidnumer = zae_gidnumer and zzl_zzgidlp = zae_gidlp
+					where (zan_zamtyp = 1152 or (zan_zamtyp = 1280 and zan_rodzaj = 8)) and
+						   zan_stan in (3,5) and			--zamówienia zatwierdzone i w realizacji
+						   ((zae_datapotwdst &gt;= @p_Data and @p_Data &gt;= 0) or		--planowanie w przód
+                            (zae_datapotwdst &lt;= abs(@p_Data) and zae_datapotwdst &gt;= @p_DataDzis and @p_Data &lt; 0)) and	--planowanie wstecz
+						   ptz_id = @p_Zasob and
+						   (((zae_magnumer = ptz_magnumer and zan_zamtyp = 1152) or 
+							 (zan_magdnumer = ptz_magnumer and zan_zamtyp = 1280 and zan_rodzaj = 8))
+							or ptz_magnumer = 0) and
+						   rez_gidtyp = 2592				--rezerwacje tylko zakupowe
+					group by zzl_zzgidtyp,zzl_zzgidnumer,zzl_zzgidlp,zae_gidnumer,zae_gidlp,rez_ilosc,rez_zrealizowano,rez_iloscmag,rez_iloscimp,
+							 rez_iloscssc,rez_iloscsad
+				  ) ZZL
+				  having sum(Ilosc)-sum(ZwiazanaIlosc) &gt;= @p_IloscBrakuje))
+		return
+	else if(@p_Tryb = 1)	--w trybie uproszczonym zwracamy tylko informacje że istnieją zamówienia zaspokajające brakującą ilość w całości
+	begin					--do wykorzystania w funkcji cdn.prodczynnoscikonflikty
+		insert into @ZamElemZwiaz values(0, 0, 0, @p_IloscBrakuje, 0, '', 0, 0)
+		return
+	end
+
+	--analiza zamówień
+	declare zamelem_cursor cursor fast_forward for
+		select zae_gidnumer,zae_gidlp,zae_pozycja,Ilosc-ZwiazanaIlosc,zae_datapotwdst,NumerZam,ptz_technologiaczynnosc
+		from
+		(
+				select zae_gidnumer,zae_gidlp,zae_pozycja,rez_ilosc-rez_zrealizowano-rez_iloscmag-rez_iloscimp-rez_iloscssc-rez_iloscsad Ilosc,
+					   sum(isnull(zzl_zwiazanailosc,0)) ZwiazanaIlosc,zae_datapotwdst,
+					   CDN.NumerDokumentu(CDN.DokMapTypDokumentu(ZaN_GIDTyp,ZaN_ZamTyp,ZaN_Rodzaj),0,ZaN_ZamTyp,ZaN_ZamNumer,ZaN_ZamRok,ZaN_ZamSeria,ZaN_ZamMiesiac) NumerZam,
+					   ptz_technologiaczynnosc
+				from cdn.zamelem
+				join cdn.zamnag on zan_gidnumer = zae_gidnumer
+				join cdn.prodtechnologiazasoby on ptz_twrtyp = zae_twrtyp and ptz_twrnumer = zae_twrnumer
+				left join cdn.rezerwacje on rez_zrdtyp = zae_gidtyp and rez_zrdnumer = zae_gidnumer and rez_zrdlp = zae_gidlp
+				left join cdn.zamzamlinki on zzl_zzgidtyp = zae_gidtyp and zzl_zzgidnumer = zae_gidnumer and zzl_zzgidlp = zae_gidlp
+				where (zan_zamtyp = 1152 or (zan_zamtyp = 1280 and zan_rodzaj = 8)) and
+					   zan_stan in (3,5) and		--zamówienia zatwierdzone i w realizacji
+					   ((zae_datapotwdst &gt;= @p_Data and @p_Data &gt;= 0) or		--planowanie w przód
+                        (zae_datapotwdst &lt;= abs(@p_Data) and zae_datapotwdst &gt;= @p_DataDzis and @p_Data &lt; 0)) and	--planowanie wstecz
+					   ptz_id = @p_Zasob and
+					   (((zae_magnumer = ptz_magnumer and zan_zamtyp = 1152) or 
+						 (zan_magdnumer = ptz_magnumer and zan_zamtyp = 1280 and zan_rodzaj = 8))
+						or ptz_magnumer = 0) and
+					   rez_gidtyp = 2592			--rezerwacje tylko zakupowe
+				group by zzl_zzgidtyp,zzl_zzgidnumer,zzl_zzgidlp,zae_gidnumer,zae_gidlp,zae_pozycja,rez_ilosc,rez_zrealizowano,zae_datapotwdst,
+				 ZaN_GIDTyp,ZaN_ZamTyp,ZaN_Rodzaj,ZaN_ZamNumer,ZaN_ZamRok,ZaN_ZamSeria,ZaN_ZamMiesiac,ptz_technologiaczynnosc,rez_iloscmag,
+				 rez_iloscimp,rez_iloscssc,rez_iloscsad
+		) ZZL
+		where Ilosc-ZwiazanaIlosc &gt; 0
+		order by (case when @p_Data &gt;= 0 then zae_datapotwdst else -zae_datapotwdst end)
+
+	--wypełnianie zwracanej tabeli
+	open zamelem_cursor
+	fetch next from zamelem_cursor into @ZaEGIDNumer, @ZaEGIDLp, @ZaEPozycja, @ZaEIlosc, @Termin, @NumerZam, @TechnologiaCzynnosc
+
+	while @@FETCH_STATUS = 0 and @p_IloscBrakuje &gt; 0
+	begin
+		if(@ZaEIlosc &gt; 0)
+		begin
+			set @p_IloscBrakuje = @p_IloscBrakuje - @ZaEIlosc
+			if(@p_IloscBrakuje &lt; 0)
+				set @ZaEIlosc = @ZaEIlosc - ABS(@p_IloscBrakuje)
+
+			insert into @ZamElemZwiaz values(@ZaEGIDNumer, @ZaEGIDLp, @ZaEPozycja, @ZaEIlosc, @Termin, @NumerZam, @p_Zasob, @TechnologiaCzynnosc)
+		end
+		fetch next from zamelem_cursor into @ZaEGIDNumer, @ZaEGIDLp, @ZaEPozycja, @ZaEIlosc, @Termin, @NumerZam, @TechnologiaCzynnosc
+	end
+
+	close zamelem_cursor 
+	deallocate zamelem_cursor
+
+	return
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

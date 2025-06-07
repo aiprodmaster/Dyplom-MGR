@@ -1,0 +1,72 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="WFL_StatusyZrodlowe"></A><PRE>
+          <FONT SIZE="2"><I>/* WFL_StatusyZrodlowe */</I><BR>
+Create function CDN.WFL_StatusyZrodlowe(@p_Status integer, @p_WDPID integer)
+returns @tbl_StatZrod table(t_status int)
+as
+begin
+
+declare @tabela table(t_status int, t_poziom int, t_statuswynik int)
+
+declare @poz int
+set @poz = 1
+
+if @p_WDPID = 0
+	Select @p_WDPID = WDS_WDPID from CDN.Wf_DefStatusy where WDS_ID = @p_Status 
+
+insert @tabela
+select * 
+from (
+	select WDZ_WDSID as sk_status, @poz as sk_poziom, WDZ_Wynik as sk_Wynik 
+	from cdn.WF_DefZadania  (NOLOCK) 
+	Where WDZ_WDPID = @p_WDPID and WDZ_WSTECZ = 0 and WDZ_Wynik &lt;&gt;0
+	union
+	Select wdZ_wdsid as sk_status, @poz as sk_poziom, WDK_WDSID as sk_Wynik
+	from cdn.wf_defStatKonc  (NOLOCK) join cdn.WF_DefZadania  (NOLOCK) on wdk_wdzid = wdz_id
+	Where WDZ_WDPID = @p_WDPID and WDZ_WSTECZ = 0
+)
+as STATUSYKONCOWE
+Where sk_Wynik = @p_status
+
+
+while ( @poz&lt;100 and exists(select T_Status from @tabela where t_Poziom=@Poz) )
+begin
+	insert @tabela (t_status, t_poziom, t_statuswynik)
+	select  STATKONC.sk_status, STATKONC.sk_poziom, STATKONC.sk_Wynik 
+	from (
+	select WDZ_WDSID as sk_status, @poz+1 as sk_poziom, WDZ_Wynik as sk_Wynik 
+	from cdn.WF_DefZadania (NOLOCK) 
+	Where WDZ_WDPID = @p_WDPID and WDZ_WSTECZ = 0 and WDZ_Wynik&lt;&gt;0
+	union
+	Select wdZ_wdsid as sk_status, @poz+1 as sk_poziom, WDK_WDSID as sk_Wynik
+	from cdn.wf_defStatKonc  (NOLOCK) join cdn.WF_DefZadania  (NOLOCK) on wdk_wdzid = wdz_id
+	Where WDZ_WDPID = @p_WDPID and WDZ_WSTECZ = 0
+	)
+	as STATKONC join  @tabela on sk_Wynik = t_status and t_POZIOM = @poz
+	where STATKONC.sk_status not in (select T_Status from @tabela)
+	set @poz = @poz + 1
+end
+
+insert @tbl_StatZrod (t_status)
+select distinct t_status
+from @tabela
+
+
+return 
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

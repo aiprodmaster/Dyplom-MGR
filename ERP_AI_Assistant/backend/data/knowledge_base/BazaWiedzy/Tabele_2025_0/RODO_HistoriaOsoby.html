@@ -1,0 +1,96 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="RODO_HistoriaOsoby"></A><PRE>
+          <FONT SIZE="2"><I>/* RODO_HistoriaOsoby */</I><BR>
+CREATE FUNCTION CDN.RODO_HistoriaOsoby (@KnSNumer int, @KnSLp int)
+RETURNS @tabelka table(
+		Stara Nvarchar(256),
+		Nowa Nvarchar(256),
+		OpeIdent Nvarchar(50)
+	)
+AS  
+BEGIN
+	declare @numery table(lp int, czas int, ope_ident nvarchar(50))
+	declare @PolaKnS table(nazwa nvarchar(50))
+	DECLARE @iter INT,
+			@iterDo INT,
+			@aktCzas INT,
+			@aktOpe nvarchar(50)
+
+	insert into @PolaKnS values
+		  ('knS_Nazwa'),
+		  ('knS_Tytul'),
+		  ('knS_Stanowisko'),
+		  ('knA_Ulica'),
+		  ('knA_Adres'),
+		  ('knA_KodP'),
+		  ('knA_Miasto'),
+		  ('knA_Wojewodztwo'),
+		  ('knA_Kraj'),
+		  ('knA_Gmina'),
+		  ('knA_Powiat'),
+		  ('knS_Telefon'),
+		  ('knS_TelefonK'),
+		  ('knS_Fax'),
+		  ('knS_Email')
+		  --KnS_KntNumer = @KnSNumer and KnS_KntLp = @KnSLp
+	
+	
+	insert into @numery 
+		select ROW_NUMBER() OVER(ORDER BY his_czaszmianDB ASC), * from
+		(
+			select distinct his_czaszmianDB, his_opeident
+			FROM cdn.kntosoby 
+			join CDN.HISTORIAZMIAN on (HIS_ObiTyp=32 AND HIS_obinumer= @KnsNumer AND HIS_OBILP1 = @KnSLp) OR (HIS_ObiTyp=896 AND HIS_obinumer=KnS_AdresId and KnS_KntNumer = @KnsNumer and KnS_KntLp = @KnSLp)
+			WHERE HIS_KOLUMNA IN (select * from @PolaKnS)
+		) a
+	set @iter = 1
+	select @iterDo = count(*) from @numery
+
+	
+	WHILE @iter &lt;= @iterDo
+	BEGIN
+		select @aktCzas = Czas, @aktOpe = ope_ident from @numery where lp = @iter
+		INSERT INTO @tabelka select 'CzasModyfikacji', LEFT(CONVERT(VARCHAR, CDN.TSToDate(@aktCzas,1) , 120), 20) ,@aktOpe 
+
+		INSERT INTO @tabelka SELECT  case when Wartosci = 'HIS_STARAWARTOSC' then 'PoprzedniaWartość' when Wartosci ='HIS_NowaWartosc' then  'NowaWartość' else 'NazwaPola' end RodzajDanych, Wartosc,his_opeident
+		FROM
+		(
+			SELECT
+				cast(HIS_STARAWARTOSC as nvarchar(256)) as HIS_STARAWARTOSC,
+				cast(HIS_NowaWartosc as nvarchar(256)) as HIS_NowaWartosc,
+				cast(his_kolumna as nvarchar(256)) as his_kolumna,
+				his_opeident,
+				ROW_NUMBER() OVER(ORDER BY (SELECT NULL)) AS rownum
+			from cdn.kntosoby 
+			join cdn.HistoriaZmian on (HIS_ObiTyp = 32 AND HIS_obinumer= kns_kntnumer AND his_obilp1 = KNS_kntlp) OR (HIS_ObiTyp=896 AND HIS_obinumer=KnS_AdresId)
+			WHERE HIS_KOLUMNA IN (select * from @PolaKnS) AND his_czaszmianDB = @aktCzas AND KnS_kntnumer = @KnsNumer AND KNS_kntlp = @KnSLp
+		) AS cp
+		UNPIVOT
+		(
+			Wartosc FOR Wartosci IN (
+				his_kolumna,
+				HIS_STARAWARTOSC,
+				HIS_NowaWartosc
+			)
+		) AS up
+		select @iter = @iter + 1
+	END
+
+	RETURN
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

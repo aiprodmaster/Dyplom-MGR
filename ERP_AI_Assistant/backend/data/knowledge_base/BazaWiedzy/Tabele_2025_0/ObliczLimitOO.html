@@ -1,0 +1,66 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="ObliczLimitOO"></A><PRE>
+          <FONT SIZE="2"><I>/* ObliczLimitOO */</I><BR>
+create procedure CDN.ObliczLimitOO (@typDok int, @numerDok int, @wartoscWgUstawy decimal(7,2)=20000.00)
+as
+begin
+	declare @wartoscWgUstPom decimal(19,2)=@wartoscWgUstawy
+	declare @kntNumer int
+	declare @data int
+	declare @sumaTran decimal(19,2)=0
+
+	if @typDok != 960
+		select @kntNumer = TrN_KntNumer, @data = TrN_Data3 from cdn.TraNag where TrN_GIDTyp=@typDok and TrN_GIDNumer=@numerDok
+
+	if @typDok in (1521,1489) --FZ,PZ, czyli transakcja zakupu 
+		select @sumaTran = isnull(sum(TrE_KsiegowaNetto),0)
+		from cdn.TraNag Spinane
+		left join cdn.tranag Spinacz on Spinacz.TrN_GidTyp = Spinane.TrN_SpiTyp and Spinacz.TrN_GidNumer = Spinane.TrN_SpiNumer
+		join cdn.TraElem on Spinane.TrN_GIDTyp = TrE_GIDTyp and Spinane.TrN_GIDNumer = tre_gidnumer 
+		where Spinane.TRN_GidTyp in (1521,1489) 
+			and not(Spinane.TRN_GidTyp = 1489 and Spinane.TrN_SpiTyp&lt;0)
+			and isnull(Spinacz.TrN_KntNumer,Spinane.TrN_KntNumer) = @kntNumer 
+			and isnull(Spinacz.TrN_Data3,Spinane.TrN_Data3) = @data
+			and TrE_Zlom = 3
+	else if @typDok in (2033,2001,2036,2037,2005) --FS, WZ, FW, FSE, WZE, czyli transakcja sprzedaży
+		select @sumaTran = isnull(sum(TrE_KsiegowaNetto),0)
+		from cdn.TraNag Spinane
+		left join cdn.tranag Spinacz on Spinacz.TrN_GidTyp = Spinane.TrN_SpiTyp and Spinacz.TrN_GidNumer = Spinane.TrN_SpiNumer
+		join cdn.TraElem on Spinane.TrN_GIDTyp = TrE_GIDTyp and Spinane.TrN_GIDNumer = tre_gidnumer 
+		where Spinane.TRN_GidTyp in (2033,2001,2036,2037,2005) 
+			and not(Spinane.TRN_GidTyp in (2001,2005) and Spinane.TrN_SpiTyp&lt;0)
+			and isnull(Spinacz.TrN_KntNumer,Spinane.TrN_KntNumer) = @kntNumer 
+			and isnull(Spinacz.TrN_Data3,Spinane.TrN_Data3) = @data
+			and TrE_Zlom = 3
+	else if @typDok = 960--zamówienie/oferta
+		select @sumaTran =  SUM(CASE WHEN ZaE_FlagaNB = 'B' THEN ROUND(ZaE_WartoscPoRabacie/(1+ZaE_StawkaPod/100),2)
+								 ELSE ZaE_WartoscPoRabacie
+							END)
+		from cdn.ZamElem 
+		where ZaE_GIDNumer = @numerDok and ZaE_Zlom = 3
+
+	declare @waluta varchar(3) = 'PLN'
+	declare @vatKursL decimal(7,2)=0
+	declare @vatKursM decimal(5)=0 
+	declare @numerKursu int=0
+
+	exec cdn.ObliczKursWaluty @waluta,@sumaTran OUTPUT,@numerKursu, @vatKursL OUTPUT ,@vatKursM OUTPUT
+
+	select @wartoscWgUstPom-@sumaTran
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

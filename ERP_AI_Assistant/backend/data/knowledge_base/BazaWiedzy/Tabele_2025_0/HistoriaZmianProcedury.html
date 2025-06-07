@@ -1,0 +1,336 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="KonfHistoriaZmian"></A><PRE>
+          <FONT SIZE="2"><I>/* KonfHistoriaZmian */</I><BR>
+CREATE FUNCTION CDN.KonfHistoriaZmian (@Typ tinyint)
+RETURNS tinyint
+ AS
+BEGIN
+/*
+0 - ceny
+1 - ceny u dostawcow
+2 - towary
+3 - kontrahent
+4 - rejon
+5 - adresy kontrahenta
+6 - promocje kontrahenta
+7 - limity kredytowe
+8 - banki
+9 - konta księgowe
+10 - osoby kontrahenta
+11 - karty pracownika
+*/
+	declare @GidTyp smallint
+
+	if @Typ = 0
+		set @GidTyp = 9955
+	else if @Typ = 1
+		set @GidTyp = 982
+	else if @Typ = 2
+		set @GidTyp = 983
+	else if @Typ = 3
+		set @GidTyp = 984
+	else if @Typ = 4
+		set @GidTyp = 985
+	else if @Typ = 5
+		set @GidTyp = 970
+	else if @Typ = 6
+		set @GidTyp = 971
+	else if @Typ = 7
+		set @GidTyp = 972
+	else if @Typ = 8
+		set @GidTyp = 973
+	else if @Typ = 9
+		set @GidTyp = 974
+	else if @Typ = 10
+		set @GidTyp = 9837
+	else if @Typ = 11
+		set @GidTyp = 9838
+	else
+		set @GidTyp = 0
+
+	return convert(tinyint,isnull((SELECT KON_Wartosc FROM CDN.Konfig with(nolock) WHERE KON_Numer = @GidTyp),'0'))	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="HistoriaZmianRejestruj"></A><PRE>
+          <FONT SIZE="2"><I>/* HistoriaZmianRejestruj */</I><BR>
+CREATE PROCEDURE cdn.HistoriaZmianRejestruj (
+@ObiTyp nvarchar(50),
+@ObiNumer nvarchar(50),
+@ObiLp1 nvarchar(50),
+@ObiLp2 nvarchar(50),
+@ObiLp3 nvarchar(50),
+@ObiNazwa nvarchar(50),
+@CzasZmian nvarchar(50),
+@TabelaID smallint,
+@Tabela nvarchar(20),
+@TabelaPodlegla tinyint, --(0 - glowna, 1 - podlegla (insert/update/delete w ramach edycji tabeli glownej np. łącznikowa), 2 - podlegla (insert/update/delete dokładnie tak samo jak tabela glowna)
+@WarunekInsert nvarchar(1000),
+@WarunekUpdate nvarchar(1000),
+@WarunekDelete nvarchar(1000),
+@WarunekWycofanieInsert nvarchar(1000),
+@ColumnsUpdated varbinary(512)
+)
+WITH EXECUTE AS SELF 
+as
+begin
+
+	declare @OpeIdent nvarchar(40)
+	declare @sSQL nvarchar(max)
+	set @sSQL = ''
+	declare @TypZmiany tinyint
+	declare @DataDB int
+	set @DataDB = datediff(s,convert(datetime,'1990-01-01',120),getdate())
+
+	declare @sInsertSQLObiTyp nvarchar(50)
+	declare @sDeleteSQLObiTyp nvarchar(50)
+	
+	
+	if ISNUMERIC(@ObiTyp) = 1
+	begin
+		set @sInsertSQLObiTyp = @ObiTyp
+		set @sDeleteSQLObiTyp = @ObiTyp
+	end
+	else
+	begin
+		set @sInsertSQLObiTyp = 'i.' + @ObiTyp
+		set @sDeleteSQLObiTyp = 'd.' + @ObiTyp
+	end
+			
+	select @OpeIdent = isnull(CDN.PolaczenieInfo(4),'') --TID:188194
+	if @OpeIdent = ''
+	begin
+		select top 1 @OpeIdent = SES_OpeIdent from cdn.Sesje with(nolock) where (SES_ClarionSPID = @@SPID or SES_ADOSPID = @@SPID) and SES_Aktywna = 0 order by SES_Start desc
+		if @@ROWCOUNT = 0
+		begin 
+			set @OpeIdent = 'SQL:' + left(SYSTEM_USER,16)
+		end
+	end		
+		
+	declare @WarunekStaraWartosc nvarchar(max)
+	declare @WarunekNowaWartosc nvarchar(max)	
+	declare @UpdateJakoInsert tinyint
+	set @UpdateJakoInsert = 0			
+	declare @DeleteJakoWycofanie tinyint
+	set @DeleteJakoWycofanie = 0
+	declare @ExistInserted tinyint
+	declare @ExistDeleted tinyint
+	
+	
+	if exists(select 1 from #inserted)
+		set @ExistInserted = 1
+	else
+		set @ExistInserted = 0
+	
+	
+	if exists(select 1 from #deleted)
+		set @ExistDeleted = 1
+	else
+		set @ExistDeleted = 0
+	
+	
+		
+	if @TabelaPodlegla = 0
+	begin 
+		if @ExistDeleted = 0
+		begin --insert glownej
+			set @TypZmiany = 0	 
+			
+			set @sSQL = 'insert into cdn.HistoriaZmian (HIS_ObiTyp,HIS_ObiNumer,HIS_ObiLp1,HIS_ObiLp2,HIS_ObiLp3,HIS_ObiNazwa,HIS_CzasZmian,HIS_TabelaID,HIS_CzasZmianDB,HIS_OpeIdent,HIS_TypZmiany,HIS_Kolumna,HIS_StaraWartosc,HIS_NowaWartosc)' + 
+						' select ' + @sInsertSQLObiTyp + ', i.' + @ObiNumer + ',' + coalesce('i.' + @ObiLp1,'0') + ', ' + coalesce('i.' + @ObiLp2,'0') + ',' + coalesce('i.' + @ObiLp3,'0') + ','''',' + coalesce('i.' + @CzasZmian,'0') + ', @TabelaID, @DataDB, @OpeIdent, @TypZmiany, '''', '''',''''' +
+						' from #inserted i'								
+						
+						
+			set @UpdateJakoInsert = 1
+		end
+		else
+		begin
+			set @sSQL = 'select @UpdateJakoInsert = case when exists(select 1 from #inserted i join #deleted d on ' + @WarunekUpdate + ' where ' + @WarunekInsert + ') then 1 else 0 end'		
+			exec sp_executeSQL @sSQL, N'@UpdateJakoInsert tinyint output', @UpdateJakoInsert = @UpdateJakoInsert output		
+			if @UpdateJakoInsert &gt; 0
+			begin
+				--update jako insert glownej 
+				return
+			end
+			else --update glownej/delete glownej			
+				set @UpdateJakoInsert = 0	
+		end
+	end
+	
+	
+	
+	if @ExistInserted = 0 and @TabelaPodlegla = 0
+	begin --delete glownej/wycofanie z insert glownej
+		
+		set @sSQL = 'select @DeleteJakoWycofanie = case when exists(select 1 from #deleted d where ' + @WarunekWycofanieInsert + ') then 1 else 0 end'
+		exec sp_executeSQL @sSQL, N'@DeleteJakoWycofanie tinyint output', @DeleteJakoWycofanie = @DeleteJakoWycofanie output		
+		if @DeleteJakoWycofanie &gt; 0
+		begin
+			--wycofanie z inserta
+			set @sSQL = 'delete from cdn.HistoriaZmian where exists(select 1 from #deleted d where ' + @sDeleteSQLObiTyp + ' = HIS_ObiTyp and d.' + @ObiNumer + ' = HIS_ObiNumer and ' +  @WarunekWycofanieInsert 
+				     + coalesce(' and d.' + @ObiLp1 + ' = HIS_ObiLp1','') + coalesce(' and d.' + @ObiLp2 + ' = HIS_ObiLp2','') + coalesce(' and d.' + @ObiLp3 + ' = HIS_ObiLp3','') +')'
+		end
+		else
+		begin
+			--delete glownej
+			set @TypZmiany = 2
+
+			set @sSQL = 'insert into cdn.HistoriaZmian (HIS_ObiTyp,HIS_ObiNumer,HIS_ObiLp1,HIS_ObiLp2,HIS_ObiLp3,HIS_ObiNazwa,HIS_CzasZmian,HIS_TabelaID,HIS_CzasZmianDB,HIS_OpeIdent,HIS_TypZmiany,HIS_Kolumna,HIS_StaraWartosc,HIS_NowaWartosc)' + 
+						' select ' + @sDeleteSQLObiTyp + ', d.' + @ObiNumer + ',' + coalesce('d.' + @ObiLp1,'0') + ', ' + coalesce('d.' + @ObiLp2,'0') + ',' + coalesce('d.' + @ObiLp3,'0') + ',' + coalesce('d.' + @ObiNazwa,'''''') + ', @DataDB, @TabelaID, @DataDB, @OpeIdent, @TypZmiany, '''', '''',''''' +
+						' from #deleted d where ' + @WarunekDelete		
+		end
+	
+	end	
+	else if @ExistInserted = 0 and @TabelaPodlegla = 1 
+	begin --delete podleglej (tylko lacznikowej)
+	
+		select colorder as Lp, b.name as NazwaKolumny into #Kolumny2
+		from syscolumns b with(nolock)					
+				join sysobjects a with(nolock)
+					on a.id = b.id 
+		where a.xtype = 'U' and a.name = @Tabela 
+		
+
+					
+		
+		set @WarunekStaraWartosc = ''
+		
+		
+		set @TypZmiany = 2
+								
+		
+		select 
+			@WarunekStaraWartosc = @WarunekStaraWartosc + ' when k.NazwaKolumny = ''' + NazwaKolumny + ''' then convert(varchar(2048),d.' + NazwaKolumny + ')'			
+		from #Kolumny2
+
+
+		
+		set @sSQL = 'insert into cdn.HistoriaZmian (HIS_ObiTyp,HIS_ObiNumer,HIS_ObiLp1,HIS_ObiLp2,HIS_ObiLp3,HIS_ObiNazwa,HIS_CzasZmian,HIS_TabelaID,HIS_CzasZmianDB,HIS_OpeIdent,HIS_TypZmiany,HIS_Kolumna,HIS_StaraWartosc,HIS_NowaWartosc)' + 		
+						' select ' + @sDeleteSQLObiTyp + ', d.' + @ObiNumer + ',' + coalesce('d.' + @ObiLp1,'0') + ', ' + coalesce('d.' + @ObiLp2,'0') + ',' + coalesce('d.' + @ObiLp3,'0') + ','''', @DataDB, @TabelaID, @DataDB, @OpeIdent, @TypZmiany, k.NazwaKolumny, isnull(case ' + @WarunekStaraWartosc + ' end,''''), ''''' + 
+						' from #Kolumny2 k, #deleted d where ' + @WarunekDelete + ' order by k.Lp'
+						
+											
+	end
+	else if @ExistDeleted = 1 and @TabelaPodlegla = 2
+	begin --delete podleglej (nie lacznikowej)
+		set @sSQL = ''
+	end
+	else if @UpdateJakoInsert = 0 and (@ExistDeleted = 1 or @ExistDeleted = 0 and @TabelaPodlegla = 1)
+	begin --update podleglej/glownej, insert podleglej(tylko lacznikowej)
+	
+		if @TabelaPodlegla = 0
+			set @WarunekInsert = '1=1' 
+		
+
+					
+		select colorder as Lp, b.name as NazwaKolumny into #Kolumny1
+		from syscolumns b with(nolock)					
+				join sysobjects a with(nolock)
+					on a.id = b.id 
+		where a.xtype = 'U' and a.name = @Tabela and sys.fn_IsBitSetInBitmask(@ColumnsUpdated,b.colid) &lt;&gt; 0
+
+		if @TabelaID = 60
+			DELETE FROM #Kolumny1 where NazwaKolumny not in('ZaN_LimitKredytowy', 'ZaN_LimitKredytowyKwota', 'ZaN_LimitKredytowyWaznyDo', 'ZaN_LimitKredytowyWaluta')
+		else if @TabelaID = 110
+			DELETE FROM #Kolumny1 where NazwaKolumny not in('Prc_Akronim', 'Prc_Imie1' ,'Prc_Imie2' ,'Prc_Nazwisko', 'Prc_NipE', 'Prc_Nip', 'Prc_Pesel', 'Prc_Ulica', 'Prc_NrDomu',
+			   'Prc_NrLokalu', 'Prc_KodP', 'Prc_Miasto', 'Prc_Poczta', 'Prc_Telefon1', 'Prc_TelefonWew1', 'Prc_Telefon2', 'Prc_Telefon3', 'Prc_Email', 'Prc_URL',
+			   'Prc_BnkNumer', 'Prc_NrRachunku', 'Prc_NTKonto', 'Prc_BnkTyp','Prc_BnkFirma','Prc_Karany', 'Prc_KaranyOpis', 'Prc_WypadekOsoba', 'Prc_WypadekTelefon',
+			   'Prc_WypadekAdres', 'Prc_MiejscePracy', 'Prc_NrPokoju')
+		else if @TabelaID = 111
+			DELETE FROM #Kolumny1 where NazwaKolumny not in('PRAE_AdresEmail')
+
+		IF NOT EXISTS(select * from #Kolumny1)
+			RETURN
+		
+						
+		set @WarunekStaraWartosc = ''
+		set @WarunekNowaWartosc = ''
+		
+		
+		if exists(select 1 from #deleted)
+			set @TypZmiany = 1
+		else
+			set @TypZmiany = 0
+		
+								
+		
+		select 
+			@WarunekStaraWartosc = @WarunekStaraWartosc + ' when k.NazwaKolumny = ''' + NazwaKolumny + ''' then convert(varchar(2048),d.' + NazwaKolumny + ')',
+			@WarunekNowaWartosc = @WarunekNowaWartosc + ' when k.NazwaKolumny = ''' + NazwaKolumny + ''' then convert(varchar(2048),i.' + NazwaKolumny + ')'
+		from #Kolumny1
+
+	
+			
+		
+		--set @sSQL = 'insert into cdn.HistoriaZmian (HIS_ObiTyp,HIS_ObiNumer,HIS_ObiLp1,HIS_ObiLp2,HIS_ObiLp3,HIS_ObiNazwa,HIS_CzasZmian,HIS_TabelaID,HIS_CzasZmianDB,HIS_OpeIdent,HIS_TypZmiany,HIS_Kolumna,HIS_StaraWartosc,HIS_NowaWartosc)' + 				
+		--				' select i.' + @ObiTyp + ', i.' + @ObiNumer + ',' + coalesce('i.' + @ObiLp1,'0') + ', ' + coalesce('i.' + @ObiLp2,'0') + ',' + coalesce('i.' + @ObiLp3,'0') + ',' + coalesce('i.' + @CzasZmian,'0') + ','''', @TabelaID, @DataDB, @OpeIdent, @TypZmiany, k.NazwaKolumny, isnull(case ' + @WarunekStaraWartosc + ' end,'''') staraWartosc, isnull(case ' + @WarunekNowaWartosc + ' end,'''') nowaWartosc' + 
+		--				' from #Kolumny1 k, #inserted i left join #deleted d on ' + @WarunekUpdate + ' where ' + @WarunekInsert + ' order by k.Lp'
+
+		set @sSQL = 'insert into cdn.HistoriaZmian (HIS_ObiTyp,HIS_ObiNumer,HIS_ObiLp1,HIS_ObiLp2,HIS_ObiLp3,HIS_ObiNazwa,HIS_CzasZmian,HIS_TabelaID,HIS_CzasZmianDB,HIS_OpeIdent,HIS_TypZmiany,HIS_Kolumna,HIS_StaraWartosc,HIS_NowaWartosc)' + 		
+						' select a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12,staraWartosc,nowaWartosc from (' +
+						' select k.Lp a0, ' + @sInsertSQLObiTyp + ' a1, i.' + @ObiNumer + ' a2,' + coalesce('i.' + @ObiLp1,'0') + ' a3, ' + coalesce('i.' + @ObiLp2,'0') + ' a4,' + coalesce('i.' + @ObiLp3,'0') + ' a5,'''' a6,' + coalesce('i.' + @CzasZmian,'0') + ' a7, @TabelaID a8, @DataDB a9, @OpeIdent a10, @TypZmiany a11, k.NazwaKolumny a12, isnull(case ' + @WarunekStaraWartosc + ' end,'''') staraWartosc, isnull(case ' + @WarunekNowaWartosc + ' end,'''') nowaWartosc' + 
+						' from #Kolumny1 k, #inserted i left join #deleted d on ' + @WarunekUpdate + ' where ' + @WarunekInsert +
+						' ) a'
+						
+
+		if @TabelaPodlegla = 0 or 1=1
+			set @sSQL = @sSQL + ' where staraWartosc &lt;&gt; nowaWartosc '
+
+						
+		set @sSQL = @sSQL + ' order by a.a0'									
+	end
+	
+	
+	--if @Tabela = 'KntOpiekun' --and 1=2
+	--begin
+	--	drop table cdn.Historiatext
+	--	declare @a1 nvarchar(max)
+	--	set @a1 = ''
+	--	select @a1 = @a1 + ',' + #Kolumny1.NazwaKolumny from #Kolumny1
+	--	ROLLBACK TRAN
+	--	raiserror ('aaa',16,1)
+	--	drop table cdn.Historiatext
+	--	select @sSQL as SQl, @a1 as kolumns, @ExistDeleted as Deleted, @ExistInserted as Inserted, @ColumnsUpdated as ColumnsUpdated into cdn.Historiatext		
+	--	return	
+	--end
+	
+
+	if @sSQL &lt;&gt; ''
+		exec sp_executeSQL @sSQL, N'@TabelaID smallint, @DataDB int, @OpeIdent nvarchar(16), @TypZmiany tinyint',						
+						@TabelaID = @TabelaID,
+						@DataDB = @DataDB,
+						@OpeIdent = @OpeIdent,
+						@TypZmiany = @TypZmiany
+			
+					
+
+	if @@ERROR &lt;&gt; 0
+	begin
+		raiserror('Błąd zapisu do tabeli cdn.HistoriaZmian',16,1)
+		ROLLBACK TRAN
+		return
+	end
+	
+	
+end
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

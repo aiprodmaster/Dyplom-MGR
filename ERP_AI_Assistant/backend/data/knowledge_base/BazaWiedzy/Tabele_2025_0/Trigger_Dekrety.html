@@ -1,0 +1,523 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Dekrety_AktualizujDateZapisuZnak"></A><PRE>
+          <FONT SIZE="2"><I>/* Dekrety_AktualizujDateZapisuZnak */</I><BR>
+create  trigger cdn.Dekrety_AktualizujDateZapisuZnak
+on CDN.Dekrety
+for INSERT, UPDATE
+as
+begin
+set nocount on
+        if Update(DT_Dzien) or Update(DT_Miesiac) or Update(DT_Rok)
+        begin
+                update b set
+			b.Dt_DataDekr = datediff(dd, convert(datetime, '18001228',120), cdn.Ymd(a.DT_Rok, a.DT_Miesiac, a.DT_Dzien))
+                from inserted a join cdn.Dekrety b on a.Dt_GIDNumer = b.Dt_GIDNumer and a.Dt_GIDLp = b.Dt_GIDLp and a.dt_DC = b.dt_DC and a.DT_WalutaObca = b.DT_WalutaObca
+		
+		if @@Error &lt;&gt; 0
+		begin
+			rollback tran
+			raiserror('Błąd aktualizacji daty dekretu', 16,1)
+			return
+		end
+
+        end
+
+	if update(DT_Kwota) or update(DT_DC)
+	begin
+		 update dt set 
+			dt_znak =
+			        case when (inserted.DT_DC=1 AND inserted.DT_Kwota&gt;0) OR (inserted.DT_DC=2 AND inserted.DT_Kwota&lt;0) then 1
+			             when (inserted.DT_DC=2 AND inserted.DT_Kwota&gt;0) OR (inserted.DT_DC=1 AND inserted.DT_Kwota&lt;0) then 2
+			             else 0
+			        end
+		 from cdn.dekrety dt 
+			join inserted 
+				on dt.dt_gidnumer=inserted.dt_gidnumer and dt.dt_gidlp=inserted.dt_gidlp
+			        and dt.dt_walutaobca=inserted.dt_walutaobca and dt.dt_dc=inserted.dt_dc;
+
+
+		if @@Error &lt;&gt; 0
+		begin
+			rollback tran
+			raiserror('Błąd aktualizacji pola ''DT_Znak''', 16,1)
+			return
+		end
+
+	end
+set nocount off
+end;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Dekrety_AktualizujStany"></A><PRE>
+          <FONT SIZE="2"><I>/* Dekrety_AktualizujStany */</I><BR>
+create  trigger cdn.Dekrety_AktualizujStany
+on CDN.Dekrety
+for INSERT, UPDATE, DELETE
+as
+begin 
+
+set nocount on 
+
+
+declare @SPID int
+declare @Err int
+declare @RCount int
+declare @DziennikBO varchar(4)
+set @DziennikBO = '*BO*'
+declare @StrPusty varchar(1)
+set @StrPusty = ''
+declare @ObrotySQL smallint
+declare @Przyrost decimal(15,2)
+declare @DT_KKSNumer int
+declare @DT_DC smallint
+
+select @ObrotySQL=isnull(kon_wartosc,0) from cdn.konfig where kon_numer=2091;
+if @ObrotySQL &lt;&gt; 0
+begin
+	set nocount off
+	return
+end
+
+
+
+declare @StanySesyjne smallint
+set @StanySesyjne = 0
+
+
+if @StanySesyjne &lt;&gt; 0
+	set @SPID = @@SPID
+else
+	set @SPID = 0
+
+
+
+
+
+if update(DT_Kwota) or update(DT_Bufor) or update(DT_Dziennik) or update(DT_Rok) or update(DT_Miesiac) or update(DT_Dzien) or update(DT_Dziennik)
+	or
+	exists (select d.DT_GIDNumer 
+		from deleted d
+			left join inserted i
+				on d.DT_GIDNumer = i.DT_GIDNumer and d.DT_GIDLp = i.DT_GIDLp and d.DT_DC = i.DT_DC and d.DT_WalutaObca = i.DT_WalutaObca
+		where i.DT_GIDNumer is null)
+		
+begin
+
+	---aktualizuj na koncie (na analitykach)
+	if not exists(
+		select h.DT_KKSNumer
+		from (
+			select DT_KKSNumer, DT_DC
+			from inserted i
+			where (i.DT_KorektaBO = 1)
+			union all
+			select DT_KKSNumer, DT_DC
+			from deleted d
+			where (d.DT_KorektaBO = 1)
+			) h 
+			left join 
+				(
+				select DT_KKSNumer, DT_DC
+				from inserted i
+				where (i.DT_KorektaBO = 1)
+				union all
+				select DT_KKSNumer, DT_DC
+				from deleted d
+				where (d.DT_KorektaBO = 1)
+				) k
+				on h.DT_KKSNumer = k.DT_KKSNumer and h.DT_DC &lt;&gt; k.DT_DC
+		where not k.DT_KKSNumer is null
+		)
+	begin 
+			
+		update cdn.Konta set
+			KKS_BODebet = 	
+						case when h.DT_DC = 1 then
+							isnull(KKS_BODebet,0) + h.Przyrost
+						else
+							isnull(KKS_BODebet,0)
+						end
+					,
+
+			KKS_BOCredit = 	
+						case when h.DT_DC = 2 then
+							isnull(KKS_BOCredit,0) + h.Przyrost
+						else
+							isnull(KKS_BOCredit,0)
+						end
+					
+		from 
+			(select DT_KKSNumer, DT_DC, (Sum(Nowy) - Sum(Stary)) as Przyrost
+			from 
+				(select i.DT_KKSNumer, i.DT_DC, sum(isnull(i.DT_Kwota,0)) as Nowy , 0 as Stary
+				from inserted i
+				where (i.DT_KorektaBO = 1)
+				group by i.DT_KKSNumer, i.DT_DC
+				union all
+				select d.DT_KKSNumer, d.DT_DC, 0, sum(isnull(d.DT_Kwota,0))
+				from deleted d			
+				where (d.DT_KorektaBO = 1)
+				group by d.DT_KKSNumer, d.DT_DC
+				) g
+			group by DT_KKSNumer, DT_DC
+			) h			
+			join cdn.Konta
+				on h.DT_KKSNumer = KKS_GIDNumer
+				
+				
+		select @Err = @@Error, @RCount = @@RowCount
+
+		if @Err &lt;&gt; 0
+		begin
+			rollback tran
+			raiserror('Błąd aktualizacji w tabeli cdn.Konta',16,1)
+			return
+		end
+
+	/*
+		if @RCount = 0
+		begin
+			--nie ma takiego konta
+			rollback tran
+			raiserror('Błąd odczytu z tabeli cdn.Konta',16,1)
+			return				
+		end
+	*/
+	end
+	else
+	begin
+	
+		declare BO_cur cursor local fast_forward for
+		select DT_KKSNumer, DT_DC, (Sum(Nowy) - Sum(Stary)) as Przyrost
+		from 
+			(select i.DT_KKSNumer, i.DT_DC, sum(isnull(i.DT_Kwota,0)) as Nowy , 0 as Stary
+			from inserted i
+			where (i.DT_KorektaBO = 1)
+			group by i.DT_KKSNumer, i.DT_DC
+			union all
+			select d.DT_KKSNumer, d.DT_DC, 0, sum(isnull(d.DT_Kwota,0))
+			from deleted d			
+			where (d.DT_KorektaBO = 1)
+			group by d.DT_KKSNumer, d.DT_DC
+			) g
+		group by DT_KKSNumer, DT_DC
+	
+
+	    open BO_cur;
+        fetch next from BO_cur into 
+		@DT_KKSNumer, @DT_DC, @Przyrost
+
+
+	    while @@FETCH_STATUS = 0
+        begin
+		
+			update cdn.Konta set
+				KKS_BODebet = 	
+							case when @DT_DC = 1 then
+								isnull(KKS_BODebet,0) + @Przyrost
+							else
+								isnull(KKS_BODebet,0)
+							end
+						,
+
+				KKS_BOCredit = 	
+							case when @DT_DC = 2 then
+								isnull(KKS_BOCredit,0) + @Przyrost
+							else
+								isnull(KKS_BOCredit,0)
+							end
+						
+			where KKS_GIDNumer = @DT_KKSNumer				
+
+
+			if @@Error &lt;&gt; 0
+			begin
+				rollback tran
+				raiserror('Błąd aktualizacji w tabeli cdn.Konta',16,1)
+				return
+			end
+
+		
+			fetch next from BO_cur into 
+			@DT_KKSNumer, @DT_DC, @Przyrost
+		end
+		
+		close BO_cur;
+		deallocate BO_cur
+	end	
+
+
+	
+
+
+
+	---aktualizuj w Stanach w biezacym i pozniejszych miesiacach
+
+	--uzupelnij brakujace wpisy z miesiacami
+	insert into cdn.Stany(DTS_SPID, DTS_KKSNumer, DTS_RokMiesiac, 
+		DTS_ObrotyDebet, DTS_ObrotyDebetBuf, DTS_ObrotyCredit, DTS_ObrotyCreditBuf, 
+		DTS_ObrotyNarDebet, DTS_ObrotyNarDebetBuf, DTS_ObrotyNarCredit, DTS_ObrotyNarCreditBuf)
+	select distinct @SPID, KKS_GIDNumer, OkM_Rok*100+OkM_Miesiac, 0, 0, 0, 0, 0, 0, 0, 0
+	from inserted				
+		join cdn.Konta 
+			on DT_KKSNumer = KKS_GIDNumer
+		join cdn.OkresyMiesiace
+			on KKS_OkresID = OkM_OkrID
+		left join cdn.Stany
+			on KKS_GIDNumer = DTS_KKSNumer and OkM_Rok*100+OkM_Miesiac = DTS_RokMiesiac and DTS_SPID = @SPID
+	where DTS_KKSNumer is null
+			
+
+
+
+	
+	if not (exists
+		(
+		select i1.DT_KKSNumer
+		from inserted i1
+			left join inserted i2
+				on i1.DT_KKSNumer = i2.DT_KKSNumer and
+				not (i1.DT_DC = i2.DT_DC and i1.DT_Rok = i2.DT_Rok and i1.DT_Miesiac = i2.DT_Miesiac and i1.DT_Dzien = i2.DT_Dzien and i1.DT_Bufor = i2.DT_Bufor
+				and i1.DT_KorektaBO = i2.DT_KorektaBO)
+			left join deleted d2
+				on i1.DT_KKSNumer = d2.DT_KKSNumer and
+				not (i1.DT_DC = d2.DT_DC and i1.DT_Rok = d2.DT_Rok and i1.DT_Miesiac = d2.DT_Miesiac and i1.DT_Dzien = d2.DT_Dzien and i1.DT_Bufor = d2.DT_Bufor
+				and i1.DT_KorektaBO = d2.DT_KorektaBO)
+		where not i2.DT_KKSNumer is null or not d2.DT_KKSNumer is null
+		) or exists
+		(
+		select d1.DT_KKSNumer
+		from deleted d1
+			left join inserted i2
+				on d1.DT_KKSNumer = i2.DT_KKSNumer and
+				not (d1.DT_DC = i2.DT_DC and d1.DT_Rok = i2.DT_Rok and d1.DT_Miesiac = i2.DT_Miesiac and d1.DT_Dzien = i2.DT_Dzien and d1.DT_Bufor = i2.DT_Bufor
+				and d1.DT_KorektaBO = i2.DT_KorektaBO)
+			left join deleted d2
+				on d1.DT_KKSNumer = d2.DT_KKSNumer and
+				not (d1.DT_DC = d2.DT_DC and d1.DT_Rok = d2.DT_Rok and d1.DT_Miesiac = d2.DT_Miesiac and d1.DT_Dzien = d2.DT_Dzien and d1.DT_Bufor = d2.DT_Bufor
+				and d1.DT_KorektaBO = d2.DT_KorektaBO)
+		where not i2.DT_KKSNumer is null or not d2.DT_KKSNumer is null
+		))
+	begin
+
+		--aktualizuj stany (na analitykach)
+		update cdn.Stany set
+			
+			DTS_ObrotyDebet = 
+					case when DT_Bufor = @StrPusty and h.DT_DC = 1 and DT_Rok*100+DT_Miesiac = DTS_RokMiesiac then 
+						isnull(DTS_ObrotyDebet,0) + h.Przyrost
+					else
+						DTS_ObrotyDebet
+					end,
+	
+	
+			DTS_ObrotyCredit = 
+					case when DT_Bufor = @StrPusty and h.DT_DC = 2 and DT_Rok*100+DT_Miesiac = DTS_RokMiesiac then 
+						isnull(DTS_ObrotyCredit,0) + h.Przyrost
+					else
+						DTS_ObrotyCredit
+					end,
+	
+			DTS_ObrotyDebetBuf = 
+					case when h.DT_DC = 1 and DT_Rok*100+DT_Miesiac = DTS_RokMiesiac then
+						isnull(DTS_ObrotyDebetBuf,0) + h.Przyrost
+					else
+						DTS_ObrotyDebetBuf
+					end,
+	
+			DTS_ObrotyCreditBuf = 
+					case when h.DT_DC = 2 and DT_Rok*100+DT_Miesiac = DTS_RokMiesiac then
+						isnull(DTS_ObrotyCreditBuf,0) + h.Przyrost
+					else
+						DTS_ObrotyCreditBuf
+					end,
+	
+	
+			DTS_ObrotyNarDebet = 
+					case when DT_Bufor = @StrPusty and h.DT_DC = 1 then 
+						isnull(DTS_ObrotyNarDebet,0) + h.Przyrost
+					else
+						DTS_ObrotyNarDebet
+					end,
+	
+	
+			DTS_ObrotyNarCredit = 
+					case when DT_Bufor = @StrPusty and h.DT_DC = 2 then 
+						isnull(DTS_ObrotyNarCredit,0) + h.Przyrost
+					else
+						DTS_ObrotyNarCredit
+					end,
+	
+			DTS_ObrotyNarDebetBuf = 
+					case when h.DT_DC = 1 then
+						isnull(DTS_ObrotyNarDebetBuf,0) + h.Przyrost
+					else
+						DTS_ObrotyNarDebetBuf
+					end,
+	
+			DTS_ObrotyNarCreditBuf = 
+					case when h.DT_DC = 2 then
+						isnull(DTS_ObrotyNarCreditBuf,0) + h.Przyrost
+					else
+						DTS_ObrotyNarCreditBuf
+					end
+	
+	
+	
+		from 
+			(select DT_KKSNumer, DT_DC, DT_Rok, DT_Miesiac, DT_Bufor, (Sum(Nowy) - Sum(Stary)) as Przyrost
+			from 
+				(select i.DT_KKSNumer, i.DT_DC, i.DT_Rok, i.DT_Miesiac, i.DT_Bufor, sum(isnull(i.DT_Kwota,0)) as Nowy , 0 as Stary
+				from inserted i
+				where i.DT_KorektaBO = 0 --(i.DT_Dziennik &lt;&gt; @DziennikBO)
+				group by i.DT_KKSNumer, i.DT_DC, i.DT_Rok, i.DT_Miesiac, i.DT_Bufor
+				union all
+				select d.DT_KKSNumer, d.DT_DC, d.DT_Rok, d.DT_Miesiac, d.DT_Bufor, 0, sum(isnull(d.DT_Kwota,0))
+				from deleted d			
+				where d.DT_KorektaBO = 0 --(d.DT_Dziennik &lt;&gt; @DziennikBO)
+				group by d.DT_KKSNumer, d.DT_DC, d.DT_Rok, d.DT_Miesiac, d.DT_Bufor
+				) g
+			group by DT_KKSNumer, DT_DC, DT_Rok, DT_Miesiac, DT_Bufor
+			) h			
+			join cdn.Konta
+				on h.DT_KKSNumer = KKS_GIDNumer
+			join cdn.Stany
+				on KKS_GIDNumer = DTS_KKSNumer and DTS_SPID = @SPID 
+				and DTS_RokMiesiac &gt;= h.DT_Rok*100+h.DT_Miesiac
+	
+	end
+	else
+	begin--dla danego konta modyfikowane sa dekrety w roznych miesiacach		
+		declare @DT_Bufor varchar(10)
+		declare @DT_Rok smallint
+		declare @DT_Miesiac smallint
+		declare @DT_KorektaBO smallint
+		
+
+
+		declare dekrety_cur cursor local fast_forward for
+		select DT_KKSNumer, DT_DC, DT_Bufor, DT_Rok, DT_Miesiac, DT_KorektaBO, (Sum(Nowy) - Sum(Stary)) as Przyrost
+		from (
+			select i.DT_KKSNumer, i.DT_DC, i.DT_Bufor, i.DT_Rok, i.DT_Miesiac, i.DT_KorektaBO, sum(isnull(i.DT_Kwota,0)) as Nowy , 0 as Stary
+			from inserted i
+			where i.DT_KorektaBO = 0
+			group by i.DT_KKSNumer, i.DT_DC, i.DT_Bufor, i.DT_Rok, i.DT_Miesiac, i.DT_KorektaBO
+			union all
+			select d.DT_KKSNumer, d.DT_DC, d.DT_Bufor, d.DT_Rok, d.DT_Miesiac, d.DT_KorektaBO, 0, sum(isnull(d.DT_Kwota,0))
+			from deleted d
+			where d.DT_KorektaBO = 0
+			group by d.DT_KKSNumer, d.DT_DC, d.DT_Bufor, d.DT_Rok, d.DT_Miesiac, d.DT_KorektaBO
+			) g
+		group by DT_KKSNumer, DT_DC, DT_Bufor, DT_Rok, DT_Miesiac, DT_KorektaBO
+		
+	
+
+	     	open dekrety_cur;
+            	fetch next from dekrety_cur into 
+			@DT_KKSNumer, @DT_DC, @DT_Bufor, @DT_Rok, @DT_Miesiac, @DT_KorektaBO, @Przyrost
+
+
+	        while @@FETCH_STATUS = 0
+            	begin
+			update cdn.Stany set
+				
+				DTS_ObrotyDebet = 
+						case when @DT_Bufor = @StrPusty and @DT_DC = 1 and @DT_Rok*100+@DT_Miesiac = DTS_RokMiesiac then 
+							isnull(DTS_ObrotyDebet,0) + @Przyrost
+						else
+							DTS_ObrotyDebet
+						end,
+		
+		
+				DTS_ObrotyCredit = 
+						case when @DT_Bufor = @StrPusty and @DT_DC = 2 and @DT_Rok*100+@DT_Miesiac = DTS_RokMiesiac then 
+							isnull(DTS_ObrotyCredit,0) + @Przyrost
+						else
+							DTS_ObrotyCredit
+						end,
+		
+				DTS_ObrotyDebetBuf = 
+						case when @DT_DC = 1 and @DT_Rok*100+@DT_Miesiac = DTS_RokMiesiac then
+							isnull(DTS_ObrotyDebetBuf,0) + @Przyrost
+						else
+							DTS_ObrotyDebetBuf
+						end,
+		
+				DTS_ObrotyCreditBuf = 
+						case when @DT_DC = 2 and @DT_Rok*100+@DT_Miesiac = DTS_RokMiesiac then
+							isnull(DTS_ObrotyCreditBuf,0) + @Przyrost
+						else
+							DTS_ObrotyCreditBuf
+						end,
+		
+		
+				DTS_ObrotyNarDebet = 
+						case when @DT_Bufor = @StrPusty and @DT_DC = 1 then 
+							isnull(DTS_ObrotyNarDebet,0) + @Przyrost
+						else
+							DTS_ObrotyNarDebet
+						end,
+		
+		
+				DTS_ObrotyNarCredit = 
+						case when @DT_Bufor = @StrPusty and @DT_DC = 2 then 
+							isnull(DTS_ObrotyNarCredit,0) + @Przyrost
+						else
+							DTS_ObrotyNarCredit
+						end,
+		
+				DTS_ObrotyNarDebetBuf = 
+						case when @DT_DC = 1 then
+							isnull(DTS_ObrotyNarDebetBuf,0) + @Przyrost
+						else
+							DTS_ObrotyNarDebetBuf
+						end,
+		
+				DTS_ObrotyNarCreditBuf = 
+						case when @DT_DC = 2 then
+							isnull(DTS_ObrotyNarCreditBuf,0) + @Przyrost
+						else
+							DTS_ObrotyNarCreditBuf
+						end
+		
+			where DTS_KKSNumer = @DT_KKSNumer and DTS_SPID = @SPID 
+				and DTS_RokMiesiac &gt;= @DT_Rok*100+@DT_Miesiac
+		
+			
+
+
+        	    	fetch next from dekrety_cur into 
+				@DT_KKSNumer, @DT_DC, @DT_Bufor, @DT_Rok, @DT_Miesiac, @DT_KorektaBO, @Przyrost
+	        end
+        
+
+		close dekrety_cur;
+		deallocate dekrety_cur
+	end
+
+end
+
+
+
+set nocount off
+end;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

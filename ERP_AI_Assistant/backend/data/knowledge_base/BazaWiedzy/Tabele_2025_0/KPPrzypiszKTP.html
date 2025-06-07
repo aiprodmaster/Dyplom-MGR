@@ -1,0 +1,157 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="KPPrzypiszKTP"></A><PRE>
+          <FONT SIZE="2"><I>/* KPPrzypiszKTP */</I><BR>
+CREATE PROCEDURE CDN.KPPrzypiszKTP
+(
+	@p_KPNId	INTEGER,		--Identyfikator konfiguracji produktu
+	@p_KTPId	INTEGER,		--Identyfikator konfiguratora produktu
+	@p_KopiaKPNId	INTEGER=null,	--Identyfikator konfiguracji produktu, z którego ew. przepisywać odpowiedzi na pytania
+	@p_PokazBledy TINYINT=1,		--Czy pokazywać błędy 
+	@Wynik		INTEGER OUTPUT
+	/*
+		 0 : Operacja zakończona sukcesem
+        -101 : Wystąpił błąd podczas aktualizacji tabeli CDN.KonfProdNag, błąd przypisywania konfiguratora produktu.
+		-102 : Wystąpił błąd podczas aktualizacji wartości parametrów ogólnych konfiguratora na podstawie wartości parametrów wskazanego konfiguratora.
+		-103 : Wystąpił błąd podczas przypisanie pytań dla parametrów ogólnych z konfiguratora.		
+		Inne &lt;0: Błąd z podrzędnej procedury/funkcji wywoływanej wewnątrz tej metody
+	*/			
+)
+AS
+BEGIN
+	
+	DECLARE @TranCount INTEGER
+	SELECT @TranCount=@@TRANCOUNT;
+	IF @TranCount&gt;0 
+		SAVE TRANSACTION Tran_KPPrzypiszKTP;
+	ELSE 
+		BEGIN TRANSACTION Tran_KPPrzypiszKTP;
+
+	/* =======================================
+		PRZYPISANIE KONFIGURATORA NA NAGŁÓWEK
+	   ======================================= */
+
+	UPDATE CDN.KonfProdNag SET KPN_KTPId=@p_KTPId WHERE KPN_Id=@p_KPNId
+	if @@error &lt;&gt; 0  
+	begin
+		IF XACT_STATE()&lt;&gt;0 rollback tran Tran_KPPrzypiszKTP
+		if @p_PokazBledy=1
+			raiserror('Wystąpił błąd podczas aktualizacji tabeli CDN.KonfProdNag podczas przypisywania konfiguratora produktu.', 16, 1)
+		set @Wynik = -101
+		return @Wynik
+	end
+
+	/* =================
+		TWORZENIE PYTAŃ
+	   ================= */
+
+	/* Ustalanie wartości parametrów ogólnych konfiguratora na podstawie wartości parametrów wskazanego konfiguratora */
+	UPDATE CDN.KonfProdElem
+	SET KPE_Odpowiedz = 
+		IsNull((
+			SELECT TOP 1 Atr_Wartosc
+			FROM CDN.ParamRozKonf
+			JOIN CDN.Atrybuty ON Atr_ObiTyp=PRK_ObiTyp AND Atr_ObiFirma=PRK_ObiFirma AND Atr_ObiNumer=PRK_ObiNumer AND Atr_ObiLp=PRK_ObiLp AND Atr_AtkId=PRK_AtkId
+			WHERE PRK_ObiTyp=14370 AND PRK_ObiNumer=@p_KTPId AND Atr_AtkId=KPE_AtkId)
+		,KPE_Odpowiedz)
+	WHERE KPE_KPNId=@p_KPNId AND KPE_TypPytania=1
+
+	if @@error &lt;&gt; 0  
+	begin
+		IF XACT_STATE()&lt;&gt;0 rollback tran Tran_KPPrzypiszKTP
+		if @p_PokazBledy=1
+			raiserror('Wystąpił błąd podczas aktualizacji wartości parametrów ogólnych konfiguratora na podstawie wartości parametrów wskazanego konfiguratora.', 16, 1)
+		set @Wynik = -102
+		return @Wynik
+	end
+
+	/* Przypisanie pytań dla parametrów ogólnych z konfiguratora, których brakuje na liście grupy towarowej */
+	INSERT INTO CDN.KonfProdElem
+			   (KPE_KPNId
+			   ,KPE_ObiTyp
+			   ,KPE_ObiFirma
+			   ,KPE_ObiNumer
+			   ,KPE_ObiLp
+			   ,KPE_TypPytania
+			   ,KPE_Pozycja
+			   ,KPE_Tresc
+			   ,KPE_AtkId
+			   ,KPE_Odpowiedz
+			   ,KPE_OdpTyp
+			   ,KPE_OdpFirma
+			   ,KPE_OdpNumer
+			   ,KPE_OdpLp
+			   ,KPE_Edycja
+			   ,KPE_Wymagaj
+			   ,KPE_Kopiuj)
+	SELECT		@p_KPNId--KPE_KPNId
+				,PRK_ObiTyp--KPE_ObiTyp
+				,PRK_ObiFirma--KPE_ObiFirma
+				,PRK_ObiNumer--KPE_ObiNumer
+				,PRK_ObiLp--KPE_ObiLp
+				,2--KPE_TypPytania
+				,PRK_Pozycja--KPE_Pozycja --TODO
+				,REPLACE(REPLACE(REPLACE(SLW_WartoscS2,'&lt;AtK_Nazwa&gt;',AtK_Nazwa),'&lt;PTE_Kod&gt;',PTE_Kod),'&lt;PTE_Nazwa&gt;',PTE_Nazwa)--KPE_Tresc
+				,PRK_AtkId--KPE_AtkId
+				,IsNUll(E.KPE_Odpowiedz,Atr_Wartosc)--KPE_Odpowiedz
+				,IsNUll(E.KPE_OdpTyp,0)--KPE_OdpTyp
+				,IsNUll(E.KPE_OdpFirma,0)--KPE_OdpFirma
+				,IsNUll(E.KPE_OdpNumer,0)--KPE_OdpNumer
+				,IsNUll(E.KPE_OdpLp,0)--KPE_OdpLp
+				,PRK_Edycja--KPE_Edycja
+				,PRK_Wymagaj--KPE_Wymagaj
+				,PRK_Kopiuj--KPE_Kopiuj
+	FROM CDN.ParamRozKonf
+	JOIN CDN.Atrybuty ON Atr_ObiTyp=PRK_ObiTyp AND Atr_ObiFirma=PRK_ObiFirma AND Atr_ObiNumer=PRK_ObiNumer AND Atr_ObiLp=PRK_ObiLp AND Atr_AtkId=PRK_AtkId
+	JOIN CDN.AtrybutyKlasy ON AtK_ID=PRK_AtkId
+	JOIN CDN.Slowniki ON SLW_ID=PRK_DefPytId
+	JOIN CDN.ProdTechnologia ON PTE_Id=@p_KTPId
+	LEFT JOIN CDN.KonfProdElem E on E.KPE_KPNId=@p_KopiaKPNId and E.KPE_ObiTyp=PRK_ObiTyp and E.KPE_ObiFirma=PRK_ObiFirma and E.KPE_ObiNumer=PRK_ObiNumer and E.KPE_ObiLp=PRK_ObiLp and E.KPE_TypPytania in (1,2) and E.KPE_AtkId=PRK_AtkId
+	WHERE PRK_ObiTyp=14370 AND PRK_ObiNumer=@p_KTPId AND NOT EXISTS(SELECT * FROM CDN.KonfProdElem WHERE KPE_KPNId=@p_KPNId AND KPE_TypPytania=1 AND KPE_AtkId=PRK_AtkId)
+
+	if @@error &lt;&gt; 0  
+	begin
+		IF XACT_STATE()&lt;&gt;0 rollback tran Tran_KPPrzypiszKTP
+		if @p_PokazBledy=1
+			raiserror('Wystąpił błąd podczas przypisanie pytań dla parametrów ogólnych z konfiguratora.', 16, 1)
+		set @Wynik = -103
+		return @Wynik
+	end
+
+	/* Przypisanie pytań dla operacji */
+	DECLARE @FirmaId INTEGER
+	SELECT @FirmaId=KPN_DokFirma FROM CDN.KonfProdNag WHERE KPN_Id=@p_KPNId
+
+	DECLARE @WynikProc INT
+	SET @WynikProc = 0
+
+	EXEC CDN.KPDodajPytaniaDlaGaleziOperacji @p_KPNId=@p_KPNId, @p_KTPId=@p_KTPId, @p_OjciecId=0, @p_FirmaId=@FirmaId, @p_KopiaKPNId=@p_KopiaKPNId, @p_PokazBledy=@p_PokazBledy, @Wynik=@WynikProc OUTPUT
+
+	if @WynikProc&lt;0 
+	begin
+		IF XACT_STATE()&lt;&gt;0 rollback tran Tran_KPPrzypiszKTP
+		set @Wynik = @WynikProc
+		return @Wynik
+	end
+
+    --OK:
+	IF @TranCount=0 COMMIT TRAN Tran_KPPrzypiszKTP;
+	
+	set @Wynik = 0
+    return @Wynik
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,314 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="KntGrupaPelnaNazwa"></A><PRE>
+          <FONT SIZE="2"><I>/* KntGrupaPelnaNazwa */</I><BR>
+CREATE FUNCTION CDN.KntGrupaPelnaNazwa (@p_KntId INT)
+RETURNS VARCHAR(255)
+AS
+BEGIN
+	-- Pracownik nie jest wpięty do żadnego centrum
+	IF @p_KntId IS NULL
+		OR @p_KntId = 0
+		RETURN '&lt;nie określono&gt;'
+
+	DECLARE @KNG_Akronim VARCHAR(255)
+	DECLARE @tempKNG_Akronim VARCHAR(255)
+	DECLARE @KNG_Typ SMALLINT
+	DECLARE @KNG_Firma INT
+	DECLARE @KNG_Numer INT
+	DECLARE @TYP SMALLINT
+
+	SELECT @TYP = KGD_GIDTyp
+		, @KNG_Akronim = KGD_Kod
+		, @KNG_Typ = KGD_GROTyp
+		, @KNG_Firma = KGD_GROFirma
+		, @KNG_Numer = KGD_GRONumer
+	FROM CDN.KntGrupyDom
+	WHERE KGD_GIDTyp = - 32
+		AND KGD_GIDNumer = @p_KntId
+
+	--SET @KNG_Akronim='/'+@KNG_Akronim
+	--@TYP=32 and
+	WHILE @KnG_Numer &lt;&gt; 0
+		AND @KNG_Akronim IS NOT NULL
+	BEGIN
+		SELECT @tempKNG_Akronim = KnG_Akronim
+			, @KNG_Typ = KnG_GROTyp
+			, @KNG_Firma = KnG_GROFirma
+			, @KNG_Numer = KnG_GRONumer
+		FROM cdn.KntGrupy
+		WHERE KnG_GIDTyp = @KnG_Typ
+			AND KnG_GIDFirma = @KnG_Firma
+			AND KnG_GIDNumer = @KNG_Numer
+
+		--	SET @KNG_Akronim='/'+@tempKNG_Akronim+@KNG_Akronim
+		SET @KNG_Akronim = @tempKNG_Akronim + '/' + @KNG_Akronim
+	END
+
+	IF @KNG_Akronim IS NULL
+		SET @KNG_Akronim = '&lt;nieprawidłowe&gt;'
+
+	RETURN (@KNG_Akronim)
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="ObliczKursWaluty"></A><PRE>
+          <FONT SIZE="2"><I>/* ObliczKursWaluty */</I><BR>
+CREATE PROCEDURE CDN.ObliczKursWaluty (
+	@Waluta VARCHAR(4)
+	, @Kwota DECIMAL(19, 2) OUTPUT
+	, @NrKursu SMALLINT = 0
+	, @KursL DECIMAL(7, 2) = 0 OUTPUT
+	, @KursM DECIMAL(5) = 0 OUTPUT
+	, @KursTS INT = 0
+	)
+	/*
+Procedura zwraca kwote przeliczna na walute systemowa
+po kursie obliczonym na podstawie parametrow lub konfiguracji
+        @Waluta varchar(4)     	- symbol waluty, ktora nalezy przeliczyc na systemowa
+OUTPUT  @Kwota decimal(19,2)   	- kwota, ktora ma byc przeliczona i zwrocona
+        @NrKursu smallint      	- numer kursu, jesli nie podany to brany domyslny z konfiguraji
+OUTPUT  @KursL decimal(7,2) 	- licznik kursu, jesli nie podany to wyliczony na podstawie WalElem i zwrocony
+OUTPUT  @KursM decimal(5)   	- mianownik kursu, jesli nie podany to wyliczony po podstawie WalElem i zwrocony
+        @KursTS integer        	- TimeStamp kursu, jesli nie podany to brany kurs biezacy
+*/
+AS
+DECLARE @Ret DECIMAL(19, 2)
+DECLARE @WalutaSystemowa VARCHAR(4)
+DECLARE @DomNumerKursu SMALLINT
+
+SELECT @WalutaSystemowa = Kon_Wartosc
+FROM cdn.Konfig
+WHERE Kon_Numer = 211
+
+SELECT @DomNumerKursu = Kon_Wartosc
+FROM cdn.Konfig
+WHERE Kon_Numer = 11
+
+IF @WalutaSystemowa = @Waluta
+BEGIN
+	SET @KursL = 1
+	SET @KursM = 1
+END
+ELSE
+BEGIN
+	-- sprawdzenie danych z konfiguracja
+	IF @NrKursu = 0
+	BEGIN
+		SET @NrKursu = @DomNumerKursu
+	END --@NrKursu=0 
+
+	IF @KursTS = 0
+	BEGIN
+		select @KursTS = CDN.DateToTS(GETDATE())
+	END --@KursTS=0
+
+	-- pobranie kursu
+	IF @KursL = 0
+		OR @KursM = 0
+	BEGIN
+		SELECT @KursL = WaE_KursL
+			, @KursM = WaE_KursM
+		FROM cdn.WalElem
+		WHERE WaE_Symbol = @Waluta
+			AND WaE_Lp = @NrKursu
+			AND WaE_KursTS = (
+				SELECT MAX(WaE_KursTS)
+				FROM cdn.WalElem
+				WHERE WaE_Symbol = @Waluta
+					AND WaE_Lp = @NrKursu
+					AND WaE_KursTS &lt;= @KursTS
+				);
+
+		IF @KursL IS NULL
+			OR @KursM IS NULL
+			OR @KursM = 0
+		BEGIN
+			SET @KursL = 1;
+			SET @KursM = 1
+		END --@KursL is null or @KursM is null or @KursM=0
+	END --@KursL=0 or @KursM=0
+END --@WalutaSystemowa=@Waluta 
+
+SET @Ret = @Kwota * @KursL / @KursM;
+SET @Kwota = @Ret
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="TwrGrupaPelnaNazwa"></A><PRE>
+          <FONT SIZE="2"><I>/* TwrGrupaPelnaNazwa */</I><BR>
+CREATE FUNCTION CDN.TwrGrupaPelnaNazwa (@p_TwrId INT)
+RETURNS VARCHAR(255)
+AS
+BEGIN
+	-- Pracownik nie jest wpięty do żadnego centrum
+	IF @p_TwrId IS NULL
+		OR @p_TwrId = 0
+		RETURN '&lt;nie określono&gt;'
+
+	DECLARE @TwG_Kod VARCHAR(255)
+	DECLARE @tempTwG_Kod VARCHAR(255)
+	DECLARE @TwG_Typ INT
+	DECLARE @TwG_Firma INT
+	DECLARE @TwG_Numer INT
+
+	SELECT @TwG_Kod = TGD_Kod
+		, @TwG_Typ = TGD_GROTyp
+		, @TwG_Firma = TGD_GROFirma
+		, @TwG_Numer = TGD_GRONumer
+	FROM CDN.TwrGrupyDom
+	WHERE TGD_GIDTyp = - 16
+		AND TGD_GIDNumer = @p_TwrId
+
+	--SET @TwG_Kod='/'+@TwG_Kod
+	SET @TwG_Kod = @TwG_Kod
+
+	WHILE @TwG_Numer &lt;&gt; 0
+		AND @TwG_Kod IS NOT NULL
+	BEGIN
+		SELECT @tempTwG_Kod = TGD_Kod
+			, @TwG_Typ = TGD_GROTyp
+			, @TwG_Firma = TGD_GROFirma
+			, @TwG_Numer = TGD_GRONumer
+		FROM cdn.TwrGrupyDom
+		WHERE TGD_GIDTyp = @TwG_Typ
+			AND TGD_GIDFirma = @TwG_Firma
+			AND TGD_GIDNumer = @TwG_Numer
+
+		--SET @TwG_Kod='/'+@tempTwG_Kod+@TwG_Kod
+		SET @TwG_Kod = @tempTwG_Kod + '/' + @TwG_Kod
+	END
+
+	IF @TwG_Kod IS NULL
+		SET @TwG_Kod = '&lt;nieprawidłowe&gt;'
+
+	RETURN (@TwG_Kod)
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="CzyJestLimitCelowy"></A><PRE>
+          <FONT SIZE="2"><I>/* CzyJestLimitCelowy */</I><BR>
+CREATE FUNCTION CDN.CzyJestLimitCelowy (
+	@p_DokNumerAktualny INT = 0
+	, @p_DokTypAktualny INT = 0
+	, @p_TrnNumerPowiazanyDlaCelowego INT = 0
+	)
+RETURNS INT
+AS
+BEGIN
+	DECLARE @Ret INT
+
+	IF @p_DokNumerAktualny &gt; 0
+		AND EXISTS (
+			SELECT *
+			FROM cdn.TraNag
+			WHERE TrN_GIDNumer = @p_DokNumerAktualny
+				AND TrN_GIDTyp IN (
+					1520
+					, 1528
+					, 1521
+					, 1529
+					, 2033
+					, 2041
+					, 2035
+					, 2043
+					, 2037
+					, 2045
+					, 2036
+					, 2044
+					, 2039
+					, 2047
+					)
+				AND TrN_SpiTyp = 0
+			)
+		--jest spinaczem	
+		SET @Ret = isnull((
+					SELECT TOP 1 1
+					FROM cdn.TraNag a
+					INNER JOIN cdn.TraNag b
+						ON a.TrN_GIDTyp = b.TrN_SpiTyp
+							AND a.TrN_GIDNumer = b.TrN_SpiNumer
+					INNER JOIN cdn.TraSElem aktualny
+						ON aktualny.TrS_GIDNumer = b.TrN_GIDNumer
+					INNER JOIN CDN.ZamNag
+						ON aktualny.TrS_ZlcNumer = ZaN_GIDNumer
+							AND aktualny.TrS_ZlcTyp = ZaN_GIDTyp
+					INNER JOIN CDN.TraSElem powiazane
+						ON powiazane.TrS_ZlcNumer = ZaN_GIDNumer
+							AND powiazane.TrS_ZlcTyp = ZaN_GIDTyp
+					LEFT JOIN cdn.TraNag c
+						ON powiazane.TrS_GIDNumer = c.TrN_GIDNumer
+					LEFT JOIN cdn.TraNag d
+						ON d.TrN_GIDTyp = c.TrN_SpiTyp
+							AND d.TrN_GIDNumer = c.TrN_SpiNumer
+					WHERE @p_DokNumerAktualny = CASE 
+							WHEN @p_DokTypAktualny = 960 --zamówienia 
+								THEN ZaN_GIDNumer
+							ELSE a.TrN_GIDNumer
+							END
+						AND ZaN_LimitKredytowy = 1
+						--Bug #348019 AND ZaN_Stan in (3,5) --Bug #322624
+						AND (
+							isnull(@p_TrnNumerPowiazanyDlaCelowego, 0) = 0
+							OR powiazane.TrS_GIDNumer = @p_TrnNumerPowiazanyDlaCelowego
+							OR a.TrN_GIDNumer = @p_TrnNumerPowiazanyDlaCelowego --płatność powiązana z nagłówkiem spinacza
+							OR d.TrN_GIDNumer = @p_TrnNumerPowiazanyDlaCelowego --płatność powiązana z nagłówkiem spinacza
+							)
+					), 0)
+	ELSE
+		SET @Ret = isnull((
+					SELECT TOP 1 1
+					FROM cdn.TraSElem aktualny
+					INNER JOIN CDN.ZamNag
+						ON aktualny.TrS_ZlcNumer = ZaN_GIDNumer
+							AND aktualny.TrS_ZlcTyp = ZaN_GIDTyp
+					INNER JOIN CDN.TraSElem powiazane
+						ON powiazane.TrS_ZlcNumer = ZaN_GIDNumer
+							AND powiazane.TrS_ZlcTyp = ZaN_GIDTyp
+					LEFT JOIN cdn.TraNag c
+						ON powiazane.TrS_GIDNumer = c.TrN_GIDNumer
+					LEFT JOIN cdn.TraNag d
+						ON d.TrN_GIDTyp = c.TrN_SpiTyp
+							AND d.TrN_GIDNumer = c.TrN_SpiNumer
+					WHERE @p_DokNumerAktualny = CASE 
+							WHEN @p_DokTypAktualny = 960 --zamówienia 
+								THEN ZaN_GIDNumer
+							ELSE aktualny.TrS_GIDNumer
+							END
+						AND ZaN_LimitKredytowy = 1
+						--Bug #348019 AND ZaN_Stan in (3,5) --Bug #322624
+						AND (
+							isnull(@p_TrnNumerPowiazanyDlaCelowego, 0) = 0
+							OR powiazane.TrS_GIDNumer = @p_TrnNumerPowiazanyDlaCelowego
+							OR d.TrN_GIDNumer = @p_TrnNumerPowiazanyDlaCelowego --płatność powiązana z nagłówkiem spinacza
+							)
+					), 0)
+
+	RETURN @Ret
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

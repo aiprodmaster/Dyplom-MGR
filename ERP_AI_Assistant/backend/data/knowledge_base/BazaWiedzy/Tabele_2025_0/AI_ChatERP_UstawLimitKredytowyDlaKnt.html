@@ -1,0 +1,149 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="AI_ChatERP_UstawLimitKredytowyDlaKnt"></A><PRE>
+          <FONT SIZE="2"><I>/* AI_ChatERP_UstawLimitKredytowyDlaKnt */</I><BR>
+CREATE PROCEDURE CDN.AI_ChatERP_UstawLimitKredytowyDlaKnt @Akronim VARCHAR(20)
+	,@WartoscLimitu DECIMAL(19, 2)
+	,@DataOd VARCHAR(10) = NULL
+AS
+BEGIN
+	DECLARE @KlkID INT;
+	DECLARE @DataOdClarion INT;
+	DECLARE @DataDoClarion INT;
+
+	IF @WartoscLimitu NOT BETWEEN 0 AND 9999999999999.99
+	BEGIN
+		SELECT '' Akronim
+			,'' NazwaKnt
+			,'' NIP
+			,'Podana kwota limitu nie mieści się w dopuszczalnym zakresie.' Uwaga
+
+		RETURN;
+	END
+
+	IF NOT EXISTS (
+			SELECT 1
+			FROM CDN.KntKarty
+			WHERE Knt_Akronim = @Akronim
+			)
+	BEGIN
+		SELECT '' Akronim
+			,'' NazwaKnt
+			,'' NIP
+			,'Podany kontrahent nie istnieje w bazie danych.' Uwaga
+
+		RETURN;
+	END
+
+	BEGIN TRY
+		SELECT @DataOdClarion = CASE 
+			WHEN CHARINDEX('-', @DataOd) = 5
+				THEN DATEDIFF(d, '18001228', COALESCE(CONVERT(DATETIME, @DataOd, 120), GETDATE()))
+			ELSE DATEDIFF(d, '18001228', COALESCE(CONVERT(DATETIME, @DataOd, 105), GETDATE()))
+			END
+
+
+
+		SELECT @KlkID = KLK_Id
+		FROM CDN.KntLimityK
+		LEFT JOIN CDN.KntKarty ON Knt_GIDNumer = KLK_KntNumer
+			AND Knt_GIDTyp = KLK_KntTyp
+			AND KLK_DataDo &gt;= @DataOdClarion
+			AND KLK_DataOd &lt;= @DataOdClarion
+		WHERE Knt_Akronim = @Akronim
+
+		IF @KlkID IS NOT NULL
+		BEGIN
+			IF (select KLK_DataOd from cdn.KntLimityK where KLK_Id = @KlkID) = @DataOdClarion
+				DELETE FROM cdn.KntLimityK
+				WHERE KLK_Id = @KlkID
+			ELSE
+				UPDATE cdn.KntLimityK
+				SET KLK_DataDo = @DataOdClarion - 1
+					,KLK_CzasModyfikacji = DATEDIFF(S, '19900101', GETDATE())
+					,KLK_OpeModyfikowal = CDN.PolaczenieInfo(5)
+				WHERE KLK_Id = @KlkID
+		END
+
+		SELECT TOP 1 @DataDoClarion = KLK_DataOd - 1
+		FROM cdn.KntLimityK
+		LEFT JOIN CDN.KntKarty ON Knt_GIDNumer = KLK_KntNumer
+			AND Knt_GIDTyp = KLK_KntTyp
+		WHERE KLK_DataOd &gt; @DataOdClarion
+			AND Knt_Akronim = @Akronim
+		ORDER BY KLK_DataOd
+
+		IF @DataDoClarion IS NULL
+			SELECT @DataDoClarion = 93890
+
+		INSERT INTO cdn.KntLimityK (
+			KLK_KntTyp
+			,KLK_KntNumer
+			,KLK_MaxLimitWart
+			,KLK_LimitPoTerminie
+			,KLK_DataOd
+			,KLK_DataDo
+			,KLK_Waluta
+			,KLK_NrKursu
+			,KLK_KursM
+			,KLK_KursL
+			,KLK_PrzeliczajWg
+			,KLK_CzasUtworzenia
+			,KLK_OpeUtworzyl
+			,KLK_CzasModyfikacji
+			,KLK_OpeModyfikowal
+			,KLK_PrzeliczajWgTyp
+			)
+		VALUES (
+			32
+			,(SELECT Knt_GIDNumer FROM cdn.KntKarty WHERE Knt_Akronim = @Akronim)
+			,@WartoscLimitu
+			,0
+			,@DataOdClarion
+			,@DataDoClarion
+			,(SELECT Kon_Wartosc FROM CDN.Konfig WHERE Kon_Numer = 211) -- waluta systemowa
+			,1
+			,1
+			,1
+			,'Daty bieżącej'
+			,DATEDIFF(S, '19900101', GETDATE())
+			,CDN.PolaczenieInfo(5)
+			,DATEDIFF(S, '19900101', GETDATE())
+			,CDN.PolaczenieInfo(5)
+			,0
+			)
+
+		UPDATE cdn.KntKarty
+		SET Knt_LimitTerminowy = 1
+			,Knt_LastModC = DATEDIFF(S, '19900101', GETDATE())
+			,Knt_LastModL = DATEDIFF(S, '19900101', GETDATE())
+			,Knt_OpeNumerM = CDN.PolaczenieInfo(5)
+		WHERE Knt_Akronim = @Akronim
+
+		SELECT @Akronim Akronim
+			,'' NazwaKnt
+			,'' NIP
+			,'' Uwaga
+	END TRY
+	BEGIN CATCH    
+		SELECT '' Akronim
+			,'' NazwaKnt
+			,'' NIP
+			,ERROR_MESSAGE() Uwaga
+	END CATCH 
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

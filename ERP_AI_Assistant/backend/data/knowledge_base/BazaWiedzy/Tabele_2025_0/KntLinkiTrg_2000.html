@@ -1,0 +1,404 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="OdbudujKntLinkiDlaElementu"></A><PRE>
+          <FONT SIZE="2"><I>/* OdbudujKntLinkiDlaElementu */</I><BR>
+CREATE PROCEDURE Cdn.OdbudujKntLinkiDlaElementu (
+	@GIDTyp INT,
+	@GIDNumer INT
+	)
+AS
+BEGIN
+	--dane o sobie
+	SELECT *
+	INTO #KntLinkiDane
+	FROM CDN.BudujKntLinkiKuKorzeniowi(@GIDNumer, @GIDTyp)
+
+	--gdy grupa to dane o dzieciach
+	IF @GIDTyp = - 32
+	BEGIN
+		WITH GrupyVsLinki
+		AS (
+			SELECT KnG_GIDNumer OryNumer,
+				KnG_GIDTyp OryTyp,
+				KnG_GrONumer GrONumer,
+				1 Lisc,
+				KnG_GIDFirma FirmaId
+			FROM CDN.KntGrupy
+			WHERE EXISTS (
+					SELECT *
+					FROM CDN.KntLinki
+					WHERE KnL_GrONumer = @GIDNumer
+						AND KnG_GIDNumer = KnL_GIDNumer
+						AND KnG_GIDTyp = KnL_GIDTyp
+					)
+			
+			UNION ALL
+			
+			SELECT OryNumer OryNumer,
+				OryTyp OryTyp,
+				KnG_GrONumer GrONumer,
+				0 Lisc,
+				FirmaId FirmaId
+			FROM GrupyVsLinki
+			INNER JOIN CDN.KntGrupy ON GrONumer = KnG_GIDNumer
+				AND KnG_GIDTyp = - 32
+			)
+		INSERT INTO #KntLinkiDane
+		SELECT OryTyp,
+			FirmaId,
+			OryNumer,
+			GrONumer,
+			SUM(Lisc) Lisc,
+			COUNT(*) LiczbaPowtorzen,
+			DATEDIFF(S, '19900101', GETDATE()) CzasModyfikacji
+		FROM GrupyVsLinki
+		WHERE GrONumer &gt; - 1
+		GROUP BY OryNumer,
+			OryTyp,
+			GrONumer,
+			FirmaId
+	END
+
+	CREATE TABLE #UsuwaneLinki(id int not null, kntnumer int,knlGIDTyp smallint,knlGUID VARCHAR(41))
+	create clustered index idx_primary on #UsuwaneLinki(id)
+
+	insert into #UsuwaneLinki 
+	select knl_id,KnL_GIDNumer,KnL_GIDTyp,KnL_GUID FROM CDN.KntLinki
+	WHERE KnL_GIDNumer = @GIDNumer --usuwamy wszystkie wpisy o sobie
+		AND KnL_GIDTyp = @GIDTyp
+	UNION select knl_id,KnL_GIDNumer,KnL_GIDTyp,KnL_GUID FROM CDN.KntLinki
+	JOIN #KntLinkiDane
+			ON OryNumer = KnL_GIDNumer
+				AND OryTyp = KnL_GIDTyp
+
+
+	DELETE cdn.kntlinki where knl_id in (select id from #UsuwaneLinki)
+
+	INSERT INTO CDN.KntLinki (
+		KnL_GIDTyp,
+		KnL_GIDFirma,
+		KnL_GIDNumer,
+		KnL_GIDLp,
+		KnL_GrOTyp,
+		KnL_GrOFirma,
+		KnL_GrONumer,
+		KnL_GrOLp,
+		KnL_Lisc,
+		KnL_LiczbaPowtorzen,
+		KnL_TStampDataMod
+		)
+	SELECT OryTyp,
+		FirmaId,
+		OryNumer,
+		0,
+		- 32,
+		FirmaId,
+		GrONumer,
+		0,
+		Lisc,
+		LiczbaPowtorzen,
+		CzasModyfikacji
+	FROM #KntLinkiDane
+
+	DROP TABLE #KntLinkiDane
+	DROP TABLE #UsuwaneLinki
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="KntLinkiInsert"></A><PRE>
+          <FONT SIZE="2"><I>/* KntLinkiInsert */</I><BR>
+CREATE TRIGGER KntLinkiInsert ON CDN.KntGrupy
+FOR INSERT
+AS
+DECLARE @GidTyp SMALLINT
+DECLARE @GidNumer INT
+
+DECLARE TriggerCursor CURSOR
+FOR
+SELECT KnG_GIDTyp,
+	KnG_GIDNumer
+FROM INSERTED
+
+OPEN TriggerCursor
+
+FETCH NEXT
+FROM TriggerCursor
+INTO @GIDTyp,
+	@GIDNumer
+
+WHILE @@FETCH_STATUS = 0
+BEGIN
+	EXEC cdn.OdbudujKntLinkiDlaElementu @GIDTyp,
+		@GIDNumer
+
+	FETCH NEXT
+	FROM TriggerCursor
+	INTO @GIDTyp,
+		@GIDNumer
+END
+
+CLOSE TriggerCursor
+
+DEALLOCATE TriggerCursor
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="KntLinkiUpdate"></A><PRE>
+          <FONT SIZE="2"><I>/* KntLinkiUpdate */</I><BR>
+CREATE TRIGGER KntLinkiUpdate ON CDN.KntGrupy
+FOR UPDATE
+AS
+IF NOT (
+		--pola typ, firma i lp są niezmienne, więc można zakomentować
+		--UPDATE (KnG_GIDTyp)
+		--	OR
+		--UPDATE (KnG_GIDFirma)
+		--	OR
+		--UPDATE (KnG_GIDNumer) --zdaje się, że to i tak zbędne, bo aktualizacjatego pola oznaczała by zastąpienie jednej grupy w drzewie inną, a nie ma takiej funkcjonalności(?)
+		--	OR
+		--UPDATE (KnG_GIDLp)
+		--	OR		
+		--UPDATE (KnG_GrOTyp)
+		--	OR
+		--UPDATE (KnG_GrOFirma)
+		--	OR
+		UPDATE (KnG_GrONumer) --tylko to ma jakiś sens i oznacza, że wycinamy grupę i przenosimy ją w inne miejsce, ale też pod warunkiem, że jest to realizowane przez update na to pole, a nie dwie osobne operacje insert i delete, bo też tak mogło by to być zrobione
+			--	OR
+			--UPDATE (KnG_GrOLp)
+		)
+	RETURN
+
+	
+
+DECLARE @GidTyp SMALLINT
+DECLARE @GidNumer INT
+
+DECLARE TriggerCursorInserted CURSOR
+FOR
+SELECT KnG_GIDTyp,
+	KnG_GIDNumer
+FROM INSERTED
+
+OPEN TriggerCursorInserted
+
+FETCH NEXT
+FROM TriggerCursorInserted
+INTO @GIDTyp,
+	@GIDNumer
+
+WHILE @@FETCH_STATUS = 0
+BEGIN
+	EXEC cdn.OdbudujKntLinkiDlaElementu @GIDTyp,
+		@GIDNumer
+	EXEC cdn.KntLinkiZapiszPicoUsuniete @GIDTyp,
+		@GidNumer
+
+	FETCH NEXT
+	FROM TriggerCursorInserted
+	INTO @GIDTyp,
+		@GIDNumer
+END
+
+CLOSE TriggerCursorInserted
+
+DEALLOCATE TriggerCursorInserted
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="KntLinkiDelete"></A><PRE>
+          <FONT SIZE="2"><I>/* KntLinkiDelete */</I><BR>
+CREATE TRIGGER KntLinkiDelete ON CDN.KntGrupy
+FOR DELETE
+AS
+DECLARE @GidTyp SMALLINT
+DECLARE @GidNumer INT
+
+DECLARE TriggerCursor CURSOR
+FOR
+SELECT KnG_GIDTyp,
+	KnG_GIDNumer
+FROM DELETED
+
+OPEN TriggerCursor
+
+FETCH NEXT
+FROM TriggerCursor
+INTO @GIDTyp,
+	@GIDNumer
+
+WHILE @@FETCH_STATUS = 0
+BEGIN
+	EXEC cdn.OdbudujKntLinkiDlaElementu @GIDTyp,
+		@GIDNumer
+	EXEC cdn.KntLinkiZapiszPicoUsuniete @GIDTyp, @GidNumer
+	FETCH NEXT
+	FROM TriggerCursor
+	INTO @GIDTyp,
+		@GIDNumer
+END
+
+CLOSE TriggerCursor
+
+DEALLOCATE TriggerCursor
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="KntRodzice"></A><PRE>
+          <FONT SIZE="2"><I>/* KntRodzice */</I><BR>
+CREATE PROCEDURE CDN.KntRodzice @GIDNumer INT
+AS
+BEGIN
+	DECLARE @n INT
+	DECLARE @prevcount INT
+	DECLARE @count INT
+
+	SET @count = - 1
+	SET @prevcount = 0
+
+	CREATE TABLE #tmpnumery (
+		GN INT,
+		C INT
+		)
+
+	INSERT INTO #tmpnumery
+	VALUES (
+		@GIDNumer,
+		1
+		)
+
+	WHILE (@prevcount != @count) --przechodzenie grafu wszerz, jezeli nic nie dodano konczymy
+	BEGIN
+		INSERT INTO #tmpnumery
+		SELECT DISTINCT KnG_GRONumer,
+			0
+		FROM CDN.KntGrupy
+		WHERE KnG_GIDNumer IN (
+				SELECT GN
+				FROM #tmpnumery
+				)
+			AND KnG_GIDTyp = - 32
+			AND KnG_GIDNumer &gt; 0
+			AND KnG_GRONumer NOT IN (
+				SELECT GN
+				FROM #tmpnumery
+				)
+
+		SET @prevcount = @count
+		SET @count = (
+				SELECT COUNT(*)
+				FROM #tmpnumery
+				)
+	END
+
+	SET @prevcount = 0
+	SET @count = - 1
+
+	WHILE (@prevcount != @count)
+	BEGIN
+		DECLARE c CURSOR
+		FOR
+		SELECT GN
+		FROM #tmpnumery
+
+		OPEN c
+
+		FETCH NEXT
+		FROM c
+		INTO @n
+
+		FETCH NEXT
+		FROM c
+		INTO @n --pomijamy pierwszy rekord - dla niego C=1
+
+		IF (@count = - 1)
+			SET @count = 0
+
+		WHILE @@FETCH_STATUS = 0
+		BEGIN
+			UPDATE #tmpnumery --podliczanie ilosci mozliwych sciezek jako sumy ilosci na elementach prowadzacych do elementu
+			SET C = (
+					SELECT SUM(C)
+					FROM #tmpnumery
+					WHERE GN IN (
+							SELECT Kng_GIDNumer
+							FROM CDN.KntGrupy
+							WHERE Kng_GRONumer = @n
+								AND Kng_GIDTyp = - 32
+								AND KnG_GIDNumer &gt; 0
+							)
+					)
+			WHERE GN = @n
+
+			SET @prevcount = @count
+			SET @count = (
+					SELECT SUM(C)
+					FROM #tmpnumery
+					)
+
+			FETCH NEXT
+			FROM c
+			INTO @n
+		END
+
+		CLOSE c
+
+		DEALLOCATE c
+	END
+
+	SELECT *
+	FROM #tmpnumery
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="KntLinkiZapiszPicoUsuniete"></A><PRE>
+          <FONT SIZE="2"><I>/* KntLinkiZapiszPicoUsuniete */</I><BR>
+CREATE PROCEDURE Cdn.KntLinkiZapiszPicoUsuniete (
+	@GIDTyp INT,
+	@GIDNumer INT
+	)
+AS
+BEGIN
+IF EXISTS(select * from cdn.picostanowiska)
+               Insert into cdn.picousuniete(PcU_PcKId, PcU_ObiTyp, PcU_ObiNumer, PcU_ObiektTyp, PcU_ObiektID, PcU_TSUsuniecia, PcU_Stan, pcu_ident, pcu_psaid)
+                              select distinct PSa_PcKID,-KnL_GIDTyp,KnL_ID,-KnL_GIDTyp,KnL_ID,DATEDIFF(second, convert(datetime,'01-01-1990',105),GETDATE()),0,
+							  case when KnL_GIDTyp = 32 then KnL_GUID else (select cast(KnG_SyncId as varchar) from cdn.KntGrupy where KnG_GIDNumer = KnL_GIDNumer and KnG_GIDTyp = KnL_GIDTyp) end,
+							  psa_id
+               from CDN.PicoStanowiska
+                              join cdn.KntLinki on KnL_GIDNumer = @GIDNumer and KnL_GIDTyp = @GIDTyp
+                              outer apply CDN.POS_KntDoEksportuCheck(psa_id,0,KnL_GIDNumer)
+                              left join CDN.PicoUsuniete u on u.pcu_pckid = PSa_PcKID and u.pcu_psaid = psa_id and u.PcU_ObiTyp=-KnL_GIDTyp and PcU_ObiNumer=KnL_ID
+                              where u.PcU_ID is null
+
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

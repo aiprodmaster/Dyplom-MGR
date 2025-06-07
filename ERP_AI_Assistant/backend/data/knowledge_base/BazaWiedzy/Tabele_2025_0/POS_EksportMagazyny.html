@@ -1,0 +1,67 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[POS_EksportMagazyny]"></A><PRE>
+          <FONT SIZE="2"><I>/* [POS_EksportMagazyny] */</I><BR>
+CREATE PROCEDURE [CDN].[POS_EksportMagazyny] 
+	@rowVersion bigint,
+	@pointOfSaleId int
+
+AS
+BEGIN
+	SET NOCOUNT ON;
+	declare @LsatMod bigint = isnull((select case when @pointOfSaleId is null and max(oddzialBylWyslany) = 0 and max(PsaDataDodania) &gt; max(MAG_CzasModyfikacji) then max(PsaDataDodania) else max(MAG_CzasModyfikacji) end from cdn.picostanowiska
+		join cdn.PicoKonfig on PSa_PcKID = pck_picoid 
+		join cdn.FrmStruktura on PcK_CentrumID = FrS_ID
+		join cdn.FrmObiekty on FRS_ID=FRO_FRMID 
+		join cdn.Magazyny on MAG_GIDNumer=FRO_GIDNumer AND FRO_GIDTyp = MAG_GIDTyp
+		join cdn.POS_OddzialyDoEksportu(@pointOfSaleId, @rowVersion) on PcK_CentrumID = PckCentrumID
+		where (PSa_ID = @pointOfSaleId or ( @pointOfSaleId is null and PSa_TypAplikacji = 2 )) AND (MAG_CzasModyfikacji &gt; @RowVersion or (@pointOfSaleId is null and oddzialBylWyslany = 0))),@rowVersion)
+
+
+
+	select 
+		@LsatMod as [@RowVersion], (
+		select distinct
+			Mag_Gidnumer as [@Id], 
+			Mag_Kod as [@Code], 
+			MAG_Nazwa as [@Name], 
+			case when MAG_Zablokowany=0 or (MAG_Zablokowany in (1,2) and exists (select 1 from cdn.InwMag join cdn.InwNag on InN_Id=InM_InNId where Mag_GIDNumer=InM_MagNumer and InN_RealizujWPOS = 1 and InN_TStampZam = 0)) then 'true' else 'false' end as [@IsActive],  
+			case when psa_id is null then 'false' when psa_id is not null and exists(select * from CDN.DokDefinicje where Dok_FrsId = frs_id and dok_gidtyp=1603 and Dok_WystPrawo=1) then 'true' else 'false' end as [@IsAvailableForWMMinus],
+			case when psa_id is null then 'false' when psa_id is not null and exists(select * from CDN.DokDefinicje where Dok_FrsId = frs_id and dok_gidtyp=1604 and Dok_WystPrawo=1) then 'true' else 'false' end as [@IsAvailableForWMPlus],
+			case when psa_id is null then 'false' when psa_id is not null and exists(select * from CDN.DokDefinicje where Dok_FrsId = frs_id and dok_gidtyp=2033 and Dok_WystPrawo=1) then 'true' else 'false' end as [@IsAvailableForReceiptSalesInvoice],
+			'false' as [@IsConsignment],
+			MAG_WMS as [@IsWMS],
+			case when psa_id is null then 'false' when psa_id is not null and exists(select * from CDN.DokDefinicje where Dok_FrsId = frs_id and dok_gidtyp=1603 and Dok_WystPrawo=1) then 'true' else 'false' end  as [@CanBeTargetForWMMinus],
+			'True' as [@IsCompanyWarehouse],
+			case when psa_id is null then 0 when psa_id is not null and exists(select * from CDN.DokDefinicje where Dok_FrsId = frs_id and dok_gidtyp=9473 and Dok_WystPrawo=1) and mag_pckid != PcK_PicoID then 1 else 0 end as [@CanBeSourceForIO]
+
+
+
+		from 
+		cdn.Magazyny
+		left join cdn.FrmObiekty on MAG_GIDNumer=FRO_GIDNumer AND FRO_GIDTyp = MAG_GIDTyp AND FRO_FRMID IN (select PcKCentrumId from cdn.POS_OddzialyDoEksportu(@pointOfSaleId, @rowVersion))
+		left join cdn.FrmStruktura on FRS_ID=FRO_FRMID
+		left join cdn.PicoKonfig on PcK_CentrumID = FrS_ID
+		left join cdn.picostanowiska on PSa_PcKID = pck_picoid and (PSa_ID = @pointOfSaleId or (@pointOfSaleId is null and PSa_TypAplikacji = 2))
+		left join cdn.POS_OddzialyDoEksportu(@pointOfSaleId, @rowVersion) on PcK_CentrumID = PckCentrumID
+		where (MAG_CzasModyfikacji &gt; @RowVersion OR @RowVersion=0 or (@pointOfSaleId is null and (oddzialBylWyslany is null or oddzialBylWyslany = 0))) AND MAG_Pico=0
+
+	for xml path('Warehouse'), type)
+	for xml path('Warehouses')
+	SET NOCOUNT OFF;	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

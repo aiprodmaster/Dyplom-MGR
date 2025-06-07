@@ -1,0 +1,255 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie procedury CDN.RozrachunkiStrukturaDekr"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie procedury CDN.RozrachunkiStrukturaDekr */</I><BR>
+IF EXISTS (SELECT name  FROM sysobjects WHERE name = 'RozrachunkiStrukturaDekr' AND type = 'P')
+  drop procedure CDN.RozrachunkiStrukturaDekr
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury RozrachunkiStrukturaDekr"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury RozrachunkiStrukturaDekr */</I><BR>
+CREATE  PROCEDURE CDN.RozrachunkiStrukturaDekr @p_KontoOD varchar(50), @p_KontoDO varchar(50), @p_PdmOd varchar(30), @p_PdmDo varchar(30), @p_Data int, @p_TypDaty smallint, @p_Waluta varchar(5), @p_Rozliczone smallint, @p_DC smallint, @p_KwotyDodatnie tinyint, @p1 int, @p2 int, @p3 int, @p4 int, @p5 int, @p6 int
+AS
+DECLARE @KontoOD      VARCHAR(31);
+DECLARE @KontoDO      VARCHAR(31);
+DECLARE @Waluta       VARCHAR(5);
+DECLARE @WalutaSys    VARCHAR(5);
+DECLARE @Data         DATETIME;
+DECLARE @BiezacyOO_OD DATETIME;
+DECLARE @BiezacyOO_DO DATETIME;
+declare @OkresID int
+
+
+
+--select
+--	convert(int,1) DzkNumer,
+--	convert(smallint,1) DtLp,
+--	replicate('a',30) Konto,
+--	replicate('a',30) Podmiot,
+--	convert(tinyint,1) DTDC,
+--	replicate('a',30) Dekret,
+--	getdate() DataDek,
+--	replicate('a',40) DokumentZrodlowy,
+--	convert(int,1) Data,	 
+--	0.00 As Razem, 
+--	0.00 As Nieprzet, 
+--	0.00 As p1, 
+--	0.00 As p2, 
+--	0.00 As p3, 
+--	0.00 As p4, 
+--	0.00 As p5, 
+--	0.00 As p6, 
+--	0.00 As p7
+
+--return
+
+
+
+
+
+select 
+	@OkresID = Okr_ID
+from cdn.Okresy
+where Okr_Poczatek &lt;= @p_Data and Okr_Koniec &gt;= @p_Data
+
+
+
+if isnull(@OkresID,0) = 0 
+	return
+
+
+
+IF upper(ltrim(rtrim(@p_KontoOD))) = '-BRAK-'
+	SET @p_KontoOD = ''
+else
+begin
+	select 
+		@p_KontoOD = KKS_KontoOrd
+	from cdn.Konta
+	where KKS_OkresID = @OkresID and KKS_Konto = @p_KontoOD
+end
+
+
+IF upper(ltrim(rtrim(@p_KontoDO))) = '-BRAK-'
+	SET @p_KontoDO = ''
+else
+begin
+	select 
+		@p_KontoDO = KKS_KontoOrd
+	from cdn.Konta
+	where KKS_OkresID = @OkresID and KKS_Konto = @p_KontoDO
+end
+
+
+--IF @p_KontoDO &lt;&gt; '' 
+SET @p_KontoDO = rtrim(@p_KontoDO) + ' ' + replicate('ż',50)
+
+
+
+SET @Waluta  = rtrim(@p_Waluta);
+
+
+-- Pobranie waluty systemowej
+SELECT @WalutaSys = Kon_Wartosc FROM CDN.Konfig WHERE Kon_Numer=211;
+IF LTrim(@Waluta)=''
+   SET @Waluta = @WalutaSys
+
+
+
+;with Struktura as (
+	SELECT
+	max(DZK_RMNumer)  As DzkNumer,
+	DEL_Pozycja       As DtLp,
+	max(KKS_Konto)    As Konto,
+	max(PODV_Akronim) As Podmiot,
+	DT_DC As DTDC, 
+	max(CDN.NumerDekretu(DT_Bufor,DT_Dziennik,DT_Rok,DT_Miesiac,DZK_RMNumer,DEL_Pozycja,DZK_Prosty,DZK_OkrSymbol))As Dekret,
+	max(cdn.Ymd(DT_Rok, DT_Miesiac, DT_Dzien)) As DataDek,
+	max(dzk_dokumentzrodlowy)     as DokumentZrodlowy,
+	CASE @p_TypDaty WHEN 1 THEN max(DZK_DataWyst) Else max(DT_Termin) END As Data,
+	MAX(DT_Kwota) DTKwota,
+	CASE WHEN @p_Rozliczone=1 THEN 
+	CASE WHEN MAX(DT_Kwota)&lt;0 THEN 0-SUM(case WHEN ISNULL(R2_DataRozrachunku,0)=0 THEN 0 WHEN R2_DataRozrachunku &lt;= @p_Data THEN CASE WHEN @Waluta=@WalutaSys THEN R2_KwotaSys ELSE R2_KwotaWal1 END ELSE 0 END) ELSE SUM(case WHEN ISNULL(R2_DataRozrachunku,0)=0 THEN 0 WHEN R2_DataRozrachunku &lt;= @p_Data THEN CASE WHEN @Waluta=@WalutaSys THEN R2_KwotaSys ELSE R2_KwotaWal1 END ELSE 0 END) END ELSE 
+	CASE WHEN MAX(DT_Kwota)&lt;0 THEN MAX(DT_Kwota)+SUM(CASE WHEN ISNULL(R2_DataRozrachunku,0)=0 THEN 0 WHEN R2_DataRozrachunku&lt;=@p_Data THEN CASE WHEN @Waluta=@WalutaSys THEN R2_KwotaSys ELSE R2_KwotaWal1 END ELSE 0 END) ELSE MAX(DT_Kwota)-SUM(CASE WHEN ISNULL(R2_DataRozrachunku,0)=0 THEN 0 WHEN R2_DataRozrachunku&lt;=@p_Data THEN CASE WHEN @Waluta=@WalutaSys THEN R2_KwotaSys ELSE R2_KwotaWal1 END ELSE 0 END) END 
+	END As Razem,
+	CASE when CASE WHEN @p_Rozliczone=1 THEN MAX(ISNULL(R2_DataRozrachunku,0)) ELSE @p_Data END-CASE @p_TypDaty WHEN 1 THEN max(DZK_DataWyst) Else max(DT_Termin) END &lt;= 0 THEN 
+	CASE WHEN @p_Rozliczone=1 THEN CASE WHEN MAX(DT_Kwota)&lt;0 THEN 0-SUM(case WHEN ISNULL(R2_DataRozrachunku,0)=0 THEN 0 WHEN R2_DataRozrachunku &lt;= @p_Data THEN CASE WHEN @Waluta=@WalutaSys THEN R2_KwotaSys ELSE R2_KwotaWal1 END ELSE 0 END) ELSE SUM(case WHEN ISNULL(R2_DataRozrachunku,0)=0 THEN 0 WHEN R2_DataRozrachunku &lt;= @p_Data THEN CASE WHEN @Waluta=@WalutaSys THEN R2_KwotaSys ELSE R2_KwotaWal1 END ELSE 0 END) END ELSE CASE WHEN max(DT_Kwota)&lt;0 THEN max(DT_Kwota)+SUM(CASE WHEN ISNULL(R2_DataRozrachunku,0)=0 THEN 0 WHEN R2_DataRozrachunku&lt;=@p_Data THEN CASE WHEN @Waluta=@WalutaSys THEN R2_KwotaSys ELSE R2_KwotaWal1 END ELSE 0 END) ELSE max(DT_Kwota)-SUM(CASE WHEN ISNULL(R2_DataRozrachunku,0)=0 THEN 0 WHEN R2_DataRozrachunku&lt;=@p_Data THEN CASE WHEN @Waluta=@WalutaSys THEN R2_KwotaSys ELSE R2_KwotaWal1 END ELSE 0 END) END END 
+	ELSE 0 END As Nieprzet,
+	case when CASE WHEN @p_Rozliczone=1 THEN max(ISNULL(R2_DataRozrachunku,0)) ELSE @p_Data END-CASE @p_TypDaty WHEN 1 THEN max(DZK_DataWyst) Else max(DT_Termin) END between 1 and @p1 THEN	
+	CASE WHEN @p_Rozliczone=1 THEN CASE WHEN MAX(DT_Kwota)&lt;0 THEN 0-SUM(case WHEN ISNULL(R2_DataRozrachunku,0)=0 THEN 0 WHEN R2_DataRozrachunku &lt;= @p_Data THEN CASE WHEN @Waluta=@WalutaSys THEN R2_KwotaSys ELSE R2_KwotaWal1 END ELSE 0 END) ELSE SUM(case WHEN ISNULL(R2_DataRozrachunku,0)=0 THEN 0 WHEN R2_DataRozrachunku &lt;= @p_Data THEN CASE WHEN @Waluta=@WalutaSys THEN R2_KwotaSys ELSE R2_KwotaWal1 END ELSE 0 END) END ELSE CASE WHEN max(DT_Kwota)&lt;0 THEN max(DT_Kwota)+SUM(CASE WHEN ISNULL(R2_DataRozrachunku,0)=0 THEN 0 WHEN R2_DataRozrachunku&lt;=@p_Data THEN CASE WHEN @Waluta=@WalutaSys THEN R2_KwotaSys ELSE R2_KwotaWal1 END ELSE 0 END) ELSE max(DT_Kwota)-SUM(CASE WHEN ISNULL(R2_DataRozrachunku,0)=0 THEN 0 WHEN R2_DataRozrachunku&lt;=@p_Data THEN CASE WHEN @Waluta=@WalutaSys THEN R2_KwotaSys ELSE R2_KwotaWal1 END ELSE 0 END) END END 
+	ELSE 0 END As p1,
+	case when CASE WHEN @p_Rozliczone=1 THEN max(ISNULL(R2_DataRozrachunku,0)) ELSE @p_Data END-CASE @p_TypDaty WHEN 1 THEN max(DZK_DataWyst) Else max(DT_Termin) END between @p1+1 and @p2 THEN 
+	CASE WHEN @p_Rozliczone=1 THEN CASE WHEN MAX(DT_Kwota)&lt;0 THEN 0-SUM(case WHEN ISNULL(R2_DataRozrachunku,0)=0 THEN 0 WHEN R2_DataRozrachunku &lt;= @p_Data THEN CASE WHEN @Waluta=@WalutaSys THEN R2_KwotaSys ELSE R2_KwotaWal1 END ELSE 0 END) ELSE SUM(case WHEN ISNULL(R2_DataRozrachunku,0)=0 THEN 0 WHEN R2_DataRozrachunku &lt;= @p_Data THEN CASE WHEN @Waluta=@WalutaSys THEN R2_KwotaSys ELSE R2_KwotaWal1 END ELSE 0 END) END ELSE CASE WHEN max(DT_Kwota)&lt;0 THEN max(DT_Kwota)+SUM(CASE WHEN ISNULL(R2_DataRozrachunku,0)=0 THEN 0 WHEN R2_DataRozrachunku&lt;=@p_Data THEN CASE WHEN @Waluta=@WalutaSys THEN R2_KwotaSys ELSE R2_KwotaWal1 END ELSE 0 END) ELSE max(DT_Kwota)-SUM(CASE WHEN ISNULL(R2_DataRozrachunku,0)=0 THEN 0 WHEN R2_DataRozrachunku&lt;=@p_Data THEN CASE WHEN @Waluta=@WalutaSys THEN R2_KwotaSys ELSE R2_KwotaWal1 END ELSE 0 END) END END 
+	ELSE 0 END As p2,
+	case when CASE WHEN @p_Rozliczone=1 THEN max(ISNULL(R2_DataRozrachunku,0)) ELSE @p_Data END-CASE @p_TypDaty WHEN 1 THEN max(DZK_DataWyst) Else max(DT_Termin) END between @p2+1 and @p3 THEN 
+	CASE WHEN @p_Rozliczone=1 THEN CASE WHEN MAX(DT_Kwota)&lt;0 THEN 0-SUM(case WHEN ISNULL(R2_DataRozrachunku,0)=0 THEN 0 WHEN R2_DataRozrachunku &lt;= @p_Data THEN CASE WHEN @Waluta=@WalutaSys THEN R2_KwotaSys ELSE R2_KwotaWal1 END ELSE 0 END) ELSE SUM(case WHEN ISNULL(R2_DataRozrachunku,0)=0 THEN 0 WHEN R2_DataRozrachunku &lt;= @p_Data THEN CASE WHEN @Waluta=@WalutaSys THEN R2_KwotaSys ELSE R2_KwotaWal1 END ELSE 0 END) END ELSE CASE WHEN max(DT_Kwota)&lt;0 THEN max(DT_Kwota)+SUM(CASE WHEN ISNULL(R2_DataRozrachunku,0)=0 THEN 0 WHEN R2_DataRozrachunku&lt;=@p_Data THEN CASE WHEN @Waluta=@WalutaSys THEN R2_KwotaSys ELSE R2_KwotaWal1 END ELSE 0 END) ELSE max(DT_Kwota)-SUM(CASE WHEN ISNULL(R2_DataRozrachunku,0)=0 THEN 0 WHEN R2_DataRozrachunku&lt;=@p_Data THEN CASE WHEN @Waluta=@WalutaSys THEN R2_KwotaSys ELSE R2_KwotaWal1 END ELSE 0 END) END END 
+	ELSE 0 END As p3,
+	case when CASE WHEN @p_Rozliczone=1 THEN max(ISNULL(R2_DataRozrachunku,0)) ELSE @p_Data END-CASE @p_TypDaty WHEN 1 THEN max(DZK_DataWyst) Else max(DT_Termin) END between @p3+1 and @p4 THEN 
+	CASE WHEN @p_Rozliczone=1 THEN CASE WHEN MAX(DT_Kwota)&lt;0 THEN 0-SUM(case WHEN ISNULL(R2_DataRozrachunku,0)=0 THEN 0 WHEN R2_DataRozrachunku &lt;= @p_Data THEN CASE WHEN @Waluta=@WalutaSys THEN R2_KwotaSys ELSE R2_KwotaWal1 END ELSE 0 END) ELSE SUM(case WHEN ISNULL(R2_DataRozrachunku,0)=0 THEN 0 WHEN R2_DataRozrachunku &lt;= @p_Data THEN CASE WHEN @Waluta=@WalutaSys THEN R2_KwotaSys ELSE R2_KwotaWal1 END ELSE 0 END) END ELSE CASE WHEN max(DT_Kwota)&lt;0 THEN max(DT_Kwota)+SUM(CASE WHEN ISNULL(R2_DataRozrachunku,0)=0 THEN 0 WHEN R2_DataRozrachunku&lt;=@p_Data THEN CASE WHEN @Waluta=@WalutaSys THEN R2_KwotaSys ELSE R2_KwotaWal1 END ELSE 0 END) ELSE max(DT_Kwota)-SUM(CASE WHEN ISNULL(R2_DataRozrachunku,0)=0 THEN 0 WHEN R2_DataRozrachunku&lt;=@p_Data THEN CASE WHEN @Waluta=@WalutaSys THEN R2_KwotaSys ELSE R2_KwotaWal1 END ELSE 0 END) END END 
+	ELSE 0 END As p4,
+	case when CASE WHEN @p_Rozliczone=1 THEN max(ISNULL(R2_DataRozrachunku,0)) ELSE @p_Data END-CASE @p_TypDaty WHEN 1 THEN max(DZK_DataWyst) Else max(DT_Termin) END between @p4+1 and @p5 THEN 
+	CASE WHEN @p_Rozliczone=1 THEN CASE WHEN MAX(DT_Kwota)&lt;0 THEN 0-SUM(case WHEN ISNULL(R2_DataRozrachunku,0)=0 THEN 0 WHEN R2_DataRozrachunku &lt;= @p_Data THEN CASE WHEN @Waluta=@WalutaSys THEN R2_KwotaSys ELSE R2_KwotaWal1 END ELSE 0 END) ELSE SUM(case WHEN ISNULL(R2_DataRozrachunku,0)=0 THEN 0 WHEN R2_DataRozrachunku &lt;= @p_Data THEN CASE WHEN @Waluta=@WalutaSys THEN R2_KwotaSys ELSE R2_KwotaWal1 END ELSE 0 END) END ELSE CASE WHEN max(DT_Kwota)&lt;0 THEN max(DT_Kwota)+SUM(CASE WHEN ISNULL(R2_DataRozrachunku,0)=0 THEN 0 WHEN R2_DataRozrachunku&lt;=@p_Data THEN CASE WHEN @Waluta=@WalutaSys THEN R2_KwotaSys ELSE R2_KwotaWal1 END ELSE 0 END) ELSE max(DT_Kwota)-SUM(CASE WHEN ISNULL(R2_DataRozrachunku,0)=0 THEN 0 WHEN R2_DataRozrachunku&lt;=@p_Data THEN CASE WHEN @Waluta=@WalutaSys THEN R2_KwotaSys ELSE R2_KwotaWal1 END ELSE 0 END) END END 
+	ELSE 0 END As p5,
+	case when CASE WHEN @p_Rozliczone=1 THEN max(ISNULL(R2_DataRozrachunku,0)) ELSE @p_Data END-CASE @p_TypDaty WHEN 1 THEN max(DZK_DataWyst) Else max(DT_Termin) END between @p5+1 and @p6 THEN 
+	CASE WHEN @p_Rozliczone=1 THEN CASE WHEN MAX(DT_Kwota)&lt;0 THEN 0-SUM(case WHEN ISNULL(R2_DataRozrachunku,0)=0 THEN 0 WHEN R2_DataRozrachunku &lt;= @p_Data THEN CASE WHEN @Waluta=@WalutaSys THEN R2_KwotaSys ELSE R2_KwotaWal1 END ELSE 0 END) ELSE SUM(case WHEN ISNULL(R2_DataRozrachunku,0)=0 THEN 0 WHEN R2_DataRozrachunku &lt;= @p_Data THEN CASE WHEN @Waluta=@WalutaSys THEN R2_KwotaSys ELSE R2_KwotaWal1 END ELSE 0 END) END ELSE CASE WHEN max(DT_Kwota)&lt;0 THEN max(DT_Kwota)+SUM(CASE WHEN ISNULL(R2_DataRozrachunku,0)=0 THEN 0 WHEN R2_DataRozrachunku&lt;=@p_Data THEN CASE WHEN @Waluta=@WalutaSys THEN R2_KwotaSys ELSE R2_KwotaWal1 END ELSE 0 END) ELSE max(DT_Kwota)-SUM(CASE WHEN ISNULL(R2_DataRozrachunku,0)=0 THEN 0 WHEN R2_DataRozrachunku&lt;=@p_Data THEN CASE WHEN @Waluta=@WalutaSys THEN R2_KwotaSys ELSE R2_KwotaWal1 END ELSE 0 END) END END 
+	ELSE 0 END As p6,
+	case when CASE WHEN @p_Rozliczone=1 THEN max(ISNULL(R2_DataRozrachunku,0)) ELSE @p_Data END-CASE @p_TypDaty WHEN 1 THEN max(DZK_DataWyst) Else max(DT_Termin) END &gt; @p6 THEN 
+	CASE WHEN @p_Rozliczone=1 THEN CASE WHEN MAX(DT_Kwota)&lt;0 THEN 0-SUM(case WHEN ISNULL(R2_DataRozrachunku,0)=0 THEN 0 WHEN R2_DataRozrachunku &lt;= @p_Data THEN CASE WHEN @Waluta=@WalutaSys THEN R2_KwotaSys ELSE R2_KwotaWal1 END ELSE 0 END) ELSE SUM(case WHEN ISNULL(R2_DataRozrachunku,0)=0 THEN 0 WHEN R2_DataRozrachunku &lt;= @p_Data THEN CASE WHEN @Waluta=@WalutaSys THEN R2_KwotaSys ELSE R2_KwotaWal1 END ELSE 0 END) END ELSE CASE WHEN max(DT_Kwota)&lt;0 THEN max(DT_Kwota)+SUM(CASE WHEN ISNULL(R2_DataRozrachunku,0)=0 THEN 0 WHEN R2_DataRozrachunku&lt;=@p_Data THEN CASE WHEN @Waluta=@WalutaSys THEN R2_KwotaSys ELSE R2_KwotaWal1 END ELSE 0 END) ELSE max(DT_Kwota)-SUM(CASE WHEN ISNULL(R2_DataRozrachunku,0)=0 THEN 0 WHEN R2_DataRozrachunku&lt;=@p_Data THEN CASE WHEN @Waluta=@WalutaSys THEN R2_KwotaSys ELSE R2_KwotaWal1 END ELSE 0 END) END END 
+	ELSE 0 END As p7
+
+
+	FROM CDN.Konta 
+		join cdn.KontaNastLinki
+			on KKS_GIDNumer = KLI_NastNumer
+		JOIN CDN.Dekrety  
+			on KLI_PoprzNumer = DT_KKSNumer 
+			and @p_Data &gt;= DT_DataDekr and not (DT_KorektaBO = 1 and DT_Rozliczony=0 AND DT_NieRozliczony=0)
+			and DT_Waluta = @Waluta	
+		JOIN CDN.DziennikElem 
+			ON DEL_GIDNumer=DT_GIDNumer AND DEL_GIDLp=DT_GIDLp
+		JOIN CDN.Dziennik 
+			ON DZK_GIDNumer=DEL_GIDNumer
+		LEFT OUTER JOIN 	
+				(SELECT R2_Dekret1Numer as R2_DekretNumer, 
+					R2_Dekret1Lp as R2_DekretLp, 
+					R2_Dekret1DC as R2_DekretDC,
+					R2_DataRozrachunku, 
+					R2_KwotaSys, 
+					R2_KwotaWal1, 
+					R2_KwotaWal2, 
+					R2_Waluta1 AS R2_Waluta
+				FROM CDN.Rozliczenia				
+		  		UNION ALL 
+				SELECT R2_Dekret2Numer as R2_DekretNumer, 
+					R2_Dekret2Lp as R2_DekretLp, 
+					R2_Dekret2DC as R2_DekretDC, 
+					R2_DataRozrachunku, 
+					R2_KwotaSys, 
+					R2_KwotaWal1, 
+					R2_KwotaWal2, 
+					R2_Waluta2 AS R2_Waluta
+				FROM CDN.Rozliczenia
+		  		) AS ROZ 
+					ON R2_DekretNumer=DT_GIDNumer AND R2_DekretLp=DT_GIDLp AND R2_DekretDC=DT_DC 
+					AND (R2_Waluta=DT_Waluta OR DT_Waluta=@WalutaSys) 
+
+		LEFT OUTER JOIN CDN.PodmiotyView ON PODV_GIDTyp=KKS_KntTyp AND PODV_GIDNumer=KKS_KntNumer 
+
+	WHERE KKS_KontoOrd BETWEEN @p_KontoOD AND @p_KontoDO AND KKS_OkresID = @OkresID AND KKS_Rozrachunkowe&lt;&gt;0
+
+	GROUP BY KKS_GIDNumer, DT_GIDNumer,DT_GIDLp,DEL_Pozycja,DT_DC,CASE WHEN @p_Rozliczone=1 THEN ISNULL(R2_DataRozrachunku,0) ELSE CASE @p_TypDaty WHEN 1 THEN DZK_DataWyst Else DT_Termin END END
+	HAVING
+	CASE WHEN @p_Rozliczone=1
+	  THEN SUM(case WHEN ISNULL(R2_DataRozrachunku,0)=0 THEN 0 WHEN R2_DataRozrachunku &lt;= @p_Data THEN CASE WHEN @Waluta=@WalutaSys THEN R2_KwotaSys ELSE R2_KwotaWal1 END ELSE 0 END)
+	  ELSE
+		CASE WHEN max(DT_Kwota)&lt;0
+		  THEN max(DT_Kwota)+SUM(CASE WHEN ISNULL(R2_DataRozrachunku,0)=0 THEN 0 WHEN R2_DataRozrachunku&lt;=@p_Data THEN CASE WHEN @Waluta=@WalutaSys THEN R2_KwotaSys ELSE R2_KwotaWal1 END ELSE 0 END)
+		  ELSE max(DT_Kwota)-SUM(CASE WHEN ISNULL(R2_DataRozrachunku,0)=0 THEN 0 WHEN R2_DataRozrachunku&lt;=@p_Data THEN CASE WHEN @Waluta=@WalutaSys THEN R2_KwotaSys ELSE R2_KwotaWal1 END ELSE 0 END)
+		END
+	END &lt;&gt; 0
+	AND
+	(
+	  CASE WHEN @p_PdmOd &lt;&gt;'' AND @p_PdmDo&lt;&gt; '' THEN MAX(PODV_Akronim) END BETWEEN @p_PdmOd AND @p_PdmDo OR
+	  CASE WHEN @p_PdmOd &lt;&gt;'' AND @p_PdmDo&lt;&gt; '' THEN 0 ELSE 1 END = 1
+	)
+)
+
+
+,Struktura1 as (
+select 
+	DzkNumer,
+	DtLp,
+	Konto,
+	Podmiot,
+	case when (DTKwota)&gt;=0 or @p_KwotyDodatnie=0 then DTDC else 3-DTDC end DTDC,
+	Dekret,
+	DataDek,
+	DokumentZrodlowy,
+	Data,	 
+	case when (DTKwota)&gt;=0 or @p_KwotyDodatnie=0 then 1 else -1 end * (Razem) As Razem, 
+	case when (DTKwota)&gt;=0 or @p_KwotyDodatnie=0 then 1 else -1 end * (Nieprzet) As Nieprzet, 
+	case when (DTKwota)&gt;=0 or @p_KwotyDodatnie=0 then 1 else -1 end * (p1) As p1, 
+	case when (DTKwota)&gt;=0 or @p_KwotyDodatnie=0 then 1 else -1 end * (p2) As p2, 
+	case when (DTKwota)&gt;=0 or @p_KwotyDodatnie=0 then 1 else -1 end * (p3) As p3, 
+	case when (DTKwota)&gt;=0 or @p_KwotyDodatnie=0 then 1 else -1 end * (p4) As p4, 
+	case when (DTKwota)&gt;=0 or @p_KwotyDodatnie=0 then 1 else -1 end * (p5) As p5, 
+	case when (DTKwota)&gt;=0 or @p_KwotyDodatnie=0 then 1 else -1 end * (p6) As p6, 
+	case when (DTKwota)&gt;=0 or @p_KwotyDodatnie=0 then 1 else -1 end * (p7) As p7
+from Struktura
+)
+
+
+select * 
+from Struktura1
+WHERE (DTDC=@p_DC or @p_DC=0)
+ORDER BY 1,2,5
+
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury RozrachunkiStrukturaDekr"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury RozrachunkiStrukturaDekr */</I><BR>
+GRANT EXECUTE ON CDN.RozrachunkiStrukturaDekr TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

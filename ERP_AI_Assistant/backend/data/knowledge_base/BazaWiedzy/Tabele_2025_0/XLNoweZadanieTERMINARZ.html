@@ -1,0 +1,490 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[XLNoweZadanieTERMINARZ]"></A><PRE>
+          <FONT SIZE="2"><I>/* [XLNoweZadanieTERMINARZ] */</I><BR>
+CREATE PROCEDURE [CDN].[XLNoweZadanieTERMINARZ]
+
+		
+
+        @Kod                                    varchar(40),
+        @Nazwa                                  varchar(128),
+        @OpeTyp                                 smallint, --TID: 146462
+        @OpeNumer                               int, -- operator tworzący i od razu modyfikujący zadanie
+
+
+
+        @Priorytet                              int = NULL,
+        @Opis                                   varchar(1024) = NULL,
+        @Przypomnienie                  tinyint = NULL,
+        @CzasPrzypomnienia              int = NULL, --ilosc sekund
+        @CzasPrzypomnieniaJedn  tinyint = NULL, --0 - sekundy, 1 - minuty, 2 - godziny, 3 - dni, 4 - tygodnie
+        @CzasUtworzenia                 int = NULL,--varchar(16) = NULL,
+        --@OpeUNumer                            int = NULL,
+        --@CzasModyfikacji              int = NULL,
+        --@OpeMNumer                            int = NULL,
+        --@CzasWykonania                        int = NULL,
+        --@OpeWNumer                            int = NULL,
+        @TerminOd                               int = NULL,--varchar(16) = NULL,
+        @TerminDo                               int = NULL,--varchar(16) = NULL,
+        @CzasPlanowany                  int = NULL, --podajemy ilość sekund, a procedura sama uwględni czas w terminie
+        @CzasPlanowanyJedn              tinyint = NULL, -- 0 - sekundy, 1 - minuty, 2 - godziny, 3 - dni, 4 - tygodnie
+        @PowtarzajCo                    int = NULL,
+        @PowtarzajOkres                 tinyint = NULL, -- 0 - dni, 1 - tygodnie, 2 - miesiące, 3 - kwartały, 4 - lata
+        @RezerwujCzas                   tinyint = NULL,
+        @ZrdTyp                                 smallint = NULL,
+        @ZrdNumer                               int = NULL,
+        @ZrdLp                                  smallint = NULL,
+        @ZrdPytania                             int = NULL, -- gdy, -1 to pole to bedzie miało id dodawanego zadania.
+        @OkresId                                int = NULL,
+        @Notatki                                varchar(256) = NULL,
+        @Cykliczne                              tinyint = NULL,
+        @OpeIdent                               varchar(8) = NULL,
+        @ObiTyp                                 smallint = NULL,
+        @ObiNumer                               int = NULL,
+        @OpePrcJakoObiekt               tinyint = NULL, --czy od razu dodać jako obiekt pracownika związanego z operatorem
+		@NodDwdId						int = NULL,
+		@NodDdsId						int = NULL,		
+		@CalyDzien						tinyint = NULL,
+		@Lokalizacja					varchar(255) = NULL,
+		@SpotkanieO						tinyint = NULL,
+		@Synchronizuj					tinyint = NULL,
+		@IgnorujBledy                   tinyint = NULL,
+		@IgnorujTranWew					tinyint = NULL
+
+AS
+
+
+declare @Now                            int
+declare @ZadId                          int
+declare @PrcNumer                       int --pracownik przypisany do @OpeNumer
+declare @Blad                           int
+DECLARE @_TRANCOUNT                     int
+
+
+
+if @Kod is null
+        set @Kod = ''
+if @Nazwa is null
+        set @Nazwa = ''
+if @OpeNumer is null
+        set @OpeNumer = 0
+if @OpeTyp is null or @OpeTyp=0
+begin
+        if @OpeNumer&gt;0
+                set @OpeTyp     = 128
+    else
+                set @OpeTyp = 0
+end
+
+SET NOCOUNT ON
+
+
+set @Now = datediff(s,'19900101',getdate())
+SELECT @_TRANCOUNT=@@TRANCOUNT;
+
+
+if ltrim(@Kod) = ''
+                begin
+                        if @IgnorujBledy is null
+                                raiserror('Nie podano kodu zadania terminarza - (-1)',16,1)
+                        return -1
+                end
+else
+        set @Kod = upper(ltrim(@Kod))
+
+
+
+if ltrim(@Nazwa) = ''
+                begin
+                        if @IgnorujBledy is null
+                                raiserror('Nie podano nazwy zadania terminarza - (-2)',16,1)
+                        return -2
+                end
+else
+        set @Nazwa = ltrim(@Nazwa)
+
+
+
+if @OpeTyp=     944
+        begin
+        if not exists(select * from cdn.prckarty where Prc_GIDNumer = @OpeNumer)
+                begin
+                        if @IgnorujBledy is null
+                                raiserror('Nie znaleziono pracownika - (-3)',16,1)
+                        return -3
+                end
+        end
+else
+        if not exists(select * from cdn.opekarty where Ope_GIDNumer = @OpeNumer and Ope_Zablokowane &lt;&gt; 1)
+                begin
+                        if @OpeIdent is not null and exists(select * from cdn.opekarty where Ope_Ident = @OpeIdent and Ope_Zablokowane &lt;&gt; 1)
+                                select @OpeNumer = Ope_GIDNumer from cdn.opekarty where Ope_Ident = @OpeIdent
+                        else
+                                begin
+                                        if @IgnorujBledy is null
+                                                raiserror('Nie znaleziono operatora - (-3)',16,1)
+                                        return -3
+                                end
+                end
+
+
+
+if @OpePrcJakoObiekt &gt; 0 and @OpePrcJakoObiekt is not null and @OpeTyp=128
+        select @PrcNumer = isnull((select Ope_PrcNumer from cdn.OpeKarty where Ope_GidNumer = @OpeNumer),0)
+
+
+
+if @ZrdTyp = 0 or @ZrdTyp is null
+        select @ZrdNumer = 0, @ZrdLp = 0, @ZrdTyp = 0
+else
+        if @ZrdTyp = 339 --Typ_Konwersacja
+                begin
+                        if not exists(select * from cdn.SrsElem where Sse_GidNumer = @ZrdNumer and Sse_GidLp = @ZrdLp)
+                                begin
+                                        if @IgnorujBledy is null
+                                                raiserror('Nie znaleziono źródła zadania - (-6)',16,1)
+                                        return -6
+                                end
+                end
+        else
+                if @ZrdLP = 0 and @ZrdTyp = 4347 --Typ_KartaPracyZlecenia
+                        begin
+                                if not exists(select * from cdn.ZRNKartyPracy where Zrk_GidNumer = @ZrdNumer)
+                                        begin
+                                                if @IgnorujBledy is null
+                                                        raiserror('Nie znaleziono źródła zadania - (-6)',16,1)
+                                                return -6
+                                        end
+                        end
+                else
+                        if @ZrdLP = 0 and @ZrdTyp = 14345 --Typ_ProdCzynnosci
+                                begin
+                                        if not exists(select * from cdn.ProdCzynnosciTerminy where Pct_Id = @ZrdNumer)
+                                                begin
+                                                        if @IgnorujBledy is null
+                                                                raiserror('Nie znaleziono źródła zadania - (-6)',16,1)
+                                                        return -6
+                                                end
+                                end
+                        else
+                                if @ZrdLP = 0 and @ZrdTyp = 12293 --Typ_WFLZadanie
+                                        begin
+                                                if not exists(select * from cdn.WF_Zadania where Wfz_Id = @ZrdNumer)
+                                                        begin
+                                                                if @IgnorujBledy is null
+                                                                        raiserror('Nie znaleziono źródła zadania - (-6)',16,1)
+                                                                return -6
+                                                        end
+                                        end
+                                else
+                                        if @ZrdLP = 0 and @ZrdTyp = 14460 --Typ_Ankieta
+                                                begin
+                                                        if not exists(select * from cdn.Ankiety where Ant_Id = @ZrdNumer)
+                                                                begin
+                                                                        if @IgnorujBledy is null
+                                                                                raiserror('Nie znaleziono źródła zadania - (-6)',16,1)
+                                                                        return -6
+                                                                end
+                                                end
+                                        else
+                                                if @ZrdLP = 0 and @ZrdTyp = 4702 --Typ_SZC
+                                                        begin
+                                                                if not exists(select * from cdn.SrwZlcCzynnosciTerminy where Szt_Id = @ZrdNumer)
+                                                                        begin
+                                                                                if @IgnorujBledy is null
+                                                                                        raiserror('Nie znaleziono źródła zadania - (-6)',16,1)
+                                                                                return -6
+                                                                        end
+                                                        end
+                                                else
+                                                        if @ZrdLP = 0 and @ZrdTyp = 341 --Typ_KontrahentWEtapie
+                                                                begin
+                                                                        if not exists(select * from cdn.CRMKntEtapy where CEK_ID = @ZrdNumer)
+                                                                                begin
+                                                                                        if @IgnorujBledy is null
+                                                                                                raiserror('Nie znaleziono źródła zadania - (-6)',16,1)
+                                                                                        return -6
+                                                                                end
+                                                                end
+                                                        else
+                                                                if @ZrdLP = 0 and @ZrdTyp = 4180 --Typ_WH
+                                                                        begin
+                                                                                if not exists(select * from cdn.CRMWizytyNag where CWN_ID = @ZrdNumer)
+                                                                                        begin
+                                                                                                if @IgnorujBledy is null
+                                                                                                        raiserror('Nie znaleziono źródła zadania - (-6)',16,1)
+                                                                                                return -6
+                                                                                        end
+                                                                        end
+                                                                else
+                                                                        if @ZrdLP = 0 and @ZrdTyp = 2984 --Typ_DLG
+                                                                                begin
+                                                                                        if not exists(select * from cdn.Delegacje where DLG_GIDNumer = @ZrdNumer)
+                                                                                                begin
+                                                                                                        if @IgnorujBledy is null
+                                                                                                                raiserror('Nie znaleziono źródła zadania - (-6)',16,1)
+                                                                                                        return -6
+                                                                                                end
+                                                                                end
+
+                                                                        else
+                                                                                begin
+                                                                                        if @IgnorujBledy is null
+                                                                                                raiserror('Nie znaleziono źródła zadania - (-6)',16,1)
+                                                                                        return -6
+                                                                                end
+
+
+if @RezerwujCzas is null or @RezerwujCzas not in (0,1)
+        set @RezerwujCzas = 0
+
+
+
+/* TFS: 77563
+if @RezerwujCzas=1 and exists(select * from cdn.Zadania where Zad_TerminOd = @TerminOd and Zad_TerminDo = @TerminDo and Zad_Kod  like '%'+ @Kod + '%')
+        begin
+                if @IgnorujBledy is null
+                        raiserror('Istnieje już zadanie o danym kodzie i w danym terminie - (-7)',16,1)
+                return -7
+        end
+*/
+
+
+
+if @CzasPlanowany is null
+        set @CzasPlanowany = 0
+if @CzasPlanowanyJedn is null or @CzasPlanowanyJedn not in (0,1,2,3,4)
+        set @CzasPlanowanyJedn = 0
+
+
+
+if @TerminOd is not null and @TerminDo is null
+        set @TerminDo = @TerminOd + @CzasPlanowany
+
+if @TerminDo is not null and @TerminOd is null
+        set @TerminOd = @TerminDo - @CzasPlanowany
+
+if @TerminOd is null or @TerminDo is null
+        select @TerminOd = @Now, @TerminDo = @Now + @CzasPlanowany
+
+if @TerminOd &gt; @TerminDo
+        set @TerminDo = @TerminOd
+
+if @TerminDo &lt; @TerminOd
+        set @TerminOd = @TerminDo
+
+if @CzasUtworzenia is null
+        set @CzasUtworzenia = @Now
+
+
+
+if @Priorytet is null or @Priorytet not in (10, 20 ,30)
+        set @Priorytet = 20
+
+
+
+if @Przypomnienie &lt;&gt; 1 or @CzasPrzypomnienia is null or @CzasPrzypomnieniaJedn is null or @CzasPrzypomnieniaJedn not in (0,1,2,3,4)
+        select @Przypomnienie = 0, @CzasPrzypomnienia = 0, @CzasPrzypomnieniaJedn = 0
+
+
+
+if @PowtarzajCo is null or @PowtarzajOkres is null or @PowtarzajOkres not in (0,1,2,3,4)
+        select @PowtarzajCo = 0, @PowtarzajOkres = 0, @Cykliczne = 0
+
+if @Cykliczne is null or @Cykliczne not in (0,1)
+        set @Cykliczne = 0
+
+
+
+if @ObiTyp = 32
+        begin
+                if not exists(select * from cdn.KntKarty where Knt_GIdNumer = @ObiNumer) --sprawdzać czy knt_archiwalny?
+                        select @ObiTyp = 0, @ObiNumer = 0
+        end
+else
+        if @ObiTyp = 944
+                begin
+                        if not exists(select * from cdn.PrcKarty where Prc_GIdNumer = @ObiNumer) --sprawdzać czy prc_archiwalny?
+                                select @ObiTyp = 0, @ObiNumer = 0
+                end
+        else
+                if @ObiTyp = 944 -- dodać dane osobowe?
+                        begin
+                                if not exists(select * from cdn.PrcKarty where Prc_GIdNumer = @ObiNumer) --sprawdzać czy prc_archiwalny?
+                                        select @ObiTyp = 0, @ObiNumer = 0
+                        end
+                else
+                        select @ObiTyp = 0, @ObiNumer = 0
+
+
+
+if @OkresId is null or not exists(select * from cdn.AnkietyOkresy where AnO_Id=@OkresId)
+        set @OkresId = 0
+
+if @CalyDzien is null or @CalyDzien not in (0,1)
+        set @CalyDzien = 0
+
+if @Synchronizuj is null or @Synchronizuj not in (0,1)
+        set @Synchronizuj = 0
+
+if @SpotkanieO is null or @SpotkanieO not in (0,1)
+        set @SpotkanieO = 0
+
+
+if @IgnorujTranWew is null
+begin 
+	IF @_TRANCOUNT&gt;0 SAVE TRANSACTION XLNoweZadanieTERMINARZ;
+	ELSE BEGIN TRANSACTION XLNoweZadanieTERMINARZ;
+end
+
+
+insert into cdn.Zadania(
+Zad_Kod,
+Zad_Nazwa,
+Zad_Priorytet,
+Zad_Opis,
+Zad_Przypomnienie,
+Zad_CzasPrzypomnienia,
+Zad_CzasPrzypomnieniaJedn,
+Zad_CzasUtworzenia,
+Zad_OpeUTyp,
+Zad_OpeUNumer,
+Zad_CzasModyfikacji,
+Zad_OpeMTyp,
+Zad_OpeMNumer,
+Zad_CzasWykonania,
+Zad_OpeWTyp,
+Zad_OpeWNumer,
+Zad_TerminOd,
+Zad_TerminDo,
+Zad_CzasPlanowanyJedn,
+Zad_PowtarzajCo,
+Zad_PowtarzajOkres,
+Zad_RezerwujCzas,
+Zad_ZrdTyp,
+Zad_ZrdNumer,
+Zad_ZrdLp,
+Zad_ObiTyp,
+Zad_ObiNumer,
+Zad_ZrdPytania,
+Zad_OkresId,
+Zad_Notatki,
+Zad_Cykliczne,
+Zad_Aktywny,
+Zad_NodDwdId,
+Zad_NodDdsId,
+Zad_CalyDzien,
+Zad_Lokalizacja,
+Zad_SpotkanieO,
+Zad_Synchronizuj
+)values(
+@Kod, --Zad_Kod
+@Nazwa, --Zad_Nazwa
+@Priorytet, --Zad_Priorytet
+isnull(@Opis,''), --Zad_Opis
+@Przypomnienie, --Zad_Przypomnienie
+@CzasPrzypomnienia, --Zad_CzasPrzypomnienia
+@CzasPrzypomnieniaJedn, --Zad_CzasPrzypomnieniaJedn
+@CzasUtworzenia, --Zad_CzasUtworzenia
+@OpeTyp, --Zad_OpeUTyp
+@OpeNumer, --Zad_OpeUNumer
+@CzasUtworzenia, --Zad_CzasModyfikacji
+@OpeTyp, --Zad_OpeMTyp
+@OpeNumer, --Zad_OpeMNumer
+0, --Zad_CzasWykonania
+0, --Zad_OpeWTyp
+0, --Zad_OpeWNumer
+@TerminOd, --Zad_TerminOd
+@TerminDo, --Zad_TerminDo
+@CzasPlanowanyJedn, --Zad_CzasPlanowanyJedn
+@PowtarzajCo, --Zad_PowtarzajCo
+@PowtarzajOkres, --Zad_PowtarzajOkres
+@RezerwujCzas, --Zad_RezerwujCzas
+@ZrdTyp, --Zad_ZrdTyp
+@ZrdNumer, --Zad_ZrdNumer
+@ZrdLp, --Zad_ZrdLp
+isnull(@ObiTyp,0), --Zad_ObiTyp
+isnull(@ObiNumer,0), --Zad_ObiNumer
+isnull(@ZrdPytania,0), --Zad_ZrdPytania
+@OkresId, --Zad_OkresId
+isnull(@Notatki,''), --Zad_Notatki
+@Cykliczne, --Zad_Cykliczne
+0, --Zad_Czy_Aktywny
+isnull(@NodDwdId,0), --Zad_NodDwdId
+isnull(@NodDdsId,0), --Zad_DdsId
+@CalyDzien, --Zad_CalyDzien
+isnull(@Lokalizacja,''), --Zad_Lokalizacja
+@SpotkanieO, --Zad_SpotkanieO
+@Synchronizuj --Zad_Synchronizuj
+
+)
+if @@error &lt;&gt; 0
+        begin
+		       if @IgnorujTranWew is null
+			   begin
+					IF XACT_STATE()&lt;&gt;0 rollback tran XLNoweZadanieTERMINARZ
+               end 
+               if @IgnorujBledy is null
+                       raiserror('Błąd podczas dodawania zadania do terminarza - (-33)', 16, 1)
+               return -33
+        end
+
+select @ZadId = scope_identity()
+if @@error &lt;&gt; 0
+        begin
+		        if @IgnorujTranWew is null
+				begin
+					IF XACT_STATE()&lt;&gt;0 rollback tran XLNoweZadanieTERMINARZ
+                end 
+                if @IgnorujBledy is null
+                        raiserror('Błąd podczas pobierania numeru zadania terminarza - (-45)',16,1)
+                return -45
+        end
+
+
+
+if @ZrdPytania = -1
+        update cdn.Zadania set Zad_ZrdPytania = @ZadId where Zad_Id = @ZadId
+
+
+
+if @OpePrcJakoObiekt &gt; 0 and @OpePrcJakoObiekt is not null and @PrcNumer &gt; 0
+        exec @Blad = CDN.XLDodajObiektDoZadaniaTERMINARZ @ZadId = @ZadId, @ObiTyp = 944, @ObiNumer = @PrcNumer, 
+        @CzasUtworzenia = @CzasUtworzenia
+
+        if @Blad &lt; 0
+                begin
+				        if @IgnorujTranWew is null
+						begin
+							IF XACT_STATE()&lt;&gt;0 rollback tran XLNoweZadanieTERMINARZ
+                        end
+                        if @IgnorujBledy is null
+                                raiserror('Błąd podczas dodawania pracownika do zadania terminarza - (-46)',16,1)
+                        return -46
+                end
+
+
+if @IgnorujTranWew is null
+begin
+	IF @_TRANCOUNT=0 COMMIT TRAN XLNoweZadanieTERMINARZ
+end
+
+SET NOCOUNT OFF
+RETURN @ZadId
+
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

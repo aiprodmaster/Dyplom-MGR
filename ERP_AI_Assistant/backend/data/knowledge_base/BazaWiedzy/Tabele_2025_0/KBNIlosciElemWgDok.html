@@ -1,0 +1,127 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="KBNIlosciElemWgDok"></A><PRE>
+          <FONT SIZE="2"><I>/* KBNIlosciElemWgDok */</I><BR>
+create function CDN.KBNIlosciElemWgDok(@_typRW smallint,@_numerRW integer,@_lpRW smallint,@_magNumerRW integer,@_cenaRW decimal(15,4),
+										@_typPW smallint,@_numerPW integer,@_lpPW smallint,@_magNumerPW integer,@_cenaPW decimal(15,4))
+returns @table table(
+	iloscRW decimal(11,4),
+	iloscPW decimal(11,4)
+	)			
+as
+begin
+	declare @tabletmp table(
+	  utwtyp smallint,            -- pozycja wynikająca z/"utworzona" na dokumencie o GID Typ
+	  utwnumer int,               -- pozycja wynikająca z/"utworzona" na dokumencie o GID Numer
+	  utwlp smallint,			  -- pozycja wynikająca z/"utworzona" na dokumencie o GID Lp
+	  utwsublp smallint,		  -- pozycja wynikająca z/"utworzona" na dokumencie o GID SubLp
+	  orgtyp smallint,            -- pobrane z trs_orgtyp
+	  orgnumer int,               -- pobrane z trs_orgnumer
+	  orglp smallint,             -- pobrane z trs_orglp
+	  orgsublp smallint,		  -- pobrane z trs_suborglp	
+	  zwrtyp smallint,            -- pobrane z trs_zwrtyp
+	  zwrnumer int,               -- pobrane z trs_zwrnumer
+	  zwrlp smallint,             -- pobrane z trs_zwrlp
+	  zwrsublp smallint,          -- pobrane z trs_subzwrlp
+	  twrnumer int,               -- twr_gidnumer
+	  ilosc decimal(11,4),		  -- ilosc 
+	  jm varchar(8),			  -- jednostka 
+	  koszt decimal(15,4),        -- koszt
+	  magnumer int 				  -- mag GIDNumer
+	  )
+
+	-- łańcuch dla elementów z dokumentów
+    declare @Dokumenty table (
+        Lp int identity(1,1),
+        GidTyp int,
+        GidNumer int,
+        ZwrTyp int,
+        ZwrNumer int,
+        Poziom int
+    );
+	
+	with DrzewoDok as (
+		select TrN_GidTyp as GIDTyp, TrN_GIDNumer as GIDNumer,TrN_ZwrTyp as ZwrTyp, TrN_ZwrNumer as ZwrNumer, 1 as Poziom
+			from CDN.TraNag 
+			where TrN_GIDNumer in(@_numerRW,@_numerPW) 
+	
+			union all
+	
+			select TrN_GIDTyp as GIDTyp, TrN_GIDNumer as GIDNumer, TrN_ZwrTyp as ZwrTyp , TrN_ZwrNumer as ZwrNumer, Poziom+1 as Poziom 
+			from DrzewoDok
+			inner join CDN.TraNag on TrN_GidNumer=ZwrNumer
+			where not TrN_GIDNumer in(@_numerRW,@_numerPW)
+	)
+	insert into @Dokumenty(GidTyp,GidNumer,ZwrTyp,ZwrNumer,Poziom)
+	select GidTyp,GidNumer,ZwrTyp,ZwrNumer,Poziom from DrzewoDok;
+
+	with DrzewoPoziomy as (
+		select GidTyp as Typ,GidNumer as Numer,1 as Poz
+		from @Dokumenty
+		where GidTyp&amp;8=0
+
+		union all
+
+		select GidTyp as Typ,GidNumer as Numer, Poz+1 as Poz
+		from DrzewoPoziomy 
+		inner join @Dokumenty on Numer=ZwrNumer and GidTyp&amp;8=8
+		)
+	update @Dokumenty set Poziom = Poz
+	from DrzewoPoziomy where gidnumer=Numer 
+
+	declare @i int=1;
+	declare @maxPoziom int;
+	select @maxPoziom=isnull(max(Poziom),1) from @Dokumenty
+
+	while @i&lt;=@maxPoziom
+	begin
+		merge @tabletmp as t
+		using (select distinct trs.TrS_GidTyp, trs.TrS_GidNumer, trs.TrS_GidLp, trs.TrS_SubGidLp, trs.TrS_ZwrTyp, trs.TrS_ZwrNumer, trs.TrS_ZwrLp, trs.TrS_SubZwrLp,
+					trs.TrS_Ilosc, Twr_Jm, trs.TrS_KosztKsiegowy, trs.TrS_MagNumer,
+					TrE_TwrNumer, org.TrN_ZwrTyp, org.TrN_ZwrNumer, trs.TrS_OrgTyp, trs.TrS_OrgNumer, trs.TrS_OrgLp,trs.TrS_SubOrgLp, TrE_Cena
+                from cdn.TraSElem trs
+				join cdn.TraElem on trs.TrS_GidNumer=TrE_GidNumer and TrE_GidLp=trs.TrS_GidLp 								
+				join cdn.TraNag org on TrE_GidNumer = org.TrN_GidNumer
+				join cdn.TwrKarty on TrE_TwrNumer=Twr_GidNumer
+				join @Dokumenty on GidNumer=org.TrN_GidNumer 				
+				where Poziom=@i and ((trs.TrS_OrgNumer=@_numerRW and trs.TrS_OrgLp=@_lpRW) or (trs.TrS_OrgNumer=@_numerPW and trs.TrS_OrgLp=@_lpPW))
+					) as s on t.utwNumer=s.TrS_ZwrNumer and t.utwLp=s.TrS_ZwrLp and t.utwSublp = s.TrS_SubZwrLp and s.Trs_GidLp&gt;0
+		when matched and t.ilosc+s.TrS_Ilosc=0 then
+			delete
+		when matched then
+			update set ilosc=t.ilosc+s.TrS_Ilosc
+						,koszt = t.koszt+s.TrS_KosztKsiegowy
+		when not matched then
+			insert(utwTyp,utwNumer,utwLp,utwsublp,orgTyp,orgNumer,orgLp,orgsublp,zwrTyp,zwrNumer,zwrLp,zwrsublp,twrNumer,ilosc,jm,koszt,magnumer)
+			values(TrS_GidTyp,TrS_GidNumer,TrS_GidLp,TrS_SubGidLp,TrS_OrgTyp,TrS_OrgNumer,TrS_OrgLp, TrS_SubOrgLp,
+				TrS_ZwrTyp,TrS_ZwrNumer,TrS_ZwrLp,TrS_SubZwrLp,TrE_TwrNumer,TrS_Ilosc,Twr_Jm,TrS_KosztKsiegowy,TrS_magnumer);
+		set @i=@i+1
+	end	 
+
+	insert into @table(iloscRW,iloscPW)
+	select sum(isnull(A.sumailoscRW,0)) as iloscRW,sum(isnull(A.sumailoscPW,0)) as iloscPW
+	from (select sum(case when utwTyp=1616 or utwTyp=1624 then isnull(ilosc,0) else 0 end) sumailoscRW,
+			sum(case when utwTyp=1617 or utwTyp=1625 then isnull(ilosc,0) else 0 end) sumailoscPW,
+			round(koszt/ilosc,4) cena,utwTyp,utwNumer,utwLp,orgTyp,orgNumer,orgLp,zwrTyp,zwrNumer,zwrLp,twrNumer,jm,magnumer 
+		from @tabletmp
+		group by utwTyp,utwNumer,utwLp,orgTyp,orgNumer,orgLp,zwrTyp,zwrNumer,zwrLp,twrNumer,jm,round(koszt/ilosc,4),magnumer) A
+	where (A.utwtyp = @_typRW and A.utwnumer = @_numerRW and A.utwlp = @_lpRW and A.magnumer = @_magNumerRW and A.cena = @_cenaRW)
+		or (A.utwtyp = @_typPW and A.utwnumer = @_numerPW and A.utwlp = @_lpPW and A.magnumer = @_magNumerPW and A.cena = @_cenaPW)
+
+return 
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

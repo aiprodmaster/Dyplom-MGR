@@ -1,0 +1,122 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="RKOListaDokZw"></A><PRE>
+          <FONT SIZE="2"><I>/* RKOListaDokZw */</I><BR>
+CREATE FUNCTION CDN.RKOListaDokZw
+(
+	@p_RKOId	INTEGER,	-- Identyfikator okresu knt przypisanego do rabatu retrospektywnego
+	@p_Waluta	VARCHAR(3),  -- Wartosc w jakiej ma być zwracana kolumna NettoWiazWal - Netto związana - np. rkt_Waluta	
+	@p_WalutaSystemowa	VARCHAR(3)  -- Waluta systemowa	
+)
+RETURNS TABLE
+AS
+
+	RETURN 
+	SELECT DokTyp, DokFirma, DokNumer, 0 as DokLp, NrDok, Data, Akronim,
+	NettoDok, NettoWiaz,
+	CASE WHEN upper(@p_Waluta)=upper(@p_WalutaSystemowa) 
+		then NettoWiazWal 
+		else CASE WHEN upper(Waluta)=upper(@p_Waluta) and DokTyp in (2037, 2045, 2005, 2013) /*FSE, FKE, WZE, WKE*/ 
+				then NettoWiazWal 
+				else convert(decimal(15,2),NettoWiazWal/Kurs) 
+				END 
+	end as NettoWiazWal, Waluta, TrNTyp, TrNLp, /*ZwrTyp, ZwrFirma, ZwrNumer, ZwrLp,*/ SpiTyp, Fiskalny, Stan, Aktywny, Zaksiegowano, KonTyp, DokumentObcy
+	FROM 
+	(
+		SELECT DokTyp, DokFirma, DokNumer, 0 as DokLp, NrDok, Data, Akronim,
+		NettoDok,
+		CASE WHEN Elementy=0 THEN NettoDok ELSE NettoWiaz END as NettoWiaz,
+		CASE WHEN upper(Waluta)=upper(@p_Waluta) then (case when Elementy=0 then NettoDok else NettoWiaz end) else NettoWiazWal END as NettoWiazWal,
+		Waluta, Elementy, Kurs, TrNTyp, TrNLp, /*ZwrTyp, ZwrFirma, ZwrNumer, ZwrLp,*/ SpiTyp, Fiskalny, Stan, Aktywny, Zaksiegowano, KonTyp, DokumentObcy
+		FROM
+			(SELECT DokTyp, DokFirma, DokNumer,
+			CDN.NumerDokumentuZ(TrN_GidTyp,TrN_SpiTyp,TrN_TrNTyp,TrN_TrNNumer,TrN_TrNRok,TrN_TrNSeria,TrN_TrNMiesiac,TrN_ZwrTyp,TrN_ZwrNumer,default) as NrDok,
+			TrN_Data2 as Data,
+			IsNull(Knt_Akronim,'') as Akronim,
+			--Netto dokumentu
+			CASE WHEN TrN_GIDTyp in (2037, 2045, 2005, 2013, 10229, 10237, /*2045, */ 1828, 1836)  --FSE, FKE, WZE, WKE, (S)FSE, (S)FKE, (Z)FKE, FEL, KEL
+			THEN
+				CASE WHEN TrN_FlagaNB='N' 
+				THEN TrN_WartoscWal
+				ELSE 
+					case when TrN_NettoP+TrN_VatP&lt;&gt;0 
+						then convert(decimal(15,2),TrN_WartoscWal-(TrN_VatP*(TrN_KursM/TrN_KursL)))
+						else convert(decimal(15,2),TrN_WartoscWal-(TrN_VatR*(TrN_KursM/TrN_KursL)))
+					end
+				END
+			ELSE
+				TrN_NettoP+TrN_NettoR
+			END as NettoDok,
+			--Wartosc powiazana netto
+			CASE WHEN Elementy=0
+			THEN null -- Nie liczymy - to będzie NettoDok
+			ELSE 
+				case when TrN_GIDTyp in (2037, 2045, 2005, 2013)  --FSE, FKE, WZE, WKE
+				then 
+					CASE WHEN TrN_FlagaNB='N' 
+					THEN (SELECT SUM(Tre_WartoscPoRabacie) 
+						FROM CDN.DokZwiazane 
+						JOIN CDN.TraElem ON TrE_GIDNumer=DoZ_DokNumer AND TrE_GIDLp=DoZ_DokLp AND TrE_GIDTyp=DoZ_DokTyp 
+						WHERE DoZ_ZRDNumer=@p_RKOId AND DoZ_ZRDTyp=5114 AND DoZ_ZRDLp=0 AND DoZ_DOKNumer=DokNumer AND DoZ_DOKTyp=DokTyp)
+
+					ELSE (SELECT SUM(convert(decimal(15,2),Tre_WartoscPoRabacie*100/(100+TrE_StawkaPod))) 
+						FROM CDN.DokZwiazane 
+						JOIN CDN.TraElem ON TrE_GIDNumer=DoZ_DokNumer AND TrE_GIDLp=DoZ_DokLp AND TrE_GIDTyp=DoZ_DokTyp 
+						WHERE DoZ_ZRDNumer=@p_RKOId AND DoZ_ZRDTyp=5114 AND DoZ_ZRDLp=0 AND DoZ_DOKNumer=DokNumer AND DoZ_DOKTyp=DokTyp)
+
+					END
+						
+				else (SELECT SUM(TrE_KsiegowaNetto) 
+						FROM CDN.DokZwiazane 
+						JOIN CDN.TraElem ON TrE_GIDNumer=DoZ_DokNumer AND TrE_GIDLp=DoZ_DokLp AND TrE_GIDTyp=DoZ_DokTyp 
+						WHERE DoZ_ZRDNumer=@p_RKOId AND DoZ_ZRDTyp=5114 AND DoZ_ZRDLp=0 AND DoZ_DOKNumer=DokNumer AND DoZ_DOKTyp=DokTyp) 
+				end
+			END as NettoWiaz,
+			--Wartosc powiazana netto w walucie
+			CASE WHEN @p_Waluta=TrN_Waluta
+			THEN null  -- Nie liczymy - to będzie NettoWiaz
+			ELSE 
+				case when Elementy=0
+				then TrN_NettoP+TrN_NettoR
+				else
+					(SELECT SUM(TrE_KsiegowaNetto) 
+						FROM CDN.DokZwiazane 
+						JOIN CDN.TraElem ON TrE_GIDNumer=DoZ_DokNumer AND TrE_GIDLp=DoZ_DokLp AND TrE_GIDTyp=DoZ_DokTyp 
+						WHERE DoZ_ZRDNumer=@p_RKOId AND DoZ_ZRDTyp=5114 AND DoZ_ZRDLp=0 AND DoZ_DOKNumer=DokNumer AND DoZ_DOKTyp=DokTyp) 
+				end
+			END as NettoWiazWal,
+			TrN_Waluta as Waluta,
+			Elementy,
+			case when @p_Waluta=@p_WalutaSystemowa 
+				then 1.0 
+				else case when DokTyp in (2037, 2045, 2005, 2013) or upper(TrN_Waluta)&lt;&gt;upper(@p_Waluta) 
+						then ISNULL((SELECT top 1 WaE_KursL/WaE_KursM FROM CDN.WalElem WHERE WaE_Symbol = @p_Waluta AND WaE_Lp = TrN_NrKursu AND WaE_KursTS&lt;=((TrN_Data3-69035)*86400) ORDER BY -WaE_KursTS),1.0) 
+						else TrN_KursL/TrN_KursM 
+						end 
+				end as Kurs,
+			TrN_TrNTyp as TrNTyp, TrN_TrNLp as TrNLp, /*TrN_ZwrTyp as ZwrTyp, TrN_ZwrFirma as ZwrFirma, TrN_ZwrNumer as ZwrNumer, TrN_ZwrLp as ZwrLp,*/ TrN_SpiTyp as SpiTyp, 
+			TrN_Fiskalny as Fiskalny, TrN_Stan as Stan, TrN_Aktywny as Aktywny, TrN_Zaksiegowano as Zaksiegowano, TrN_KonTyp as KonTyp, TrN_DokumentObcy as DokumentObcy
+			FROM (
+				SELECT DoZ_DOKTyp as DokTyp, DOZ_DOKFirma as DokFirma, DoZ_DOKNumer as DokNumer, case when DoZ_DOKLp&gt;0 then 1 else 0 end as Elementy
+				FROM CDN.DokZwiazane
+				WHERE DoZ_ZRDNumer=@p_RKOId AND DoZ_ZRDTyp=5114 AND DoZ_ZRDLp=0
+				GROUP BY DoZ_DOKTyp, DOZ_DOKFirma, DoZ_DOKNumer, case when DoZ_DOKLp&gt;0 then 1 else 0 end) DOK
+			JOIN CDN.TraNag ON TrN_GIDNumer=DOK.DokNumer AND TrN_GIDTyp=DOK.DokTyp
+			LEFT JOIN CDN.KntKarty ON Knt_GIDNumer=TrN_KntNumer AND Knt_GidTyp=TrN_KntTyp
+		) Q1
+	) Q2
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

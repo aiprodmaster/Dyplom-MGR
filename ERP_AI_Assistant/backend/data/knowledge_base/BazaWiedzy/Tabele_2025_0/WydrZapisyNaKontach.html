@@ -1,0 +1,196 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Usuwanie funkcji WydrZapisyNaKontach"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Usuwanie funkcji WydrZapisyNaKontach */</I><BR>
+IF EXISTS (SELECT name  FROM sysobjects WHERE name = 'WydrZapisyNaKontach' AND type = 'P')
+  DROP PROCEDURE CDN.WydrZapisyNaKontach
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie funkcji WydrZapisyNaKontach"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie funkcji WydrZapisyNaKontach */</I><BR>
+CREATE      PROCEDURE CDN.WydrZapisyNaKontach
+@KontoOD varchar(50),
+@KontoDO varchar(50),
+@DataStart int,
+@DataKoniec int,
+@KsiegaGlowna smallint,
+@Bilansowe smallint,
+@Syntetyczne smallint,
+@KontaBezZapisow smallint,
+@KontoMaska smallint = 0,				-- 0 - konto, 1 - maska konta
+@MaskaKonta varchar(50) = '',			-- maska konta
+@CDN_FiltrDekrety nvarchar(max) = '',
+@CDN_FiltrWybraneKonta tinyint=0,
+@CDN_OpeNumer int=0
+
+AS
+DECLARE @p_KontoOd varchar(70)
+DECLARE @p_KontoDo varchar(70)
+DECLARE @p_Bilansowe smallint
+DECLARE @p_Bufor varchar(10)
+declare @OkresIDKoniec int
+
+declare @sZapytanie varchar(4000)
+declare @sFiltr varchar(2000)
+
+IF @KsiegaGlowna = 1  Set @p_Bufor = ''
+Else Set @p_Bufor = '%'
+
+
+select @OkresIDKoniec = Okr_ID from cdn.Okresy where @DataKoniec between Okr_Poczatek and Okr_Koniec
+
+
+select
+        @p_KontoOd = KKS_KontoOrd
+from cdn.Konta
+where KKS_OkresID = @OkresIDKoniec and KKS_Konto = @KontoOD
+set @p_KontoOd = ISNULL(@p_KontoOd, 0)
+
+select
+        @p_KontoDo = KKS_KontoOrd
+from cdn.Konta
+where KKS_OkresID = @OkresIDKoniec and KKS_Konto = @KontoDO
+
+set @p_KontoDo = ISNULL(@p_KontoDo, 0)
+
+declare @Konto varchar(30)
+set @Konto = @MaskaKonta
+declare @TypMaskiKonta smallint
+
+
+declare @NumerKlasyKonta int
+declare @TypMaski tinyint
+set @NumerKlasyKonta = 0
+set @TypMaski = 0
+
+if @KontoMaska = 1
+begin
+        if left(@MaskaKonta,1) = '@'
+        begin
+                select @NumerKlasyKonta = Naz_GidLp from cdn.Nazwy where Naz_GIDTyp = 2896 and Naz_Nazwa = substring(@MaskaKonta, 2, len(@MaskaKonta))
+                set @TypMaski = 1
+        end
+        else if charindex('?', @MaskaKonta) &gt; 0 or charindex('*', @MaskaKonta) &gt; 0
+        begin
+                set @MaskaKonta = replace(@MaskaKonta, '?', '_')
+                set @MaskaKonta = replace(@MaskaKonta, '*', '%')
+                set @TypMaski = 2
+        end
+        else if right(RTRIM(@MaskaKonta), 1) &lt;&gt; '%'
+        begin
+                set @MaskaKonta = rtrim(@MaskaKonta) + '%'
+                set @TypMaski = 2
+        end
+        else
+        begin
+                --set @MaskaKonta = ''
+                set @TypMaski = 2
+        end
+end
+else
+    set @TypMaski = 0
+
+IF (@NumerKlasyKonta = 0 AND @TypMaski = 1)
+begin
+    set @MaskaKonta = '%'
+    set @TypMaski = 2
+end
+ELSE IF (@NumerKlasyKonta &lt;&gt; 0 and @TypMaski = 1) or @TypMaski in (0, 2)
+begin
+    if @p_KontoOd = '' and @p_KontoDo = '' and @MaskaKonta = ''
+    begin
+                set @MaskaKonta = '%'
+        set @TypMaski = 2
+    end
+end
+
+
+set @sZapytanie = ''
+
+set @sZapytanie = 'SELECT ' +
+'KKS_Konto, KKS_Nazwa, ' +
+'DEL_Opis as DZK_Opis, ' +
+'DEL_DokumentZrodlowy as DZK_DokumentZrodlowy, ' +
+'CDN.NumerDekretu(Dekrety.DT_Bufor,Dekrety.DT_Dziennik,Dekrety.DT_Rok,Dekrety.DT_Miesiac,DZK_RMNumer,DEL_Pozycja,DZK_Prosty,DZK_OkrSymbol) As NumerDekretu, ' +
+'convert(datetime, convert(varchar,Dekrety.DT_Rok) + ''-'' + convert(varchar,Dekrety.DT_Miesiac) + ''-'' + convert(varchar,Dekrety.DT_Dzien),120 ) As DataDekretu, ' +
+'Dekrety.DT_Konto, ' +
+'Case When Dekrety.DT_DC=1 Then Dekrety.DT_Kwota Else 0 End  As KwotaDt, ' +
+'Case When Dekrety.DT_DC=2 Then Dekrety.DT_Kwota Else 0 End  As KwotaCt, ' +
+'ISNULL(DekretyP.DT_Konto,'''') As KontoPrzeciw, ' +
+'ISNULL(DZK_Identyfikator,'''') As DZK_Identyfikator ' +
+'FROM ' +
+'CDN.Konta ' +
+        'join cdn.KontaLinki ' +
+                'on KKS_GIDNumer = KKL_SynNumer ' +
+        'join cdn.KontaNastLinki ' +
+                'on KKL_KKSNumer = KLI_NastNumer ' +
+        'LEFT OUTER JOIN CDN.Dekrety Dekrety ' +
+                'ON KLI_PoprzNumer = Dekrety.DT_KKSNumer AND DT_DataDekr between ' + convert(varchar(10), @DataStart) + ' and ' + convert(varchar(10), @DataKoniec) + case when @CDN_FiltrDekrety &lt;&gt; '' then ' and ' + REPLACE(@CDN_FiltrDekrety, 'DT_', 'Dekrety.DT_') else '' end + ' ' +
+        'LEFT OUTER JOIN CDN.DziennikElem ' +
+                'ON DEL_GIDNumer=DT_GIDNumer AND DEL_GIDLp=DT_GIDLp ' +
+        'LEFT OUTER JOIN CDN.Dziennik ' +
+                'ON DZK_GIDNumer=DEL_GIDNumer ' +
+        'LEFT OUTER JOIN CDN.Dekrety  DekretyP ' +
+                'ON Dekrety.DT_GIDTyp = DekretyP.DT_GIDTyp AND Dekrety.DT_GIDNumer = DekretyP.DT_GIDNumer AND Dekrety.DT_GIDLp = DekretyP.DT_GIDLp AND Dekrety.DT_Waluta = DekretyP.DT_Waluta AND Dekrety.DT_DC=3-DekretyP.DT_DC ' + case when @CDN_FiltrDekrety &lt;&gt; '' then ' and ' + REPLACE(@CDN_FiltrDekrety, 'DT_', 'DekretyP.DT_') else '' end + ' '
+
+set @sFiltr = ' WHERE ' +
+        'KKS_OkresID = ' + convert(varchar(10), @OkresIDKoniec) + ' ' +
+        'and (Dekrety.DT_GIDNumer is null or Dekrety.DT_GIDNumer is not null and Dekrety.DT_Dziennik &lt;&gt; ''*BO*'' AND Dekrety.DT_Bufor like ''' + @p_Bufor + ''' ) '
+
+if @CDN_FiltrWybraneKonta &gt; 0
+	set @sFiltr = @sFiltr + N' and exists(select 1 from cdn.KontaListaWybrane where KLW_OpeNumer='+CONVERT(varchar,@CDN_OpeNumer)+N' and KLW_KKSKonto=KKS_Konto) ' 
+
+
+IF @Bilansowe = 1
+        set @sFiltr = @sFiltr + ' AND KKS_TypKonta&lt;&gt;6 '
+ELSE
+        set @sFiltr = @sFiltr + ' AND KKS_TypKonta=6 '
+
+IF @Syntetyczne = 1
+        set @sFiltr = @sFiltr + ' AND KKS_SynNumer = 0 '
+ELSE
+        set @sFiltr = @sFiltr + ' AND KKS_Analityka = 1 '
+
+IF @TypMaski = 0
+        set @sFiltr = @sFiltr + ' AND KKS_KontoOrd BETWEEN  ''' + @p_KontoOd + ''' AND ''' + @p_KontoDo + ''' '
+ELSE IF @TypMaski = 1
+        set @sFiltr = @sFiltr + ' AND KKS_Klasa = ' + convert(varchar(20), @NumerKlasyKonta) + ' '
+ELSE IF @TypMaski = 2
+        set @sFiltr = @sFiltr + ' AND KKS_Konto LIKE ''' + @MaskaKonta + ''' '
+
+IF @KontaBezZapisow = 0
+        set @sFiltr = @sFiltr + ' AND Dekrety.DT_GIDTyp IS NOT NULL '
+
+--select @sZapytanie + @sFiltr + ' ORDER BY Dekrety.DT_Rok, Dekrety.DT_Miesiac,Dekrety.DT_Dzien, KKS_KontoOrd '
+
+exec(@sZapytanie + @sFiltr + ' ORDER BY Dekrety.DT_Rok, Dekrety.DT_Miesiac,Dekrety.DT_Dzien, KKS_KontoOrd ')
+
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do funkcji WydrZapisyNaKontach"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do funkcji WydrZapisyNaKontach */</I><BR>
+GRANT EXECUTE ON CDN.WydrZapisyNaKontach TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

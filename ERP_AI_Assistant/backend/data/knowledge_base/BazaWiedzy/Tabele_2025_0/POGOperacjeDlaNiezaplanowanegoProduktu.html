@@ -1,0 +1,123 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="POGOperacjeDlaNiezaplanowanegoProduktu"></A><PRE>
+          <FONT SIZE="2"><I>/* POGOperacjeDlaNiezaplanowanegoProduktu */</I><BR>
+CREATE PROCEDURE CDN.POGOperacjeDlaNiezaplanowanegoProduktu( 
+/* ==========================================================================================
+        Zwraca operacje na technologii domyślnej jakie muszą być zykonane aby móc wyprodukować daną ilość towaru
+	   Mnoznik nie jest mnożnikiem operacji(ignoruje ilość ustawioną bezpośrednio na operacji), odnosi się do ilości na zasobach
+   ========================================================================================== */
+	@TwrNumer INT,
+	@IloscProduktu DECIMAL(15,4)=1,
+	@Technologia INT =0
+)	
+
+AS
+CREATE TABLE #POGOperacjeDlaNiezaplanowanegoProduktuTMP
+(
+PTZ_Id INT,
+IloscWyprodukowano DECIMAL(21,8),
+IloscDoProdukcji DECIMAL(21,8)
+);
+DECLARE 
+@PTZ_Id INT,
+@Ilosc DECIMAL(21,8),
+@PTC_Id INT,
+@Mnoznik DECIMAL(21,8);
+
+WITH OperacjaBazowa
+     AS (
+     SELECT TOP 1 PTC_Id,
+                  coalesce((@IloscProduktu) / NULLIF(PTZ_Ilosc, 0), @IloscProduktu) AS Mnoznik
+
+     FROM CDN.TwrKarty
+          JOIN CDN.ProdTechnologiaCzynnosci ON (PTC_Technologia = Twr_ProdTechnologia AND @Technologia=0) OR (PTC_Technologia = @Technologia AND @Technologia&lt;&gt;0) 
+          JOIN CDN.ProdTechnologiaZasoby Produkt ON PTZ_TechnologiaCzynnosc = PTC_Id
+                                                    AND PTZ_TwrTyp = Twr_GIDTyp
+                                                    AND PTZ_TwrNumer = Twr_GIDNumer
+                                                    AND PTZ_TypZasobu = 0
+     WHERE Twr_GIDTyp = 16
+           AND Twr_GIDNumer = @TwrNumer 
+     ORDER BY PTC_Id DESC)
+
+     INSERT INTO #POGOperacjeDlaNiezaplanowanegoProduktuTMP
+		  (
+		  PTZ_Id,
+		  IloscWyprodukowano, 
+		  IloscDoProdukcji
+		  )
+            SELECT PTZ_ID,
+			    0,
+                   Mnoznik*Surowce.PTZ_Ilosc
+            FROM OperacjaBazowa OB
+				    JOIN CDN.ProdTechnologiaZasoby surowce ON surowce.PTZ_TechnologiaCzynnosc=OB.PTC_Id AND PTZ_TypZasobu=0
+		  ; 
+
+WHILE EXISTS(
+    SELECT * FROM #POGOperacjeDlaNiezaplanowanegoProduktuTMP WZ
+    WHERE IloscDoProdukcji&gt;IloscWyprodukowano)
+BEGIN
+	  SELECT TOP 1 @PTZ_Id=WZ.PTZ_Id, @Ilosc=IloscDoProdukcji-IloscWyprodukowano 
+	   FROM #POGOperacjeDlaNiezaplanowanegoProduktuTMP WZ
+	   WHERE IloscDoProdukcji&gt;IloscWyprodukowano 
+
+	   --poprzednia technologia, mnoznik z produktu
+	   SELECT TOP 1 @PTC_Id=PTZ_TechnologiaCzynnosc, @Mnoznik=@Ilosc/PTZ_Ilosc
+	    FROM CDN.ProdTechnologiaZasoby produkt 
+	   WHERE produkt.PTZ_ID = @PTZ_Id
+
+	   --wprowadzenie surowcow
+	   MERGE #POGOperacjeDlaNiezaplanowanegoProduktuTMP AS target
+		  USING (
+		  SELECT produkt.PTZ_Id, 0,surowiecPozniejszejOperacji.Ptz_Ilosc* @Mnoznik
+			    FROM  cdn.ProdTechnologiaZasoby produkt 
+			    JOIN cdn.ProdTechnologiaZasoby surowiecPozniejszejOperacji ON produkt.PTZ_ID=surowiecPozniejszejOperacji.PTZ_TechnologiaZasob
+			    WHERE surowiecPozniejszejOperacji.PTZ_TechnologiaCzynnosc = @PTC_Id AND surowiecPozniejszejOperacji.PTZ_Zamiennik=0
+			    ) AS source (PTZ_Id, IloscWyprodukowano, IloscDoProdukcji)
+	   ON (target.PTZ_ID=source.PTZ_Id )
+	   WHEN MATCHED THEN
+		  UPDATE SET IloscDoProdukcji=target.IloscDoProdukcji+source.IloscDoProdukcji
+	   WHEN NOT MATCHED THEN
+		  INSERT ( PTZ_Id, IloscWyprodukowano, IloscDoProdukcji)
+		  VALUES (source.PTZ_Id, source.IloscWyprodukowano, source.IloscDoProdukcji)
+	   ;
+
+	   --wprowadzenie produktow
+	   MERGE #POGOperacjeDlaNiezaplanowanegoProduktuTMP AS target
+		  USING (SELECT surowce.PTZ_Id, surowce.PTZ_Ilosc*@Mnoznik,0
+			    FROM CDN.ProdTechnologiaZasoby surowce
+			    JOIN cdn.ProdTechnologiaZasoby surowiec ON surowiec.PTZ_TechnologiaCzynnosc = surowce.PTZ_TechnologiaCzynnosc 
+			    WHERE surowiec.PTZ_Id=@PTZ_Id AND surowce.PTZ_TypZasobu=0
+			    ) AS source (PTZ_Id, IloscWyprodukowano, IloscDoProdukcji)
+	   ON (target.PTZ_ID=source.PTZ_Id )
+	   WHEN MATCHED THEN
+		  UPDATE SET IloscWyprodukowano=target.IloscWyprodukowano+source.IloscWyprodukowano
+	   WHEN NOT MATCHED THEN
+		  INSERT ( PTZ_Id, IloscWyprodukowano, IloscDoProdukcji)
+		  VALUES (source.PTZ_Id, source.IloscWyprodukowano, source.IloscDoProdukcji)
+	   ;
+
+END
+
+SELECT distinct PTC_ID,IloscWyprodukowano/PTZ_Ilosc Mnoznik
+
+FROM #POGOperacjeDlaNiezaplanowanegoProduktuTMP CTE
+     JOIN cdn.ProdTechnologiaZasoby PTZ ON PTZ.PTZ_Id=CTE.PTZ_Id
+	join cdn.ProdTechnologiaCzynnosci  on PTZ_TechnologiaCzynnosc = PTC_Id
+
+	DROP TABLE #POGOperacjeDlaNiezaplanowanegoProduktuTMP;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

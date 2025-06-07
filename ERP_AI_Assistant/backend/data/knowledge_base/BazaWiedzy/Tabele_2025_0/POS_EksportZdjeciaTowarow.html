@@ -1,0 +1,61 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[POS_EksportZdjeciaTowarow]"></A><PRE>
+          <FONT SIZE="2"><I>/* [POS_EksportZdjeciaTowarow] */</I><BR>
+CREATE PROCEDURE [CDN].[POS_EksportZdjeciaTowarow]
+	@RowVersion BIGINT,
+	@PointOfSaleId INT
+AS
+BEGIN
+SET NOCOUNT ON;
+	declare @RowVersion2 bigint = 0
+
+
+	declare @Zdjecia table([@ProductId] int,[@PictureId] int,[@IsDefault] varchar(5),RW int)
+	declare @TypId int = (select slw_id from cdn.slowniki where slw_kategoria = 'Typy załączników' and SLW_WartoscS='Obraz')
+
+	IF EXISTS(select * from CDN.DaneBinarne where DAB_Retail=1 AND DAB_TypId = @TypId)
+	BEGIN
+		INSERT INTO @Zdjecia
+		SELECT  distinct
+			TwrGIDNumer as [@ProductId],
+			DAB_ID as [@PictureId],
+			case when dao_pozycja = (select min(dao_pozycja) from cdn.DaneObiekty join CDN.DaneBinarne on DAB_ID=DAO_DABId where DAO_ObiTyp = 16 AND DAO_ObiNumer = TwrGIDNumer AND DAB_Retail=1 AND DAB_TypId = (select slw_id from cdn.slowniki where slw_kategoria = 'Typy załączników' and SLW_WartoscS='Obraz')) 
+				then 'true' else 'false' end as [@IsDefault],
+			case when @PointOfSaleId is null and oddzialBylWyslany = 0 and PSaDataDodania &gt; DAB_CzasModyfikacji and PSaDataDodania &gt; DAO_czasModyfikacji then PSaDataDodania else
+			case when DAB_CzasModyfikacji &gt; DAO_czasModyfikacji then DAB_CzasModyfikacji else DAO_czasModyfikacji end end
+		from cdn.POS_OddzialyDoEksportu(@PointOfSaleId, @RowVersion)
+		cross apply CDN.POS_TwrDoEksportu(PSaID,0)
+		join CDN.DaneObiekty on DAO_ObiTyp = 16 AND DAO_ObiNumer = TwrGIDNumer
+		join CDN.DaneBinarne on DAB_ID=DAO_DABId
+		where DAB_Retail=1 AND DAB_TypId = @TypId AND (@RowVersion = 0 OR 
+			case WHEN DAB_CzasModyfikacji &gt; DAO_czasModyfikacji AND DAB_CzasModyfikacji &gt; TwrLastMod THEN DAB_CzasModyfikacji 
+				 WHEN DAO_czasModyfikacji &gt; DAB_CzasModyfikacji AND DAO_czasModyfikacji &gt; TwrLastMod THEN DAO_czasModyfikacji ELSE TwrLastMod END &gt; @RowVersion OR (oddzialBylWyslany = 0 and @PointOfSaleId is null)
+		)
+	END
+
+
+	select
+		coalesce((select MAX(RW) from @Zdjecia),@RowVersion) as [@RowVersion], 
+		(		
+		SELECT distinct [@ProductId],[@PictureId], [@IsDefault] from @Zdjecia
+	for xml path('ProductPicture'), type)
+	for xml path('ProductPictures')
+
+	SET NOCOUNT OFF;	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

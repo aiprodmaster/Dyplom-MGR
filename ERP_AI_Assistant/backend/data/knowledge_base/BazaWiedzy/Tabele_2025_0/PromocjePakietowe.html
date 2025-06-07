@@ -1,0 +1,589 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="PromocjePakietowe"></A><PRE>
+          <FONT SIZE="2"><I>/* PromocjePakietowe */</I><BR>
+CREATE PROCEDURE CDN.PromocjePakietowe
+@lTyp                 INT,
+@lNumer               INT,
+@sPrmId nvarchar(1024),
+@lMagTyp int, --Typ magazynu
+@lMagNumer int, --Numer magazynu
+@lRezDst                int,
+@lFrsId         int,
+@lFrsIdW                int,
+@lTypDok                SMALLINT,
+@lData int=null,         -- bieżąca data i czas jako timestamp
+@lKntTyp smallint=null,  -- dane kontrahenta (KNT,KNU,PRM)
+@lKntNumer int=null,
+@lFormaNr int=null, -- numer    formy płatności (PLT)
+@lFormaTermin int=null, -- termin formy płatności (PLT)
+@lSposobDostawy int=null, -- sposób dostawy
+@sFrsId   varchar(255)=null  -- oddzielone przecinkami miejsca w strukturze firmy
+as
+/*
+declare @MagNumer       int
+declare @KntTyp         int
+declare @KntNumer       int
+*/
+declare @lBiezacaData   int
+
+set @lBiezacaData=DATEDIFF(D,'18001228',GETDATE());
+
+create table #tabPromocje
+(
+Prm_Id Int,
+ChekDost tinyint,
+SposobDst int,
+FormaPlt int
+);
+CREATE INDEX tabPPrmId
+   ON #tabPromocje (Prm_Id);
+
+if @sPrmId=''
+        insert into #tabPromocje
+        select distinct PRM_Id,case when exists(
+        select * from CDN.SpDPromocje
+        inner join CDN.PltPromocje on PPr_PrmID = Prm_ID
+        where SpD_PrmID = Prm_ID
+        and (PPr_PltID in (@lFormaNr,-1) and (PPr_TerminMaks &gt; @lFormaTermin or PPr_TerminMaks in (@lFormaTermin,-1)))
+        and (SpD_SpDLp = @lSposobDostawy or SpD_SpDLp = -1)) then 1 else 0 end as CheckDost,
+        (select top 1 SpD_SpDLp from CDN.SpDPromocje where SpD_PrmID = Prm_ID) as SposobDst,
+        (select top 1 PPr_PltID from CDN.PltPromocje where PPr_PrmID = Prm_ID) as FormaPlt
+        from CDN.PrmKarty
+                        inner join CDN.MagPromocje on MPR_PrmId=PRM_Id
+                        inner join
+                        (
+                                SELECT KPr_PrmId
+                                FROM
+                                (
+                                        SELECT KnL_GROTyp KntTyp, KnL_GRONumer KntNumer
+                                        FROM CDN.KntLinki
+                                        WHERE KnL_GIDTyp=@lknttyp AND KnL_GIDNumer=@lkntnumer
+                                        UNION ALL
+                                        SELECT @lknttyp, @lkntnumer
+                                ) Knt
+                                INNER JOIN CDN.KntPromocje ON (KPr_KntTyp=KntTyp AND KPr_KntNumer=KntNumer) OR KPR_KntNumer = 0
+                        ) KPr ON KPr_PrmId=Prm_Id AND PRM_Pakietowa = 1
+                inner join
+                        (
+                                SELECT FPr_PrmId
+                                FROM CDN.Str2List(@sfrsid)
+                                INNER JOIN CDN.FrsPromocje ON FPr_FrsId=Num
+                        ) FPr ON FPr_PrmId=Prm_Id AND PRM_Pakietowa = 1
+                        where Prm_Stan=1 and MPR_MagNumer in(-1,@lMagNumer) and PRM_Pakietowa=1
+                        AND (PRM_MaxIloscPakietow = 0 OR @lTypDok &lt;&gt; 8960)
+                        AND CDN.CzyPromocjaObowiazuje(PRM_DataOd,PRM_DataDo,PRM_Cykliczna, @lData,PRM_CyklRodzaj, PRM_CyklCzestotliwosc,PRM_CyklWystepowanie, PRM_CyklDniOd, PRM_CyklDniDo) = 1
+else if CHARINDEX(',',@sPrmId) = 0
+        insert into #tabPromocje
+        select distinct PRM_Id,case when exists(
+        select * from CDN.SpDPromocje
+        inner join CDN.PltPromocje on PPr_PrmID = Prm_ID
+        where SpD_PrmID = Prm_ID
+        and (PPr_PltID in (@lFormaNr,-1) and (PPr_TerminMaks &gt; @lFormaTermin or PPr_TerminMaks in (@lFormaTermin,-1)))
+        and (SpD_SpDLp = @lSposobDostawy or SpD_SpDLp = -1)) then 1 else 0 end as CheckDost,
+        (select top 1 SpD_SpDLp from CDN.SpDPromocje where SpD_PrmID = Prm_ID) as SposobDst,
+        (select top 1 PPr_PltID from CDN.PltPromocje where PPr_PrmID = Prm_ID) as FormaPlt
+        from CDN.PrmKarty
+                        inner join CDN.MagPromocje on MPR_PrmId=PRM_Id
+                        inner join
+                        (
+                                SELECT KPr_PrmId
+                                FROM
+                                (
+                                        SELECT KnL_GROTyp KntTyp, KnL_GRONumer KntNumer
+                                        FROM CDN.KntLinki
+                                        WHERE KnL_GIDTyp=@lknttyp AND KnL_GIDNumer=@lkntnumer
+                                        UNION ALL
+                                        SELECT @lknttyp, @lkntnumer
+                                ) Knt
+                                INNER JOIN CDN.KntPromocje ON KPr_KntTyp=KntTyp AND KPr_KntNumer=KntNumer
+                        ) KPr ON KPr_PrmId=Prm_Id AND PRM_Pakietowa = 1
+                inner join
+                        (
+                                SELECT FPr_PrmId
+                                FROM CDN.Str2List(@sfrsid)
+                                INNER JOIN CDN.FrsPromocje ON FPr_FrsId=Num
+                        ) FPr ON FPr_PrmId=Prm_Id AND PRM_Pakietowa = 1
+                        where PRM_Id in (select Num from CDN.Str2List(@sPrmId))
+else
+        insert into #tabPromocje select PRM_Id,0 CheckDost,0 SposobDst,0 FormaPlt  from PrmKarty
+                                                         where PRM_Id in (select Num from CDN.Str2List(@sPrmId))
+
+create table #tabZasoby
+(
+TwrGIDTyp int,
+TwrGIDFirma int,
+TwrGIDNumer int,
+Ilosc decimal(15,4)
+);
+CREATE INDEX tabZTwrGIDNumer
+   ON #tabZasoby (TwrGIDNumer);
+insert into #tabZasoby
+select pom1.Twr_GIDTyp, pom1.Twr_GIDFirma, pom1.Twr_GIDNumer,
+case when pom1.Twr_Typ=1 then  CDN.PRMSumaStanowSpr
+                        (
+                                 Twr_GIDTyp
+                                ,Twr_GIDFirma
+                                ,Twr_GIDNumer
+                                ,@lBiezacaData
+                                ,@lRezDst
+                                ,@lFrsId
+                                ,@lFrsIdW
+                                ,@lTypDok
+                                ,0
+                                ,0
+                                ,0
+                                ,0
+                                ,@lMagTyp
+                                ,@lMagNumer
+                        )
+else '-1'
+end
+ from
+(
+select distinct * from
+(
+select Twr_GIDTyp, Twr_GIDFirma, Twr_GIDNumer, Twr_Typ
+from CDN.TwrPromocje
+INNER JOIN CDN.TwrKarty on Twr_GIDNumer=TPR_TwrNumer
+where TPR_PrmId in (select Prm_Id from #tabPromocje)
+union all
+select Twr_GIDTyp, Twr_GIDFirma, Twr_GIDNumer, Twr_Typ
+from CDN.GratisyPromocje
+INNER JOIN CDN.TwrKarty on Twr_GIDNumer=GPR_TwrNumer
+where GPR_PrmId in (select Prm_Id from #tabPromocje)
+) as pom
+) as pom1
+
+
+if @lTyp = 960
+begin
+
+select
+ pakiety.Akronim, pakiety.Poziom,pakiety.Typ, pakiety.NazwaTwr,pakiety.Rabat, pakiety.IloscMin,
+pakiety.IloscDost,pakiety.Ilosc,pakiety.Jm,pakiety.PrmId,promocje.ChekDost,promocje.SposobDst,promocje.FormaPlt, pakiety.RodzajPakietu,
+CAST((
+case when pakiety.Typ=1 then
+case when pakiety.PakietId&lt;&gt;0 then
+-1
+else
+(
+select
+SUM(
+        (
+                case when pom.MaxProg*pom.TPR_Prog&lt;pom.SumIlosc then--pom.MaxProg-jaki mnoznik progu bierzemy pod uwage;pom.SumIlosc-suma na dokumencie
+                        pom.MaxProg*pom.TPR_Prog
+                else
+                        pom.SumIlosc
+                end
+        )/(pom.SumIloscMin)--SumIloscMin-suma progow
+ )*100
+from
+ (
+select
+        (select min(
+                                case when (pom1.SumIlosc/pom1.TPR_Prog)%1=0 then
+                                        (pom1.SumIlosc/pom1.TPR_Prog)+1
+                                else
+                                        CEILING(pom1.SumIlosc/pom1.TPR_Prog)
+                                end
+                                ) from
+                                (
+                                select TPR_Prog,
+                                isnull((select SUM(ZaE_Ilosc) from CDN.ZamElem where ZaE_GIDNumer=@lNumer and ZaE_TwrNumer=TPR_TwrNumer and ZaE_PakietId=0 and ZaE_ReENumer=0 and ZaE_ZstNumer=0 ),0) SumIlosc
+                                from CDN.TwrPromocje where TPR_PrmId=PRM_Id
+                                ) as pom1
+        ) MaxProg,
+ TPR_Prog,
+(select SUM(TPR_Prog)  from CDN.TwrPromocje where TPR_PrmId=PRM_Id) SumIloscMin,
+isnull((select SUM(ZaE_Ilosc) from CDN.ZamElem  where ZaE_GIDNumer=@lNumer and ZaE_TwrNumer=TPR_TwrNumer and ZaE_PakietId=0 and ZaE_ReENumer=0 and ZaE_ZstNumer=0),0) SumIlosc
+ from CDN.TwrPromocje where TPR_PrmId=PRM_Id
+) as pom)
+end
+else 0 end
+) as decimal(17,2)) as ProcentReal ,
+pakiety.WartoscProg, pakiety.ProgId, pakiety.GratisDomyslny, pakiety.GratisMnoz, pakiety.RabatTyp, pakiety.TwrGIDNumer, pakiety.TwrGIDTyp,
+pakiety.PakietId, pakiety.PromocjaProgId,  pakiety.CenaPrzed, pakiety.CenaPo, pakiety.FlagaNB,
+pakiety.Waluta, pakiety.NajwyzszyProg, pakiety.PrpMinIloscPoz, pakiety.PrpWartosc, pakiety.PtpMinIloscPoz, pakiety.PtpWartoscProg,
+pakiety.PtpRodzaj, pakiety.TwrZPozaPromocji, pakiety.TwrWymagany, pakiety.EdycjaGratisow, pakiety.JmZ, pakiety.JmPom, pakiety.WymagajJm,
+pakiety.PrzeliczL, pakiety.PrzeliczM, pakiety.JmFormatZ, pakiety.JmCalkowita, pakiety.TwrJmFormat, pakiety.TwrJmCalkowita,
+pakiety.MaxIloscPakietow, pakiety.LimitRodzaj
+  from
+(
+
+select distinct PRM_Akronim Akronim, 1 Poziom, case when PRM_RodzajPakietu=0 then 1 else 2 end Typ, '' NazwaTwr, 0 Rabat, '' IloscMin,
+'' IloscDost, 0 Ilosc,'' Jm,PRM_Id PrmId, PRM_Akronim SortAkrPrm, PRM_RodzajPakietu RodzajPakietu,
+0 WartoscProg, 0 ProgId, 0 GratisDomyslny, 0 GratisMnoz, 0 RabatTyp, 0 TwrGIDNumer, 0 TwrGIDTyp
+,ISNULL(ZaE_PakietId,0) PakietId, ISNULL(ZaE_PromocjaProgID,0) PromocjaProgId,0 CenaPrzed, 0 CenaPo,
+'' FlagaNB, '' Waluta, PRM_NajwyzszyProg NajwyzszyProg, 0 LP, 0 INNELp,
+0 PrpMinIloscPoz,0 PrpWartosc,0 PtpMinIloscPoz,0 PtpWartoscProg, 0 PtpRodzaj, 0 TwrZPozaPromocji, 0 TwrWymagany, 0 EdycjaGratisow, 
+'' JmZ, '' JmPom, PRM_WymagajJm WymagajJm, 1 PrzeliczL, 1 PrzeliczM, 0 JmFormatZ, 0 JmCalkowita, 0 TwrJmFormat, 0 TwrJmCalkowita,
+PRM_MaxIloscPakietow MaxIloscPakietow, PRM_LimitRodzaj LimitRodzaj
+ from CDN.PrmKarty left join CDN.GratisyPromocje on GPR_PrmId=PRM_Id
+left join CDN.ZamElem on ZaE_PakietId=PRM_Id  and ZaE_GIDNumer=@lNumer
+where PRM_Pakietowa = 1
+union all
+
+select distinct cast(PRP_Wartosc as varchar) , 2 Poziom, case when PRP_Rodzaj=0 then 4 else 3 end Typ, '' NazwaTwr, 0 Rabat, '' IloscMin,
+'' IloscDost, 0 Ilosc,'' Jm,PRM_Id PrmId, PRM_Akronim , PRM_RodzajPakietu RodzajPakietu,
+PRP_Wartosc, PRP_ID, 0, 0, 0 RabatTyp, 0, 0
+,ISNULL(ZaE_PakietId,0), ISNULL(ZaE_PromocjaProgID,0),0,0,'','', PRM_NajwyzszyProg, 0 , 0,
+Prp_MinIloscPoz PrpMinIloscPoz,PRP_Wartosc,0 PtpMinIloscPoz,0 PtpWartosc, 0, 0, 0 TwrWymagany, PRP_EdycjaGratisow EdycjaGratisow, 
+PRM_JmZ JmZ, '' JmPom, PRM_WymagajJm WymagajJm, 1 PrzeliczL, 1 PrzeliczM, 0 JmFormatZ, 0 JmCalkowita, 0 TwrJmFormat, 0 TwrJmCalkowita,
+PRM_MaxIloscPakietow MaxIloscPakietow, PRM_LimitRodzaj LimitRodzaj
+ from CDN.ProgiPromocje inner join CDN.PrmKarty on PRP_PrmID=PRM_Id
+left join CDN.ZamElem on ZaE_PakietId=PRM_Id  and ZaE_GIDNumer=@lNumer
+ where PRM_Pakietowa = 1
+
+union all
+
+SELECT DISTINCT ISNULL(TwG_Kod,'Inne') , 3 Poziom, 5, ISNULL((select Sciezka from CDN.PobierzDrzewoGrupTowarowychKuLisciom(0,default,null,2,default) where GIDNumer = TwG_GIDNumer and GrONumer IN(0,-1)),'Inne') NazwaTwr, ISNULL(PTP_Wartosc,0) Rabat, '' IloscMin,
+'' IloscDost, 0 Ilosc,'' Jm,p.PRM_Id PrmId, PRM_Akronim , PRM_RodzajPakietu RodzajPakietu,
+PRP_Wartosc, PRP_ID, 0 GratisDomyslny, 0 GratisMnoz, ISNULL(TPR_Typ,0) RabatTyp, ISNULL(TwG_GIDNumer,-1), ISNULL(TwG_GIDTyp, - 16)
+,ISNULL(ZaE_PakietId,0), ISNULL(ZaE_PromocjaProgID,0),0,0,'','', PRM_NajwyzszyProg,  TPR_LP, CASE WHEN TPR_LP IS NULL THEN 1 ELSE 0 END,
+0,0,PTP_MinIloscPoz,PTP_WartoscProg, PTP_Rodzaj ,0, 0 TwrWymagany, PRP_EdycjaGratisow EdycjaGratisow, 
+PRM_JmZ JmZ, '' JmPom, PRM_WymagajJm WymagajJm, 1 PrzeliczL, 1 PrzeliczM, 0 JmFormatZ, 0 JmCalkowita, 0 TwrJmFormat, 0 TwrJmCalkowita,
+PRM_MaxIloscPakietow MaxIloscPakietow, PRM_LimitRodzaj LimitRodzaj
+ FROM CDN.ProgiTwrPromocje 
+inner JOIN CDN.ProgiPromocje on PRP_ID=PTP_PRPId 
+inner join CDN.PrmKarty p on PRP_PrmID=PRM_Id
+left join CDN.TwrPromocje on TPR_Id = PTP_TPRId
+LEFT JOIN CDN.TwrGrupy ON TwG_GIDNumer = TPR_TwrNumer AND TwG_GIDTyp = TPR_TwrTyp
+left join CDN.ZamElem on ZaE_PakietId=PRM_Id and ZaE_GIDNumer=@lNumer
+where TPR_TwrTyp = -16 OR TPR_TwrTyp IS NULL
+
+union all
+
+select distinct Twr_Kod,  4 , 5, Twr_Nazwa, PTP_Wartosc  ,
+case when PRP_ID is null then CAST(TPR_Prog AS varchar) else '-' end,
+CAST(isnull(CDN.PRMSumaStanowSpr
+                        (
+                                 Twr_GIDTyp
+                                ,Twr_GIDFirma
+                                ,Twr_GIDNumer
+                                ,@lBiezacaData
+                                ,@lRezDst
+                                ,@lFrsId
+                                ,@lFrsIdW
+                                ,@lTypDok
+                                ,0
+                                ,0
+                                ,0
+                                ,0
+                                ,@lMagTyp
+                                ,@lMagNumer
+                        ),0)  as varchar),
+isnull((select SUM(ZaE_Ilosc) from CDN.ZamElem where ZaE_GIDNumer=@lNumer and ZaE_TwrNumer=Twr_GIDNumer and ZaE_Gratis=0 and ZaE_PakietId=ISNULL(ZAE2.ZaE_PakietId,0) and ZaE_ReENumer=0 and ZaE_ZstNumer=0),0),
+Twr_Jm, PRM.PRM_Id,PRM_Akronim, PRM_RodzajPakietu, isnull(PRP_Wartosc,0),PRP_ID,0, 0, TPR_Typ, Twr_GIDNumer, Twr_GIDTyp,
+isnull(ZAE.ZaE_PakietId,0),0,ISNULL(ZAE.ZaE_CenaKatalogowa,0), ISNULL(ZAE.ZaE_CenaUzgodniona,0),
+TPR_FlagaNB, TPR_Waluta, PRM_NajwyzszyProg,(Select MAX(TPR_LP) FROM CDN.TwrPromocje where ((TPR_TwgNumer = TwG_GrONumer and TPR_TwgTyp = TwG_GrOTyp) or (TPR_TwrNumer = TwG_GrONumer and TPR_TwrTyp = TwG_GrOTyp)) and TPR_PrmId = PRM.PRM_Id) , 
+ 0, 0,0,0,0,0,1, 0 TwrWymagany, PRP_EdycjaGratisow EdycjaGratisow, 
+ PRM_JmZ JmZ, '' JmPom, PRM_WymagajJm WymagajJm, 1 PrzeliczL, 1 PrzeliczM, 0 JmFormatZ, 0 JmCalkowita, Twr_JmFormat TwrJmFormat, Twr_JMCalkowita TwrJmCalkowita,
+PRM_MaxIloscPakietow MaxIloscPakietow, PRM_LimitRodzaj LimitRodzaj
+from CDN.ZamElem Z
+inner join CDN.TwrGrupy on ZaE_TwrNumer = TwG_GIDNumer and ZaE_TwrTyp = TwG_GIDTyp
+inner join CDN.TwrPromocje on TPR_TwrNumer = TwG_GrONumer and TPR_TwrTyp = TwG_GrOTyp
+inner JOIN CDN.PrmKarty PRM on PRM_Id= TPR_PrmId
+inner JOIN CDN.TwrKarty ON Twr_GIDNumer=ZaE_TwrNumer AND Twr_GIDTyp = ZaE_TwrTyp
+inner JOIN CDN.ProgiTwrPromocje PTP on  PTP_TPRId= TPR_Id
+inner JOIN CDN.ProgiPromocje on PRP_ID=PTP_PRPId
+inner join #tabPromocje as promocje on promocje.PRM_Id=PRM.PRM_Id
+left join CDN.ZamElem ZAE on ZAE.ZaE_PakietId=PRM.PRM_Id and ZAE.ZaE_GIDNumer=@lNumer and ZAE.ZaE_Gratis=0 and ZAE.ZaE_TwrNumer=Twr_GIDNumer
+left join CDN.ZamElem ZAE2 on ZAE2.ZaE_PakietId=PRM.PRM_Id and ZAE2.ZaE_GIDNumer=@lNumer
+where PRM_Pakietowa = 1 AND z.ZaE_GIDNumer = @lNumer and PRM_ZamknietaLista = 0
+and  TwG_GrONumer = (select TOP 1 TwG_GrONumer from CDN.TwrGrupy 
+inner join CDN.TwrPromocje on TPR_TwrNumer = TwG_GrONumer AND TPR_TwrTyp = TwG_GrOTyp	
+left join CDN.TwrGrupyDom on TGD_GIDTyp = TwG_GIDTyp and TGD_GIDNumer = TwG_GIDNumer and TGD_GrONumer = TwG_GrONumer and TGD_GrOTyp = TwG_GrOTyp
+where TwG_GIDTyp = Z.ZaE_TwrTyp and TwG_GIDNumer = Z.ZaE_TwrNumer  AND TPR_PrmId = PRM.PRM_Id order by  TGD_GIDTyp DESC,TPR_LP)
+and not EXISTS(select * from CDN.TwrPromocje where TPR_PrmId = PRM.PRM_Id and TPR_TwrNumer = Z.ZaE_TwrNumer and TPR_TwrTyp = Z.ZaE_TwrTyp)
+
+union all
+
+select distinct TK.Twr_Kod, case when PRP_ID is null then 2 when PRM_RodzajPakietu = 1 AND (TPR_TwgTyp = -16 OR EXISTS(Select * FROM CDN.ProgiTwrPromocje where PTP_PRPId = PTP.PTP_PRPId AND PTP_TPRId = 0)) then 4 else 3 end
+, 5, TK.Twr_Nazwa,case when PRP_ID is null then TPR_Wartosc else PTP_Wartosc end ,
+case when PRP_ID is null then CAST(TPR_Prog AS varchar) else '-' end,
+CAST(isnull(zasoby.Ilosc,0)  as varchar),
+CASE WHEN ZAE.ZaE_PakietId IS NOT NULL OR PRM_JmZ = '' OR PRM_JmZ = Twr_Jm OR PRM_JmZ = TwJ_JmZ  THEN isnull((select SUM(ZaE_Ilosc) from CDN.ZamElem where ZaE_GIDNumer=@lNumer and ZaE_TwrNumer=TK.Twr_GIDNumer and ZaE_Gratis=0 
+and ZaE_PakietId=ISNULL(ZAE2.ZaE_PakietId,0) and ZaE_ReENumer=0 and ZaE_ZstNumer=0),0) ELSE 0 END,
+TK.Twr_Jm, PRM_Id,PRM_Akronim, PRM_RodzajPakietu, isnull(PRP_Wartosc,0),isnull(PRP_ID,0),0, 0,TPR_Typ, TK.Twr_GIDNumer, TK.Twr_GIDTyp,
+isnull(ZAE.ZaE_PakietId,0),0,ISNULL(ZAE.ZaE_CenaKatalogowa,0), ISNULL(ZAE.ZaE_CenaUzgodniona,0),
+TP.TPR_FlagaNB, TP.TPR_Waluta, PRM_NajwyzszyProg, TPR_LP , CASE WHEN TPR_TwgTyp = 0 THEN 1 ELSE 0 END,
+0,0,0,0,0,0, TP.TPR_Wymagany TwrWymagany, ISNULL(PRP_EdycjaGratisow,0) EdycjaGratisow, 
+PRM_JmZ JmZ, CASE WHEN PRM_RodzajPakietu = 1 THEN ISNULL(TwJ_JmZ, Twr_jm) ELSE '' END JmPom, PRM_WymagajJm WymagajJm, 
+CASE WHEN PRM_RodzajPakietu = 1 AND EXISTS(Select * from CDN.ZamElem where ZaE_GIDNumer=@lNumer and ZaE_TwrNumer=TK.Twr_GIDNumer and ZaE_JmZ = PRM_JmZ and ZaE_PakietId = 0) THEN 
+(Select TOP 1 ZaE_PrzeliczL from CDN.ZamElem where ZaE_GIDNumer=@lNumer and ZaE_TwrNumer=TK.Twr_GIDNumer and ZaE_JmZ = PRM_JmZ and ZaE_PakietId = 0) ELSE 
+ISNULL(TwJ_PrzeliczL, 1) END PrzeliczL, 
+CASE WHEN PRM_RodzajPakietu = 1 AND EXISTS(Select * from CDN.ZamElem where ZaE_GIDNumer=@lNumer and ZaE_TwrNumer=TK.Twr_GIDNumer and ZaE_JmZ = PRM_JmZ and ZaE_PakietId = 0) THEN 
+(Select TOP 1 ZaE_PrzeliczM from CDN.ZamElem where ZaE_GIDNumer=@lNumer and ZaE_TwrNumer=TK.Twr_GIDNumer and ZaE_JmZ = PRM_JmZ and ZaE_PakietId = 0) ELSE
+ISNULL(TwJ_PrzeliczM, 1) END PrzeliczM,
+CASE WHEN PRM_RodzajPakietu = 1 AND EXISTS(Select * from CDN.ZamElem where ZaE_GIDNumer=@lNumer and ZaE_TwrNumer=TK.Twr_GIDNumer and ZaE_JmZ = PRM_JmZ and ZaE_PakietId = 0) THEN 
+(Select TOP 1 ZaE_JmFormatZ from CDN.ZamElem where ZaE_GIDNumer=@lNumer and ZaE_TwrNumer=TK.Twr_GIDNumer and ZaE_JmZ = PRM_JmZ and ZaE_PakietId = 0) ELSE 
+ISNULL(TwJ_JmFormat, Twr_JmFormat) END JmFormatZ, ISNULL(TwJ_Calkowita, Twr_JMCalkowita) JmCalkowita
+, Twr_JmFormat TwrJmFormat, Twr_JMCalkowita TwrJmCalkowita,
+PRM_MaxIloscPakietow MaxIloscPakietow, PRM_LimitRodzaj LimitRodzaj
+from CDN.TwrPromocje TP INNER JOIN CDN.PrmKarty on PRM_Id=TP.TPR_PrmId
+LEFT JOIN CDN.TwrKarty TK ON TK.Twr_GIDNumer=TP.TPR_TwrNumer AND TK.Twr_GIDTyp = TP.TPR_TwrTyp
+LEFT  JOIN CDN.TwrJm  ON  Twr_GIDNumer= TwJ_TwrNumer AND TwJ_JmZ = PRM_JmZ
+inner join #tabZasoby zasoby on zasoby.TwrGIDNumer=TK.Twr_GIDNumer
+left outer JOIN CDN.ProgiTwrPromocje PTP on  PTP_TPRId=TP.TPR_Id
+LEFT outer JOIN CDN.ProgiPromocje on PRP_ID=PTP_PRPId
+left join CDN.ZamElem ZAE on ZaE_PakietId=PRM_Id and ZaE_GIDNumer=@lNumer and ZaE_Gratis=0 and ZaE_TwrNumer=TK.Twr_GIDNumer
+left join CDN.ZamElem ZAE2 on ZAE2.ZaE_PakietId=PRM_Id and ZAE2.ZaE_GIDNumer=@lNumer
+where PRM_Pakietowa = 1
+union all
+
+select TK.Twr_Kod, case when PRP_ID is null then 2 else 3 end, 6,TK.Twr_Nazwa,
+GP.GPR_Wartosc , CAST(GP.GPR_Ilosc AS varchar),
+CAST(ISNULL(zasoby.Ilosc,0) as varchar),
+CAST(ISNULL(ZaE_Ilosc,0) AS varchar),TK.Twr_Jm, PRM_Id,PRM_Akronim, PRM_RodzajPakietu,
+isnull(PRP_Wartosc,0),isnull(PRP_ID,0), GP.GPR_Domyslny, GP.GPR_Mnoz, GP.GPR_Typ, TK.Twr_GIDNumer, TK.Twr_GIDTyp
+,ISNULL(ZaE_PakietId,0), ISNULL(ZaE_PromocjaProgID,0),ISNULL(ZaE_CenaKatalogowa,0), ISNULL(ZaE_CenaUzgodniona,0),
+GPR_FlagaNB, GPR_Waluta, PRM_NajwyzszyProg, GPR_Pozycja , 0,
+0,0,0,0,0,0, 0 TwrWymagany, PRP_EdycjaGratisow EdycjaGratisow, 
+PRP_JmZ JmZ,  CASE WHEN PRM_RodzajPakietu = 1 THEN ISNULL(TwJ_JmZ, Twr_jm) ELSE '' END JmPom, 
+PRM_WymagajJm WymagajJm, 
+ISNULL(TwJ_PrzeliczL, 1) PrzeliczL, 
+ISNULL(TwJ_PrzeliczM, 1) PrzeliczM,
+ISNULL(TwJ_JmFormat, Twr_JmFormat)  JmFormatZ, ISNULL(TwJ_Calkowita, Twr_JMCalkowita) JmCalkowita,
+Twr_JmFormat TwrJmFormat, Twr_JMCalkowita TwrJmCalkowita,
+PRM_MaxIloscPakietow MaxIloscPakietow, PRM_LimitRodzaj LimitRodzaj
+from CDN.GratisyPromocje GP
+INNER JOIN CDN.PrmKarty on PRM_Id=GP.GPR_PrmId
+INNER JOIN CDN.TwrKarty TK ON TK.Twr_GIDNumer=GP.GPR_TwrNumer
+inner join #tabZasoby zasoby on zasoby.TwrGIDNumer=TK.Twr_GIDNumer
+LEFT JOIN CDN.ProgiPromocje on PRP_ID=GP.GPR_PrPID
+LEFT  JOIN CDN.TwrJm  ON  Twr_GIDNumer= TwJ_TwrNumer AND TwJ_JmZ = PRP_JmZ
+left join CDN.ZamElem on ZaE_PakietId=PRM_Id and ZaE_PromocjaProgId = PRP_ID and ZaE_GIDNumer=@lNumer and ZaE_TwrNumer=TK.Twr_GIDNumer  and ZaE_Gratis=1
+where PRM_Pakietowa = 1
+) as pakiety
+inner join #tabPromocje as promocje on promocje.PRM_Id=pakiety.PrmId
+order by pakiety.SortAkrPrm, pakiety.WartoscProg, pakiety.Typ, pakiety.INNELp, pakiety.LP, pakiety.TwrZPozaPromocji, pakiety.NazwaTwr
+end
+else
+begin
+
+select
+ pakiety.Akronim, pakiety.Poziom,pakiety.Typ, pakiety.NazwaTwr,pakiety.Rabat, pakiety.IloscMin,
+pakiety.IloscDost,pakiety.Ilosc,pakiety.Jm,pakiety.PrmId,promocje.ChekDost,promocje.SposobDst,promocje.FormaPlt, pakiety.RodzajPakietu,
+CAST((
+case when pakiety.Typ=1 then
+case when pakiety.PakietId&lt;&gt;0 then
+-1
+else
+(
+select
+SUM(
+        (
+                case when pom.MaxProg*pom.TPR_Prog&lt;pom.SumIlosc then--pom.MaxProg-jaki mnoznik progu bierzemy pod uwage;pom.SumIlosc-suma na dokumencie
+                        pom.MaxProg*pom.TPR_Prog
+                else
+                        pom.SumIlosc
+                end
+        )/(pom.SumIloscMin)--SumIloscMin-suma progow
+ )*100
+from
+ (
+select
+        (select min(
+                                case when (pom1.SumIlosc/pom1.TPR_Prog)%1=0 then
+                                        (pom1.SumIlosc/pom1.TPR_Prog)+1
+                                else
+                                        CEILING(pom1.SumIlosc/pom1.TPR_Prog)
+                                end
+                                ) from
+                                (
+                                select TPR_Prog,
+                                isnull((select SUM(TrE_Ilosc) from CDN.TraElem  where TrE_GIDNumer=@lNumer and TrE_TwrNumer=TPR_TwrNumer and TrE_PakietId=0 and TrE_ZstNumer=0 and TrE_RecNumer=0),0) SumIlosc
+                                from CDN.TwrPromocje where TPR_PrmId=PRM_Id
+                                ) as pom1
+        ) MaxProg,
+ TPR_Prog,
+(select SUM(TPR_Prog)  from CDN.TwrPromocje where TPR_PrmId=PRM_Id) SumIloscMin,
+isnull((select SUM(TrE_Ilosc) from CDN.TraElem  where TrE_GIDNumer=@lNumer and TrE_TwrNumer=TPR_TwrNumer and TrE_PakietId=0  and TrE_ZstNumer=0 and TrE_RecNumer=0),0) SumIlosc
+ from CDN.TwrPromocje where TPR_PrmId=PRM_Id
+) as pom)
+end
+else 0 end
+) as decimal(17,2)) as ProcentReal,
+pakiety.WartoscProg, pakiety.ProgId, pakiety.GratisDomyslny, pakiety.GratisMnoz, pakiety.RabatTyp, pakiety.TwrGIDNumer, pakiety.TwrGIDTyp,
+pakiety.PakietId, pakiety.PromocjaProgId, pakiety.CenaPrzed, pakiety.CenaPo, pakiety.FlagaNB,
+pakiety.Waluta, pakiety.NajwyzszyProg, pakiety.PrpMinIloscPoz, pakiety.PrpWartosc, pakiety.PtpMinIloscPoz, pakiety.PtpWartoscProg,
+pakiety.PtpRodzaj, pakiety.TwrZPozaPromocji, pakiety.TwrWymagany, pakiety.EdycjaGratisow, pakiety.JmZ, pakiety.JmPom, pakiety.WymagajJm,
+pakiety.PrzeliczL, pakiety.PrzeliczM,pakiety.JmFormatZ, pakiety.JmCalkowita, pakiety.TwrJmFormat, pakiety.TwrJmCalkowita,
+pakiety.MaxIloscPakietow, pakiety.LimitRodzaj
+  from
+(
+
+select distinct PRM_Akronim Akronim, 1 Poziom, case when PRM_RodzajPakietu=0 then 1 else 2 end Typ, '' NazwaTwr, 0 Rabat, '' IloscMin,
+'' IloscDost, 0 Ilosc,'' Jm,PRM_Id PrmId, PRM_Akronim SortAkrPrm, PRM_RodzajPakietu RodzajPakietu,
+0 WartoscProg, 0 ProgId, 0 GratisDomyslny, 0 GratisMnoz, 0 RabatTyp, 0 TwrGIDNumer, 0 TwrGIDTyp
+,ISNULL(TrE_PakietId,0) PakietId, ISNULL(TrE_PromocjaProgID,0) PromocjaProgId
+, 0 CenaPrzed, 0 CenaPo,
+'' FlagaNB, '' Waluta, PRM_NajwyzszyProg NajwyzszyProg,0 LP, 0 INNELp,
+0 PrpMinIloscPoz,0 PrpWartosc,0 PtpMinIloscPoz,0 PtpWartoscProg, 0 PtpRodzaj, 0 TwrZPozaPromocji, 0 TwrWymagany, 0 EdycjaGratisow, 
+'' JmZ, '' JmPom, PRM_WymagajJm WymagajJm, 1 PrzeliczL, 1 PrzeliczM, 0 JmFormatZ, 0 JmCalkowita, 0 TwrJmFormat, 0 TwrJmCalkowita,
+PRM_MaxIloscPakietow MaxIloscPakietow, PRM_LimitRodzaj LimitRodzaj
+ from CDN.PrmKarty left join CDN.GratisyPromocje on GPR_PrmId=PRM_Id
+left join CDN.TraElem on TrE_PakietId=PRM_Id  and TrE_GIDNumer=@lNumer
+ where PRM_Pakietowa = 1
+union all
+
+select distinct cast(PRP_Wartosc as varchar) , 2 Poziom, case when PRP_Rodzaj=0 then 4 else 3 end Typ, '' NazwaTwr, 0 Rabat, '' IloscMin,
+'' IloscDost, 0 Ilosc,'' Jm,PRM_Id PrmId, PRM_Akronim , PRM_RodzajPakietu RodzajPakietu,
+PRP_Wartosc, PRP_ID, 0 GratisDomyslny, 0 GratisMnoz, 0 RabatTyp, 0,0
+,ISNULL(TrE_PakietId,0), ISNULL(TrE_PromocjaProgID,0), 0,0,'','', PRM_NajwyzszyProg,0, 0 INNELp,
+Prp_MinIloscPoz PrpMinIloscPoz,PRP_Wartosc PrpWartosc,0 PtpMinIloscPoz,0 PtpWartosc, 0, 0 TwrZPozaPromocji, 0 TwrWymagany, PRP_EdycjaGratisow EdycjaGratisow, 
+PRM_JmZ JmZ, '' JmPom, PRM_WymagajJm WymagajJm, 1 PrzeliczL, 1 PrzeliczM, 0 JmFormatZ, 0 JmCalkowita, 0 TwrJmFormat, 0 TwrJmCalkowita,
+PRM_MaxIloscPakietow MaxIloscPakietow, PRM_LimitRodzaj LimitRodzaj
+ from CDN.ProgiPromocje inner join CDN.PrmKarty on PRP_PrmID=PRM_Id
+left join CDN.TraElem on TrE_PakietId=PRP_PrmID  and TrE_GIDNumer=@lNumer
+ where PRM_Pakietowa = 1
+
+union all
+
+SELECT DISTINCT ISNULL(TwG_Kod,'Inne') , 3 Poziom, 5, ISNULL((select Sciezka from CDN.PobierzDrzewoGrupTowarowychKuLisciom(0,default,null,2,default) where GIDNumer = TwG_GIDNumer and GrONumer IN(0,-1)),'Inne') NazwaTwr, ISNULL(PTP_Wartosc,0) Rabat, '' IloscMin,
+'' IloscDost, 0 Ilosc,'' Jm,p.PRM_Id PrmId, PRM_Akronim , PRM_RodzajPakietu RodzajPakietu,
+PRP_Wartosc, PRP_ID, 0 GratisDomyslny, 0 GratisMnoz, ISNULL(TPR_Typ,0) RabatTyp, ISNULL(TwG_GIDNumer,-1), ISNULL(TwG_GIDTyp, - 16)
+,ISNULL(TrE_PakietId,0), ISNULL(TrE_PromocjaProgID,0), 0,0,'','', PRM_NajwyzszyProg,  TPR_LP, CASE WHEN TPR_LP IS NULL THEN 1 ELSE 0 END,
+0,0,PTP_MinIloscPoz,PTP_WartoscProg, PTP_Rodzaj ,0, 0 TwrWymagany, PRP_EdycjaGratisow EdycjaGratisow, 
+PRM_JmZ JmZ, '' JmPom, PRM_WymagajJm WymagajJm, 1 PrzeliczL, 1 PrzeliczM, 0 JmFormatZ, 0 JmCalkowita, 0 TwrJmFormat, 0 TwrJmCalkowita,
+PRM_MaxIloscPakietow MaxIloscPakietow, PRM_LimitRodzaj LimitRodzaj
+ FROM CDN.ProgiTwrPromocje 
+inner JOIN CDN.ProgiPromocje on PRP_ID=PTP_PRPId 
+inner join CDN.PrmKarty p on PRP_PrmID=PRM_Id
+left join CDN.TwrPromocje on TPR_Id = PTP_TPRId
+LEFT JOIN CDN.TwrGrupy ON TwG_GIDNumer = TPR_TwrNumer AND TwG_GIDTyp = TPR_TwrTyp
+left join CDN.TraElem on TrE_PakietId=PRM_Id  and TrE_GIDNumer=@lNumer
+where TPR_TwrTyp = -16 OR TPR_TwrTyp IS NULL
+
+union all
+
+
+select distinct  Twr_Kod,  4 , 5, Twr_Nazwa, PTP_Wartosc  ,
+case when PRP_ID is null then CAST(TPR_Prog AS varchar) else '-' end,
+CAST(isnull(CDN.PRMSumaStanowSpr
+                        (
+                                 Twr_GIDTyp
+                                ,Twr_GIDFirma
+                                ,Twr_GIDNumer
+                                ,@lBiezacaData
+                                ,@lRezDst
+                                ,@lFrsId
+                                ,@lFrsIdW
+                                ,@lTypDok
+                                ,0
+                                ,0
+                                ,0
+                                ,0
+                                ,@lMagTyp
+                                ,@lMagNumer
+                        ),0)  as varchar),
+isnull((select SUM(TrE_Ilosc) from CDN.TraElem where TrE_GIDNumer=@lNumer and TrE_TwrNumer=Twr_GIDNumer and TrE_Gratis=0 and TrE_PakietId=ISNULL(TRE2.TrE_PakietId,0) and TrE_ReCNumer=0 and TrE_ZstNumer=0),0),
+Twr_Jm, PRM.PRM_Id,PRM_Akronim, PRM_RodzajPakietu, isnull(PRP_Wartosc,0),PRP_ID,0, 0,  TPR_Typ, Twr_GIDNumer, Twr_GIDTyp,
+ISNULL(TRE.TrE_PakietId,0),0,ISNULL(TRE.TrE_Poczatkowa,0),ISNULL(TRE.TrE_CenaPoRabacie,0),
+TPR_FlagaNB, TPR_Waluta, PRM_NajwyzszyProg,(Select MAX(TPR_LP) FROM CDN.TwrPromocje where ((TPR_TwgNumer = TwG_GrONumer and TPR_TwgTyp = TwG_GrOTyp) or (TPR_TwrNumer = TwG_GrONumer and TPR_TwrTyp = TwG_GrOTyp)) and TPR_PrmId = PRM.PRM_Id) , 
+ 0, 0,0,0,0,0,1, 0 TwrWymagany, PRP_EdycjaGratisow EdycjaGratisow, 
+ PRM_JmZ JmZ, '' JmPom, PRM_WymagajJm WymagajJm, 1 PrzeliczL, 1 PrzeliczM, 0 JmFormatZ, 0 JmCalkowita, Twr_JmFormat TwrJmFormat, Twr_JMCalkowita TwrJmCalkowita,
+PRM_MaxIloscPakietow MaxIloscPakietow, PRM_LimitRodzaj LimitRodzaj
+from CDN.TraElem T
+inner join CDN.TwrGrupy on TrE_TwrNumer = TwG_GIDNumer and TrE_TwrTyp = TwG_GIDTyp
+inner join CDN.TwrPromocje on TPR_TwrNumer = TwG_GrONumer and TPR_TwrTyp = TwG_GrOTyp
+inner JOIN CDN.PrmKarty PRM on PRM_Id= TPR_PrmId
+inner JOIN CDN.TwrKarty ON Twr_GIDNumer=TrE_TwrNumer AND Twr_GIDTyp = TrE_TwrTyp
+inner JOIN CDN.ProgiTwrPromocje PTP on  PTP_TPRId= TPR_Id
+inner JOIN CDN.ProgiPromocje on PRP_ID=PTP_PRPId
+inner join #tabPromocje as promocje on promocje.PRM_Id=PRM.PRM_Id
+left join CDN.TraElem TRE on TRE.TrE_PakietId= PRM.PRM_Id  and TRE.TrE_GIDNumer=@lNumer and TrE.TrE_TwrNumer=Twr_GIDNumer and TrE.TrE_Gratis=0
+left join CDN.TraElem TRE2 on TRE2.TrE_PakietId=PRM.PRM_Id  and TRE2.TrE_GIDNumer=@lNumer
+where PRM_Pakietowa = 1 AND T.TrE_GIDNumer = @lNumer and PRM_ZamknietaLista = 0
+and TwG_GrONumer = (select TOP 1 TwG_GrONumer from CDN.TwrGrupy 
+inner join CDN.TwrPromocje on TPR_TwrNumer = TwG_GrONumer AND TPR_TwrTyp = TwG_GrOTyp	
+left join CDN.TwrGrupyDom on TGD_GIDTyp = TwG_GIDTyp and TGD_GIDNumer = TwG_GIDNumer and TGD_GrONumer = TwG_GrONumer and TGD_GrOTyp = TwG_GrOTyp
+where TwG_GIDTyp = T.TrE_TwrTyp and TwG_GIDNumer = T.TrE_TwrNumer  AND TPR_PrmId = PRM.PRM_Id order by  TGD_GIDTyp DESC,TPR_LP)
+and not EXISTS(select * from CDN.TwrPromocje where TPR_PrmId = PRM.PRM_Id and TPR_TwrNumer = T.TrE_TwrNumer and TPR_TwrTyp = T.TrE_TwrTyp)
+
+union all
+
+select distinct TK.Twr_Kod, case when PRP_ID is null then 2 when PRM_RodzajPakietu = 1 AND (TPR_TwgTyp = -16 OR EXISTS(Select * FROM CDN.ProgiTwrPromocje where PTP_PRPId = PTP.PTP_PRPId AND PTP_TPRId = 0)) then 4 else 3 end, 5, TK.Twr_Nazwa,
+case when PRP_ID is null then TPR_Wartosc else PTP_Wartosc end,
+case when PRP_ID is null then CAST(TPR_Prog AS varchar) else '-' end,
+case when isnull(zasoby.Ilosc,0)=-1 then CAST(zasoby.Ilosc as varchar) else CAST(isnull(zasoby.Ilosc,0)+
+isnull((select SUM(TrE_Ilosc) from CDN.TraElem where TrE_GIDNumer=@lNumer and TrE_TwrNumer=TK.Twr_GIDNumer and TrE_PakietId=0),0) as varchar) end,
+CASE WHEN TRE.TrE_PakietId IS NOT NULL OR PRM_JmZ = '' OR PRM_JmZ = Twr_Jm OR PRM_JmZ = TwJ_JmZ  THEN
+isnull((select SUM(TrE_Ilosc) from CDN.TraElem where TrE_GIDNumer=@lNumer and TrE_TwrNumer=TK.Twr_GIDNumer and TrE_Gratis=0 and TrE_PakietId=ISNULL(TRE2.TrE_PakietId,0)  
+and TrE_ZstNumer=0 and TrE_RecNumer=0 ),0) ELSE 0 END ,
+TK.Twr_Jm, PRM_Id,PRM_Akronim, PRM_RodzajPakietu, isnull(PRP_Wartosc,0),isnull(PRP_ID,0),0,0,TPR_Typ,TK.Twr_GIDNumer,TK.Twr_GIDTyp,
+ISNULL(TRE.TrE_PakietId,0),0,ISNULL(TRE.TrE_Poczatkowa,0),ISNULL(TRE.TrE_CenaPoRabacie,0), TP.TPR_FlagaNB, TP.TPR_Waluta, PRM_NajwyzszyProg,  TPR_LP, CASE WHEN TPR_TwgTyp = 0 THEN 1 ELSE 0 END ,
+0,0,0,0,0, 0 TwrZPozaPromocji, TP.TPR_Wymagany TwrWymagany, ISNULL(PRP_EdycjaGratisow,0) EdycjaGratisow, 
+PRM_JmZ JmZ, CASE WHEN PRM_RodzajPakietu = 1 THEN ISNULL(TwJ_JmZ, Twr_jm) ELSE '' END JmPom, PRM_WymagajJm WymagajJm, 
+CASE WHEN PRM_RodzajPakietu = 1 AND EXISTS(Select * from CDN.TraElem where TrE_GIDNumer=@lNumer and TrE_TwrNumer=TK.Twr_GIDNumer and TrE_JmZ = PRM_JmZ and TrE_PakietId = 0) THEN 
+(Select TOP 1 TrE_PrzeliczL from CDN.TraElem where TrE_GIDNumer=@lNumer and TrE_TwrNumer=TK.Twr_GIDNumer and TrE_JmZ = PRM_JmZ and TrE_PakietId = 0) ELSE 
+ISNULL(TwJ_PrzeliczL, 1) END PrzeliczL, 
+CASE WHEN PRM_RodzajPakietu = 1 AND EXISTS(Select * from CDN.TraElem where TrE_GIDNumer=@lNumer and TrE_TwrNumer=TK.Twr_GIDNumer and TrE_JmZ = PRM_JmZ and TrE_PakietId = 0) THEN 
+(Select TOP 1 TrE_PrzeliczM from CDN.TraElem where TrE_GIDNumer=@lNumer and TrE_TwrNumer=TK.Twr_GIDNumer and TrE_JmZ = PRM_JmZ and TrE_PakietId = 0) ELSE 
+ISNULL(TwJ_PrzeliczM, 1) END PrzeliczM,
+CASE WHEN PRM_RodzajPakietu = 1 AND EXISTS(Select * from CDN.TraElem where TrE_GIDNumer=@lNumer and TrE_TwrNumer=TK.Twr_GIDNumer and TrE_JmZ = PRM_JmZ and TrE_PakietId = 0) THEN 
+(Select TOP 1 TrE_JmFormatZ from CDN.TraElem where TrE_GIDNumer=@lNumer and TrE_TwrNumer=TK.Twr_GIDNumer and TrE_JmZ = PRM_JmZ and TrE_PakietId = 0) ELSE 
+ISNULL(TwJ_JmFormat, Twr_JmFormat) END JmFormatZ, ISNULL(TwJ_Calkowita, Twr_JMCalkowita) JmCalkowita
+, Twr_JmFormat TwrJmFormat, Twr_JMCalkowita TwrJmCalkowita,
+PRM_MaxIloscPakietow MaxIloscPakietow, PRM_LimitRodzaj LimitRodzaj
+from CDN.TwrPromocje TP INNER JOIN CDN.PrmKarty on PRM_Id=TP.TPR_PrmId
+INNER JOIN CDN.TwrKarty TK ON TK.Twr_GIDNumer=TP.TPR_TwrNumer AND TK.Twr_GIDTyp = TP.TPR_TwrTyp
+LEFT  JOIN CDN.TwrJm  ON  Twr_GIDNumer= TwJ_TwrNumer AND TwJ_JmZ = PRM_JmZ
+inner join #tabZasoby zasoby on zasoby.TwrGIDNumer=TK.Twr_GIDNumer
+left outer JOIN CDN.ProgiTwrPromocje PTP on  PTP_TPRId=TP.TPR_Id
+LEFT outer JOIN CDN.ProgiPromocje on PRP_ID=PTP_PRPId
+left join CDN.TraElem TRE on TrE_PakietId=PRM_Id  and TrE_GIDNumer=@lNumer and TrE_TwrNumer=TK.Twr_GIDNumer and TrE_Gratis=0
+left join CDN.TraElem TRE2 on TRE2.TrE_PakietId=PRM_Id  and TRE2.TrE_GIDNumer=@lNumer
+where PRM_Pakietowa = 1
+
+union all
+
+select TK.Twr_Kod, case when PRP_ID is null then 2 else 3 end, 6,TK.Twr_Nazwa,
+GP.GPR_Wartosc, CAST(GP.GPR_Ilosc AS varchar),
+case when isnull(zasoby.Ilosc,0)=-1 then CAST(zasoby.Ilosc as varchar) else CAST(isnull(zasoby.Ilosc,0)+
+isnull((select SUM(TrE_Ilosc) from CDN.TraElem where TrE_GIDNumer=@lNumer and TrE_TwrNumer=TK.Twr_GIDNumer and TrE_PakietId=0  and TrE_ZstNumer=0 and TrE_RecNumer=0),0) as varchar) end,
+CAST(ISNULL(TrE_Ilosc,0) AS varchar),TK.Twr_Jm, PRM_Id,PRM_Akronim, PRM_RodzajPakietu,
+isnull(PRP_Wartosc,0),isnull(PRP_ID,0), GP.GPR_Domyslny, GP.GPR_Mnoz,GPR_Typ, TK.Twr_GIDNumer, TK.Twr_GIDTyp
+,ISNULL(TrE_PakietId,0), ISNULL(TrE_PromocjaProgID,0),ISNULL(TrE_Poczatkowa,0),ISNULL(TrE_CenaPoRabacie,0),
+GPR_FlagaNB, GPR_Waluta, PRM_NajwyzszyProg,GPR_Pozycja, 0 INNELp,
+0,0,0,0,0, 0 TwrZPozaPromocji, 0 TwrWymagany, PRP_EdycjaGratisow EdycjaGratisow, 
+PRP_JmZ JmZ, CASE WHEN PRM_RodzajPakietu = 1 THEN ISNULL(TwJ_JmZ, Twr_jm) ELSE '' END JmPom, 
+PRM_WymagajJm WymagajJm, 
+ISNULL(TwJ_PrzeliczL, 1) PrzeliczL, 
+ISNULL(TwJ_PrzeliczM, 1) PrzeliczM,
+ISNULL(TwJ_JmFormat, Twr_JmFormat) JmFormatZ, ISNULL(TwJ_Calkowita, Twr_JMCalkowita) JmCalkowita,
+Twr_JmFormat TwrJmFormat, Twr_JMCalkowita TwrJmCalkowita,
+PRM_MaxIloscPakietow MaxIloscPakietow, PRM_LimitRodzaj LimitRodzaj
+from CDN.GratisyPromocje GP
+INNER JOIN CDN.PrmKarty on PRM_Id=GP.GPR_PrmId
+INNER JOIN CDN.TwrKarty TK ON TK.Twr_GIDNumer=GP.GPR_TwrNumer
+inner join #tabZasoby zasoby on zasoby.TwrGIDNumer=TK.Twr_GIDNumer
+LEFT JOIN CDN.ProgiPromocje on PRP_ID=GP.GPR_PrPID
+LEFT JOIN CDN.TwrJm  ON  Twr_GIDNumer= TwJ_TwrNumer AND TwJ_JmZ = PRP_JmZ
+left join CDN.TraElem on TrE_PakietId=PRM_Id and TrE_PromocjaProgID = PRP_ID and TrE_TwrNumer=TK.Twr_GIDNumer and TrE_GIDNumer=@lNumer and TrE_Gratis=1
+where PRM_Pakietowa = 1
+) as pakiety
+inner join #tabPromocje as promocje on promocje.PRM_Id=pakiety.PrmId
+order by pakiety.SortAkrPrm, pakiety.WartoscProg, pakiety.Typ, pakiety.INNELp, pakiety.LP, pakiety.TwrZPozaPromocji, pakiety.NazwaTwr
+end
+
+
+
+drop table #tabPromocje
+drop table #tabZasoby
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

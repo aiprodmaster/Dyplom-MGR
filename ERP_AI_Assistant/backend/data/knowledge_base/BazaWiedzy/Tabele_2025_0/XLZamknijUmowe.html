@@ -1,0 +1,80 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="XLZamknijUmowe"></A><PRE>
+          <FONT SIZE="2"><I>/* XLZamknijUmowe */</I><BR>
+CREATE PROCEDURE [CDN].XLZamknijUmowe 
+	@UmowaId			int,
+	@OpeIdent			varchar(8),
+	@StanId				tinyint,
+	@StanOpisId			int = null,
+	@IgnorujBledy		tinyint = null
+AS
+declare @DataCzasTeraz	int
+
+
+SET NOCOUNT ON
+select @DataCzasTeraz = DATEDIFF(s,'19900101',GETDATE())
+update umowa 
+set UmN_Stan=@StanId
+,UmN_OpeMNumer=Ope_GIDNumer
+,UmN_DataCzasM = @DataCzasTeraz
+,UmN_OpePNumer=case when @StanId=1 /*Potwierdzona*/ then Ope_GIDNumer else 0 end
+,UmN_DataCzasP=case when @StanId=1 /*Potwierdzona*/ then @DataCzasTeraz else 0 end
+,UmN_OpisStanuId = case when isnull(@StanOpisId,0)=0  --jak nie przekazano konkretnego opisu to...
+				then coalesce(--wybranie domyślnego opisu stanu lub pierwszego lepszego lub 0 gdy stan nie ma opisu
+					(select SLW_ID from CDN.SlownikiStruktura inner join CDN.Slowniki on SLW_SLSId=SLS_Id
+					join (select 0 Stan, 0 SlwPre union all select 1,133 /*e_sls_UmowyKodPotwierdzenia*/ union all select 2,134 /*e_sls_UmowyKodOdrzucenia*/ union all select 3,135/*e_sls_UmowyKodZakonczenia*/ union all select 4,0) StanSlwPre on SLS_Predefiniowany=StanSlwPre.SlwPre
+					where SLW_Aktywny = 1 and Slw_Domyslny=1 and StanSlwPre.Stan=@StanId),					
+					(select top 1 SLW_ID from CDN.SlownikiStruktura inner join CDN.Slowniki on SLW_SLSId=SLS_Id
+					join (select 0 Stan, 0 SlwPre union all select 1,133 /*e_sls_UmowyKodPotwierdzenia*/ union all select 2,134 /*e_sls_UmowyKodOdrzucenia*/ union all select 3,135/*e_sls_UmowyKodZakonczenia*/ union all select 4,0) StanSlwPre on SLS_Predefiniowany=StanSlwPre.SlwPre
+					where SLW_Aktywny = 1 and StanSlwPre.Stan=@StanId order by SLW_WartoscS),(select 0))
+				else @StanOpisId end --przekazano konkretny opis stanu, join walidujący z opisem stanu musi się zwrócić coś by był update inaczej przekazano błędy opis
+from CDN.UmwNag umowa
+join (select SLW_ID from CDN.SlownikiStruktura inner join CDN.Slowniki on SLW_SLSId=SLS_Id
+	join (select 0 Stan, 0 SlwPre union all select 1,133 /*e_sls_UmowyKodPotwierdzenia*/ union all select 2,134 /*e_sls_UmowyKodOdrzucenia*/ union all select 3,135/*e_sls_UmowyKodZakonczenia*/ union all select 4,0) StanSlwPre on SLS_Predefiniowany = StanSlwPre.SlwPre
+	where SLW_Aktywny = 1 and StanSlwPre.Stan=@StanId and SLW_ID=@StanOpisId union all select 0) StanPre 
+on StanPre.SLW_ID = isnull(@StanOpisId,0)
+join CDN.OpeKarty on Ope_Ident=@OpeIdent
+where UmN_Id=@UmowaId
+and @StanId in (0 /*Niepotwierdzona*/,1 /*Potwierdzona*/,2 /*Odrzucona*/,3 /*Zakończona*/,4 /*Anulowana*/)
+and (@StanId = UmN_Stan --bez zmiany stanu
+	or (
+			(UmN_Stan=0 and @StanId=1 /*bufor do potwierdzona*/)
+			or (UmN_Stan=1 and @StanId=3 /*potwierdzona do zakonczona*/)
+			or (UmN_Stan=1 and @StanId=4 /*potwierdzona do anulowana*/)
+			or (UmN_Stan=3 and @StanId=0 /*zakonczona do bufor*/)
+		)
+	)
+
+	IF @@ROWCOUNT=0 BEGIN
+		IF NOT EXISTS(SELECT * FROM CDN.OpeKarty WHERE Ope_Ident=@OpeIdent) BEGIN
+			RAISERROR ('XLZamknijUmowe. Podany operator nie występuje w bazie.', 16, 1)
+			RETURN -2
+		END
+
+		IF NOT @StanId in (0 /*Niepotwierdzona*/,1 /*Potwierdzona*/,2 /*Odrzucona*/,3 /*Zakończona*/,4 /*Anulowana*/) BEGIN
+			RAISERROR ('XLZamknijUmowe. Błędny stan.', 16, 1)
+			RETURN -3
+		END				
+		-- inny powód błędu:						
+		RAISERROR ('XLZamknijUmowe. Nie powiodło się zamykanie umowy.', 16, 1)
+		RETURN -1
+	END
+
+SET NOCOUNT OFF
+RETURN 0
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

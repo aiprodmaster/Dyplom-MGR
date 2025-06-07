@@ -1,0 +1,850 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[FakturyZakupuWgDeklaracjiVatJPK]"></A><PRE>
+          <FONT SIZE="2"><I>/* [FakturyZakupuWgDeklaracjiVatJPK] */</I><BR>
+create procedure [CDN].[FakturyZakupuWgDeklaracjiVatJPK] (@miesiacKwartal tinyint, @kwartal tinyint, @miesiac tinyint, @rok smallint, @wersjaDeklaracji smallint = 12, @wskaznikStruktury decimal(7,2) = 100.00, @uzgodnijVAT7 tinyint=0, @JPKPONNumer int=0, @DokZaksiegowane tinyint=0) as
+begin
+
+	declare @poczKwart tinyint = 0
+		, @konKwart tinyint = 0
+		, @wskStr decimal(15,4)
+		, @konfParam_wskaznik_2_98 tinyint 
+		, @bNettoWgStrSprzed tinyint = 0
+		--
+	declare @sSQL nvarchar(max)
+	declare @rv int
+	
+	-- odczytaj paramert z konf
+	select @konfParam_wskaznik_2_98 = Kon_Wartosc
+	from cdn.Konfig where Kon_Numer = 20110 and kon_lp = 32767
+	
+	if @konfParam_wskaznik_2_98 &gt; 0
+		if @wskaznikStruktury &gt; 98
+			set @wskaznikStruktury = 100
+		else if @wskaznikStruktury &lt;= 2
+			set @wskaznikStruktury = 0
+	
+	IF not exists(select 1 from cdn.Konfig where KON_Numer=20136 and KON_Wartosc=1)
+		set @wskaznikStruktury = round(@wskaznikStruktury,0)
+
+	set @wskStr = convert(decimal(15,4), @wskaznikStruktury) / 100.00
+	
+
+
+	select @bNettoWgStrSprzed = Kon_Wartosc from cdn.Konfig where Kon_Numer = 20134
+	
+	--select @konfParam_wskaznik_2_98 konfParam_wskaznik_2_98, @wskaznikStruktury wskaznikStruktury, @wskStr wskStr
+		
+	if @miesiacKwartal &gt; 0
+	begin
+		set @poczKwart = ((@kwartal - 1) * 3) + 1
+		set @konKwart = @poczKwart + 2
+	end
+	
+	declare @e_ksi_lPodatek_VAT7 tinyint = 1, @TYP_Deklaracja_VAT7 smallint = 2768	
+	declare @PONNumer int = 0	
+	
+	if @uzgodnijVAT7 &gt; 0 and @wersjaDeklaracji &lt; 17
+	begin
+		-- wczytaj dane z zaakceptowanej/zatwierdzonej deklaracji VAT-7(16)
+		select @PONNumer = PON_GIDNumer
+		from cdn.PodNag 
+		join cdn.PodElem on PON_GIDNumer = POE_GIDNumer
+		where PON_GIDTyp = @TYP_Deklaracja_VAT7 and PON_TypPodatku = @e_ksi_lPodatek_VAT7
+			and PON_Rok = @rok and PON_Miesiac = @miesiac and PON_Status in (1,2)			
+	end	
+
+	declare @Typ_FW	 int = 2036
+	declare @Typ_FWK int = 2044	
+	declare @Typ_FWS int = 3379
+	declare @Typ_FWZ int = 3378
+	declare @Typ_FKZ int = 3386
+	declare @Typ_FKS int = 3387	--3378
+	declare @Typ_FZ  int = 1521
+	declare @Typ_FZK int = 1529
+	declare @e_SPR_nTrNTypAvistaZDZ tinyint = 34
+		
+	declare @g_ksi_lUwzgledniajNieopodatkowane tinyint =  0
+	declare @g_ksi_lUwzgledniajZakup0zw tinyint =  0
+
+/*6,7,8,9 ,10,11,12,13 ,16,17,18,19 ,21
+@e_SPR_nWewnatrzwspolnotowyVat0D, @e_SPR_nWewnatrzwspolnotowyVatDowolnyD, @e_SPR_nWewnatrzwspolnotowyVat0DT, @e_SPR_nWewnatrzwspolnotowyVatDowolnyDT
+, @e_SPR_nWewnatrzwspolnotowyVat0N, @e_SPR_nWewnatrzwspolnotowyVatDowolnyN, @e_SPR_nWewnatrzwspolnotowyVat0NT, @e_SPR_nWewnatrzwspolnotowyVatDowolnyNT
+, @e_SPR_nWewnatrzwspolnotowyVatDowolnyDKorekta, @e_SPR_nWewnatrzwspolnotowyVat0DKorekta, @e_SPR_nWewnatrzwspolnotowyVatDowolnyDTKorekta, @e_SPR_nWewnatrzwspolnotowyVatDowolnyDTKorekta
+, @e_SPR_nDostawaOpodatkowanaWWsp
+*/
+	declare @e_SPR_nNieEksportowy							tinyint =  1       -- nie eksportowy
+	declare @e_SPR_nEksportowyVat0                          tinyint =  2       -- eksportowy VAT0%
+	declare @e_SPR_nEksportowyVatDowolny                    tinyint =  3       -- eksportowy VAT dowolny
+	declare @e_SPR_nEksportowyVatDowolnyKorekta             tinyint =  4       -- korekta vat dowolny  -&gt; vat eksportowy
+	declare @e_SPR_nEksportowyVat0Korekta                   tinyint =  5       -- korekta vat eksportowy -&gt; vat dowolny
+	declare @e_SPR_nWewnatrzwspolnotowyVat0D                tinyint =  6       -- Wewnątrzwspólnotowy dostawa Vat 0
+	declare @e_SPR_nWewnatrzwspolnotowyVatDowolnyD          tinyint =  7       -- Wewnątrzwspólnotowy dostawa Vat dowolny
+	declare @e_SPR_nWewnatrzwspolnotowyVat0DT               tinyint =  8       -- Wewnątrzwspólnotowa dostawa, trójstronna Vat 0,
+	declare @e_SPR_nWewnatrzwspolnotowyVatDowolnyDT         tinyint =  9       -- Wewnątrzwspólnotowa dostawa, trójstronna Vat dowolny,
+	declare @e_SPR_nWewnatrzwspolnotowyVat0N                tinyint =  10      -- Wewnątrzwspólnotowe nabycie Vat 0
+	declare @e_SPR_nWewnatrzwspolnotowyVatDowolnyN          tinyint =  11      -- Wewnątrzwspólnotowe nabycie Vat dowolny
+	declare @e_SPR_nWewnatrzwspolnotowyVat0NT               tinyint =  12      -- Wewnątrzwspólnotowe nabycie, trójstronne Vat 0
+	declare @e_SPR_nWewnatrzwspolnotowyVatDowolnyNT         tinyint =  13      -- Wewnątrzwspólnotowe nabycie, trójstronne Vat dowolny
+	declare @e_SPR_nImportowyVat0FW                         tinyint =  14      -- eksportowy VAT0% dla FWS
+	declare @e_SPR_nImportowyVatDowolnyFW                   tinyint =  15      -- eksportowy VAT dowolny dla FWS
+	declare @e_SPR_nWewnatrzwspolnotowyVatDowolnyDKorekta   tinyint =  16      -- korekta wewnątrzwspólnotowy dostawa Vat dowolny
+	declare @e_SPR_nWewnatrzwspolnotowyVat0DKorekta         tinyint =  17      -- korekta wewnątrzwspólnotowy dostawa Vat 0
+	declare @e_SPR_nWewnatrzwspolnotowyVatDowolnyDTKorekta  tinyint =  18      -- korekta wewnątrzwspólnotowa dostawa trójstronna Vat dowolny
+	declare @e_SPR_nWewnatrzwspolnotowyVat0DTKorekta        tinyint =  19      -- korekta wewnątrzwspólnotowa dostawa trójstronna Vat 0
+	declare @e_SPR_nEksportowyNabywca                       tinyint =  20      -- podatnikiem jest nabywca
+	declare @e_SPR_nDostawaOpodatkowanaWWsp                 tinyint =  21      -- dostawa opodatkowana poza terytorium kraju
+	declare @e_SPR_nTaxFree                                 tinyint =  22      -- tax free
+	declare @e_SPR_nDostawaOpodatkowanaInne                 tinyint =  23      -- dostawa opodatkowana poza terytorium kraju
+	declare @e_SPR_nEksportowyNabywcaWsp	tinyint =  24      --podatnikiem jest Nabywca (transakcja Wewnątrzwspólnotowa)
+	declare @e_SPR_nEksportowyNabywcaInne	tinyint =  25      --podatnikime jest Nabywca (transakcja Inna zagranicznia)
+
+	declare @e_ksi_lRodzajZakupu_Towary			tinyint =  1
+	declare @e_ksi_lRodzajZakupu_Koszty			tinyint =  2
+	declare @e_ksi_lRodzajZakupu_SrTrwale		tinyint =  3
+	declare @e_ksi_lRodzajZakupu_Inwestycje		tinyint =  @e_ksi_lRodzajZakupu_SrTrwale
+	declare @e_ksi_lRodzajZakupu_Nieruchomosci	tinyint =  4
+	declare @e_ksi_lRodzajZakupu_ImportUslug	tinyint =  5
+	declare @e_ksi_lRodzajZakupu_SrTransportu	tinyint =  6
+	declare @e_ksi_lRodzajZakupu_Paliwo			tinyint =  7  
+	declare @e_ksi_lRodzajZakupu_UslugiRO		tinyint =  8
+
+	declare @e_ksi_lOdliczeniaVAT_Tak		tinyint =  1
+	declare @e_ksi_lOdliczeniaVAT_Nie		tinyint =  2
+	declare @e_ksi_lOdliczeniaVAT_Warunkowo	tinyint =  3	
+
+
+	select @g_ksi_lUwzgledniajNieopodatkowane = CAST(KON_Wartosc as int) from cdn.Konfig where Kon_Numer = 2056
+	select @g_ksi_lUwzgledniajZakup0zw = CAST(KON_Wartosc as int) from cdn.Konfig where Kon_Numer = 2071
+
+
+	declare @akronimFrm varchar(200) = ''
+	declare @adresFrm varchar(200)
+	declare @nazwaFrm varchar(100)
+	declare @prefiksFrm varchar(10)
+	declare @NIPFrm varchar(30)
+
+	select top 1 @akronimFrm = KnA_Akronim, @nazwaFrm = KnA_Nazwa1 + ' ' + KnA_Nazwa2
+		, @adresFrm = KnA_Ulica + ' ' + KnA_Adres + ' ' + KnA_KodP + ', ' + KnA_Miasto
+		, @prefiksFrm = KnA_NipPrefiks, @NIPFrm = case when KnA_Nip='' then KnA_Pesel else KnA_Nip end 
+	from cdn.firma
+	left join cdn.KntKarty on Frm_KntNumer = KnT_GIDNumer
+	left join cdn.KntAdresy on Knt_KnANumer = KnA_GIDNumer
+	where frm_dataarc = 0 and Frm_KntNumer &gt; 0
+	order by Frm_GidNumer
+
+
+	-- Kon_Numer = 2056 - uwzględniać sprzedaż niepodlegającą opodatkowaniu na deklaracji VAT-7
+	-- Kon_Numer = 2071 - Czy uwzględniać zakupy 0% i zw. na deklaracji VAT-7
+	create table #tmpWyn
+	(	
+		GIDTyp smallint, 
+		GIDNumer int, 
+		GIDLp smallint, 
+		NrWRej int,
+		Rejestr varchar(20),
+		PoleNaDekl smallint,
+		Odliczenie tinyint,		-- pełne, warunkowe (tak, nie, warunkowe)
+		FlagaVat tinyint,
+		DataWystaw int,
+		DataSprzed int,
+		DataWplywuFA int,
+		NrDok varchar(40),
+		Akronim varchar(20),
+		Nazwa varchar(400),
+		Netto decimal(15,2),
+		Vat decimal(15,2),
+		WplRok smallint,
+		WplMiesiac tinyint,
+		WplDzien tinyint,
+		TrnTyp tinyint,		
+		AdresNabywcy varchar(512),
+		NrIdWystawcy varchar(100),
+		KNAKodKraju varchar(2)
+	)	
+
+	-------------------------------------------------------------------------------------------------------------------------------------
+	select * INTO #tmpDokumenty from 
+	(SELECT TRV_GIDTyp, TRV_GIDNumer, TRV_GIDLp, TRN_VatRejestr, TrN_VatNumer, TrN_Data2 DataWyst, TrN_Data3 DataZak, TrN_DataWplywuFA DataWplywuFA,
+		CASE WHEN (TSV_NettoP + TSV_VatP) &lt;&gt; 0 THEN TSV_NettoP ELSE TSV_NettoR END as Netto,
+		CASE WHEN (TSV_NettoP + TSV_VatP) &lt;&gt; 0 THEN TSV_VatP ELSE TSV_VatR END as Vat,
+		TRV_StawkaPod, TRV_FlagaVAT, TSV_DeklRok, TSV_DeklMiesiac,
+		TSV_RodzajZakupu, TSV_OdliczeniaVat,
+		B.TRN_VatRok, B.TRN_VatMiesiac, B.TrN_VatDzien, B.TRN_VatKorekta, TRV_ExpoNorm, 0 as Zero, B.TRN_RolnikRyczalt, B.TRN_KorektaOdlicz, 0 as TypSad, 0 as CzySad,
+		case when TrN_DokumentObcy &lt;&gt; '' then TrN_DokumentObcy when 1=2 then CDN.NumerDokumentuZ(TrN_GidTyp, TrN_SpiTyp, TrN_TrNTyp, TrN_TrNNumer, TrN_TrNRok, TrN_TrNSeria, TrN_TrNMiesiac, TrN_ZwrTyp, TrN_ZwrNumer, TrN_WMS) else 'brak' end as NumerDok		--CDN.NumerDokumentu(TrN_GIDTyp, TrN_SpiTyp,TrN_TrnTyp,TrN_TrnNumer,TrN_TrNRok,Trn_TrnSeria,TrN_TrnMiesiac) end as NumerDok
+		,KnA_Akronim
+		, case when @wersjaDeklaracji&gt;=21 then
+			KnA_Nazwa1 + ' ' + KnA_Nazwa2 + ' ' + KnA_Nazwa3
+		else
+			 KnA_Nazwa1 + ' ' + KnA_Nazwa2 
+		end as KNTNazwa
+		,TrN_TrNTyp
+	    ,LTRIM(RTRIM(KnA_Ulica + ' ' + KnA_Adres + ' ' + KnA_KodP + ' ' + KnA_Miasto)) as KnAAdres
+	    --, case when KnA_Nip='' then case when KnA_Pesel = '' then 'brak' else KnA_Pesel end else
+	    , case when KnA_Nip='' then case when TRV_GIDTyp in (1520,1528) and KnA_Pesel&lt;&gt;'' then KnA_Pesel else 'brak' end else
+			case when @wersjaDeklaracji &lt; 21 and TRV_ExpoNorm in (@e_SPR_nWewnatrzwspolnotowyVat0D, @e_SPR_nWewnatrzwspolnotowyVatDowolnyD, @e_SPR_nWewnatrzwspolnotowyVat0DT, @e_SPR_nWewnatrzwspolnotowyVatDowolnyDT
+			, @e_SPR_nWewnatrzwspolnotowyVat0N, @e_SPR_nWewnatrzwspolnotowyVatDowolnyN, @e_SPR_nWewnatrzwspolnotowyVat0NT, @e_SPR_nWewnatrzwspolnotowyVatDowolnyNT
+			, @e_SPR_nWewnatrzwspolnotowyVatDowolnyDKorekta, @e_SPR_nWewnatrzwspolnotowyVat0DKorekta, @e_SPR_nWewnatrzwspolnotowyVatDowolnyDTKorekta, @e_SPR_nWewnatrzwspolnotowyVat0DTKorekta
+			, @e_SPR_nDostawaOpodatkowanaWWsp) then KnA_NipPrefiks else '' end + KnA_Nip 
+		end as NrIdWystawcy
+		, case when KnA_Nip='' and (TRN_ExpoNorm=2 or KNT_ExpoKraj=3) then KnA_Kraj when KnA_Nip='' then '' when isnull(KnA_NipPrefiks,'')&lt;&gt;'' then KnA_NipPrefiks else case when isnull(KnA_Kraj,'')='' or isnull(KnA_Kraj,'') &lt;&gt; 'PL' then KnA_Kraj else '' end end KnA_NipPrefiks		
+	FROM CDN.TraVat 
+	JOIN CDN.TraNag B ON TRV_GIDTyp = B.TRN_GIDTyp AND TRV_GIDNumer=B.TRN_GIDNumer 
+	JOIN CDN.TraSVat ON TRV_GIDTyp = TSV_GIDTyp AND TRV_GIDNumer = TSV_GIDNumer AND TrV_GIDLp = TSV_GIDLp
+	--LEFT JOIN CDN.KntKarty ON TrN_KntTyp = Knt_GIDTyp AND TrN_KntNumer = Knt_GIDNumer
+	LEFT JOIN CDN.KntAdresy ON TRN_KNANumer = KnA_GIDNumer
+	LEFT JOIN CDN.KntKarty on KNA_KNtNumer=KNT_GIDNumer
+	WHERE B.TRN_VatTyp = 1 AND TSV_Rozliczac = 1 AND TSV_DeklRok = @rok 
+		 AND (@miesiacKwartal = 0 AND TSV_DeklMiesiac = @miesiac OR 
+			@miesiacKwartal = 1 AND TSV_DeklMiesiac BETWEEN @poczKwart AND @konKwart)
+		 AND B.TRN_VatRejestr &lt;&gt; ''
+		 AND (@DokZaksiegowane=0 OR (@DokZaksiegowane=1 AND TrN_Zaksiegowano=1) OR (@DokZaksiegowane=2 AND TrN_Zaksiegowano=0))
+		 --AND ( @g_ksi_lUwzgledniajZakup0zw = 1 OR @g_ksi_lUwzgledniajZakup0zw = 0 AND TrV_FlagaVat in (0,2) )
+		 
+	     
+	UNION ALL
+
+	SELECT     
+		TRV_GIDTyp, TRV_GIDNumer, TRV_GIDLp, SaN_VatRejestr, SaN_VatNumer, SaN_DataWplywu DataWyst, SaN_DataZgloszenia DataZak, SaN_DataWplywuFA DataWplywuFA,
+		CASE WHEN (TSV_NettoP + TSV_VatP) &lt;&gt; 0 THEN TSV_NettoP ELSE TSV_NettoR END as Netto,
+		CASE WHEN (TSV_NettoP + TSV_VatP) &lt;&gt; 0 THEN TSV_VatP ELSE TSV_VatR END as Vat,
+		TRV_StawkaPod, TRV_FlagaVAT, TSV_DeklRok, TSV_DeklMiesiac,
+		TSV_RodzajZakupu, TSV_OdliczeniaVat,
+		SAN_VatRok, SAN_VatMiesiac, SAN_VatDzien, 0, TRV_ExpoNorm, 0, 0, 0,  
+		CASE WHEN SAN_GidTyp IN (3376, 3378, 3386) THEN 1 ELSE 0 END as TypSad, 1 as CzySad,
+		case when SaN_NumerSAD &lt;&gt; '' then SaN_NumerSAD when 1=2 then CDN.NumerDokumentu(SaN_GIDTyp,0,SaN_SaNTyp,SaN_SaNNumer,SaN_SaNRok,SaN_SaNSeria,SaN_SaNMiesiac) else 'brak' end		
+		,case when SAN_GIDTyp = 3376 then case when isnull(k2.KnA_GIDNumer, 0) = 0 OR isnull(k2.KnA_Akronim,'') = '' then 'brak' else isnull(k2.KnA_Akronim,'') end else case when isnull(k1.KnA_GIDNumer, 0) = 0 or isnull(k1.KnA_Akronim,'') = '' then 'brak' else isnull(k1.KnA_Akronim,'') end end
+		,case when SAN_GIDTyp = 3376 then case when isnull(k2.KnA_GIDNumer, 0) = 0 or isnull(k2.KnA_Nazwa1,'') = '' then 'brak' else isnull(k2.KnA_Nazwa1,'') + ' ' + isnull(k2.KnA_Nazwa2,'')+ ' ' + isnull(k2.KnA_Nazwa3,'') end else case when isnull(k1.KnA_GIDNumer, 0) = 0 or isnull(k1.KnA_Nazwa1,'') = '' then 'brak' else isnull(k1.KnA_Nazwa1,'') + ' ' + isnull(k1.KnA_Nazwa2,'') + ' ' + isnull(k1.KnA_Nazwa3,'') end end
+		,0
+		, LTRIM(RTRIM(case when SAN_GIDTyp = 3376 then
+			case when isnull(k2.KnA_GIDNumer, 0) = 0 OR isnull(k2.KnA_Ulica,'') = '' then 'brak' else k2.KnA_Ulica + ' ' + k2.KnA_Adres + ' ' + k2.KnA_KodP + ' ' + k2.KnA_Miasto end
+	      else 
+			case when isnull(k1.KnA_GIDNumer, 0) = 0 OR isnull(k1.KnA_Ulica,'') = '' then 'brak' else k1.KnA_Ulica + ' ' + k1.KnA_Adres + ' ' + k1.KnA_KodP + ' ' + k1.KnA_Miasto end end)) as KnAAdres
+	    , case 
+			when SAN_GIDTyp = 3376 then case when isnull(k2.KnA_Nip,'') = '' then 'brak' else k2.KnA_Nip end
+			when isnull(k1.KnA_Nip,'')='' then	'brak'
+			else
+				case when @wersjaDeklaracji &lt; 21 and TRV_ExpoNorm in (@e_SPR_nWewnatrzwspolnotowyVat0D, @e_SPR_nWewnatrzwspolnotowyVatDowolnyD, @e_SPR_nWewnatrzwspolnotowyVat0DT, @e_SPR_nWewnatrzwspolnotowyVatDowolnyDT
+				, @e_SPR_nWewnatrzwspolnotowyVat0N, @e_SPR_nWewnatrzwspolnotowyVatDowolnyN, @e_SPR_nWewnatrzwspolnotowyVat0NT, @e_SPR_nWewnatrzwspolnotowyVatDowolnyNT
+				, @e_SPR_nWewnatrzwspolnotowyVatDowolnyDKorekta, @e_SPR_nWewnatrzwspolnotowyVat0DKorekta, @e_SPR_nWewnatrzwspolnotowyVatDowolnyDTKorekta, @e_SPR_nWewnatrzwspolnotowyVatDowolnyDTKorekta
+				, @e_SPR_nDostawaOpodatkowanaWWsp) then 
+					k1.KnA_NipPrefiks
+				else '' 
+				end + k1.KnA_Nip
+		  end
+		  , case when SAN_GIDTyp = 3376 then 
+				case when k2.KnA_Nip='' and (SAN_ExpoNorm=2 and KNT2.KNT_ExpoKraj=3) then k2.KnA_Kraj when k2.KnA_Nip='' then '' when isnull(k2.KnA_NipPrefiks,'')&lt;&gt;'' then k2.KnA_NipPrefiks else case when isnull(k2.KnA_Kraj,'')='' or isnull(k2.KnA_Kraj,'') &lt;&gt; 'PL' then k2.KnA_Kraj else '' end end
+			else 
+				case when k1.KnA_Nip='' and (SAN_ExpoNorm=2 and KNT1.KNT_ExpoKraj=3) then k1.KnA_Kraj when k1.KnA_Nip='' then '' when isnull(k1.KnA_NipPrefiks,'')&lt;&gt;'' then k1.KnA_NipPrefiks else case when isnull(k1.KnA_Kraj,'')='' or isnull(k1.KnA_Kraj,'') &lt;&gt; 'PL' then k1.KnA_Kraj else '' end end
+			end KnA_NipPrefiks		  
+	FROM CDN.TraVat 
+	JOIN CDN.SadNag	ON TRV_GIDTyp = SAN_GIDTyp AND TRV_GIDNumer = SAN_GIDNumer	
+	JOIN CDN.TraSVat ON TRV_GIDTyp = TSV_GIDTyp AND TRV_GIDNumer = TSV_GIDNumer AND TrV_GIDLp = TSV_GIDLp
+	LEFT JOIN CDN.KntAdresy k1 ON SAN_KNANumer = k1.KnA_GIDNumer
+	LEFT JOIN CDN.KntKarty KNT1 on k1.KNA_KNtNumer=KNT1.KNT_GIDNumer
+	LEFT JOIN CDN.KntAdresy k2 ON SaN_DstAdres = k2.KnA_GIDNumer	
+	LEFT JOIN CDN.KntKarty KNT2 on k2.KNA_KNtNumer=KNT2.KNT_GIDNumer
+	WHERE SAN_VatTyp = 1 AND TSV_Rozliczac = 1 AND TSV_DeklRok = @rok
+		 AND (@miesiacKwartal = 0 AND TSV_DeklMiesiac = @miesiac OR 
+			@miesiacKwartal = 1 AND TSV_DeklMiesiac BETWEEN @poczKwart AND @konKwart)
+		 AND SAN_VatRejestr &lt;&gt; ''
+		 AND (@DokZaksiegowane=0 OR (@DokZaksiegowane=1 AND SAN_Zaksiegowano=1) OR (@DokZaksiegowane=2 AND SAN_Zaksiegowano=0))
+		 --AND ( @g_ksi_lUwzgledniajZakup0zw = 1 OR @g_ksi_lUwzgledniajZakup0zw = 0 AND TrV_FlagaVat in (0,2) )
+	)    as aa 
+	-------------------------------------------------------------------------------------------------------------------------------------     
+
+	declare @TRV_GIDTyp smallint,
+		@OldTRVGIDTyp smallint,
+		@TRV_GIDNumer int, 
+		@OldTRVGIDNumer int,
+		@TRV_GIDLp int,
+		@TRN_VatRejestr varchar(5), 
+		@TrN_VatNumer int,
+		@CzySad tinyint,
+		@TypSad smallint,
+		@DataWyst int,
+		@DataZak int,
+		@OldDataWyst int,
+		@OldDataZak int,
+		@DataWplywuFA int,
+		@NumerDok varchar(40),
+		@Akronim varchar(20),
+		@Nazwa varchar(400),
+		@Netto decimal(15,2),
+		@Vat decimal(15,2),
+		@TRV_StawkaPod tinyint,
+		@TRV_FlagaVAT tinyint, 
+		@TRV_DeklRok smallint, 
+		@TRV_DeklMiesiac tinyint,
+		@TRV_RodzajZakupu tinyint, 
+		@TRV_OdliczeniaVat tinyint,
+		@TRN_VatRok smallint, 
+		@TRN_VatMiesiac tinyint, 
+		@TRN_VatKorekta tinyint, 
+		@TRV_ExpoNorm tinyint, 
+		@Zero tinyint, 
+		@TRN_RolnikRyczalt tinyint, 
+		@TRN_KorektaOdlicz tinyint,
+		@TRN_VatDzien tinyint,
+		@TRN_TRNTyp tinyint,
+		@AdresNabywcy varchar(512),
+		@NrIdWystawcy varchar(100),
+		@KNAKodKraju varchar(2)
+
+
+
+	declare @poleNaDekl		 smallint =  0
+	declare @pole_NTUPST_Tak smallint =  41		-- 41 na vat7(15)		49 na VAT-7(12)
+	declare @pole_NTUPST_War smallint =  41		-- 41 na vat7(15)		49 na VAT-7(12)
+	declare @pole_NTUP_Tak	 smallint =  43		-- 43 na vat7(15)		51 na VAT-7(12)
+	declare @pole_NTUP_War	 smallint =  43		-- 43 na vat7(15)		51 na VAT-7(12)
+	declare @pole_WWNT		 smallint =  23		-- 23 na vat7(15)		33 na VAT-7(12)
+	declare @pole_IU		 smallint =  27		-- 27 na vat7(15)		37 na VAT-7(12)
+	declare @pole_IURO		 smallint =  29		-- 29 na vat7(15)		39 na VAT-7(12)
+
+	declare @pole_VATZD	  smallint = 47	-- numeracja VAT-7(15)
+	declare @pole_KPNNST  smallint = 45		-- numeracja na podstawie VAT-7(15)
+	declare @pole_KPNPN   smallint = 46		-- numeracja na podstawie VAT-7(15)
+	declare @pole_RKPNDO  smallint = 48		-- numeracja na podstawie VAT-7(15)
+	
+	declare @pole_VATZDPlus smallint = 50	-- vat-7(17)
+	
+	if @wersjaDeklaracji &gt;= 21
+	begin
+		select @pole_NTUPST_Tak =  40		-- 41 na vat7(15)		49 na VAT-7(12)
+			, @pole_NTUPST_War  =  40		-- 41 na vat7(15)		49 na VAT-7(12)
+			, @pole_NTUP_Tak	=  42		-- 43 na vat7(15)		51 na VAT-7(12)
+			, @pole_NTUP_War	=  42		-- 43 na vat7(15)		51 na VAT-7(12)
+			, @pole_WWNT		=  23		-- 23 na vat7(15)		33 na VAT-7(12)
+			, @pole_IU		    =  27		-- 27 na vat7(15)		37 na VAT-7(12)
+			, @pole_IURO		=  29		-- 29 na vat7(15)		39 na VAT-7(12)
+
+			, @pole_VATZD	    = 46		-- numeracja VAT-7(15)
+			, @pole_KPNNST      = 44		-- numeracja na podstawie VAT-7(15)
+			, @pole_KPNPN       = 45		-- numeracja na podstawie VAT-7(15)
+			--, @pole_RKPNDO      = 50		-- numeracja na podstawie VAT-7(15)
+			,@pole_VATZDPlus = 47
+
+			
+	end
+	else
+	if @wersjaDeklaracji &gt;= 17
+	begin
+		select @pole_NTUPST_Tak =  43		-- 41 na vat7(15)		49 na VAT-7(12)
+			, @pole_NTUPST_War  =  43		-- 41 na vat7(15)		49 na VAT-7(12)
+			, @pole_NTUP_Tak	=  45		-- 43 na vat7(15)		51 na VAT-7(12)
+			, @pole_NTUP_War	=  45		-- 43 na vat7(15)		51 na VAT-7(12)
+			, @pole_WWNT		=  23		-- 23 na vat7(15)		33 na VAT-7(12)
+			, @pole_IU		    =  27		-- 27 na vat7(15)		37 na VAT-7(12)
+			, @pole_IURO		=  29		-- 29 na vat7(15)		39 na VAT-7(12)
+
+			, @pole_VATZD	    = 49		-- numeracja VAT-7(15)
+			, @pole_KPNNST      = 47		-- numeracja na podstawie VAT-7(15)
+			, @pole_KPNPN       = 48		-- numeracja na podstawie VAT-7(15)
+			--, @pole_RKPNDO      = 50		-- numeracja na podstawie VAT-7(15)	
+	end
+	
+	declare curDok cursor for select * from #tmpDokumenty for read only
+	open curDok
+	fetch curDok into @TRV_GIDTyp, @TRV_GIDNumer, @TRV_GIDLp, @TRN_VatRejestr, @TrN_VatNumer, @DataWyst, @DataZak, @DataWplywuFA,
+		@Netto, @Vat, @TRV_StawkaPod, @TRV_FlagaVAT, @TRV_DeklRok,
+		@TRV_DeklMiesiac, @TRV_RodzajZakupu, @TRV_OdliczeniaVat, @TRN_VatRok, @TRN_VatMiesiac, @TRN_VatDzien,
+		@TRN_VatKorekta, @TRV_ExpoNorm, @Zero, @TRN_RolnikRyczalt, @TRN_KorektaOdlicz, @TypSad, @CzySad,
+		@NumerDok, @Akronim, @Nazwa, @TRN_TrnTyp, @AdresNabywcy, @NrIdWystawcy, @KNAKodKraju
+
+	while @@FETCH_STATUS = 0
+	begin		
+		set @Nazwa = LEFT(@Nazwa, 256);
+
+		IF @wersjaDeklaracji &gt;= 21
+		BEGIN
+			IF @TRN_TRNTyp = 34 --ZDZ
+			BEGIN
+				IF (@TRV_GIDTyp = @OldTRVGIDTyp and @TRV_GIDNumer = @OldTRVGIDNumer)
+				BEGIN
+					set @DataWyst = @OldDataWyst
+					set @DataZak = @OldDataZak
+				END
+				ELSE
+				BEGIN									
+					select top 1
+						@DataWyst = trn.TRN_Data2
+						--,@DataZak = trn.TrN_DataWplywu
+						,@DataZak = DateDiff(dd, '18001228',CDN.YMD(trn.TRN_VatRok, trn.TRN_VatMiesiac, trn.TRN_VatDzien))						
+					from cdn.TraNag zd
+						join cdn.PodElemDok on PED_PONNumer=zd.TrN_VatZDPeDNumer and PED_Lp=zd.TrN_VatZDPeDLp and zd.TrN_VatZDPeDNumer&lt;&gt;0
+						join cdn.TraPLat prol on prol.TRP_GIDTyp=PED_TRPTyp and prol.TRP_GIDNumer=PED_TRPNumer and prol.TRP_GIDLp=PED_TRPLp
+						join cdn.TraPLat trp on prol.TrP_ProlZrdTyp=trp.TrP_GIDTyp and prol.TrP_ProlZrdNumer=trp.TrP_GIDNumer and prol.TrP_ProlZrdLp=trp.TrP_GIDLp
+						left join cdn.TraNag trn on trp.TRP_SpiNumer = trn.TRN_GIDNumer						
+					where zd.TRN_GIDTyp=@TRV_GIDTyp and zd.TRN_GIDNumer=@TRV_GIDNumer										
+					
+					set @OldDataWyst = @DataWyst
+					set @OldDataZak = @DataZak
+				END
+			END
+		END
+
+		if @g_ksi_lUwzgledniajZakup0zw=0 and (@TRV_StawkaPod=0 and (@wersjaDeklaracji&lt;21 or @TRV_FlagaVat=1))
+			--pomijaj
+			set @poleNaDekl	= @poleNaDekl
+		else
+		IF @CzySad = 0		-- dokumenty z tranag
+		BEGIN
+			If @TRV_FlagaVat in (0,2) and @wersjaDeklaracji&gt;=21 
+			BEGIN 				
+				set @poleNaDekl = 1000 --vat marza
+				insert #tmpWyn (GIDTyp, GIDNumer, GIDLp, NrWRej, Rejestr, PoleNaDekl, Odliczenie, FlagaVat, DataWystaw, DataSprzed, DataWplywuFA, NrDok,	Akronim, Nazwa,	Netto, Vat, WplRok, WplMiesiac, WplDzien, TrnTyp, AdresNabywcy, NrIdWystawcy, KNAKodKraju)
+				values (@TRV_GIDTyp, @TRV_GIDNumer, @TRV_GIDLp, @TRN_VatNumer, @TRN_VatRejestr, @poleNaDekl, @TRV_OdliczeniaVat, @TRV_FlagaVat, @DataWyst, @DataZak, @DataWplywuFA, 	
+					@NumerDok, @Akronim, @Nazwa, @Netto, @Vat, @TRN_VatRok, @TRN_VatMiesiac, @TRN_VatDzien, @TRN_TrnTyp, @AdresNabywcy, @NrIdWystawcy, @KNAKodKraju)
+			END
+			ELSE IF @TRV_FlagaVat in (0,2)
+			BEGIN
+				--pomijaj
+				SET @poleNaDekl	= @poleNaDekl
+			END
+			ELSE
+			-- pole 47. Korekta podatku naliczonego, o której mowa w art. 89b ust. 1
+			--IF (@TRV_GIDTyp IN (@Typ_FZ, @Typ_FZK) AND @TRN_TRNTyp = @e_SPR_nTrNTypAvistaZDZ AND @TRN_KorektaOdlicz = 1)
+			IF (@TRV_GIDTyp IN (@Typ_FZ, @Typ_FZK) AND @TRN_TRNTyp = @e_SPR_nTrNTypAvistaZDZ AND (@Netto &lt; 0 and @wersjaDeklaracji &gt;= 17 or @wersjaDeklaracji &lt; 17 and @TRN_KorektaOdlicz = 1))	-- @TRN_KorektaOdlicz = 1)
+			BEGIN
+				set @poleNaDekl = @pole_VATZD
+				
+				IF @TRV_OdliczeniaVat &lt;&gt; @e_ksi_lOdliczeniaVAT_NIE
+					insert #tmpWyn (GIDTyp, GIDNumer, GIDLp, NrWRej, Rejestr, PoleNaDekl, Odliczenie, FlagaVat, DataWystaw, DataSprzed, DataWplywuFA, NrDok,	Akronim, Nazwa,	Netto, Vat, WplRok, WplMiesiac, WplDzien, TrnTyp, AdresNabywcy, NrIdWystawcy, KNAKodKraju)
+					values (@TRV_GIDTyp, @TRV_GIDNumer, @TRV_GIDLp, @TRN_VatNumer, @TRN_VatRejestr, @poleNaDekl, @TRV_OdliczeniaVat, @TRV_FlagaVat, @DataWyst, @DataZak, @DataWplywuFA, 	
+						@NumerDok, @Akronim, @Nazwa, @Netto, @Vat, @TRN_VatRok, @TRN_VatMiesiac, @TRN_VatDzien, @TRN_TrnTyp, @AdresNabywcy, @NrIdWystawcy, @KNAKodKraju)
+			END
+			ELSE
+				IF (@TRV_GIDTyp IN (@Typ_FZ, @Typ_FZK) AND @TRN_TRNTyp = @e_SPR_nTrNTypAvistaZDZ AND @Netto &gt; 0)
+				BEGIN
+					set @poleNaDekl = @pole_VATZDPlus
+					
+					IF @TRV_OdliczeniaVat &lt;&gt; @e_ksi_lOdliczeniaVAT_NIE	
+						insert #tmpWyn (GIDTyp, GIDNumer, GIDLp, NrWRej, Rejestr, PoleNaDekl, Odliczenie, FlagaVat, DataWystaw, DataSprzed, DataWplywuFA, NrDok,	Akronim, Nazwa,	Netto, Vat, WplRok, WplMiesiac, WplDzien, TrnTyp, AdresNabywcy, NrIdWystawcy, KNAKodKraju)
+						values (@TRV_GIDTyp, @TRV_GIDNumer, @TRV_GIDLp, @TRN_VatNumer, @TRN_VatRejestr, @poleNaDekl, @TRV_OdliczeniaVat, @TRV_FlagaVat, @DataWyst, @DataZak, @DataWplywuFA, 	
+							@NumerDok, @Akronim, @Nazwa, @Netto, @Vat, @TRN_VatRok, @TRN_VatMiesiac, @TRN_VatDzien, @TRN_TrnTyp, @AdresNabywcy, @NrIdWystawcy, @KNAKodKraju)
+				END				
+				ELSE
+				IF @TRN_KorektaOdlicz = 0
+				BEGIN
+					IF @TRV_ExpoNorm IN (@e_SPR_nWewnatrzwspolnotowyVat0DT, @e_SPR_nWewnatrzwspolnotowyVatDowolnyDT)
+					BEGIN
+						set @poleNaDekl = @pole_WWNT
+						insert #tmpWyn (GIDTyp, GIDNumer, GIDLp, NrWRej, Rejestr, PoleNaDekl, Odliczenie, FlagaVat, DataWystaw, DataSprzed, DataWplywuFA, NrDok,	Akronim, Nazwa,	Netto, Vat, WplRok, WplMiesiac, WplDzien, TrnTyp, AdresNabywcy, NrIdWystawcy, KNAKodKraju)
+						values (@TRV_GIDTyp, @TRV_GIDNumer, @TRV_GIDLp, @TRN_VatNumer, @TRN_VatRejestr, @poleNaDekl, @TRV_OdliczeniaVat, @TRV_FlagaVat, @DataWyst, @DataZak, @DataWplywuFA, 	
+							@NumerDok, @Akronim, @Nazwa, @Netto, @Vat, @TRN_VatRok, @TRN_VatMiesiac, @TRN_VatDzien, @TRN_TrnTyp, @AdresNabywcy, @NrIdWystawcy, @KNAKodKraju)
+					END
+						
+					IF @TRV_RodzajZakupu IN (@e_ksi_lRodzajZakupu_SrTrwale, @e_ksi_lRodzajZakupu_Nieruchomosci, @e_ksi_lRodzajZakupu_SrTransportu)
+					BEGIN
+						set @poleNaDekl = @pole_NTUPST_Tak
+						IF @TRV_OdliczeniaVat = @e_ksi_lOdliczeniaVAT_Tak
+							insert #tmpWyn (GIDTyp, GIDNumer, GIDLp, NrWRej, Rejestr, PoleNaDekl, Odliczenie, FlagaVat, DataWystaw, DataSprzed, DataWplywuFA, NrDok,	Akronim, Nazwa,	Netto, Vat, WplRok, WplMiesiac, WplDzien, TrnTyp, AdresNabywcy, NrIdWystawcy, KNAKodKraju)
+							values (@TRV_GIDTyp, @TRV_GIDNumer, @TRV_GIDLp, @TRN_VatNumer, @TRN_VatRejestr, @poleNaDekl, @TRV_OdliczeniaVat, @TRV_FlagaVat, @DataWyst, @DataZak, @DataWplywuFA, 	
+								@NumerDok, @Akronim, @Nazwa, @Netto, @Vat, @TRN_VatRok, @TRN_VatMiesiac, @TRN_VatDzien, @TRN_TrnTyp, @AdresNabywcy, @NrIdWystawcy, @KNAKodKraju)
+						
+						set @poleNaDekl = @pole_NTUPST_War
+						IF @TRV_OdliczeniaVat = @e_ksi_lOdliczeniaVAT_Warunkowo
+							insert #tmpWyn (GIDTyp, GIDNumer, GIDLp, NrWRej, Rejestr, PoleNaDekl, Odliczenie, FlagaVat, DataWystaw, DataSprzed, DataWplywuFA, NrDok,	Akronim, Nazwa,	Netto, Vat, WplRok, WplMiesiac, WplDzien,TrnTyp, AdresNabywcy, NrIdWystawcy, KNAKodKraju)
+							values (@TRV_GIDTyp, @TRV_GIDNumer, @TRV_GIDLp, @TRN_VatNumer, @TRN_VatRejestr, @poleNaDekl, @TRV_OdliczeniaVat, @TRV_FlagaVat, @DataWyst, @DataZak, @DataWplywuFA, 	
+								@NumerDok, @Akronim, @Nazwa, @Netto, @Vat, @TRN_VatRok, @TRN_VatMiesiac, @TRN_VatDzien, @TRN_TrnTyp, @AdresNabywcy, @NrIdWystawcy, @KNAKodKraju)
+					END
+					ELSE
+					BEGIN
+						IF @TRV_GIDTyp IN( @Typ_FWS, @Typ_FKS, @Typ_FW, @Typ_FWK)
+							IF @TRV_RodzajZakupu = @e_ksi_lRodzajZakupu_ImportUslug
+							BEGIN			
+								set @poleNaDekl = @pole_IU
+								insert #tmpWyn (GIDTyp, GIDNumer, GIDLp, NrWRej, Rejestr, PoleNaDekl, Odliczenie, FlagaVat, DataWystaw, DataSprzed, DataWplywuFA, NrDok,	Akronim, Nazwa,	Netto, Vat, WplRok, WplMiesiac, WplDzien,TrnTyp, AdresNabywcy, NrIdWystawcy, KNAKodKraju)
+								values (@TRV_GIDTyp, @TRV_GIDNumer, @TRV_GIDLp, @TRN_VatNumer, @TRN_VatRejestr, @poleNaDekl, @TRV_OdliczeniaVat, @TRV_FlagaVat, @DataWyst, @DataZak, @DataWplywuFA, 	
+									@NumerDok, @Akronim, @Nazwa, @Netto, @Vat, @TRN_VatRok, @TRN_VatMiesiac, @TRN_VatDzien, @TRN_TrnTyp, @AdresNabywcy, @NrIdWystawcy, @KNAKodKraju)
+							END
+							ELSE IF @TRV_RodzajZakupu = @e_ksi_lRodzajZakupu_UslugiRO
+							BEGIN			
+								set @poleNaDekl = @pole_IURO
+								insert #tmpWyn (GIDTyp, GIDNumer, GIDLp, NrWRej, Rejestr, PoleNaDekl, Odliczenie, FlagaVat, DataWystaw, DataSprzed, DataWplywuFA, NrDok,	Akronim, Nazwa,	Netto, Vat, WplRok, WplMiesiac, WplDzien,TrnTyp, AdresNabywcy, NrIdWystawcy, KNAKodKraju)
+								values (@TRV_GIDTyp, @TRV_GIDNumer, @TRV_GIDLp, @TRN_VatNumer, @TRN_VatRejestr, @poleNaDekl, @TRV_OdliczeniaVat, @TRV_FlagaVat, @DataWyst, @DataZak, @DataWplywuFA, 	
+									@NumerDok, @Akronim, @Nazwa, @Netto, @Vat, @TRN_VatRok, @TRN_VatMiesiac, @TRN_VatDzien, @TRN_TrnTyp, @AdresNabywcy, @NrIdWystawcy, @KNAKodKraju)
+							END
+					
+						IF @TRV_RodzajZakupu IN (@e_ksi_lRodzajZakupu_Towary, @e_ksi_lRodzajZakupu_Koszty, 
+							@e_ksi_lRodzajZakupu_ImportUslug, @e_ksi_lRodzajZakupu_Paliwo, @e_ksi_lRodzajZakupu_UslugiRO)
+						BEGIN         
+							set @poleNaDekl = @pole_NTUP_Tak
+							IF @TRV_OdliczeniaVat = @e_ksi_lOdliczeniaVAT_Tak
+								insert #tmpWyn (GIDTyp, GIDNumer, GIDLp, NrWRej, Rejestr, PoleNaDekl, Odliczenie, FlagaVat, DataWystaw, DataSprzed, DataWplywuFA, NrDok,	Akronim, Nazwa,	Netto, Vat, WplRok, WplMiesiac, WplDzien,TrnTyp, AdresNabywcy, NrIdWystawcy, KNAKodKraju)
+								values (@TRV_GIDTyp, @TRV_GIDNumer, @TRV_GIDLp, @TRN_VatNumer, @TRN_VatRejestr, @poleNaDekl, @TRV_OdliczeniaVat, @TRV_FlagaVat, @DataWyst, @DataZak, @DataWplywuFA, 	
+									@NumerDok, @Akronim, @Nazwa, @Netto, @Vat, @TRN_VatRok, @TRN_VatMiesiac, @TRN_VatDzien, @TRN_TrnTyp, @AdresNabywcy, @NrIdWystawcy, @KNAKodKraju)
+									
+							set @poleNaDekl = @pole_NTUP_War
+							IF @TRV_OdliczeniaVat = @e_ksi_lOdliczeniaVAT_Warunkowo
+								insert #tmpWyn (GIDTyp, GIDNumer, GIDLp, NrWRej, Rejestr, PoleNaDekl, Odliczenie, FlagaVat, DataWystaw, DataSprzed, DataWplywuFA, NrDok,	Akronim, Nazwa,	Netto, Vat, WplRok, WplMiesiac, WplDzien,TrnTyp, AdresNabywcy, NrIdWystawcy, KNAKodKraju)
+								values (@TRV_GIDTyp, @TRV_GIDNumer, @TRV_GIDLp, @TRN_VatNumer, @TRN_VatRejestr, @poleNaDekl, @TRV_OdliczeniaVat, @TRV_FlagaVat, @DataWyst, @DataZak, @DataWplywuFA, 	
+									@NumerDok, @Akronim, @Nazwa, @Netto, @Vat, @TRN_VatRok, @TRN_VatMiesiac, @TRN_VatDzien, @TRN_TrnTyp, @AdresNabywcy, @NrIdWystawcy, @KNAKodKraju)
+							
+						END
+					END			
+				END
+				ELSE		-- @TRN_KorektaOdlicz &lt;&gt; 0
+				BEGIN
+					IF @TRV_RodzajZakupu IN (@e_ksi_lRodzajZakupu_SrTrwale, @e_ksi_lRodzajZakupu_Nieruchomosci, @e_ksi_lRodzajZakupu_SrTransportu)
+					BEGIN         
+						set @poleNaDekl = @pole_KPNNST
+						IF @TRV_OdliczeniaVat = @e_ksi_lOdliczeniaVAT_Tak OR @TRV_OdliczeniaVat = @e_ksi_lOdliczeniaVAT_Warunkowo
+							insert #tmpWyn (GIDTyp, GIDNumer, GIDLp, NrWRej, Rejestr, PoleNaDekl, Odliczenie, FlagaVat, DataWystaw, DataSprzed, DataWplywuFA, NrDok,	Akronim, Nazwa,	Netto, Vat, WplRok, WplMiesiac, WplDzien,TrnTyp, AdresNabywcy, NrIdWystawcy, KNAKodKraju)
+							values (@TRV_GIDTyp, @TRV_GIDNumer, @TRV_GIDLp, @TRN_VatNumer, @TRN_VatRejestr, @poleNaDekl, @TRV_OdliczeniaVat, @TRV_FlagaVat, @DataWyst, @DataZak, @DataWplywuFA, 	
+								@NumerDok, @Akronim, @Nazwa, @Netto, @Vat, @TRN_VatRok, @TRN_VatMiesiac, @TRN_VatDzien, @TRN_TrnTyp, @AdresNabywcy, @NrIdWystawcy, @KNAKodKraju)
+					END
+					
+					IF @TRV_RodzajZakupu IN (@e_ksi_lRodzajZakupu_Towary, @e_ksi_lRodzajZakupu_Koszty, @e_ksi_lRodzajZakupu_ImportUslug, @e_ksi_lRodzajZakupu_Paliwo, @e_ksi_lRodzajZakupu_UslugiRO)
+					BEGIN         
+						set @poleNaDekl = @pole_KPNPN
+						IF @TRV_OdliczeniaVat = @e_ksi_lOdliczeniaVAT_Tak OR @TRV_OdliczeniaVat = @e_ksi_lOdliczeniaVAT_Warunkowo
+							insert #tmpWyn (GIDTyp, GIDNumer, GIDLp, NrWRej, Rejestr, PoleNaDekl, Odliczenie, FlagaVat, DataWystaw, DataSprzed, DataWplywuFA, NrDok,	Akronim, Nazwa,	Netto, Vat, WplRok, WplMiesiac, WplDzien,TrnTyp, AdresNabywcy, NrIdWystawcy, KNAKodKraju)
+							values (@TRV_GIDTyp, @TRV_GIDNumer, @TRV_GIDLp, @TRN_VatNumer, @TRN_VatRejestr, @poleNaDekl, @TRV_OdliczeniaVat, @TRV_FlagaVat, @DataWyst, @DataZak, @DataWplywuFA, 	
+								@NumerDok, @Akronim, @Nazwa, @Netto, @Vat, @TRN_VatRok, @TRN_VatMiesiac, @TRN_VatDzien, @TRN_TrnTyp, @AdresNabywcy, @NrIdWystawcy, @KNAKodKraju)
+					END
+				END
+			
+		END
+		ELSE IF @CzySad = 1
+		BEGIN
+			IF @TRV_FlagaVat in (0,2)
+			BEGIN
+				--pomijaj
+				SET @poleNaDekl	= @poleNaDekl
+			END
+			ELSE
+			IF NOT (
+				@TRV_ExpoNorm = @e_SPR_nEksportowyVat0 
+				AND @TypSAD = 0
+				AND @TRV_RodzajZakupu IN 
+					(@e_ksi_lRodzajZakupu_Towary, @e_ksi_lRodzajZakupu_Koszty, @e_ksi_lRodzajZakupu_SrTrwale,
+					@e_ksi_lRodzajZakupu_Inwestycje, @e_ksi_lRodzajZakupu_Nieruchomosci, @e_ksi_lRodzajZakupu_SrTransportu,
+					@e_ksi_lRodzajZakupu_Paliwo, @e_ksi_lRodzajZakupu_UslugiRO)
+				)
+			BEGIN
+				IF @TRV_RodzajZakupu IN (@e_ksi_lRodzajZakupu_SrTrwale, @e_ksi_lRodzajZakupu_Nieruchomosci, @e_ksi_lRodzajZakupu_SrTransportu)
+				BEGIN				
+					set @poleNaDekl = @pole_NTUPST_Tak
+					IF @TRV_OdliczeniaVat = @e_ksi_lOdliczeniaVAT_Tak
+						insert #tmpWyn (GIDTyp, GIDNumer, GIDLp, NrWRej, Rejestr, PoleNaDekl, Odliczenie, FlagaVat, DataWystaw, DataSprzed, DataWplywuFA, NrDok,	Akronim, Nazwa,	Netto, Vat, WplRok, WplMiesiac, WplDzien,TrnTyp, AdresNabywcy, NrIdWystawcy, KNAKodKraju)
+						values (@TRV_GIDTyp, @TRV_GIDNumer, @TRV_GIDLp, @TRN_VatNumer, @TRN_VatRejestr, @poleNaDekl, @TRV_OdliczeniaVat, @TRV_FlagaVat, @DataWyst, @DataZak, @DataWplywuFA, 	
+							@NumerDok, @Akronim, @Nazwa, @Netto, @Vat, @TRN_VatRok, @TRN_VatMiesiac, @TRN_VatDzien, @TRN_TrnTyp, @AdresNabywcy, @NrIdWystawcy, @KNAKodKraju)
+									
+					set @poleNaDekl = @pole_NTUPST_War
+					IF @TRV_OdliczeniaVat = @e_ksi_lOdliczeniaVAT_Warunkowo
+						insert #tmpWyn (GIDTyp, GIDNumer, GIDLp, NrWRej, Rejestr, PoleNaDekl, Odliczenie, FlagaVat, DataWystaw, DataSprzed, DataWplywuFA, NrDok,	Akronim, Nazwa,	Netto, Vat, WplRok, WplMiesiac, WplDzien,TrnTyp, AdresNabywcy, NrIdWystawcy, KNAKodKraju)
+						values (@TRV_GIDTyp, @TRV_GIDNumer, @TRV_GIDLp, @TRN_VatNumer, @TRN_VatRejestr, @poleNaDekl, @TRV_OdliczeniaVat, @TRV_FlagaVat, @DataWyst, @DataZak, @DataWplywuFA, 	
+							@NumerDok, @Akronim, @Nazwa, @Netto, @Vat, @TRN_VatRok, @TRN_VatMiesiac, @TRN_VatDzien, @TRN_TrnTyp, @AdresNabywcy, @NrIdWystawcy, @KNAKodKraju)
+				END
+				ELSE
+				BEGIN
+					set @poleNaDekl = @pole_NTUP_Tak
+					IF @TRV_OdliczeniaVat = @e_ksi_lOdliczeniaVAT_Tak				
+						insert #tmpWyn (GIDTyp, GIDNumer, GIDLp, NrWRej, Rejestr, PoleNaDekl, Odliczenie, FlagaVat, DataWystaw, DataSprzed, DataWplywuFA, NrDok,	Akronim, Nazwa,	Netto, Vat, WplRok, WplMiesiac, WplDzien,TrnTyp, AdresNabywcy, NrIdWystawcy, KNAKodKraju)
+						values (@TRV_GIDTyp, @TRV_GIDNumer, @TRV_GIDLp, @TRN_VatNumer, @TRN_VatRejestr, @poleNaDekl, @TRV_OdliczeniaVat, @TRV_FlagaVat, @DataWyst, @DataZak, @DataWplywuFA, 	
+							@NumerDok, @Akronim, @Nazwa, @Netto, @Vat, @TRN_VatRok, @TRN_VatMiesiac, @TRN_VatDzien, @TRN_TrnTyp, @AdresNabywcy, @NrIdWystawcy, @KNAKodKraju)
+							
+					set @poleNaDekl = @pole_NTUP_War
+					IF @TRV_OdliczeniaVat = @e_ksi_lOdliczeniaVAT_Warunkowo
+						insert #tmpWyn (GIDTyp, GIDNumer, GIDLp, NrWRej, Rejestr, PoleNaDekl, Odliczenie, FlagaVat, DataWystaw, DataSprzed, DataWplywuFA, NrDok,	Akronim, Nazwa,	Netto, Vat, WplRok, WplMiesiac, WplDzien,TrnTyp, AdresNabywcy, NrIdWystawcy, KNAKodKraju)
+						values (@TRV_GIDTyp, @TRV_GIDNumer, @TRV_GIDLp, @TRN_VatNumer, @TRN_VatRejestr, @poleNaDekl, @TRV_OdliczeniaVat, @TRV_FlagaVat, @DataWyst, @DataZak, @DataWplywuFA, 	
+							@NumerDok, @Akronim, @Nazwa, @Netto, @Vat, @TRN_VatRok, @TRN_VatMiesiac, @TRN_VatDzien, @TRN_TrnTyp, @AdresNabywcy, @NrIdWystawcy, @KNAKodKraju)
+				END
+			END
+		END
+		
+		fetch next from curDok into
+			@TRV_GIDTyp, @TRV_GIDNumer, @TRV_GIDLp, @TRN_VatRejestr, @TrN_VatNumer, @DataWyst, @DataZak, @DataWplywuFA, 
+			@Netto, @Vat, @TRV_StawkaPod, @TRV_FlagaVAT, @TRV_DeklRok,
+			@TRV_DeklMiesiac, @TRV_RodzajZakupu, @TRV_OdliczeniaVat, @TRN_VatRok, @TRN_VatMiesiac, @TRN_VatDzien,
+			@TRN_VatKorekta, @TRV_ExpoNorm, @Zero, @TRN_RolnikRyczalt, @TRN_KorektaOdlicz, @TypSad, @CzySad,
+			@NumerDok, @Akronim, @Nazwa, @TRN_TrnTyp, @AdresNabywcy, @NrIdWystawcy, @KNAKodKraju
+		
+	end
+
+	close curDok
+	deallocate curDok
+
+	/*select GIDTyp, GIDNumer, NrWRej, Rejestr, PoleNaDekl, Odliczenie, FlagaVat, DataWystaw, DataSprzed, NrDok, Akronim, Nazwa,
+		sum(Netto) as Netto, SUM(Vat) as Vat, WplRok, WplMiesiac, WplDzien
+		
+	from #tmpWyn
+	group by GIDTyp, GIDNumer, NrWRej, Rejestr, PoleNaDekl, Odliczenie, FlagaVat, DataWystaw, DataSprzed, NrDok, Akronim, Nazwa, WplRok, WplMiesiac, WplDzien
+	order by PoleNaDekl, Odliczenie*/
+
+	declare @deklP42 decimal(15,2) = 0.00, @deklP43 decimal(15,2) = 0.00, @deklP44 decimal(15,2) = 0.00, @deklP45 decimal(15,2) = 0.00
+				, @deklP46 decimal(15,2) = 0.00, @deklP47 decimal(15,2) = 0.00, @deklP48 decimal(15,2) = 0.00, @deklP49 decimal(15,2) = 0.00
+				, @deklP73 int = 0	-- data przeliczenia deklaracji
+
+
+	--drop table cdn.tmpWyn 
+	--select * into cdn.tmpWyn 
+	--from #tmpWyn
+	--return
+
+
+if @wersjaDeklaracji &gt;= 21
+begin
+set @sSQL = N'with wyn as (			
+	select GIDTyp, GIDNumer
+	, case when TrnTyp = '+convert(nvarchar,@e_SPR_nTrNTypAvistaZDZ)+N' and Nazwa = '''' then @NIPFrm else NrIdWystawcy end NrDostawcy	
+			
+	, case when TrnTyp = '+convert(nvarchar,@e_SPR_nTrNTypAvistaZDZ)+N' and ltrim(Nazwa) = '''' then @NazwaFrm else case when ltrim(nazwa)='''' then ''brak'' else nazwa end end NazwaDostawcy
+	, case when TrnTyp = '+convert(nvarchar,@e_SPR_nTrNTypAvistaZDZ)+N' and Nazwa = '''' then @adresFrm else AdresNabywcy end AdresDostawcy
+			
+	, NrDok DowodZakupu			
+	, case when GIDTyp IN (3376) then DataSprzed 
+	when GIDTyp IN ('+convert(nvarchar(10), @Typ_FWS)+N','+convert(nvarchar(10), @Typ_FKS)+N') then 
+		DateDiff(d, convert(datetime,''28-12-1800'',105),convert(datetime, convert(varchar(4), WplRok) +''-'' +convert(varchar(4), WplMiesiac)+''-''+convert(varchar(4), WplDzien),101))
+	else 
+		DataWystaw 
+	end DataZakupu
+	, case when KNAKodKraju=''GR'' then ''EL'' '+case when @rok&lt;2022 then N'when KNAKodKraju=''XI'' then ''GB''' else N'' end + N' else KNAKodKraju end _KodKrajuNadaniaTIN,			
+
+			
+	case when GIDTyp in ('+convert(nvarchar(10), @Typ_FW)+N','+convert(nvarchar(10), @Typ_FWK)+
+		N','+convert(nvarchar(10), @Typ_FWS)+
+		N','+convert(nvarchar(10), @Typ_FKS)+N') then DataWplywuFA 
+	when GIDTyp IN ('+convert(nvarchar(20), @Typ_FWZ)+N','+convert(nvarchar(20), @Typ_FKZ)+N') then DataWplywuFA
+	when TRNTyp IN (34, 35) then DataSprzed
+	else DateDiff(d, convert(datetime,''28-12-1800'',105),convert(datetime, convert(varchar(4), WplRok) +''-'' +convert(varchar(4), WplMiesiac)+''-''+convert(varchar(4), WplDzien),101)) end _DataWplywu,
+	min(case when FlagaVat in (0,2) then 2 else 1 end) FlagaVat,
+		
+	convert(decimal(18,2), round(sum(case when PoleNaDekl = '+CONVERT(nvarchar(2), @pole_NTUPST_Tak)+N' then Netto else 0.00 end ' + case when @bNettoWgStrSprzed &gt; 0 then N'* case when Odliczenie = '+convert(nvarchar,@e_ksi_lOdliczeniaVAT_Warunkowo)+N' then @wskStr else 1 end' else N'' end +N'),2)) as K_'+CONVERT(nvarchar(2), @pole_NTUPST_Tak)+N', '+
+	N' convert(decimal(18,2), round(sum(case when PoleNaDekl = '+CONVERT(nvarchar(2), @pole_NTUPST_Tak)+N' then Vat else 0.00 end * case when Odliczenie = '+convert(nvarchar,@e_ksi_lOdliczeniaVAT_Warunkowo)+N' then @wskStr else 1 end),2)) as K_'+CONVERT(nvarchar(2), @pole_NTUPST_Tak+1)+N',
+	convert(decimal(18,2), round(sum(case when PoleNaDekl = '+CONVERT(nvarchar(2), @pole_NTUP_Tak)+N' then Netto else 0.00 end ' + case when @bNettoWgStrSprzed &gt; 0 then N'* case when Odliczenie = '+convert(nvarchar,@e_ksi_lOdliczeniaVAT_Warunkowo)+N' then @wskStr else 1 end' else N'' end +N'),2)) as K_'+CONVERT(nvarchar(2), @pole_NTUP_Tak)+N', '+
+	N' convert(decimal(18,2), round(sum(case when PoleNaDekl = '+CONVERT(nvarchar(2), @pole_NTUP_Tak)+N' then Vat else 0.00 end * case when Odliczenie = '+convert(nvarchar,@e_ksi_lOdliczeniaVAT_Warunkowo)+N' then @wskStr else 1 end),2)) as K_'+CONVERT(nvarchar(2), @pole_NTUP_Tak+1)+N',
+			
+	convert(decimal(18,2), round(sum(case when PoleNaDekl = '+CONVERT(nvarchar(2), @pole_KPNNST)+N' then Vat else 0.00 end * case when Odliczenie = '+convert(nvarchar,@e_ksi_lOdliczeniaVAT_Warunkowo)+N' then @wskStr else 1 end),2)) as K_'+CONVERT(nvarchar(2), @pole_KPNNST)+N',
+	convert(decimal(18,2), round(sum(case when PoleNaDekl = '+CONVERT(nvarchar(2), @pole_KPNPN)+N' then Vat else 0.00 end * case when Odliczenie = '+convert(nvarchar,@e_ksi_lOdliczeniaVAT_Warunkowo)+N' then @wskStr else 1 end),2)) as K_'+CONVERT(nvarchar(2), @pole_KPNPN)+N',
+	convert(decimal(18,2), round(sum(case when PoleNaDekl = '+CONVERT(nvarchar(2), @pole_VATZD)+N' then Vat else 0.00 end * case when Odliczenie = '+convert(nvarchar,@e_ksi_lOdliczeniaVAT_Warunkowo)+N' then @wskStr else 1 end),2)) as K_'+CONVERT(nvarchar(2), @pole_VATZD)+N',
+	convert(decimal(18,2), round(sum(case when PoleNaDekl = '+CONVERT(nvarchar(2), @pole_VATZDPlus)+N' then Vat else 0.00 end * case when Odliczenie = '+convert(nvarchar,@e_ksi_lOdliczeniaVAT_Warunkowo)+N' then @wskStr else 1 end),2)) as K_'+CONVERT(nvarchar(2), @pole_VATZDPlus)+N',
+				
+	convert(decimal(18,2), sum(Netto+ Vat)) as Brutto
+			
+from #tmpWyn
+group by GIDTyp, GIDNumer, Nazwa, AdresNabywcy, NrIdWystawcy, NrDok,WplRok, WplMiesiac, WplDzien, TrnTyp, DataWystaw, DataSprzed, DataWplywuFA, KNAKodKraju
+)
+, Wyn1 as (select Wyn.*, case when _DataWplywu=DataZakupu then 0 else _DataWplywu end DataWplywu,
+case 
+when not TRN_GIDTyp is null then TRN_DokTypJPK
+when not SAN_GIDTyp is null then SAN_DokTypJPK
+else '''' end DokumentZakupu
+, case when exists(select 1 from cdn.TraJPK where GIDTyp=TrJ_TrNTyp and GIDNumer=TrJ_TrNNumer and TrJ_Wartosc in (''MR_T'',''MR_UZ'')) then Brutto else 0 end ZakupVAT_Marza
+, case when exists(select 1 from cdn.TraJPK where GIDTyp=TrJ_TrNTyp and GIDNumer=TrJ_TrNNumer and TrJ_Wartosc in (''MPP'')) then '+case when @rok=2021 and @miesiac&gt;=7 or @rok&gt;2021 then N'0' else N'1' end + N' else 0 end MPP
+, case when GIDTyp in (1521,1529,1312,1320,3376,3378,3386) and exists(select 1 from cdn.TraJPK where GIDTyp=TrJ_TrNTyp and GIDNumer=TrJ_TrNNumer and TrJ_Wartosc in (''IMP'')) then 1 else 0 end IMP
+from Wyn
+	left join cdn.TraNag on GIDTyp=TRN_GIDTyp and GIDNumer=TRN_GIDNumer
+	left join cdn.SadNag on GIDTyp=SAN_GIDTyp and GIDNumer=SAN_GIDNumer
+)
+select ROW_NUMBER() over (order by GIDTyp, GIDNumer) LpZakupu, Wyn1.*, CDN.KodKrajuIntrastatNaISO(_KodKrajuNadaniaTIN) KodKrajuNadaniaTIN
+into ##tmpJPKVatZ_' + convert(nvarchar,@JPKPONNumer) +
+N' from Wyn1
+where FlagaVat=1 or FlagaVat=2 and ZakupVAT_Marza&lt;&gt;0'
+			
+		
+		
+				
+	EXECUTE @rv = sp_executesql @sSQL, 
+	N'@deklP42 decimal(15,2), @deklP43 decimal(15,2), @deklP44 decimal(15,2), @deklP45 decimal(15,2)
+		, @deklP46 decimal(15,2), @deklP47 decimal(15,2), @deklP48 decimal(15,2), @deklP49 decimal(15,2)
+		, @deklP73 int
+		,@akronimFrm varchar(200)
+		,@adresFrm varchar(200)
+		,@nazwaFrm varchar(100)
+		,@prefiksFrm varchar(10)
+		,@NIPFrm varchar(30)
+		,@wskStr decimal(15,4)'
+		,@deklP42 =@deklP42, @deklP43 =@deklP43, @deklP44 =@deklP44, @deklP45 =@deklP45
+		,@deklP46 =@deklP46, @deklP47 =@deklP47, @deklP48 =@deklP48, @deklP49 =@deklP49
+		,@deklP73 =@deklP73
+		,@akronimFrm=@akronimFrm 
+		,@adresFrm=@adresFrm
+		,@nazwaFrm=@nazwaFrm
+		,@prefiksFrm=@prefiksFrm
+		,@NIPFrm=@NIPFrm
+		,@wskStr=@wskStr
+end
+else
+if @wersjaDeklaracji &gt;= 17
+begin
+	set @sSQL = N'
+	select ROW_NUMBER() over (order by GIDTyp, GIDNumer) LpZakupu,
+		GIDTyp, GIDNumer
+		, case when TrnTyp = '+convert(nvarchar,@e_SPR_nTrNTypAvistaZDZ)+' and Nazwa = '''' then @NIPFrm else NrIdWystawcy end NrDostawcy	
+			
+		, case when TrnTyp = '+convert(nvarchar,@e_SPR_nTrNTypAvistaZDZ)+' and ltrim(Nazwa) = '''' then @NazwaFrm else nazwa end NazwaDostawcy
+		, case when TrnTyp = '+convert(nvarchar,@e_SPR_nTrNTypAvistaZDZ)+' and Nazwa = '''' then @adresFrm else AdresNabywcy end AdresDostawcy
+			
+		, NrDok DowodZakupu
+		, DataWystaw DataZakupu,
+
+		case when GIDTyp in ('+convert(varchar(10), @Typ_FW)+','+convert(varchar(10), @Typ_FWK)+
+			','+convert(varchar(10), @Typ_FWS)+','+convert(varchar(10), @Typ_FWZ)+
+			','+convert(varchar(10), @Typ_FKS)+','+convert(varchar(10), @Typ_FKZ)+') then DataWplywuFA 
+		else DateDiff(d, convert(datetime,''28-12-1800'',105),convert(datetime, convert(varchar(4), WplRok) +''-'' +convert(varchar(4), WplMiesiac)+''-''+convert(varchar(4), WplDzien),101)) end DataWplywu,
+		
+		convert(decimal(18,2), round(sum(case when PoleNaDekl = '+CONVERT(varchar(2), @pole_NTUPST_Tak)+' then Netto else 0.00 end ' + case when @bNettoWgStrSprzed &gt; 0 then '* case when Odliczenie = '+convert(nvarchar,@e_ksi_lOdliczeniaVAT_Warunkowo)+' then @wskStr else 1 end' else '' end +'),2)) as K_'+CONVERT(varchar(2), @pole_NTUPST_Tak)+', '+
+		' convert(decimal(18,2), round(sum(case when PoleNaDekl = '+CONVERT(varchar(2), @pole_NTUPST_Tak)+' then Vat else 0.00 end * case when Odliczenie = '+convert(nvarchar,@e_ksi_lOdliczeniaVAT_Warunkowo)+' then @wskStr else 1 end),2)) as K_'+CONVERT(varchar(2), @pole_NTUPST_Tak+1)+',
+		convert(decimal(18,2), round(sum(case when PoleNaDekl = '+CONVERT(varchar(2), @pole_NTUP_Tak)+' then Netto else 0.00 end ' + case when @bNettoWgStrSprzed &gt; 0 then '* case when Odliczenie = '+convert(nvarchar,@e_ksi_lOdliczeniaVAT_Warunkowo)+' then @wskStr else 1 end' else '' end +'),2)) as K_'+CONVERT(varchar(2), @pole_NTUP_Tak)+', '+
+		' convert(decimal(18,2), round(sum(case when PoleNaDekl = '+CONVERT(varchar(2), @pole_NTUP_Tak)+' then Vat else 0.00 end * case when Odliczenie = '+convert(nvarchar,@e_ksi_lOdliczeniaVAT_Warunkowo)+' then @wskStr else 1 end),2)) as K_'+CONVERT(varchar(2), @pole_NTUP_Tak+1)+',
+			
+		convert(decimal(18,2), round(sum(case when PoleNaDekl = '+CONVERT(varchar(2), @pole_KPNNST)+' then Vat else 0.00 end * case when Odliczenie = '+convert(nvarchar,@e_ksi_lOdliczeniaVAT_Warunkowo)+' then @wskStr else 1 end),2)) as K_'+CONVERT(varchar(2), @pole_KPNNST)+',
+		convert(decimal(18,2), round(sum(case when PoleNaDekl = '+CONVERT(varchar(2), @pole_KPNPN)+' then Vat else 0.00 end * case when Odliczenie = '+convert(nvarchar,@e_ksi_lOdliczeniaVAT_Warunkowo)+' then @wskStr else 1 end),2)) as K_'+CONVERT(varchar(2), @pole_KPNPN)+',
+		convert(decimal(18,2), round(sum(case when PoleNaDekl = '+CONVERT(varchar(2), @pole_VATZD)+' then Vat else 0.00 end * case when Odliczenie = '+convert(nvarchar,@e_ksi_lOdliczeniaVAT_Warunkowo)+' then @wskStr else 1 end),2)) as K_'+CONVERT(varchar(2), @pole_VATZD)+',
+		convert(decimal(18,2), round(sum(case when PoleNaDekl = '+CONVERT(varchar(2), @pole_VATZDPlus)+' then Vat else 0.00 end * case when Odliczenie = '+convert(nvarchar,@e_ksi_lOdliczeniaVAT_Warunkowo)+' then @wskStr else 1 end),2)) as K_'+CONVERT(varchar(2), @pole_VATZDPlus)+'
+			
+	into ##tmpJPKVatZ_' + convert(nvarchar,@JPKPONNumer) +	
+	N' from #tmpWyn where FlagaVat=1
+	group by GIDTyp, GIDNumer, Nazwa, AdresNabywcy, NrIdWystawcy, NrDok,WplRok, WplMiesiac, WplDzien,TrnTyp, DataWystaw, DataWplywuFA'
+	--order by GIDTyp, GIDNumer
+			
+		
+		
+	--order by GIDTyp, GIDNumer
+		
+	--print @sSQL
+	--return
+				
+	EXECUTE @rv = sp_executesql @sSQL, 
+	N'@deklP42 decimal(15,2), @deklP43 decimal(15,2), @deklP44 decimal(15,2), @deklP45 decimal(15,2)
+		, @deklP46 decimal(15,2), @deklP47 decimal(15,2), @deklP48 decimal(15,2), @deklP49 decimal(15,2)
+		, @deklP73 int
+		,@akronimFrm varchar(200)
+		,@adresFrm varchar(200)
+		,@nazwaFrm varchar(100)
+		,@prefiksFrm varchar(10)
+		,@NIPFrm varchar(30)
+		,@wskStr decimal(15,4)'
+		,@deklP42 =@deklP42, @deklP43 =@deklP43, @deklP44 =@deklP44, @deklP45 =@deklP45
+		,@deklP46 =@deklP46, @deklP47 =@deklP47, @deklP48 =@deklP48, @deklP49 =@deklP49
+		,@deklP73 =@deklP73
+		,@akronimFrm=@akronimFrm 
+		,@adresFrm=@adresFrm
+		,@nazwaFrm=@nazwaFrm
+		,@prefiksFrm=@prefiksFrm
+		,@NIPFrm=@NIPFrm
+		,@wskStr=@wskStr
+end
+else
+begin
+	set @sSQL = N'
+	select ROW_NUMBER() over (order by GIDTyp, GIDNumer) LpZakupu,
+		GIDTyp, GIDNumer
+		, case when TrnTyp = '+convert(nvarchar,@e_SPR_nTrNTypAvistaZDZ)+' and ltrim(Nazwa) = '''' then @NazwaFrm else nazwa end NazwaWystawcy
+		, case when TrnTyp = '+convert(nvarchar,@e_SPR_nTrNTypAvistaZDZ)+' and Nazwa = '''' then @adresFrm else AdresNabywcy end AdresWystawcy
+		, case when TrnTyp = '+convert(nvarchar,@e_SPR_nTrNTypAvistaZDZ)+' and Nazwa = '''' then @NIPFrm else NrIdWystawcy end NrIdWystawcy	
+		, NrDok NrFaktury, 
+		DateDiff(d, convert(datetime,''28-12-1800'',105),convert(datetime, convert(varchar(4), WplRok) +''-'' +convert(varchar(4), WplMiesiac)+''-''+convert(varchar(4), WplDzien),101)) DataWplywuFaktury,		
+		
+		convert(decimal(18,2), round(sum(case when PoleNaDekl = 41 then Netto else 0.00 end),2)) as K_42, convert(decimal(18,2), round(sum(case when PoleNaDekl = 41 then Vat else 0.00 end * case when Odliczenie = '+convert(nvarchar,@e_ksi_lOdliczeniaVAT_Warunkowo)+' then @wskStr else 1 end),2)) as K_43,
+		convert(decimal(18,2), round(sum(case when PoleNaDekl = 43 then Netto else 0.00 end),2)) as K_44, convert(decimal(18,2), round(sum(case when PoleNaDekl = 43 then Vat else 0.00 end * case when Odliczenie = '+convert(nvarchar,@e_ksi_lOdliczeniaVAT_Warunkowo)+' then @wskStr else 1 end),2)) as K_45,
+			
+		convert(decimal(18,2), round(sum(case when PoleNaDekl = 45 then Vat else 0.00 end * case when Odliczenie = '+convert(nvarchar,@e_ksi_lOdliczeniaVAT_Warunkowo)+' then @wskStr else 1 end),2)) as K_46,
+		convert(decimal(18,2), round(sum(case when PoleNaDekl = 46 then Vat else 0.00 end * case when Odliczenie = '+convert(nvarchar,@e_ksi_lOdliczeniaVAT_Warunkowo)+' then @wskStr else 1 end),2)) as K_47,
+		convert(decimal(18,2), round(sum(case when PoleNaDekl = 47 then Vat else 0.00 end * case when Odliczenie = '+convert(nvarchar,@e_ksi_lOdliczeniaVAT_Warunkowo)+' then @wskStr else 1 end),2)) as K_48	
+	into ##tmpJPKVatZ_' + convert(nvarchar,@JPKPONNumer) +	
+	N' from #tmpWyn where FlagaVat=1
+	group by GIDTyp, GIDNumer, Nazwa, AdresNabywcy, NrIdWystawcy, NrDok,WplRok, WplMiesiac, WplDzien,TrnTyp'
+	--order by GIDTyp, GIDNumer
+
+	if not (@uzgodnijVAT7 = 0 or @PONNumer = 0)	
+	begin			
+			
+		-- wczytaj dane z zaakceptowanej/zatwierdzonej deklaracji VAT-7(16)				
+
+		select @deklP42 = sum(case when POE_Pozycja = 42 then POE_KwotaL else 0.00 end) 
+			, @deklP43 = sum(case when POE_Pozycja = 43 then POE_KwotaL else 0.00 end)
+			, @deklP44 = sum(case when POE_Pozycja = 44 then POE_KwotaL else 0.00 end)
+			, @deklP45 = sum(case when POE_Pozycja = 45 then POE_KwotaL else 0.00 end)
+			, @deklP46 = sum(case when POE_Pozycja = 46 then POE_KwotaL else 0.00 end)
+			, @deklP47 = sum(case when POE_Pozycja = 47 then POE_KwotaL else 0.00 end)
+			, @deklP48 = sum(case when POE_Pozycja = 48 then POE_KwotaL else 0.00 end)
+			, @deklP73 = sum(case when POE_Pozycja = 73 then POE_KwotaL else 0.00 end)
+		from cdn.PodElem
+		where POE_GIDNumer = @PONNumer
+
+
+		--declare @maxId int = 0	
+		--select @maxId = max(Lp) from #tmpWyn2
+			
+		--select * from #tmpWyn2
+		--union all	
+		set @sSQL = @sSQL + N';
+		if (select count(*) from ##tmpJPKVatZ_' + convert(nvarchar,@JPKPONNumer) + ') &gt; 0
+		insert into ##tmpJPKVatZ_' + convert(nvarchar,@JPKPONNumer) +
+		N' select isnull(MAX(LpZakupu),0) + 1 LpZakupu,	0 GIDTyp, 0 GIDNumer, ''Zaokrąglenia'' NazwaWystawcy
+			, ''Nie dotyczy'' AdresWystawcy
+			, ''Nie dotyczy'' NrIdWystawcy
+			, ''Nie dotyczy'' NrFaktury
+			, @deklP73 DataWplywuFaktury,
+			
+			isnull(@deklP42,0) - sum(K_42),
+			isnull(@deklP43,0) - sum(K_43),
+			isnull(@deklP44,0) - sum(K_44),
+			isnull(@deklP45,0) - sum(K_45),
+			isnull(@deklP46,0) - sum(K_46),
+			isnull(@deklP47,0) - sum(K_47),
+			isnull(@deklP48,0) - sum(K_48)
+		from ##tmpJPKVatZ_' + convert(nvarchar,@JPKPONNumer)
+
+		-----		
+		--drop table #tmpWyn2
+	end	
+
+
+	--set @sSQL = @sSQL + N';
+	--		select * from ##tmpJPKVatZ_' + convert(nvarchar,@JPKPONNumer)
+
+	EXECUTE @rv = sp_executesql @sSQL, 
+		N'@deklP42 decimal(15,2), @deklP43 decimal(15,2), @deklP44 decimal(15,2), @deklP45 decimal(15,2)
+			, @deklP46 decimal(15,2), @deklP47 decimal(15,2), @deklP48 decimal(15,2)
+			, @deklP73 int
+			,@akronimFrm varchar(200)
+			,@adresFrm varchar(200)
+			,@nazwaFrm varchar(100)
+			,@prefiksFrm varchar(10)
+			,@NIPFrm varchar(30)
+			,@wskStr decimal(15,4)'
+			,@deklP42 =@deklP42, @deklP43 =@deklP43, @deklP44 =@deklP44, @deklP45 =@deklP45
+			,@deklP46 =@deklP46, @deklP47 =@deklP47, @deklP48 =@deklP48
+			,@deklP73 =@deklP73
+			,@akronimFrm=@akronimFrm 
+			,@adresFrm=@adresFrm
+			,@nazwaFrm=@nazwaFrm
+			,@prefiksFrm=@prefiksFrm
+			,@NIPFrm=@NIPFrm
+			,@wskStr=@wskStr
+end
+
+drop table #tmpDokumenty
+drop table #tmpWyn
+
+
+if @rv &lt;&gt; 0
+begin 				
+	raiserror('Błąd odczytu JPKVatZakup ', 16, 1)	
+	return 1
+end
+
+	
+set nocount off	
+END	
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

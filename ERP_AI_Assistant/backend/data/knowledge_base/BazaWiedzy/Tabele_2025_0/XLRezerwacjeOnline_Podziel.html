@@ -1,0 +1,266 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="XLRezerwacjeOnline_Podziel"></A><PRE>
+          <FONT SIZE="2"><I>/* XLRezerwacjeOnline_Podziel */</I><BR>
+CREATE PROCEDURE CDN.XLRezerwacjeOnline_Podziel
+(
+	@p_OrgGUID UNIQUEIDENTIFIER,
+	@p_NowaIlosc DECIMAL(19,4),
+	@p_NowyGUID	UNIQUEIDENTIFIER,
+	@p_Status INT OUTPUT,
+	@p_OpisBladu NVARCHAR(MAX) OUTPUT
+	/*
+	@p_OrgGUID - Identyfikator rezerwacji źródłowej
+
+	@p_NowaIlosc - Nowa ilość na rezerwacji źródłowej
+
+	@p_NowyGUID	- Identyfikator nowej rezerwacji
+
+	@p_Status - Status operacji:
+		1 – operacja zakończona sukcesem,
+		5 – rezerwacja nie została znaleziona
+		7 – nieprawidłowa ilość: nowa ilość &gt;= ilość na rezerwacji źródłowej
+
+	@p_OpisBladu - Szczegóły w przypadku niepowodzenia
+	*/
+)
+AS
+BEGIN
+	SET NOCOUNT ON;
+
+	SET @p_Status = 5
+	DECLARE @_TRANCOUNT int;
+	SELECT @_TRANCOUNT=@@TRANCOUNT;
+
+	DECLARE @IloscAkt DECIMAL(19,4)
+	SELECT @IloscAkt = Rez_Ilosc FROM CDN.Rezerwacje WHERE Rez_GUID = CAST(@p_OrgGUID as varchar(36))
+
+	IF @IloscAkt is null BEGIN
+		SELECT @IloscAkt = SUM(RezP_Ilosc) FROM CDN.RezerwacjeWPrzyszlosc WHERE RezP_GUID = CAST(@p_OrgGUID as varchar(36))
+		if @IloscAkt is not null begin
+			IF @IloscAkt &lt;= @p_NowaIlosc BEGIN
+				SET @p_Status = 7
+				SET NOCOUNT OFF;
+				RETURN
+			END
+			BEGIN TRY
+				IF @_TRANCOUNT&gt;0 SAVE TRANSACTION TRAN_XLRezerwacjeOnline_Podziel;
+				ELSE BEGIN TRANSACTION TRAN_XLRezerwacjeOnline_Podziel;
+				
+				INSERT INTO CDN.RezerwacjeWPrzyszlosc
+				   (RezP_GUID
+				   ,RezP_TwrTyp
+				   ,RezP_TwrFirma
+				   ,RezP_TwrNumer
+				   ,RezP_TwrLp
+				   ,RezP_ZrdTyp
+				   ,RezP_ZrdFirma
+				   ,RezP_ZrdNumer
+				   ,RezP_ZrdLp
+				   ,RezP_ZrdSubLp
+				   ,RezP_MagTyp
+				   ,RezP_MagFirma
+				   ,RezP_MagNumer
+				   ,RezP_MagLp
+				   ,RezP_TPaId
+				   ,RezP_Ilosc
+				   ,RezP_TStamp)
+				SELECT 
+					CAST(@p_NowyGUID as varchar(36))
+				   ,RezP_TwrTyp
+				   ,RezP_TwrFirma
+				   ,RezP_TwrNumer
+				   ,RezP_TwrLp
+				   ,-1605--RezP_ZrdTyp
+				   ,0--RezP_ZrdFirma
+				   ,0--RezP_ZrdNumer
+				   ,0--RezP_ZrdLp
+				   ,0--RezP_ZrdSubLp
+				   ,RezP_MagTyp
+				   ,RezP_MagFirma
+				   ,RezP_MagNumer
+				   ,RezP_MagLp
+				   ,RezP_TPaId
+				   ,RezP_Ilosc - @p_NowaIlosc
+				   ,DATEDIFF(s,'19900101',GETDATE())
+				FROM CDN.RezerwacjeWPrzyszlosc 
+				WHERE RezP_GUID = CAST(@p_OrgGUID as varchar(36))
+
+				UPDATE CDN.RezerwacjeWPrzyszlosc
+				SET RezP_Ilosc = @p_NowaIlosc
+				WHERE RezP_GUID = CAST(@p_OrgGUID as varchar(36))
+
+				IF @_TRANCOUNT=0 COMMIT TRANSACTION TRAN_XLRezerwacjeOnline_Podziel
+			END TRY
+			BEGIN CATCH
+				SET @p_OpisBladu = CONCAT('ErrorProcedure: ',ERROR_PROCEDURE(),'; ErrorLine: ',ERROR_LINE(),'; ErrorMessage: ',ERROR_MESSAGE());
+				IF XACT_STATE()&lt;&gt;0 ROLLBACK TRANSACTION TRAN_XLRezerwacjeOnline_Podziel
+			END CATCH	
+
+		end else begin
+			SET NOCOUNT OFF;
+			RETURN
+		end
+	END ELSE BEGIN
+		IF @IloscAkt &lt;= @p_NowaIlosc BEGIN			
+			SET @p_Status = 7
+			SET NOCOUNT OFF;
+			RETURN
+		END
+
+		BEGIN TRY
+			IF @_TRANCOUNT&gt;0 SAVE TRANSACTION TRAN_XLRezerwacjeOnline_Podziel;
+			ELSE BEGIN TRANSACTION TRAN_XLRezerwacjeOnline_Podziel;
+		
+			DECLARE @Identyfikatory TABLE(Id INT);
+
+			INSERT INTO CDN.Rezerwacje
+				(Rez_GIDTyp
+				,Rez_GIDFirma
+				,Rez_GIDLp
+				,Rez_TwrTyp
+				,Rez_TwrFirma
+				,Rez_TwrNumer
+				,Rez_TwrLp
+				,Rez_KntTyp
+				,Rez_KntFirma
+				,Rez_KntNumer
+				,Rez_KntLp
+				,Rez_ZrdTyp
+				,Rez_ZrdFirma
+				,Rez_ZrdNumer
+				,Rez_ZrdLp
+				,Rez_ZrdSubLp
+				,Rez_OpeTyp
+				,Rez_OpeFirma
+				,Rez_OpeNumer
+				,Rez_OpeLp
+				,Rez_MagTyp
+				,Rez_MagFirma
+				,Rez_MagNumer
+				,Rez_MagLp
+				,Rez_DstTyp
+				,Rez_DstFirma
+				,Rez_DstNumer
+				,Rez_DstLp
+				,Rez_Ilosc
+				,Rez_Zrealizowano
+				,Rez_IloscMag
+				,Rez_IloscImp
+				,Rez_IloscSSC
+				,Rez_IloscSAD
+				,Rez_TStamp
+				,Rez_DataRealizacji
+				,Rez_DataWaznosci
+				,Rez_DataAktywacji
+				,Rez_Aktywna
+				,Rez_Zrodlo
+				,Rez_DataPotwDst
+				,Rez_FrsID
+				,Rez_Typ
+				,Rez_Priorytet
+				,Rez_DataRezerwacji
+				,Rez_BsSTwrNumer
+				,Rez_BsNID
+				,Rez_BsSRodzaj
+				,Rez_PTZID
+				,Rez_CCHNumer
+				,Rez_Cecha
+				,Rez_Opis
+				,Rez_GUID
+				)
+			OUTPUT inserted.Rez_GidNumer INTO @Identyfikatory(Id)
+			SELECT 
+				Rez_GIDTyp
+				,Rez_GIDFirma
+				,Rez_GIDLp
+				,Rez_TwrTyp
+				,Rez_TwrFirma
+				,Rez_TwrNumer
+				,Rez_TwrLp
+				,Rez_KntTyp
+				,Rez_KntFirma
+				,Rez_KntNumer
+				,Rez_KntLp
+				,-1605--Rez_ZrdTyp
+				,0--Rez_ZrdFirma
+				,0--Rez_ZrdNumer
+				,0--Rez_ZrdLp
+				,0--Rez_ZrdSubLp
+				,Rez_OpeTyp
+				,Rez_OpeFirma
+				,Rez_OpeNumer
+				,Rez_OpeLp
+				,Rez_MagTyp
+				,Rez_MagFirma
+				,Rez_MagNumer
+				,Rez_MagLp
+				,Rez_DstTyp
+				,Rez_DstFirma
+				,Rez_DstNumer
+				,Rez_DstLp
+				,Rez_Ilosc - @p_NowaIlosc
+				,Rez_Zrealizowano
+				,Rez_IloscMag
+				,Rez_IloscImp
+				,Rez_IloscSSC
+				,Rez_IloscSAD
+				,DATEDIFF(s,'19900101',GETDATE())
+				,Rez_DataRealizacji
+				,Rez_DataWaznosci
+				,Rez_DataAktywacji
+				,Rez_Aktywna
+				,Rez_Zrodlo
+				,Rez_DataPotwDst
+				,Rez_FrsID
+				,Rez_Typ
+				,Rez_Priorytet
+				,Rez_DataRezerwacji
+				,Rez_BsSTwrNumer
+				,Rez_BsNID
+				,Rez_BsSRodzaj
+				,Rez_PTZID
+				,Rez_CCHNumer
+				,Rez_Cecha
+				,Rez_Opis
+				,CAST(@p_NowyGUID as varchar(36))
+			FROM CDN.Rezerwacje
+			WHERE Rez_GUID = CAST(@p_OrgGUID as varchar(36))
+
+			INSERT INTO CDN.RezMagazyny (ReM_RezTyp,ReM_RezFirma,ReM_RezNumer,ReM_RezLp,ReM_MagTyp,ReM_MagFirma,ReM_MagNumer,ReM_MagLp,ReM_ZrdTyp,ReM_ZrdFirma,ReM_ZrdNumer,ReM_ZrdLp,ReM_ZrdSubLp)
+					SELECT Rez_GIDTyp,Rez_GIDFirma,Rez_GIDNumer, 1, Rez_MagTyp, Rez_MagFirma, Rez_MagNumer, Rez_MagLp, Rez_ZrdTyp, Rez_ZrdFirma, Rez_ZrdNumer, Rez_ZrdLp, Rez_ZrdSubLp
+					FROM CDN.Rezerwacje WHERE Rez_GIDNumer IN (SELECT ID FROM @Identyfikatory)
+					AND NOT EXISTS(SELECT * FROM CDN.RezMagazyny WHERE ReM_RezTyp=Rez_GIDTyp AND ReM_RezNumer=Rez_GIDNumer AND ReM_RezLp=1)
+
+			UPDATE CDN.Rezerwacje
+			SET Rez_Ilosc = @p_NowaIlosc
+			WHERE Rez_GUID = CAST(@p_OrgGUID as varchar(36))
+
+			IF @_TRANCOUNT=0 COMMIT TRANSACTION TRAN_XLRezerwacjeOnline_Podziel
+		END TRY
+		BEGIN CATCH
+			SET @p_OpisBladu = CONCAT('ErrorProcedure: ',ERROR_PROCEDURE(),'; ErrorLine: ',ERROR_LINE(),'; ErrorMessage: ',ERROR_MESSAGE());
+			IF XACT_STATE()&lt;&gt;0 ROLLBACK TRANSACTION TRAN_XLRezerwacjeOnline_Podziel
+		END CATCH	
+	END
+
+	SET @p_Status = 1
+	SET NOCOUNT OFF;
+	RETURN
+END
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

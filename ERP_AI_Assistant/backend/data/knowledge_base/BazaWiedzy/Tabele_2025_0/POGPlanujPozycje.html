@@ -1,0 +1,392 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="POGPlanujPozycje"></A><PRE>
+          <FONT SIZE="2"><I>/* POGPlanujPozycje */</I><BR>
+CREATE PROCEDURE CDN.POGPlanujPozycje
+(
+	@p_POGId			int,				-- Identyfikator planu obciążenia
+	@p_PPOId			int,				-- Identyfikator pozycji planu obciążenia
+	
+	@p_PokazBledy		TINYINT=1,			-- Czy pokazywać błędy 
+	@Wynik				INTEGER OUTPUT		-- Wynik:
+											/*
+												 0  : Operacja zakończona sukcesem
+												-20 : Nie powiodło się dodawanie wpisu do tabeli CDN.PlanySkladnikiObciazenia
+												-21 : Pozycja jest już zaplanowana
+											*/			
+)
+AS
+BEGIN
+
+        declare @PSOId			int
+        declare @DokZrdTyp		smallint
+        declare @DokZrdFirma	int
+        declare @DokZrdNumer    int
+        declare @DokZrdLp       smallint
+        declare @TwrNumer       int
+        declare @PPOIlosc       decimal(11,4)
+        declare @PTOId          int
+        DECLARE @CacheListyOkresow INT
+        DECLARE @TechnologiaDlaZamowienia INT
+
+        IF OBJECT_ID('tempdb..#ListaOkresow') IS NOT NULL
+              SET @CacheListyOkresow=1
+        ELSE
+              SET @CacheListyOkresow=0
+
+
+        if exists(SELECT * FROM CDN.PlanyPozycjeSkladniki WHERE PPS_PPOId=@p_PPOId)
+        begin
+                if @p_PokazBledy=1
+                        raiserror('Pozycja jest już zaplanowana.', 16, 1)
+                set @Wynik = -21
+                return @Wynik
+        end
+
+        select
+        --używane tam gdzie planowany produkt jest na ZP
+          @DokZrdTyp=PPO_DokZrdTyp, @DokZrdFirma=PPO_DokZrdFirma, @DokZrdNumer=PPO_DokZrdNumer, @DokZrdLp=PPO_DokZrdLp,
+        --używane tam gdzie planowany produkt nie jest na ZP
+          @TwrNumer=PPO_TwrNumer, @PPOIlosc=PPO_IloscDoProdukcji 
+          from cdn.PlanyObciazeniaPozycje where PPO_Id=@p_PPOId
+
+        select @PTOId=POG_PTOId from CDN.PlanyObciazeniaGniazd where POG_Id=@p_POGId
+
+        DECLARE @TranCount INTEGER
+        SELECT @TranCount=@@TRANCOUNT;
+        IF @TranCount&gt;0
+                SAVE TRANSACTION Tran_POGPlanujPozycje;
+        ELSE
+                BEGIN TRANSACTION Tran_POGPlanujPozycje;
+
+
+                create table #CDN_POGPlanujPozycje_tTmp
+                (
+                        PrdTyp smallint,
+                        PrdNumer int,
+                        PrdIlosc decimal(11,4),
+                        CzTyp smallint,
+                        CzNumer int,
+                        CzTerminPocz int,
+                        CzTerminKon int,
+                        PFUId int,
+                        ZdolnoscWSek bigint,
+                        Obciazenie bigint,
+                        PCT_Id int default(-1)
+                );
+                create table #CDN_POGOperacjeNaPodstawieTechnologii
+                (
+                        PTC_ID INT,
+                        Mnoznik decimal(21,8)
+                );
+                create table #CDN_POGPlanujPozycje_tOkresyWsp
+                (
+                        Iteracja int,
+                        Wspolczynnik float
+                );
+
+                   if (@DokZrdTyp=14348) or (@DokZrdTyp&lt;&gt;14348 and exists(select * from cdn.ZamZamLinki 
+                                join cdn.ProdZlecElem ON PZE_Id=ZZL_ZZGidNumer AND ZZL_ZZGIDTyp=14343
+                                JOIN CDN.ProdProcesy ON PPC_Zlecenie=PZE_Zlecenie
+                                where ZZL_ZZGidTyp=14343 and ZZL_ZSGidTyp=@DokZrdTyp and ZZL_ZSGidFirma=@DokZrdFirma and ZZL_ZSGidNumer=@DokZrdNumer and ZZL_ZSGidLp=@DokZrdLp))
+                begin
+      
+declare @PZLId INT
+select @PZLId=PZE_Zlecenie from cdn.ProdZlecElem 
+where ((@DokZrdTyp=14348 and PZE_Id=@DokZrdNumer)
+                                        or
+                                        (@DokZrdTyp&lt;&gt;14348 and PZE_Id in (select ZZL_ZZGidNumer from cdn.ZamZamLinki where ZZL_ZZGidTyp=14343 and ZZL_ZSGidTyp=@DokZrdTyp and ZZL_ZSGidFirma=@DokZrdFirma and ZZL_ZSGidNumer=@DokZrdNumer and ZZL_ZSGidLp=@DokZrdLp))
+                                  )
+
+insert into #CDN_POGPlanujPozycje_tTmp
+
+select  COALESCE(realizacja.PZA_TwrTyp,REZ_TwrTyp,14342) as PrdTyp, COALESCE(realizacja.PZA_TwrNumer,Rez_TwrNumer, PTZ_Id,0) as PrdNumer,
+  PPO_IloscMPS *( 1.0 * ODZZ.Mnoznik * PCT_CzasRozliczeniowy/ SUM(PCT_CzasRozliczeniowy) OVER(PARTITION BY pc.PCZ_Id,PFU_Id) ) as PrdIlosc,
+                                14345 as CzTyp,  pc.PCZ_Id as CzNumer,
+                                pct.PCT_TerminOd+(pct.PCT_TerminDo- pct.PCT_TerminOd)*ODZZ.MnoznikOpoznienia as CzTerminPocz,
+                                pct.PCT_TerminDo-(pct.PCT_TerminDo- pct.PCT_TerminOd)*(1-ODZZ.Mnoznik-ODZZ.MnoznikOpoznienia) as CzTerminKon,
+                                PFU_Id as PFUId,
+                                PFU_ZdolnoscWOkresie*(case PFU_ZdolnoscWOkresieJedn
+                                                        when 0 then 60 --min
+                                                        when 1 then 3600 --godz
+                                                        when 2 then 86400  --dni
+                                                        else 0
+                                                        end) as ZdolnoscWSek,
+                                 (pct.PCT_TerminDo- pct.PCT_TerminOd)*ODZZ.Mnoznik 
+                                        * COUNT(*) OVER (PARTITION BY pc.PCZ_Id,PCO_ID)/ COUNT(*) OVER (PARTITION BY pc.PCZ_Id,PFU_Id)
+                                        as Obciazenie
+								,pct.PCT_ID PCT_ID
+                        from cdn.POGOperacjeDlaZaplanowanegoZlecenia(@PZLId) ODZZ
+                        join cdn.ProdCzynnosci pc on pc.PCZ_Id=ODZZ.PczId
+                        LEFT JOIN (SELECT *, ROW_NUMBER() OVER (PARTITION BY Rez_ZrdNumer ORDER BY (SELECT null)) rowNum  FROM
+								 CDN.rezerwacje where Rez_ZrdTyp=14345 AND Rez_GIDTyp=2592
+
+						) rez ON pc.PCZ_ID=rez.Rez_ZrdNumer AND rez.rowNum=1
+                        LEFT JOIN (SELECT *, ROW_NUMBER() OVER (PARTITION BY PCZ_Id ORDER BY (SELECT null)) rowNum  FROM
+								 CDN.ProdCzynnosci pc2
+								 JOIN cdn.ProdZasoby  ON PZA_Czynnosc=pc2.PCZ_Id AND PZA_TypZasobu=0
+
+						) realizacja ON pc.PCZ_ID=realizacja.PCZ_Realizuje AND realizacja.rowNum=1
+						LEFT JOIN (
+						SELECT *, ROW_NUMBER() OVER (PARTITION BY PZA_Czynnosc ORDER BY (SELECT null)) rowNum 
+							FROM cdn.ProdZasoby	
+							JOIN CDN.ProdTechnologiaZasoby  ON PZA_TechnologiaZasob=PTZ_Id
+							WHERE PTZ_TypZasobu=0
+						) pz ON pc.PCZ_ID=pz.PZA_Czynnosc AND pz.rowNum=1
+                        JOIN cdn.ProdCzynnosciObiekty ON pc.PCZ_Id=PCO_Czynnosc
+                        JOIN CDN.ProdCzynnosciTerminy  pct ON pc.PCZ_Id = PCT_Czynnosc AND (PCO_Termin=0 OR PCO_Termin=PCT_Id)
+                        join cdn.PlanyObciazeniaPozycje ON 
+                                ((      
+                                        --ZP bez zamówienia
+                                        14348=PPO_DokZrdTyp and ODZZ.PZE_Id=PPO_DokZrdNumer AND PPO_POGId=@p_POGId)
+                                        or
+                                        --ZP z zamówieniem
+                                        (PPO_DokZrdTyp&lt;&gt;14348 and ODZZ.PZE_Id in (select ZZL_ZZGidNumer from cdn.ZamZamLinki where ZZL_ZZGidTyp=14343 and ZZL_ZSGidTyp=PPO_DokZrdTyp and ZZL_ZSGidFirma=PPO_DokZrdFirma and ZZL_ZSGidNumer=PPO_DokZrdNumer and ZZL_ZSGidLp=PPO_DokZrdLp))
+                                  )
+                        join CDN.ProdFunkcje ON PFU_Id= PCO_Funkcja and PFU_PlanujStrategicznie=1
+                        where PPO_ID=@p_PPOId AND PCT_CzasRozliczeniowy&gt;0
+
+                end
+                else -- nie jest to element ZP i nie istnieją do tego elementu wygenerowane takie dokumenty, planowanie na podstawie technologii
+                               begin
+
+IF @DokZrdTyp&lt;&gt;14348 and exists(select * from cdn.ZamZamLinki 
+                                join cdn.ProdZlecElem ON PZE_Id=ZZL_ZZGidNumer AND ZZL_ZZGIDTyp=14343
+                                where ZZL_ZZGidTyp=14343 and ZZL_ZSGidTyp=@DokZrdTyp and ZZL_ZSGidFirma=@DokZrdFirma and ZZL_ZSGidNumer=@DokZrdNumer and ZZL_ZSGidLp=@DokZrdLp)
+SELECT @TechnologiaDlaZamowienia=PZE_Technologia from cdn.ZamZamLinki 
+                                join cdn.ProdZlecElem ON PZE_Id=ZZL_ZZGidNumer AND ZZL_ZZGIDTyp=14343
+                                where ZZL_ZZGidTyp=14343 and ZZL_ZSGidTyp=@DokZrdTyp and ZZL_ZSGidFirma=@DokZrdFirma and ZZL_ZSGidNumer=@DokZrdNumer and ZZL_ZSGidLp=@DokZrdLp
+ELSE
+SET @TechnologiaDlaZamowienia=0
+                   
+INSERT INTO #CDN_POGOperacjeNaPodstawieTechnologii EXEC cdn.POGOperacjeDlaNiezaplanowanegoProduktu @TwrNumer,@PPOIlosc,@TechnologiaDlaZamowienia
+
+       insert into #CDN_POGPlanujPozycje_tTmp
+SELECT 
+    14342 as PrdTyp, PTZ.PTZ_Id as PrdNumer, convert(decimal(11,4),Mnoznik  ) as PrdIlosc,
+                                                14341 as CzTyp, PTC.PTC_Id as CzNumer, 
+									   DATEDIFF(s,'19900101',GETDATE()) as CzTerminPocz,
+									    DATEDIFF(s,'19900101',GETDATE()) + (CDN.Prod_WartoscAtr(PTC_CzasPlanowany,PTC_CzasPlanowanyAtr,14340,PTC_Technologia,0,0) ) as CzTerminKon,
+                                                PFU_Id as PFUId,
+                                                PFU_ZdolnoscWOkresie*(case PFU_ZdolnoscWOkresieJedn
+                                                                        when 0 then 60 --min
+                                                                        when 1 then 3600 --godz
+                                                                        when 2 then 86400  --dni
+                                                                        else 0
+                                                                        end) as ZdolnoscWSek,
+                                                round(coalesce(convert(decimal(11,4),Mnoznik*PTF_LiczbaObiektow/**B.PTZ_Ilosc*/)/nullif(PTC_Ilosc,0),1) * (CDN.Prod_WartoscAtr(PTC_CzasPlanowany,PTC_CzasPlanowanyAtr,14340,PTC_Technologia,0,0) ) *PTZ_Ilosc/SUM(PTZ_Ilosc)OVER (PARTITION BY ONPT.PTC_ID, PFU_Id),0) as Obciazenie
+									   ,0
+				
+ FROM #CDN_POGOperacjeNaPodstawieTechnologii ONPT
+JOIN cdn.ProdTechnologiaCzynnosci PTC ON ONPT.PTC_ID=PTC.PTC_Id
+JOIN cdn.ProdTechnologiaZasoby PTZ ON PTZ_TechnologiaCzynnosc=PTC.PTC_Id AND PTZ_TypZasobu=0
+JOIN CDN.ProdTechnologiaFunkcje PTF ON PTF_TechnologiaCzynnosc=ONPT.PTC_Id
+                                JOIN CDN.ProdFunkcje ON PFU_Id=PTF_Funkcja
+where PFU_PlanujStrategicznie=1
+  
+
+
+                end
+
+                declare @c1_CzTyp smallint
+                declare @c1_CzNumer int
+                declare @c1_CzTerminPocz int
+                declare @c1_CzTerminKon int
+                declare @c1_CzDataPocz int
+                declare @c1_CzDataKon int
+
+				declare @c1_PrdTyp smallint
+                declare @c1_PrdNumer int
+                declare @c1_PFUId int
+                declare @c1_PCT_ID int
+                declare @c1_PrdIlosc decimal(11,4)
+                                  
+				 delete #CDN_POGPlanujPozycje_tTmp FROM #CDN_POGPlanujPozycje_tTmp JOIN CDN.ProdFunkcje ON PFU_Id=PFUId where PFUId is null or PFU_PlanujStrategicznie=0
+
+
+                DECLARE C1_POGPlanujPozycje CURSOR LOCAL FAST_FORWARD FOR
+                SELECT CzTyp, CzNumer, CzTerminPocz, CzTerminKon, CzTerminPocz/86400+69035, CzTerminKon/86400+69035, PrdTyp, PrdNumer, PrdIlosc, PFUId, PCT_ID FROM #CDN_POGPlanujPozycje_tTmp
+                OPEN C1_POGPlanujPozycje;
+                FETCH NEXT FROM C1_POGPlanujPozycje INTO @c1_CzTyp, @c1_CzNumer, @c1_CzTerminPocz, @c1_CzTerminKon, @c1_CzDataPocz, @c1_CzDataKon, @c1_PrdTyp, @c1_PrdNumer, @c1_PrdIlosc, @c1_PFUId, @c1_PCT_ID
+                WHILE @@fetch_status = 0
+                BEGIN
+                        set @PSOId = null
+
+						--Jeśli skladnikiem jest operacja z technologii to mamy je dublować, jeśli ze zlecen to mają się grupować
+                        SELECT @PSOId=PSO_Id FROM CDN.PlanySkladnikiObciazenia WHERE PSO_ObiTyp=@c1_CzTyp AND PSO_ObiNumer=@c1_CzNumer AND PSO_POGId=@p_POGId AND @c1_CzTyp=14345
+
+                        /*
+                                CDN.PlanySkladnikiObciazenia
+                        */
+                        IF (@PSOId is null)
+                        BEGIN
+                                INSERT INTO CDN.PlanySkladnikiObciazenia(PSO_POGId, PSO_ObiTyp ,PSO_ObiNumer)
+                                VALUES (@p_POGId, @c1_CzTyp, @c1_CzNumer)
+                                if @@error &lt;&gt; 0
+                                begin
+                                        CLOSE C1_POGPlanujPozycje;
+                                        DEALLOCATE C1_POGPlanujPozycje;
+                                        IF XACT_STATE()&lt;&gt;0 rollback tran Tran_POGPlanujPozycje
+                                        if @p_PokazBledy=1
+                                                raiserror('Nie powiodło się dodawanie wpisu do tabeli CDN.PlanySkladnikiObciazenia.', 16, 1)
+                                        set @Wynik = -20
+                                        return @Wynik
+                                end
+                                else
+                                begin
+                                        SET @PSOId = scope_identity()
+                                end
+                        END
+
+                        /*
+                                CDN.PlanyPozycjeSkladniki
+                        */
+                        IF NOT EXISTS(SELECT * FROM CDN.PlanyPozycjeSkladniki WHERE PPS_PPOId=@p_PPOId AND PPS_PSOId=@PSOId)
+                                INSERT INTO CDN.PlanyPozycjeSkladniki(PPS_PPOId, PPS_PSOId) VALUES (@p_PPOId,@PSOId)
+
+                        /*
+                                Wybieranie okresów i wspólczynnika obciązenia dla tego okresu:
+                        */
+
+
+
+                        delete #CDN_POGPlanujPozycje_tOkresyWsp
+IF @CacheListyOkresow=1
+                        insert into #CDN_POGPlanujPozycje_tOkresyWsp
+                        select distinct Iteracja, coalesce(convert(float,CzasWOkresie)*100/nullif((@c1_CzTerminKon-@c1_CzTerminPocz),0),100) as Wspolczynnik
+                        from (
+                                        select * ,
+                                                case
+                                                        -- + poczatek i koniec w tym przedziale:
+                                                        when (pocz&lt;=@c1_CzDataPocz and @c1_CzDataPocz&lt;=Kon and pocz&lt;=@c1_CzDataKon and @c1_CzDataKon&lt;=Kon) then @c1_CzTerminKon-@c1_CzTerminPocz
+                                                        -- + tylko początek
+                                                        when (pocz&lt;=@c1_CzDataPocz and @c1_CzDataPocz&lt;=Kon and @c1_CzDataKon&gt;Kon) then TimeStampKon-@c1_CzTerminPocz
+                                                        -- + cały okres - początek i koniec są w innym przedziale
+                                                        when (pocz&gt;=@c1_CzDataPocz and pocz&lt;=@c1_CzDataKon and @c1_CzDataPocz&lt;= Kon and @c1_CzDataKon&gt;= Kon) then TimeStampKon-TimeStampPocz
+                                                        -- + tylko koniec
+                                                        when (pocz&lt;=@c1_CzDataKon and @c1_CzDataKon&lt;=Kon and @c1_CzDataPocz&lt;pocz) then @c1_CzTerminKon-TimeStampPocz
+                                                end CzasWOkresie
+                                        from
+                                        (
+                                                select Iteracja, Pocz, Kon, (Pocz-69035)*86400 as TimeStampPocz, (Kon-69035+1)*86400-1 TimeStampKon
+                                              from #ListaOkresow
+                                                where (pocz&lt;=@c1_CzDataPocz and @c1_CzDataPocz&lt;= Kon) or (pocz&gt;=@c1_CzDataPocz and pocz&lt;=@c1_CzDataKon and @c1_CzDataPocz&lt;= Kon and @c1_CzDataKon&gt;= Kon) or (pocz&lt;=@c1_CzDataKon and @c1_CzDataKon&lt;= Kon)
+                                         ) A
+                                ) B
+ELSE 
+                        insert into #CDN_POGPlanujPozycje_tOkresyWsp
+                        select distinct Iteracja, coalesce(convert(float,CzasWOkresie)*100/nullif((@c1_CzTerminKon-@c1_CzTerminPocz),0),100) as Wspolczynnik
+                        from (
+                                        select * ,
+                                                case
+                                                        -- + poczatek i koniec w tym przedziale:
+                                                        when (pocz&lt;=@c1_CzDataPocz and @c1_CzDataPocz&lt;=Kon and pocz&lt;=@c1_CzDataKon and @c1_CzDataKon&lt;=Kon) then @c1_CzTerminKon-@c1_CzTerminPocz
+                                                        -- + tylko początek
+                                                        when (pocz&lt;=@c1_CzDataPocz and @c1_CzDataPocz&lt;=Kon and @c1_CzDataKon&gt;Kon) then TimeStampKon-@c1_CzTerminPocz
+                                                        -- + cały okres - początek i koniec są w innym przedziale
+                                                        when (pocz&gt;=@c1_CzDataPocz and pocz&lt;=@c1_CzDataKon and @c1_CzDataPocz&lt;= Kon and @c1_CzDataKon&gt;= Kon) then TimeStampKon-TimeStampPocz
+                                                        -- + tylko koniec
+                                                        when (pocz&lt;=@c1_CzDataKon and @c1_CzDataKon&lt;=Kon and @c1_CzDataPocz&lt;pocz) then @c1_CzTerminKon-TimeStampPocz
+                                                end CzasWOkresie
+                                        from
+                                        (
+                                                select Iteracja, Pocz, Kon, (Pocz-69035)*86400 as TimeStampPocz, (Kon-69035+1)*86400-1 TimeStampKon
+                                                from CDN.POGListaOkresow(@PTOId, null, null)
+                                                where (pocz&lt;=@c1_CzDataPocz and @c1_CzDataPocz&lt;= Kon) or (pocz&gt;=@c1_CzDataPocz and pocz&lt;=@c1_CzDataKon and @c1_CzDataPocz&lt;= Kon and @c1_CzDataKon&gt;= Kon) or (pocz&lt;=@c1_CzDataKon and @c1_CzDataKon&lt;= Kon)
+                                         ) A
+                                ) B
+                        /*
+                                CDN.PlanyElementySkladnikow
+                        */
+
+
+
+                        MERGE CDN.PlanyElementySkladnikow AS PGS
+                        USING ( SELECT  @PSOId as PGS_PSOId, Iteracja as PGS_PTOIteracja, sum(coalesce((Wspolczynnik*Obciazenie/100),0)) as PGS_WartoscObciazenia, PFUId as PGS_PFuId, Wspolczynnik
+                                        FROM #CDN_POGPlanujPozycje_tTmp
+                                        , #CDN_POGPlanujPozycje_tOkresyWsp
+                                    WHERE CzTyp=@c1_CzTyp AND CzNumer=@c1_CzNumer AND PrdNumer=@c1_PrdNumer AND PFUId=@c1_PFUId AND PCT_ID=@c1_PCT_ID
+									group by Iteracja, PFUId, Wspolczynnik) AS New
+                        ON PGS.PGS_PSOId=New.PGS_PSOId AND PGS.PGS_PTOIteracja=New.PGS_PTOIteracja AND PGS.PGS_PFuId=New.PGS_PFuId
+                        WHEN MATCHED THEN
+                                UPDATE SET PGS.PGS_WartoscObciazenia = PGS.PGS_WartoscObciazenia + New.PGS_WartoscObciazenia
+                        WHEN NOT MATCHED THEN
+                                INSERT(PGS_PSOId,PGS_PTOIteracja,PGS_WartoscObciazenia,PGS_PFuId)
+                                VALUES(New.PGS_PSOId,New.PGS_PTOIteracja,New.PGS_WartoscObciazenia,New.PGS_PFuId);
+
+                        /*
+                                CDN.PlanyElementyProdukty
+                        */						
+                        MERGE CDN.PlanyElementyProdukty PGP
+                        USING ( SELECT DISTINCT PGS_Id as PGP_PGSId, PrdIlosc*Wspolczynnik/100 as PGP_Ilosc, coalesce(Twr_Jm,PTZ_Jednostka,'') as PGP_Jm, PrdTyp as PGP_ObiTyp, PrdNumer as PGP_ObiNumer
+                                        FROM #CDN_POGPlanujPozycje_tTmp
+                                        join CDN.PlanySkladnikiObciazenia ON PSO_ObiTyp=CzTyp AND PSO_ObiNumer=CzNumer AND PSO_POGId=@p_POGId
+                                        join CDN.PlanyElementySkladnikow ON PFUId=PGS_PFuId AND PGS_PSOId=PSO_Id AND (@c1_CzTyp=14345 OR PGS_PSOId=@PSOId)
+                                        join #CDN_POGPlanujPozycje_tOkresyWsp ON Iteracja=PGS_PTOIteracja
+                                        left join CDN.ProdZasoby ON PrdTyp=14346 AND PrdNumer=PZA_Id
+                                        left join CDN.Rezerwacje ON PrdTyp=Rez_GIDTyp AND PrdNumer=Rez_GIDNumer
+                                        left join CDn.ProdTechnologiaZasoby ON PrdTyp=14342 AND PrdNumer=PTZ_Id
+                                        left join CDN.TwrKarty on (PZA_TwrTyp=Twr_GIDTyp and PZA_TwrNumer=Twr_GIDNumer) or (Rez_TwrTyp=Twr_GIDTyp and Rez_TwrNumer=Twr_GIDNumer) or (PTZ_TwrTyp=Twr_GIDTyp and PTZ_TwrNumer=Twr_GIDNumer)
+                                        WHERE CzTyp=@c1_CzTyp AND CzNumer=@c1_CzNumer and PrdTyp=@c1_PrdTyp and PrdNumer=@c1_PrdNumer  AND PFUId=@c1_PFUId AND PCT_ID=@c1_PCT_ID--AND @c1_CzTyp=14345
+                                ) AS NEW
+                        ON PGP.PGP_PGSId=New.PGP_PGSId AND PGP.PGP_ObiTyp=New.PGP_ObiTyp AND PGP.PGP_ObiNumer=New.PGP_ObiNumer AND PGP.PGP_Jm=New.PGP_Jm
+                        WHEN MATCHED /*AND @c1_CzTyp=14345*/ THEN
+                                UPDATE SET PGP.PGP_Ilosc = PGP.PGP_Ilosc + New.PGP_Ilosc
+                        WHEN NOT MATCHED THEN
+                                INSERT(PGP_PGSId,PGP_Ilosc,PGP_Jm,PGP_ObiTyp,PGP_ObiNumer)
+                                VALUES(New.PGP_PGSId,New.PGP_Ilosc,New.PGP_Jm,New.PGP_ObiTyp,New.PGP_ObiNumer);
+                      
+                        FETCH NEXT FROM C1_POGPlanujPozycje INTO @c1_CzTyp, @c1_CzNumer, @c1_CzTerminPocz, @c1_CzTerminKon, @c1_CzDataPocz, @c1_CzDataKon, @c1_PrdTyp, @c1_PrdNumer, @c1_PrdIlosc,@c1_PFUId, @c1_PCT_ID
+
+                END -- WHILE @@fetch_status = 0
+                CLOSE C1_POGPlanujPozycje;
+                DEALLOCATE C1_POGPlanujPozycje;
+
+                -- aktualizacja wartosci 'termin produkcji wg obciazenia'
+IF @CacheListyOkresow=1                
+                UPDATE CDN.PlanyObciazeniaPozycje
+                SET PPO_TerminWgObciazenia = IsNull(
+                                                            (       select max(F.Kon)
+                                                                    from CDN.PlanyElementySkladnikow
+                                                                    join CDN.PlanyPozycjeSkladniki on PGS_PSOId=PPS_PSOId and PPS_PPOId=@p_PPOId
+                                                               join #ListaOkresow F on 1=1
+                                                                    where PGS_PTOIteracja=F.Iteracja and PGS_WartoscObciazenia&gt;0
+                                                            )
+                                                    ,0)
+                WHERE PPO_ID=@p_PPOId
+ELSE 
+                UPDATE CDN.PlanyObciazeniaPozycje
+                SET PPO_TerminWgObciazenia = IsNull(
+                                                            (       select max(F.Kon)
+                                                                    from CDN.PlanyElementySkladnikow
+                                                                    join CDN.PlanyPozycjeSkladniki on PGS_PSOId=PPS_PSOId and PPS_PPOId=@p_PPOId
+                                                                    cross apply CDN.POGListaOkresow(@PTOId, null, null) F
+                                                                    where PGS_PTOIteracja=F.Iteracja and PGS_WartoscObciazenia&gt;0
+                                                            )
+                                                    ,0)
+                WHERE PPO_ID=@p_PPOId
+
+
+        end
+
+        -- OK:
+        IF @TranCount=0 COMMIT TRAN Tran_POGPlanujPozycje;
+
+        set @Wynik = 0
+    return @Wynik
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

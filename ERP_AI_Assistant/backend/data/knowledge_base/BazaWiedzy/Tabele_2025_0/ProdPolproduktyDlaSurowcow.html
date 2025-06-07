@@ -1,0 +1,166 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Usuwanie funkcji CDN.ProdPolproduktyDlaSurowcow"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Usuwanie funkcji CDN.ProdPolproduktyDlaSurowcow */</I><BR>
+if exists(select * from sysobjects where name='ProdPolproduktyDlaSurowcow' and type='IF')
+	drop function CDN.ProdPolproduktyDlaSurowcow
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie funkcji CDN.ProdPolproduktyDlaSurowcow"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie funkcji CDN.ProdPolproduktyDlaSurowcow */</I><BR>
+CREATE FUNCTION CDN.ProdPolproduktyDlaSurowcow(@CzynnoscRealizowana int, @SposobRealizacji tinyint)
+RETURNS TABLE
+AS
+--Parametry funkcji:
+--@CzynnoscRealizowana - ID czynności aktualnie realizowanej
+--@SposobRealizacji:
+	-- 1 - Realizacja pojedynczego terminu
+	-- 2 - Realizacja wszystkich terminów (brak sprawdzania ile już zrealizowano)
+	-- 3 - Realizacja pozostałych
+RETURN
+(
+	select CASE WHEN DopasowanieIlosci &gt; 0 THEN PotrzebnaIloscSurowca - (PotrzebnaIloscSurowca * DopasowanieIlosci)/100 ELSE PotrzebnaIloscSurowca END PotrzebnaIloscSurowca, 
+	PolproduktIloscDostepna, OryginalZamiennikaIloscPobrana, KodSurowca,SurowiecPTZID,KodPolproduktu,PolproduktPTZID,PTC_Kod,PCZ_Id,PCZ_Proces
+	from
+	(
+		select case when @SposobRealizacji = 2 or 
+						 ((select COUNT(*) from cdn.ProdCzynnosciTerminy where PCT_Czynnosc = @CzynnoscRealizowana) &gt; 1 and @SposobRealizacji = 3)	--realizacja wszystkich lub realizacja czynności które mają wiele terminów z wybraną opcją realizacji pozostałych
+						then isnull(A.SurowiecPotrzeba,0)
+					when isnull(A.SurowiecPotrzeba,0) &lt; isnull(SUM(SurowiecRealizacja.PZA_Ilosc),0)						
+						then 0																							--w przypadku nadrealizacji potrzebną ilość ustalamy na 0 (nie chcemy wypisywać ujemnych wartości)
+						else isnull(A.SurowiecPotrzeba,0) - isnull(SUM(SurowiecRealizacja.PZA_Ilosc),0)					--ilość potrzebnego surowca dla realizacji pojedynczego terminu, odejmujemy ilość już zrealizowaną na tym zleceniu
+			   end PotrzebnaIloscSurowca,
+			   isnull(A.PolproduktIlosc,0)- isnull(SurowiecRealizacjaPolproduktIlosc,0) PolproduktIloscDostepna,		--ilość dostępnego surowca czyli półproduktu z którym możemy się związać z uwzględnieniem ilości która już została związana z jakimiś zasobami
+			   A.RezIloscZasob + A.IloscDokPlan OryginalZamiennikaIloscPobrana,											--jeśli sprawdzany półprodukt jest zamiennikiem trzeba znaleźć jego oryginał i zobaczyć ile zostało już zarezerwowane zasobowo lub znajduje się na dokumentach (z planu), w takim przypadku ilość potrzebnego zamiennika/półproduktu jest mniejsza
+			   A.KodSurowca,A.SurowiecPTZID,A.KodPolproduktu,A.PolproduktPTZID,A.PTC_Kod,A.PCZ_Id,A.PCZ_Proces, A.DopasowanieIlosci	  
+		from
+		(
+			select ISNULL(SurowiecTwr.Twr_Kod,Surowiec.PTZ_Kod) KodSurowca,Surowiec.PTZ_Id SurowiecPTZID,
+			ISNULL(PolproduktTwr.Twr_Kod,Polprodukt.PTZ_Kod) KodPolproduktu,Polprodukt.PTZ_Id PolproduktPTZID,PolproduktCzynnosc.PTC_Kod,
+				   CzynnoscRealizowana.PCZ_Id,CzynnoscRealizowana.PCZ_Proces,
+			   
+				   case when @SposobRealizacji = 2												--w przypadku realizacji wszystkich terminów nie wyliczamy ilości tylko wprost bierzemy ilość wynikającą z czynności
+							then CzynnoscRealizowana.PCZ_Ilosc
+						else (((CzynnoscRealizowana.PCZ_Ilosc*SumaTerminow)/					--ilość potrzebnego surowca wyliczamy m.in. na podstawie sumy terminów bo w przypadku gdy czynność jest zplanowana na wiele terminów kolejne realizacje podpowiadają się na odpowiednią ilość
+							 case when CzynnoscRealizowana.PCZ_CzasRealizacji &lt;=0 then 1 else CzynnoscRealizowana.PCZ_CzasRealizacji end)*
+							 Surowiec.PTZ_Ilosc)/
+							 SurowiecCzynnosc.PTC_Ilosc 
+				   end SurowiecPotrzeba,		--w polu SurowiecPotrzeba mamy ilość surowca jaka jest potrzebna do realizacji czynności (uwzględnienie już zrealizowanej ilości jest w zapytaniu nadrzędnym)
+				   sum(case when (Polprodukt.PTZ_ZrodloZasobu = 0 and CzynnoscPoprzednia.PCZ_Proces = CzynnoscRealizowana.PCZ_Proces) or				--przypadek gdy wykorzystanie półproduktu ustawione jest na pobieranie z tego samego procesu 
+								 (Polprodukt.PTZ_ZrodloZasobu = 1 and AktualneZlecenie.PZL_Id is not null) or			--przypadek gdy wykorzystanie półproduktu ustawione jest na pobieranie z tego samego zlecenia 
+								 (Polprodukt.PTZ_ZrodloZasobu = 2 and CzynnoscRealizowana.PCZ_Oddzial = CzynnoscPoprzednia.PCZ_Oddzial) or	--przypadek gdy wykorzystanie półproduktu ustawione jest na pobieranie z tego samego oddziału
+								  Polprodukt.PTZ_ZrodloZasobu = 3														--przypadek gdy wykorzystanie półproduktu ustawione jest na dowolne
+								then PolproduktPlan.PZA_Ilosc
+							else 0
+					   end) PolproduktIlosc,	--ilość półproduktu z którym możemy się związać przy realizacji (zużycie ilości, czyli istniejące powiązania z innymi zasobami które zmniejszają możliwą ilość, uwzględnione są w zapytaniu nadrzędnym)
+				   sum(case when (Polprodukt.PTZ_ZrodloZasobu = 0 and CzynnoscPoprzednia.PCZ_Proces = CzynnoscRealizowana.PCZ_Proces) or				--przypadek gdy wykorzystanie półproduktu ustawione jest na pobieranie z tego samego procesu 
+								 (Polprodukt.PTZ_ZrodloZasobu = 1 and AktualneZlecenie.PZL_Id is not null) or			--przypadek gdy wykorzystanie półproduktu ustawione jest na pobieranie z tego samego zlecenia 
+								 (Polprodukt.PTZ_ZrodloZasobu = 2 and CzynnoscRealizowana.PCZ_Oddzial = CzynnoscPoprzednia.PCZ_Oddzial) or	--przypadek gdy wykorzystanie półproduktu ustawione jest na pobieranie z tego samego oddziału
+								  Polprodukt.PTZ_ZrodloZasobu = 3														--przypadek gdy wykorzystanie półproduktu ustawione jest na dowolne
+								then SurowceZuzyciePolproduktPlan.PZA_Ilosc
+							else 0
+					   end) SurowiecRealizacjaPolproduktIlosc,
+				   sum(isnull(Rez_Ilosc,0)) RezIloscZasob,																--ilość rezerwacji zasobowych oryginału zamiennika
+				   isnull(sum(case when RWPlanTrE.TrE_TwrNumer is null then 0 else RWPlanTrS.TrS_Ilosc end),0) IloscDokPlan,	--ilość oryginału zamiennika znajdującego się na dokumentach wygenerowanych z planu
+				   isnull(polprodukt.PTZ_DopasowanieIlosci,0) DopasowanieIlosci
+			from cdn.ProdCzynnosci CzynnoscRealizowana
+			join cdn.ProdTechnologiaCzynnosci SurowiecCzynnosc on SurowiecCzynnosc.PTC_Id = CzynnoscRealizowana.PCZ_TechnologiaCzynnosc		--realizowana czynność w technologii
+			left join cdn.ProdTechnologiaZasoby Surowiec on Surowiec.PTZ_TechnologiaCzynnosc = SurowiecCzynnosc.PTC_Id						--surowiec w realizowanej czynności pochodzący z innej czynności
+			left join cdn.TwrKarty SurowiecTwr ON Surowiec.PTZ_TwrNumer = SurowiecTwr.Twr_GIDNumer AND Surowiec.PTZ_TwrTyp = 16
+			left join cdn.ProdTechnologiaZasoby Polprodukt on Polprodukt.PTZ_Id = Surowiec.PTZ_TechnologiaZasob								--półprodukt związany z surowcem
+			left join cdn.TwrKarty PolproduktTwr ON Polprodukt.PTZ_TwrNumer = PolproduktTwr.Twr_GIDNumer AND Polprodukt.PTZ_TwrTyp = 16
+			left join cdn.ProdTechnologiaCzynnosci PolproduktCzynnosc on PolproduktCzynnosc.PTC_Id = Polprodukt.PTZ_TechnologiaCzynnosc		--czynność w technologii do której przypięty jest półprodukt z nadrzędnej czynności
+			left join cdn.ProdCzynnosci CzynnoscPoprzednia on CzynnoscPoprzednia.PCZ_TechnologiaCzynnosc = PolproduktCzynnosc.PTC_Id and CzynnoscPoprzednia.PCZ_Realizuje &lt;&gt; 0		--czynność planowana do której podpięty jest szukany przez nas półprodukt
+			--left join cdn.ProdProcesy TenSamProces on TenSamProces.PPC_Id = CzynnoscPoprzednia.PCZ_Proces and TenSamProces.PPC_Id = CzynnoscRealizowana.PCZ_Proces					--join potrzebny do sprawdzenia czy to ten sam proces
+			--left join cdn.ProdProcesy ProcesCzynnosciPoprzedniej on ProcesCzynnosciPoprzedniej.PPC_Id = CzynnoscPoprzednia.PCZ_Proces												--kolejne trzy joiny na potrzeby sprawdzenia czy to to samo zlecenie
+			--left join cdn.ProdProcesy ProcesCzynnosciRealizowanej on ProcesCzynnosciRealizowanej.PPC_Id = CzynnoscRealizowana.PCZ_Proces
+			left join cdn.ProdZlecenia AktualneZlecenie on AktualneZlecenie.PZL_Id = CzynnoscRealizowana.PCZ_PZLId and AktualneZlecenie.PZL_Id = CzynnoscPoprzednia.PCZ_PZLId
+			left join cdn.ProdZasoby PolproduktPlan on PolproduktPlan.PZA_Czynnosc = CzynnoscPoprzednia.PCZ_Id and PolproduktPlan.PZA_TypZasobu = 0 and PolproduktPlan.PZA_TechnologiaZasob = Polprodukt.PTZ_Id		--półprodukt ze zlecenia, potrzebne do sumy ilości możliwej do wykorzystania
+			left join cdn.ProdZasoby SurowceZuzyciePolproduktPlan on SurowceZuzyciePolproduktPlan.PZA_Zasob = PolproduktPlan.PZA_Id			--surowce podpięte do półproduktów zmniejszające ich dostępną ilość
+			left join
+			(				--poniższe zapytania potrzebne są do wyliczenia odpowiedniej ilości surowca potrzebnej do realizacji, jest to szczególnie istotne w przypadku gdy czynność zaplanowana jest na wiele terminów (w takim przypadku przy realizacji podpowiadają się odpowiednio wyliczone ilości)
+				select case when SumaTerminow = 0 then 1 else SumaTerminow end SumaTerminow, PCT_Czynnosc from
+				(
+					select sum(PCT_TerminDo-PCT_TerminOd) SumaTerminow,count(*) IloscTerminow,PCT_Czynnosc 
+					from cdn.ProdCzynnosciTerminy
+					where (PCT_Id =									--przypadek gdy realizujemy tylko jeden termin (chcemy obliczyć proporcjonalną ilość surowca potrzebną do realizacji)
+									(
+										select max (pct_id) from	--zapytanie z kodu Clarionowego aby było identycznie podczas sprawdzania blokady
+										(
+											select  t.pct_id, count(t2.pct_id) as t  from CDN.ProdCzynnosciTerminy t                 
+											left outer join  CDN.ProdCzynnosciTerminy  t2 on t2.pct_czynnosc=t.pct_czynnosc and t2.pct_id &lt; T.pct_id                 
+											where t.pct_czynnosc = @CzynnoscRealizowana                 
+											group by (t.pct_id)  
+											having count(t2.pct_id) &lt;=                            
+											((select count (*) from CDN.prodczynnosci inner join CDN.prodczynnosciterminy on PCT_Czynnosc = PCZ_ID  where PCZ_realizuje = @CzynnoscRealizowana ))
+										) RealizujTermin
+									) and @SposobRealizacji = 1		--realizacja jednego terminu
+						  ) OR
+						  (PCT_Id in								--przypadek gdy realizujemy "pozostałe" (również chcemy wyliczyć proporcjonalną ilość surowca potrzebną do realizacji)
+									(
+										select PCT_Id as ID			--zapytanie z kodu Clarionowego aby było identycznie podczas sprawdzania blokady
+										from Cdn.ProdCzynnosciTerminy 
+										where pct_czynnosc = @CzynnoscRealizowana and  
+										PCT_ID not in 
+										( 
+											select TerminyPlan.PCT_id as TerminyPlanPctId   
+											from Cdn.ProdCzynnosciTerminy TerminyPlan   
+											join 
+											( 
+												select  PCT_id, PCT_TerminOd, PCT_TerminDo  
+												from Cdn.ProdCzynnosciTerminy 
+												inner join Cdn.ProdCzynnosci on pct_czynnosc = pcz_id and PCZ_CzasRealizacji&lt;&gt;0 
+												where pcz_realizuje = @CzynnoscRealizowana
+											) T1 on TerminyPlan.pct_czynnosc = @CzynnoscRealizowana and TerminyPlan.PCT_TerminOd &lt;=T1.PCT_Termindo and T1.PCT_TerminOd&lt;= TerminyPlan.PCT_TerminDo  and 
+													  0.75*(TerminyPlan.PCT_TerminDo - TerminyPlan.PCT_TerminOd ) &lt;= (case  when T1.PCT_TerminDo &lt;=TerminyPlan.PCT_TerminDo then T1.PCT_TerminDo else TerminyPlan.PCT_TerminDo end )-  
+													  (case when  T1.PCT_TerminOd &gt;= TerminyPlan.PCT_TerminOd then T1.PCT_TerminOd else TerminyPlan.PCT_TerminOd end) 
+										)
+									) and @SposobRealizacji = 3		--wybrano realizację pozostałych terminów
+						  )
+					group by PCT_Czynnosc
+				) PCT
+			) Terminy on Terminy.PCT_Czynnosc = CzynnoscRealizowana.PCZ_Id
+			left join CDN.ProdTechnologiaZasoby OryginalyZamiennikow on OryginalyZamiennikow.PTZ_Id = Surowiec.PTZ_Zamiennik and OryginalyZamiennikow.PTZ_TechnologiaZasob = 0 and OryginalyZamiennikow.PTZ_TypZasobu = 1	--jeśli półprodukt jest zamiennikiem do surowca to join ten zwróci oryginał zamiennika
+			left join CDN.Rezerwacje on Rez_PTZID = OryginalyZamiennikow.PTZ_Id and Rez_ZrdTyp = 14345 and Rez_ZrdNumer = CzynnoscRealizowana.PCZ_Id and Rez_DstNumer &gt; 0													--rezerwacje zasobowe dla surowca w realizowanej czynności, ilość z tych rezerwacji powinna pomniejszać ilość potrzebnego półproduktu/zamiennika
+			left join CDN.TraSElem RWPlanTrS on RWPlanTrS.TrS_ZlcTyp=14345 and RWPlanTrS.TrS_ZlcNumer=CzynnoscRealizowana.PCZ_Id																							--ilość oryginału zamiennika znajdującego się na RW z planu, ilość powinna pomniejszać ilość potrzebnego półproduktu/zamiennika
+			left join CDN.TraElem RWPlanTrE on RWPlanTrE.TrE_GIDNumer = RWPlanTrS.TrS_GIDNumer and RWPlanTrE.TrE_GIDLp = RWPlanTrS.TrS_GIDLp and RWPlanTrE.TrE_TwrTyp = 16 and RWPlanTrE.TrE_TwrNumer = OryginalyZamiennikow.PTZ_TwrNumer		
+			where CzynnoscRealizowana.PCZ_ID = @CzynnoscRealizowana and Surowiec.PTZ_TypZasobu = 1 and Surowiec.PTZ_TechnologiaZasob &lt;&gt; 0
+			group by Surowiec.PTZ_Kod,SurowiecTwr.Twr_Kod,Surowiec.PTZ_Id,Polprodukt.PTZ_Kod,Polprodukt.PTZ_Id,PolproduktTwr.Twr_Kod
+			,PolproduktCzynnosc.PTC_Kod,CzynnoscRealizowana.PCZ_Ilosc,
+			Surowiec.PTZ_Ilosc,SurowiecCzynnosc.PTC_Ilosc,
+					 CzynnoscRealizowana.PCZ_Id,CzynnoscRealizowana.PCZ_Proces,SumaTerminow,CzynnoscRealizowana.PCZ_CzasRealizacji, POLPRODUKT.PTZ_DopasowanieIlosci
+		) A
+		left join cdn.ProdCzynnosci CzynnoscRealizowanaRealizacja on CzynnoscRealizowanaRealizacja.PCZ_Realizuje = A.PCZ_Id			--join'y potrzebne do wyliczenia zrealizowanej ilości surowca w czynności realizowanej
+		left join cdn.ProdZasoby SurowiecRealizacja on SurowiecRealizacja.PZA_Czynnosc = CzynnoscRealizowanaRealizacja.PCZ_Id and SurowiecRealizacja.PZA_TechnologiaZasob = A.SurowiecPTZID
+		group by A.KodSurowca,A.SurowiecPTZID,A.KodPolproduktu,A.PolproduktPTZID,A.PTC_Kod,A.PCZ_Id,A.PCZ_Proces,
+				 A.SurowiecPotrzeba, A.PolproduktIlosc, SurowiecRealizacjaPolproduktIlosc, A.RezIloscZasob, A.IloscDokPlan, A.DopasowanieIlosci
+	) Surowce
+)
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do funkcji CDN.ProdPolproduktyDlaSurowcow"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do funkcji CDN.ProdPolproduktyDlaSurowcow */</I><BR>
+GRANT SELECT ON CDN.ProdPolproduktyDlaSurowcow TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

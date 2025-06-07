@@ -1,0 +1,119 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="AktualizujLokalizacje2"></A><PRE>
+          <FONT SIZE="2"><I>/* AktualizujLokalizacje2 */</I><BR>
+CREATE PROCEDURE CDN.AktualizujLokalizacje2 
+@Nazwa VARCHAR(255),  -- Nazwa lokalizacji
+@OptimaID INT,        -- ID rekordu w bazie Optimy
+@Nieaktywny TINYINT,  -- u nas Archiwalny
+@Konto NVARCHAR(51)   -- konto księgowe
+AS SET NOCOUNT ON
+
+if (@OptimaID=0) 
+begin
+  RAISERROR('Zerowy OptimaID.',16,1);
+  return;
+end
+
+DECLARE @Kategoria VARCHAR(40), @KategoriaID INT
+SELECT @Kategoria=SLS_Nazwa, @KategoriaID=SLS_ID from CDN.SlownikiStruktura where SLS_Predefiniowany=52 -- pobranie nazwy i ID kategorii dla lokalizacji ze struktury słowników
+
+DECLARE 
+  @XL_SLWID INT,
+  @XL_OptimaID INT
+
+SELECT @XL_SLWID=IsNull(SLW_ID,0), @XL_OptimaID=IsNull(SLW_OptimaID,0) from CDN.Slowniki where SLW_SLSID=@KategoriaID and SLW_WartoscS=@Nazwa
+
+
+begin try
+
+  if not exists (SELECT SLW_ID from CDN.Slowniki where SLW_SLSID=@KategoriaID and SLW_OptimaID=@OptimaID) -- sprawdzenie czy w lokalizacjach jest już takie OptimaID
+    begin -- jeśli nie
+      if  @XL_OptimaID is NULL -- nie było też lokalizacji o takiej nazwie
+        begin -- dodawanie
+          DECLARE @New_SLWID INT
+          SELECT @New_SLWID=IsNull(Max(SLW_ID),0)+1 from CDN.Slowniki -- autonumeracja SLW_ID
+      
+          INSERT INTO CDN.Slowniki(SLW_ID,SLW_Predefiniowany,slw_kategoria,SLW_WartoscS,SLW_WartoscS1,SLW_WartoscS2,SLW_Nazwa,
+		                           SLW_WartoscN1,SLW_WartoscN2,SLW_WartoscN3,SLW_WartoscN4,SLW_WartoscL1,SLW_WartoscL2,slw_konto,
+								   slw_aktywny,SLW_Domyslny,SLW_OptimaId,SLW_WartoscL3,SLW_SLSId,SLW_CzasModyfikacji,SLW_Archiwalny,
+								   slw_wartoscl4,slw_wartoscl5,slw_wartoscs3,slw_wartoscs4,SLW_WersjaZrodlo,SLW_WersjaNr)
+          VALUES (@New_SLWID,0, @Kategoria, @Nazwa,'', '', '', 0.0, 0.0, 0.0, 0.0, 0, 0, @Konto, case @Nieaktywny when 0 then 1 else 0 end, 
+		          0, @OptimaId, 0, @KategoriaId, NULL, 0,0,0,'','',@New_SLWID,1)
+        end -- dodawanie
+      else if @XL_OptimaID=0 -- była lokalizacja o tej nazwie, ale OpimaID=0 (niezsynchronizowana z O!). Można bezpiecznie związać
+        begin -- przypisanie 
+			if @Konto &lt;&gt; ''  
+			    UPDATE CDN.Slowniki set SLW_Konto=@Konto, SLW_Aktywny=case @Nieaktywny when 0 then 1 else 0 end, SLW_OptimaId=@OptimaId 
+			    where SLW_ID=@XL_SLWID
+			else
+                UPDATE CDN.Slowniki set SLW_Aktywny=case @Nieaktywny when 0 then 1 else 0 end, SLW_OptimaId=@OptimaId 
+			    where SLW_ID=@XL_SLWID			     			  
+        end -- przypisanie
+      else
+        begin -- nie da się powiązać
+          RAISERROR('Duplikacja: obiekt o podanym kodzie (wartości) istnieje już na liście lokalizacji w zsynchronizowanej bazie danych. Nie można zapisać 
+                     danych. Aby w przyszłości uniknąć podobnych sytuacji należy w Comarch ERP XL uruchomić funkcję specjalną: Synchronizacja struktury  
+                     organizacyjnej.',16,1) -- nie wolno dodać - bazy rozsynchronizowane					   
+          return
+        end
+    end
+  else
+    begin -- aktualizacja rekordu
+      if  @XL_OptimaID is NULL -- rekordu o takiej nazwie nie ma
+        begin -- modyfikacja dozwolona
+			if @Konto &lt;&gt; '' 
+			    update CDN.Slowniki set SLW_WartoscS=@Nazwa, SLW_Konto=@Konto, SLW_Aktywny=case @Nieaktywny when 0 then 1 else 0 end, SLW_OptimaId=@OptimaId
+			    where SLW_OptimaID=@OptimaID
+			else
+			    update CDN.Slowniki set SLW_WartoscS=@Nazwa,SLW_Aktywny=case @Nieaktywny when 0 then 1 else 0 end, SLW_OptimaId=@OptimaId
+			    where SLW_OptimaID=@OptimaID
+        end -- modyfikacja dozwolona
+      else if @XL_OptimaID=@OptimaID  -- był już wcześniej poprawnie zsynchronizowany
+        begin -- modyfikacja dozwolona
+			if @Konto &lt;&gt; ''  
+			    update CDN.Slowniki set SLW_WartoscS=@Nazwa, SLW_Konto=@Konto, SLW_Aktywny=case @Nieaktywny when 0 then 1 else 0 end, SLW_OptimaId=@OptimaId
+			    where SLW_ID=@XL_SLWID
+			else
+                update CDN.Slowniki set SLW_WartoscS=@Nazwa, SLW_Aktywny=case @Nieaktywny when 0 then 1 else 0 end, SLW_OptimaId=@OptimaId
+			    where SLW_ID=@XL_SLWID  			  			   
+        end -- modyfikacja dozwolona
+      else
+        begin
+          RAISERROR('W ERP.XL do tej lokalizacji jest już przypisana lokalizacja o innym kodzie.',16,1) -- nie wolno zmienić - bazy rozsynchronizowane
+          return
+        end
+    end
+
+end try
+
+begin catch
+
+  DECLARE
+    @ErrorMessage     NVARCHAR(4000),
+    @ErrorSeverity    INT,
+    @ErrorState       INT
+
+  SELECT 
+    @ErrorMessage=ERROR_MESSAGE(),
+    @ErrorSeverity=ERROR_SEVERITY(),
+    @ErrorState=ERROR_STATE();
+
+  RAISERROR(@ErrorMessage,@ErrorSeverity,@ErrorState);
+
+end catch
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

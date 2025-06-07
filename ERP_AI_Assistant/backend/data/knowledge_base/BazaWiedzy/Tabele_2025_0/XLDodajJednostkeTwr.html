@@ -1,0 +1,121 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="XLDodajJednostkeTwr"></A><PRE>
+          <FONT SIZE="2"><I>/* XLDodajJednostkeTwr */</I><BR>
+CREATE PROCEDURE CDN.XLDodajJednostkeTwr
+@Twr_Kod                                        VARCHAR(40)=NULL,
+@Naz_NazwaJ                                     VARCHAR(20)=NULL,
+@TwJ_PrzeliczM                          DECIMAL(15)=1,          --Mianownik przelicznika jednostki
+@TwJ_PrzeliczL                          DECIMAL(15)=1,          --Licznik przelicznika jednostki
+@TwJ_EAN                                VARCHAR(40)='',         --EAN
+@IgnorujBledy                           TINYINT = NULL          --Jeżeli różne od NULL wtedy wyswietlana informacja o bledzie
+AS
+BEGIN
+        SET NOCOUNT ON;
+DECLARE @Twr_GIDTyp                     SMALLINT
+DECLARE @Twr_GIDFirma           INT
+DECLARE @Twr_GidNumer           INT
+DECLARE @Twr_GIDLp                      SMALLINT
+
+DECLARE @GIDFirma           INT
+DECLARE @Naz_GIDTyp         SMALLINT
+DECLARE @Pom_Lp                 SMALLINT
+
+SET @GIDFirma   =       CDN.GIDFirma()
+SET @Naz_GIDTyp =       144
+
+if @Twr_Kod is null or @Twr_GIDNumer=''
+        begin
+                if @IgnorujBledy is null
+                        raiserror('Nie podano kodu towaru - (-1)',16,1)
+                return -1
+        end
+
+if @TwJ_PrzeliczM &lt;= 0 or @TwJ_PrzeliczL &lt;= 0 
+        begin
+                if @IgnorujBledy is null
+                        raiserror('Przeliczniki jednostek nie moga mieć wartości mniejszych lub równych zero - (-6)',16,1)
+                return -6
+        end
+
+SELECT @Twr_GIDTyp=Twr_GidTyp, @Twr_GIDFirma=Twr_GidFirma, @Twr_GIDNumer=Twr_GidNumer, @Twr_GIDLp=Twr_GidLp  FROM cdn.twrkarty where twr_kod=@Twr_Kod
+
+if  @Twr_GIDNumer is null
+        begin
+                if @IgnorujBledy is null
+                        raiserror('Nie znaleziono towaru - (-2)',16,1)
+                return -2
+        end
+
+if @Naz_NazwaJ is null or @Naz_NazwaJ=''
+        begin
+                if @IgnorujBledy is null
+                        raiserror('Nie podano jednostki miary - (-3)',16,2)
+                return -3
+        end
+
+
+if exists(SELECT Twr_GIDNumer FROM CDN.TwrKarty WHERE Twr_Kod=@Twr_Kod AND Twr_Jm=@Naz_NazwaJ)
+        begin
+                if @IgnorujBledy is null
+                        raiserror('Podana jednostka jest jednostką podstawową dla tego towaru - (-4)',16,1)
+                return -4
+        end
+
+if exists(Select TwJ_TwrNumer FROM CDN.TwrJm WHERE TwJ_TwrNumer=(SELECT Twr_GIDNumer FROM CDN.TwrKarty WHERE Twr_Kod=@Twr_Kod) AND TwJ_JmZ=@Naz_NazwaJ)
+        begin
+                if @IgnorujBledy is null
+                        raiserror('Jednostka pomocnicza już istnieje dla tego towaru - (-5)',16,1)
+                return -5
+        end
+
+BEGIN TRAN
+
+if not exists(SELECT Naz_GIDTyp FROM cdn.Nazwy where naz_Nazwa = @Naz_NazwaJ and Naz_GIDTyp=@Naz_GIDTyp)
+        begin
+        SELECT @Pom_Lp=isnull(max(naz_GidLp)+1,1) FROM cdn.Nazwy where naz_Gidtyp = @Naz_GIDTyp
+                insert into cdn.nazwy(Naz_GIDTyp,Naz_GIDFirma,Naz_GIDNumer,Naz_GIDLp,Naz_Nazwa,Naz_Nazwa1,Naz_Opis) values (@Naz_GIDTyp,@GIDFirma,0,@Pom_Lp     ,@Naz_NazwaJ,'','')
+        end
+
+SELECT @Pom_Lp  =isnull(max(Twj_TwrLp)+1,1) FROM cdn.TwrJm where Twj_TwrNumer=@Twr_GidNumer
+
+if @@Error = 0
+insert into cdn.twrjm(twj_twrfirma,twj_twrnumer,twj_twrtyp,twj_twrlp,twj_przeliczl,twj_przeliczm,twj_jmz,twj_typjm,twj_prog,twj_waga,twj_objetoscl,twj_objetoscm,twj_wagabrutto,twj_wymjm,twj_kcaTyp,twj_kcaFirma,twj_kcaNumer,twj_kcaLp,twj_jmformat,TwJ_Calkowita,TwJ_Obowiazek,TwJ_WJm,TwJ_WyliczPrzySpr,TwJ_WJmBrutto,TwJ_JednostkaLog, TwJ_Pozycja, TwJ_iSklep,TwJ_MobSpr,TwJ_PulpitKnt) values (@Twr_GIDFirma, @Twr_GidNumer , @Twr_GIDTyp, @Pom_Lp, @TwJ_PrzeliczL, @TwJ_PrzeliczM, @Naz_NazwaJ    ,1,0,0,0,1,0,'m',0,0,0,0,0,0,0,'',0,'',0,@Pom_Lp,0,0,0)
+if @@Error &lt;&gt; 0
+        begin
+                ROLLBACK TRAN
+                if @IgnorujBledy is null
+                        raiserror('Wystąpił błąd podczas zapisu danych - (-100)',16,1)
+                return -100
+        end
+if LEN(@TwJ_EAN) &gt; 0 
+begin
+	insert into CDN.TwrKody(TwK_TypKodu,TwK_Kod,TwK_Jm,TwK_Opis,TwK_Rodzaj,TwK_TwrNumer,TwK_Pochodzenie,TwK_Domyslny,TwK_CzasModyfikacji) values(CDN.ZwrocNumerTypuKoduEAN(@TwJ_EAN),@TwJ_EAN,@Naz_NazwaJ,'',0,@Twr_GidNumer,1,1,DATEDIFF(S,'19900101',GETDATE()))        
+	if @@Error &lt;&gt; 0
+			begin
+					ROLLBACK TRAN
+					if @IgnorujBledy is null
+							raiserror('Wystąpił błąd podczas zapisu danych - (-100)',16,1)
+					return -100
+			end
+end
+COMMIT TRAN
+return 0
+
+END
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

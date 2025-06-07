@@ -1,0 +1,348 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie procedury WypelnijTabeleDTT"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie procedury WypelnijTabeleDTT */</I><BR>
+if exists (select * from dbo.sysobjects where id = object_id(N'CDN.WypelnijTabeleDTO') and OBJECTPROPERTY(id, N'IsProcedure') = 1)
+  drop procedure CDN.WypelnijTabeleDTO
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury WypelnijTabeleDTO"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury WypelnijTabeleDTO */</I><BR>
+CREATE PROCEDURE CDN.WypelnijTabeleDTO
+ @MyGUID UNIQUEIDENTIFIER,
+ @SourceName  VARCHAR(255),
+ @SourceDatabase  VARCHAR(255),
+ @SameServer TINYINT = 1
+AS
+BEGIN
+
+--DECLARE @DTO_ID		INTEGER IDENTITY  
+--DECLARE @DTO_GUID		UNIQUEIDENTIFIER
+DECLARE @DTO_LplId		INTEGER  
+DECLARE @DTO_WpeId		INTEGER  
+DECLARE @DTO_DzlId		INTEGER  
+DECLARE @DTO_DzlKod		VARCHAR(255)
+DECLARE @DTO_LokId		INTEGER 
+DECLARE @DTO_LokKod		VARCHAR(255)
+DECLARE @DTO_PrjId		INTEGER
+DECLARE @DTO_PrjKod		VARCHAR(255)
+DECLARE @DTO_Procent	DECIMAL(15,2)
+DECLARE @DTO_Brutto		DECIMAL(15,2)
+DECLARE @DTO_Netto		DECIMAL(15,2)
+DECLARE @DTO_ZUSF		DECIMAL(15,2)
+DECLARE @DTO_ZUSP		DECIMAL(15,2)
+DECLARE @DTO_Zdrow		DECIMAL(15,2)
+DECLARE @DTO_ZalFIS		DECIMAL(15,2)
+
+---- PPK
+DECLARE @DTO_SklPPKPrc			 DECIMAL(15,2)
+DECLARE @DTO_SklPPKFirma			 DECIMAL(15,2)	
+
+DECLARE @DTT_Rodzaj		SMALLINT
+DECLARE @LPL_Kategoria  INTEGER
+DECLARE @TWP_PdzId		INTEGER
+DECLARE @WPE_Wartosc	DECIMAL (15,2)
+DECLARE @TWP_RodzajFIS	SMALLINT
+DECLARE @TWP_WchodziDoWyplaty TINYINT
+DECLARE @KosztFirma		TINYINT
+DECLARE @OPP_Brutto		DECIMAL (15,2)
+DECLARE @OPP_ZUSF		DECIMAL (15,2)
+DECLARE @OPP_ZUSP		DECIMAL (15,2)
+DECLARE @OPP_Zdrow		DECIMAL (15,2)
+DECLARE @OPP_ZalFIS		DECIMAL (15,2)
+
+---- PPK
+DECLARE @OPP_PPKP             DECIMAL (15,2) --Składka na PPK pracownika (podstawowa plus dodatkowa)
+DECLARE @OPP_PPKF             DECIMAL (15,2) --Składka na PPK pracodawcy (podstawowa plus dodatkowa)
+
+DECLARE @DZL_DzlId		INTEGER
+DECLARE @Lok_LokId		INTEGER
+DECLARE @Prj_PrjId		INTEGER
+
+DECLARE @DZL_Kod		INTEGER
+DECLARE @Lok_Kod		INTEGER
+DECLARE @Prj_Kod		INTEGER
+
+DECLARE @DTT_TWPStandardowy SMALLINT
+DECLARE @LPLParentId INTEGER
+
+DECLARE @LPL_Tryb SMALLINT
+DECLARE @DTT_WypTryb		SMALLINT
+
+DECLARE @sql NVARCHAR(4000)
+DECLARE @params NVARCHAR(4000)
+DECLARE @sqlJoinWhere NVARCHAR(2000)
+DECLARE @kosztFirmaKol NVARCHAR(1000)
+
+	IF @SameServer = 1 
+	BEGIN
+		SET @sqlJoinWhere = ' ['+@SourceName+'].['+@SourceDatabase +'].cdn.listyplac
+                JOIN ['+@SourceName+'].['+@SourceDatabase +'].cdn.wyplaty ON lpl_lplid = wpl_lplid
+                JOIN ['+@SourceName+'].['+@SourceDatabase +'].cdn.wypelementy ON wpl_wplid = wpe_wplid
+                JOIN ['+@SourceName+'].['+@SourceDatabase +'].cdn.wypskladniki ON wpe_wpeid = wps_wpeid
+                JOIN ['+@SourceName+'].['+@SourceDatabase +'].cdn.typwyplata ON wps_twpId = twp_twpid
+                JOIN ['+@SourceName+'].['+@SourceDatabase +'].cdn.opisplace ON opp_wpeid= wpe_wpeid
+                LEFT OUTER JOIN ['+@SourceName+'].['+@SourceDatabase +'].cdn.dzialy ON opp_dzlid=dzl_dzlid
+                LEFT OUTER JOIN ['+@SourceName+'].['+@SourceDatabase +'].cdn.lokalizacje ON dzl_lokid=lok_lokid
+                LEFT OUTER JOIN ['+@SourceName+'].['+@SourceDatabase +'].cdn.defprojekty ON opp_prjid=prj_prjid
+        where cast(lpl_zamknieta as integer) &gt; 0 AND TWP_Wskaznik = 0
+                and ltrim(lpl_numerstring) not in (select lxl_lista from CDN.##DtsListyXL)
+                and wps_wpsid=(select top 1 wps_wpsid from ['+@SourceName+'].['+@SourceDatabase +'].cdn.wypskladniki
+                   join ['+@SourceName+'].['+@SourceDatabase +'].cdn.typwyplata on wps_twpid=twp_twpid
+                   where wps_wpeid=wpe_wpeid order by twp_podstawowe, wps_wpsid) '
+
+		SET @kosztFirmaKol = ' (select max(twp_kosztfirma) from ['+@SourceName+'].['+@SourceDatabase +'].cdn.wypskladniki join ['+@SourceName+'].['+@SourceDatabase +'].cdn.typwyplata  ON wps_twpId = twp_twpid where wps_wpeid = wpe_wpeid) as KosztFirma '
+		
+	END
+	ELSE
+	BEGIN
+		SET	@sqlJoinWhere = '  ##DTOTemp where ltrim(lpl_numerstring) not in (select lxl_lista from CDN.##DtsListyXL) ' 
+		SET @kosztFirmaKol = ' KosztFirma ' 
+	END
+
+	select @sql = 
+	N'
+	DECLARE CursorForDTO CURSOR FAST_FORWARD READ_ONLY FOR 
+	SELECT  LPL_LplId,
+			WPE_WpeId,
+			LPL_Kategoria,
+			TWP_PdzId,
+			WPE_Wartosc,
+			TWP_RodzajFIS,
+			TWP_WchodziDoWyplaty,
+			' +@kosztFirmaKol+ ' ,
+			isnull(DZL_DzlId,0) as DZL_DzlId,
+			isnull(DZL_DzlId,0) as DZL_Kod,
+			isnull(Lok_LokId,0) as Lok_LokId, 
+			isnull(Lok_LokId,0) as Lok_Kod,
+			isnull(Prj_PrjId,0) as Prj_PrjId, 
+			isnull(Prj_PrjId,0) as Prj_Kod,
+			OPP_Procent, 
+			OPP_Brutto,
+			OPP_ZUSF,
+			OPP_ZUSP,
+			OPP_Zdrow,
+			OPP_ZalFIS,
+			TWP_Standardowy,
+			LPL_ParentId,
+			LPL_Tryb,
+			WPL_Tryb,
+			OPP_PPKP,
+			OPP_PPKF
+	FROM '+ @sqlJoinWhere +' 
+	order by lpl_lplid;
+    OPEN CursorForDTO ;
+	'
+	EXEC (@sql)
+
+    WHILE 1=1 
+    BEGIN							
+       FETCH NEXT FROM CursorForDTO INTO  @DTO_LplId,
+										  @DTO_WpeId,
+										  @LPL_Kategoria,
+										  @TWP_PdzId,
+										  @WPE_Wartosc,
+										  @TWP_RodzajFIS,
+										  @TWP_WchodziDoWyplaty,
+										  @KosztFirma ,
+										  @DTO_DzlId,
+										  @DZL_Kod,
+										  @Lok_LokId,
+										  @Lok_Kod,
+										  @Prj_PrjId,
+										  @Prj_Kod,
+										  @DTO_Procent,
+										  @OPP_Brutto,
+										  @OPP_ZUSF,
+										  @OPP_ZUSP,
+										  @OPP_Zdrow,
+										  @OPP_ZalFIS,
+										  @DTT_TWPStandardowy,
+										  @LPLParentId,
+										  @LPL_Tryb,
+                                          @DTT_WypTryb,
+										  @OPP_PPKP,
+										  @OPP_PPKF 
+
+       IF @@FETCH_STATUS &lt;&gt; 0 
+				 BREAK 
+
+		SET @DTO_DzlKod = ''
+		SET @DTO_LokKod = ''
+		SET @DTO_PrjKod = ''
+		EXEC CDN.DzlSciezka  @SourceName, @SourceDatabase,@DZL_Kod,@DTO_DzlKod OUTPUT,@SameServer
+        EXEC CDN.LokSciezka  @SourceName, @SourceDatabase,@Lok_Kod,@DTO_LokKod OUTPUT,@SameServer
+        EXEC CDN.PrjSciezka  @SourceName, @SourceDatabase,@Prj_Kod,@DTO_PrjKod OUTPUT,@SameServer
+ 
+
+		select @DTT_Rodzaj=(case 
+		     when (@DTT_TWPStandardowy =15 OR @DTT_TWPStandardowy = 20 OR @DTT_TWPStandardowy = 16) then 7
+			 when (@DTT_TWPStandardowy = 21 OR @DTT_TWPStandardowy = 22 OR @DTT_TWPStandardowy = 23) then 7
+			 when (@DTT_TWPStandardowy = 17 or @DTT_TWPStandardowy = 18) then 8					
+			 when (@DTT_TWPStandardowy = 19) then 6
+			 when (@TWP_PdzId in (325,326,327,328,329,337,338,339,340)) then 3     
+			 when ((@TWP_PdzId&gt;324 OR @TWP_PdzId = 220) AND @TWP_PdzId &lt;&gt; 326 AND @TWP_PdzId &lt;&gt; 328 AND @TWP_RodzajFIS&lt;&gt; 1 AND @LPL_Kategoria=1) OR (@DTT_TWPStandardowy = 13 OR @DTT_TWPStandardowy = 14) then 1
+			 when @TWP_RodzajFIS = 1 AND ROUND(@WPE_Wartosc,2)&lt; 0 then 5
+			 when (@TWP_PdzId&gt;324 OR @TWP_PdzId = 220) AND @TWP_PdzId&lt;&gt; 326 AND @TWP_PdzId &lt;&gt;328 AND @TWP_RodzajFIS = 1 AND ROUND(@WPE_Wartosc,2)&gt; 0 then 4
+			 when (@TWP_PdzId&gt;=10 AND @TWP_PdzId&lt;=12) OR (@TWP_PdzId&gt;=121 AND @TWP_PdzId &lt;=122) OR (@TWP_PdzId&gt;=211 AND @TWP_PdzId &lt;=216) 
+				    OR (@TWP_PdzId&gt;=311 AND @TWP_PdzId &lt;=324) OR @TWP_PdzId = 332 OR @TWP_PdzId = 334 OR @TWP_PdzId = 336 OR @TWP_PdzId = 338 then 3
+             when @DTT_TWPStandardowy in (40, 41, 42, 43, 44, 45, 46, 47) then 9 
+			 when @LPL_Kategoria = 4 then 6
+			 when @LPL_Kategoria = 2 then 2					--DTT_Rodzaj
+			 when @TWP_RodzajFIS = 1 AND @DTT_WypTryb = 2 AND ROUND(@WPE_Wartosc,2)&lt; 0 AND @LPL_Tryb = 1 then 5			 
+ 			 else 6 end)
+
+		IF @TWP_WchodziDoWyplaty = 0 
+		BEGIN
+			IF @LPL_Kategoria = 8 
+			BEGIN
+				--UWAGA! na ten moment z powodu błedu w optimie TID=74703
+				--nie przenosimy opisu analitycznego dla list płac właścicieli
+				--przenoszone są  tylko kwoty składek zus ( rentowe+zdrowtne+emerytalne)
+				--Komentarz nieaktualny poprawiamy TID = 96057
+				SET @DTO_Brutto	= ROUND(0,2)
+				SET @DTO_Netto	= ROUND(0,2)
+				SET @DTO_ZalFIS	= ROUND(0,2)
+				SET @DTO_ZUSP	= ROUND(@OPP_ZUSP,2)
+				SET @DTO_ZUSF	= ROUND(@OPP_ZUSF,2)
+				SET @DTO_Zdrow	= ROUND(@OPP_Zdrow,2)
+				--PPK
+				SET @DTO_SklPPKPrc	 = ROUND(0,2)
+				SET @DTO_SklPPKFirma = ROUND(0,2)
+			END
+			ELSE
+			BEGIN
+				SET @DTO_Brutto = ROUND(0,2)
+				SET @DTO_Netto 	= ROUND(0,2) - ROUND(@OPP_ZUSP ,2) - ROUND(@OPP_ZalFIS ,2) - ROUND(@OPP_Zdrow ,2)
+				SET @DTO_ZUSF 	= ROUND(@OPP_ZUSF ,2)
+				IF @KosztFirma = 0 
+				BEGIN
+					SET @DTO_ZalFIS = ROUND(@OPP_ZalFIS ,2) -- potrzebny do podatku ppk
+					SET @DTO_ZUSP 	= ROUND(0,2)
+					SET @DTO_Zdrow 	= ROUND(0,2)
+					--PPK
+					SET @DTO_SklPPKPrc	 = ROUND(0,2)
+					SET @DTO_SklPPKFirma = ROUND(0,2)
+				END
+				ELSE
+				BEGIN
+					SET @DTO_ZalFIS = ROUND(@OPP_ZalFIS ,2)
+					SET @DTO_ZUSP 	= ROUND(@OPP_ZUSP ,2)
+					SET @DTO_Zdrow 	= ROUND(@OPP_Zdrow ,2)
+					--PPK
+					SET @DTO_SklPPKPrc	 = ROUND(@OPP_PPKP,2)
+					SET @DTO_SklPPKFirma = ROUND(@OPP_PPKF,2)
+				END 
+			END
+		END
+		ELSE
+		BEGIN												    --TID 149327
+			IF ROUND(@WPE_Wartosc , 2) &lt; 0  and  @DTT_Rodzaj &lt;&gt; 1 AND @DTT_Rodzaj &lt;&gt; 2 AND @LPL_Kategoria &lt;&gt; 4
+			BEGIN
+				SET @DTO_Brutto 	= 0 - ROUND(@OPP_Brutto ,2)
+				SET @DTO_Netto 	= 0 - ( ROUND(@OPP_Brutto ,2) - ROUND(@OPP_ZUSP ,2) - ROUND(@OPP_ZalFIS ,2) - ROUND(@OPP_Zdrow ,2) )    
+				IF @LPLParentId &gt; 0--jesli lista korygujaca
+				    BEGIN
+				        IF ROUND(@WPE_Wartosc , 2) &lt; 0 
+				            BEGIN
+								SET @DTO_Brutto = ROUND(@OPP_Brutto ,2)
+    							SET @DTO_Netto 	= ROUND(@OPP_Brutto ,2) - ROUND(@OPP_ZUSP ,2) - ROUND(@OPP_ZalFIS ,2) - ROUND(@OPP_Zdrow ,2)
+    				        END   	 
+    	      	    END
+				SET @DTO_ZalFIS 	= 0 - ROUND(@OPP_ZalFIS ,2)
+				SET @DTO_ZUSP 	= 0 - ROUND(@OPP_ZUSP ,2)
+				SET @DTO_ZUSF 	= 0 - ROUND(@OPP_ZUSF ,2)
+				SET @DTO_Zdrow 	= 0 - ROUND(@OPP_Zdrow ,2)   				
+			END
+			ELSE
+			BEGIN
+				SET @DTO_Brutto = ROUND(@OPP_Brutto ,2)
+				SET @DTO_Netto 	= ROUND(@OPP_Brutto ,2) - ROUND(@OPP_ZUSP ,2) - ROUND(@OPP_ZalFIS ,2) - ROUND(@OPP_Zdrow ,2)
+				SET @DTO_ZalFIS = ROUND(@OPP_ZalFIS ,2)
+				SET @DTO_ZUSP 	= ROUND(@OPP_ZUSP ,2)
+				SET @DTO_ZUSF 	= ROUND(@OPP_ZUSF ,2)
+				SET @DTO_Zdrow 	= ROUND(@OPP_Zdrow ,2)
+			END
+			--PPK
+			SET @DTO_SklPPKPrc	 = ROUND(@OPP_PPKP,2)
+			SET @DTO_SklPPKFirma = ROUND(@OPP_PPKF,2)
+		END 
+
+		SET @DTO_Netto 	= @DTO_Netto - ROUND(isnull(@DTO_SklPPKPrc,0),2)
+
+		IF @KosztFirma  = 0 
+		BEGIN
+			SET @DTO_Netto 	= ROUND(0,2)
+		END 
+		INSERT INTO [CDN].[##DtsTempOptimaOpis]
+           ([DTO_GUID]
+           ,[DTO_LplId]
+           ,[DTO_WpeId]
+           ,[DTO_DzlId]
+           ,[DTO_DzlKod]
+           ,[DTO_LokId]
+           ,[DTO_LokKod]
+           ,[DTO_PrjId]
+           ,[DTO_PrjKod]
+           ,[DTO_Procent]
+           ,[DTO_Brutto]
+           ,[DTO_Netto]
+           ,[DTO_ZUSF]
+           ,[DTO_ZUSP]
+           ,[DTO_Zdrow]
+           ,[DTO_ZalFIS]
+		   ,[DTO_SklPPKPrc]
+		   ,[DTO_SklPPKFirma])
+     VALUES
+           (@MyGUID
+           ,@DTO_LplId
+           ,@DTO_WpeId 
+           ,@DTO_DzlId 
+           ,@DTO_DzlKod
+           ,@Lok_LokId
+           ,@DTO_LokKod
+           ,@Prj_PrjId
+           ,@DTO_PrjKod
+           ,@DTO_Procent
+           ,@DTO_Brutto
+           ,@DTO_Netto
+           ,@DTO_ZUSF
+           ,@DTO_ZUSP
+           ,@DTO_Zdrow
+           ,@DTO_ZalFIS
+		   ,@DTO_SklPPKPrc	
+		   ,@DTO_SklPPKFirma)
+		
+    END 
+    CLOSE CursorForDTO
+    DEALLOCATE CursorForDTO
+
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury CDN.WypelnijTabeleDTO"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury CDN.WypelnijTabeleDTO */</I><BR>
+GRANT EXECUTE ON CDN.WypelnijTabeleDTO TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,244 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[ECODSpiWzKor]"></A><PRE>
+          <FONT SIZE="2"><I>/* [ECODSpiWzKor] */</I><BR>
+create function [CDN].[ECODSpiWzKor](@p_GidTyp smallint,@p_GidNumer int)
+returns @table table(
+  typ smallint,               -- GID Typ
+  numer int,                  -- GID Numer
+  lp smallint,                     -- GID Lp
+  dodna_typ smallint,         -- pozycja wynikająca z/"utworzona" na dokumencie o GID Typ
+  dodna_numer int,            -- pozycja wynikająca z/"utworzona" na dokumencie o GID Numer
+  dodna_lp smallint,               -- pozycja wynikająca z/"utworzona" na dokumencie o GID Lp
+  orgtyp smallint,            -- pobrane z trs_orgtyp
+  orgnumer int,               -- pobrane z trs_orgnumer
+  orglp smallint,             -- pobrane z trs_orglp
+  zwrtyp smallint,            -- pobrane z trs_zwrtyp
+  zwrnumer int,               -- pobrane z trs_zwrnumer
+  zwrlp smallint,             -- pobrane z trs_zwrlp
+  spiorgtyp smallint,		  -- gid typ spinanego dokumentu do orginału
+  spiorgnumer int,			  -- gid numer spinanego dokumentu do orginału
+  twrnumer int,               -- twr_gidnumer
+  kod varchar(40),            -- kod towaru
+  nazwa varchar(255),         -- nazwa towaru
+  jmz varchar(8),
+  flagaNB varchar(1),
+  przeliczM decimal(15),
+  przeliczL decimal(15),
+  org_ilosc decimal(11,4),    -- Ilosc oryginalna
+  org_cena decimal(15,4),     -- Cena oryginalna
+  org_wartoscporabacie decimal(15,2),  -- Wartosc oryginalna
+  org_ksiegowabrutto decimal(15,2),  -- Wartosc oryginalna
+  org_ksiegowanetto decimal(15,2),
+  org_vat decimal(5,2),                -- VAT oryginalny
+  org_flagaVat smallint,      -- Flaga VAT oryginalna
+  org_grupaVat varchar(1),
+  org_zlom int,
+  pokor_ilosc decimal(11,4),
+  pokor_cena decimal(15,4),
+  pokor_wartoscporabacie decimal(15,2),
+  pokor_ksiegowabrutto decimal(15,2),
+  pokor_ksiegowanetto decimal(15,2),
+  pokor_vat decimal(5,2),
+  pokor_flagaVat smallint,
+  pokor_grupaVat varchar(1),
+  pokor_zlom int)
+as
+begin
+
+	-- Tabela przechowujaca wszystkie WZ/PZ/PA/WKA i WZK/PZK/PAK/WKK ktore maja byc uwzglednione (ze spinacza i wyszukane z lancuszka korekt)
+	declare @Dokumenty table (
+	  LP int identity(1,1),
+	  GIDTyp int,
+	  GIDNumer int,
+	  ZwrTyp int,
+	  ZwrNumer int,
+	  Poziom int
+	);
+
+	-- *************************** Przypadek FSK
+	if ((select TrN_SpiTyp from CDN.TraNag where TrN_GIDTyp = @p_GidTyp and TrN_GIDNumer = @p_GidNumer)&lt;&gt;0)
+		with DrzewoFSK as (
+			select TrN_GidTyp as GIDTyp, TrN_GIDNumer as GIDNumer,TrN_ZwrTyp as ZwrTyp, TrN_ZwrNumer as ZwrNumer
+			from CDN.TraNag 
+			where TrN_GIDTyp=@p_GidTyp and TrN_GIDNumer=@p_GidNumer
+	
+			union all
+	
+			select TrN_GIDTyp as GIDTyp, TrN_GIDNumer as GIDNumer, TrN_ZwrTyp as ZwrTyp , TrN_ZwrNumer as ZwrNumer
+			from DrzewoFSK
+			inner join CDN.TraNag on TrN_GIDTyp=ZwrTyp and TrN_GidNumer=ZwrNumer
+			where GIDTyp not in (2033,1520,2037) and not (TrN_GIDTyp=@p_GidTyp and TrN_GIDNumer=@p_GidNumer)
+			)
+
+			insert into @Dokumenty(GIDTyp,GIDNumer,ZwrTyp,ZwrNumer)
+			select GIDTyp,GIDNumer,ZwrTyp,ZwrNumer from DrzewoFSK
+			option(maxrecursion 0)
+	else
+	begin -- *************************** Przypadek (S)FSK
+		declare  @ORGFS_GidTyp smallint -- GID (S)FS/(S)FZ/RAK zeby uwzglednic dokumenty ktore nie byly korygowane ale byly na spinaczu
+		declare  @ORGFS_GidNumer int    -- GID (S)FS/(S)FZ/RAK zeby uwzglednic dokumenty ktore nie byly korygowane ale byly na spinaczu
+
+		select @ORGFS_GidNumer=TrN_ZwrNumer,@ORGFS_GidTyp=TrN_ZwrTyp
+				from CDN.TraNag where TrN_GIDTyp=@p_GidTyp and TrN_GIDNumer=@p_GidNumer;
+
+		with DrzewoSFSK as (
+			select TrN_GIDTyp as Typ,TrN_GIDNumer as Numer,TrN_ZwrTyp as ZwrTyp,TrN_ZwrNumer as ZwrNumer
+			from CDN.TraNag 
+			where (TrN_SpiTyp=@p_GidTyp and TrN_SpiNumer=@p_GidNumer) 
+				or (@p_GidTyp=1624 and TrN_GIDTyp=@p_GidTyp and TrN_GIDNumer=@p_GidNumer) 
+				or (TrN_SpiTyp=@ORGFS_GidTyp and TrN_SpiNumer=@ORGFS_GidNumer)	
+		
+			union all
+
+			select TrN_GIDTyp as Typ, TrN_GIDNumer as Numer,TrN_ZwrTyp as ZwrTyp, TrN_ZwrNumer as ZwrNumer
+			from DrzewoSFSK
+			inner join CDN.TraNag on TrN_GIDTyp=ZwrTyp and TrN_GIDNumer=ZwrNumer
+			where not (Typ&amp;8=0 or (@p_GidTyp=Typ and Typ=1528))
+			)
+		
+			insert into @Dokumenty(GidTyp,GidNumer,ZwrTyp,ZwrNumer)
+			select distinct Typ,Numer,ZwrTyp,ZwrNumer
+				from DrzewoSFSK
+			option(maxrecursion 0)
+
+	end;
+	with DrzewoPoziomy as (
+		select GidTyp as Typ,GidNumer as Numer,1 as Poz
+		from @Dokumenty
+		where GidTyp&amp;8=0
+
+		union all
+
+		select GidTyp as Typ,GidNumer as Numer, Poz+1 as Poz
+		from DrzewoPoziomy 
+		inner join @Dokumenty on Typ=ZwrTyp and Numer=ZwrNumer and GidTyp&amp;8=8
+		)
+	update @Dokumenty set Poziom = Poz
+	from DrzewoPoziomy where GidTyp = Typ and gidnumer=Numer
+	option(maxrecursion 0) 
+
+	declare @i int=1;
+	declare @maxPoziom int=1;--0;
+	select @maxPoziom=max(Poziom) from @Dokumenty
+
+	while @i&lt;=@maxPoziom
+	begin
+		merge @table as t
+		using (select distinct trs.TrS_GIDTyp,trs.TrS_GIDNumer,trs.TrS_GIDLp
+					, TrN_SpiTyp -- potrzebne do identyfikacji czy dokument spiety do (S)FSK/(S)FZK/RAK
+					, TrN_SpiNumer -- potrzebne do identyfikacji czy dokument spiety do (S)FSK/(S)FZK/RAK
+					, case when TrN_GIDTyp&amp;8&lt;&gt;0 and (TrN_GIDTyp&lt;&gt;TrN_ZwrTyp or TrN_GIDNumer&lt;&gt;TrN_ZwrNumer) and (trs.TrS_GIDTyp=trs.TrS_OrgTyp or trs.TrS_GIDNumer=trs.TrS_OrgNumer)
+					then trs.TrS_ZwrTyp else trs.TrS_OrgTyp end as TrS_OrgTyp -- dla przypadku korekty sprzedazy z podmiana dostaw, rpozpoznanie po TRNGID &lt;&gt; TRNZWRGID i TRSGID=TRSZWRGID
+					, case when TrN_GidTyp&amp;8&lt;&gt;0 and (TrN_GIDTyp&lt;&gt;TrN_ZwrTyp or TrN_GIDNumer&lt;&gt;TrN_ZwrNumer) and (trs.TrS_GIDTyp=trs.TrS_OrgTyp or trs.TrS_GIDNumer=trs.TrS_OrgNumer)
+					then trs.TrS_ZwrNumer else trs.TrS_OrgNumer end as TrS_OrgNumer -- dla przypadku korekty sprzedazy z podmiana dostaw, rpozpoznanie po TRNGID &lt;&gt; TRNZWRGID i TRSGID=TRSZWRGI
+					, case when TrN_GidTyp&amp;8&lt;&gt;0 and (TrN_GIDTyp&lt;&gt;TrN_ZwrTyp or TrN_GIDNumer&lt;&gt;TrN_ZwrNumer) and (trs.TrS_GIDTyp=trs.TrS_OrgTyp or trs.TrS_GIDNumer=trs.TrS_OrgNumer)
+					then trs.TrS_ZwrLp else trs.TrS_OrgLp end as TrS_OrgLp
+					, trs.TrS_ZwrTyp,trs.TrS_ZwrNumer,trs.TrS_ZwrLp
+					, Tre_Twrnumer
+					, Tre_TwrKod
+					, TrE_TwrNazwa
+					, TrE_Ilosc
+					, Tre_Cena
+					, TrE_WartoscPoRabacie 
+					, Tre_KsiegowaNetto
+					, Tre_KsiegowaBrutto
+					, TrE_JmZ
+					, TrE_GrupaPod
+					, TrE_StawkaPod
+					, TrE_Zlom
+					, TrE_FlagaNB
+					, Tre_FlagaVat
+					, TrE_PrzeliczM
+					, TrE_PrzeliczL
+					from @Dokumenty
+					join CDN.TraNag on GIDNumer=TrN_GIDNumer 
+					join CDN.TraElem on TrN_GIDNumer=TrE_GIDNumer and TrN_GIDTyp=TrE_GIDTyp
+					join CDN.TraSElem trs on trs.TrS_GIDNumer=TrE_GIDNumer and trs.TrS_GIDLp=TrE_GIDLp --and trs_zwrlp &lt;&gt; 0
+					where Poziom=@i) as s on t.dodna_typ=s.TrS_ZwrTyp and t.dodna_numer=s.TrS_ZwrNumer and t.dodna_lp=s.TrS_ZwrLp and s.TrS_GIDLp&gt;0
+		when matched then
+			update set typ=s.TrS_GIDTyp
+						,numer=s.TrS_GIDNumer
+						,lp=s.TrS_GIDLp
+						,org_ilosc=(case when (s.TrN_SpiTyp=@p_GidTyp and s.TrN_SpiNumer=@p_GidNumer) OR (s.TrN_SpiTyp=(-1)*@p_GidTyp AND s.TrN_SpiNumer=0 and s.TrS_GidTyp=@p_GidTyp and s.TrS_GidNumer=@p_GidNumer)
+										then t.org_ilosc
+										else t.org_ilosc+s.TrE_Ilosc end)
+						,org_wartoscporabacie=(case when (s.TrN_SpiTyp=@p_GidTyp and s.TrN_SpiNumer=@p_GidNumer) OR (s.TrN_SpiTyp=(-1)*@p_GidTyp AND s.TrN_SpiNumer=0 and s.TrS_GidTyp=@p_GidTyp and s.TrS_GidNumer=@p_GidNumer)
+										then t.org_wartoscporabacie 
+										else t.org_wartoscporabacie+s.TrE_WartoscPoRabacie end)
+						,org_KsiegowaNetto=(case when (s.TrN_SpiTyp=@p_GidTyp and s.TrN_SpiNumer=@p_GidNumer) OR (s.TrN_SpiTyp=(-1)*@p_GidTyp AND s.TrN_SpiNumer=0 and s.TrS_GidTyp=@p_GidTyp and s.TrS_GidNumer=@p_GidNumer)
+										then t.org_KsiegowaNetto 
+										else t.org_KsiegowaNetto+s.TrE_KsiegowaNetto end)
+						,org_KsiegowaBrutto=(case when (s.TrN_SpiTyp=@p_GidTyp and s.TrN_SpiNumer=@p_GidNumer) OR (s.TrN_SpiTyp=(-1)*@p_GidTyp AND s.TrN_SpiNumer=0 and s.TrS_GidTyp=@p_GidTyp and s.TrS_GidNumer=@p_GidNumer)
+										then t.org_KsiegowaBrutto 
+										else t.org_KsiegowaBrutto+s.TrE_KsiegowaBrutto end)
+						,org_cena=(case when (s.TrN_SpiTyp=@p_GidTyp and s.TrN_SpiNumer=@p_GidNumer) OR (s.TrN_SpiTyp=(-1)*@p_GidTyp AND s.TrN_SpiNumer=0 and s.TrS_GidTyp=@p_GidTyp and s.TrS_GidNumer=@p_GidNumer)
+										then t.org_cena 
+										else s.TrE_Cena end)
+						,org_vat=t.pokor_vat
+						,org_flagaVat=t.pokor_FlagaVat
+                        ,org_grupaVat=t.pokor_GrupaVat
+                        ,org_zlom=t.pokor_Zlom
+						,pokor_ilosc=t.pokor_ilosc+s.TrE_Ilosc
+						,pokor_wartoscporabacie=t.pokor_wartoscporabacie+s.TrE_WartoscPoRabacie
+						,pokor_KsiegowaNetto=t.pokor_KsiegowaNetto+s.TrE_KsiegowaNetto
+						,pokor_KsiegowaBrutto=t.pokor_KsiegowaBrutto+s.TrE_KsiegowaBrutto
+						,pokor_cena=s.TrE_Cena
+						,pokor_vat=s.TrE_StawkaPod
+						,pokor_flagaVat=s.TrE_FlagaVat
+						,pokor_grupaVat=s.TrE_GrupaPod
+						,pokor_zlom=s.Tre_Zlom
+		when not matched then
+			insert(typ,numer,lp,dodna_typ,dodna_numer,dodna_lp,orgtyp,orgnumer,orglp,zwrtyp,zwrnumer,zwrlp,twrnumer,kod, 
+				nazwa,jmz,flagaNB,przeliczM,przeliczL, 
+				org_ilosc,org_cena,org_wartoscporabacie,org_ksiegowanetto, org_ksiegowabrutto,org_vat,org_flagaVat,org_grupaVat,org_zlom, 
+				pokor_ilosc,pokor_cena,pokor_wartoscporabacie,pokor_ksiegowanetto,pokor_ksiegowabrutto,pokor_vat,pokor_flagaVat,pokor_grupaVat,pokor_zlom,spiorgtyp,spiorgnumer)
+			values(TrS_GIDTyp,TrS_GIDNumer,TrS_GIDLp,TrS_GIDTyp,TrS_GIDNumer,TrS_GIDLp,TrS_OrgTyp,TrS_OrgNumer,TrS_OrgLp,TrS_ZwrTyp,TrS_ZwrNumer,TrS_ZwrLp,TrE_TwrNumer,TrE_TwrKod,
+					TrE_TwrNazwa,TrE_JmZ,TrE_FlagaNB,TrE_PrzeliczM,TrE_PrzeliczL
+					,(case when (@p_GidTyp=1624 and TrS_GIDTyp=@p_GidTyp and TrS_GIDNumer=@p_GidNumer) or (@p_GidTyp&lt;&gt;1624 and ((TrN_SpiTyp=@p_GidTyp and TrN_SpiNumer=@p_GidNumer) OR (s.TrN_SpiTyp=(-1)*@p_GidTyp AND s.TrN_SpiNumer=0 and s.TrS_GidTyp=@p_GidTyp and s.TrS_GidNumer=@p_GidNumer))) and TrS_GidLp&gt;0 or (Trs_gidlp &lt;0 and @i = @maxPoziom)
+							then 0 
+							else TrE_Ilosc end)
+					,(case when (@p_GidTyp=1624 and TrS_GIDTyp=@p_GidTyp and TrS_GIDNumer=@p_GidNumer) or (@p_GidTyp&lt;&gt;1624 and ((TrN_SpiTyp=@p_GidTyp and TrN_SpiNumer=@p_GidNumer) OR (s.TrN_SpiTyp=(-1)*@p_GidTyp AND s.TrN_SpiNumer=0 and s.TrS_GidTyp=@p_GidTyp and s.TrS_GidNumer=@p_GidNumer))) and TrS_GidLp&gt;0 or (Trs_gidlp &lt;0 and @i = @maxPoziom)
+							then 0 
+							else TrE_Cena end)
+					,(case when (@p_GidTyp=1624 and TrS_GIDTyp=@p_GidTyp and TrS_GIDNumer=@p_GidNumer) or (@p_GidTyp&lt;&gt;1624 and ((TrN_SpiTyp=@p_GidTyp and TrN_SpiNumer=@p_GidNumer) OR (s.TrN_SpiTyp=(-1)*@p_GidTyp AND s.TrN_SpiNumer=0 and s.TrS_GidTyp=@p_GidTyp and s.TrS_GidNumer=@p_GidNumer))) and TrS_GidLp&gt;0 or (Trs_gidlp &lt;0 and @i = @maxPoziom)
+							then 0 
+							else TrE_WartoscPoRabacie end)
+					,(case when (@p_GidTyp=1624 and TrS_GIDTyp=@p_GidTyp and TrS_GIDNumer=@p_GidNumer) or (@p_GidTyp&lt;&gt;1624 and ((TrN_SpiTyp=@p_GidTyp and TrN_SpiNumer=@p_GidNumer) OR (s.TrN_SpiTyp=(-1)*@p_GidTyp AND s.TrN_SpiNumer=0 and s.TrS_GidTyp=@p_GidTyp and s.TrS_GidNumer=@p_GidNumer))) and TrS_GidLp&gt;0 or (Trs_gidlp &lt;0 and @i = @maxPoziom)
+							then 0 
+							else TrE_KsiegowaNetto end)
+					,(case when (@p_GidTyp=1624 and TrS_GIDTyp=@p_GidTyp and TrS_GIDNumer=@p_GidNumer) or (@p_GidTyp&lt;&gt;1624 and ((TrN_SpiTyp=@p_GidTyp and TrN_SpiNumer=@p_GidNumer) OR (s.TrN_SpiTyp=(-1)*@p_GidTyp AND s.TrN_SpiNumer=0 and s.TrS_GidTyp=@p_GidTyp and s.TrS_GidNumer=@p_GidNumer))) and TrS_GidLp&gt;0 or (Trs_gidlp &lt;0 and @i = @maxPoziom)
+							then 0 
+							else TrE_KsiegowaBrutto end)
+					,TrE_StawkaPod,TrE_FlagaVat,TrE_GrupaPod,TrE_Zlom
+					,TrE_Ilosc,TrE_Cena,TrE_WartoscPoRabacie,TrE_KsiegowaNetto,TrE_KsiegowaBrutto,TrE_StawkaPod,TrE_FlagaVat,TrE_GrupaPod,TrE_Zlom,
+					case when TrS_GIDTyp=-TrN_SpiTyp then TrN_SpiTyp else TrS_GIDTyp end, --spityp &lt;=&gt; spinacze elem, trs_gidTyp &lt;=&gt; spinacze nagłówkowe i zwykłe dok
+					case when TrS_GIDTyp=-TrN_SpiTyp then TrN_SpiNumer else TrS_GIDNumer end);
+		set @i=@i+1
+	end	
+
+	update @table set spiorgtyp = TrS_SpiTyp, spiorgnumer = TrS_SpiNumer
+	from @table
+	cross apply (select top 1 TrS_SpiTyp,TrS_SpiNumer
+						from cdn.TraSElem  
+						where numer=TrS_GIDNumer and lp=TrS_GIDLp
+						order by TrS_SubGidLp) spitrs
+	where dodna_typ=-spiorgtyp
+
+return
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,199 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="SprawdzCzyMoznaUmiescicWTejLokalizacji"></A><PRE>
+          <FONT SIZE="2"><I>/* SprawdzCzyMoznaUmiescicWTejLokalizacji */</I><BR>
+create function CDN.SprawdzCzyMoznaUmiescicWTejLokalizacji(@p_tpa int,@p_ilosc decimal(15,4),@p_jms int,@p_iloscjms decimal(15,4),
+                                                           @p_dlugosc decimal(5,2),@p_szerokosc decimal(5,2),@p_wysokosc decimal(5,2),@p_mga int)
+
+
+
+
+
+returns  integer
+
+as
+
+begin
+
+
+  declare @retval integer;
+
+
+  declare @typ_pm integer;
+  declare @typ_wm integer;
+  declare @typ_mp integer;
+  declare @typ_awd integer;
+  declare @typ_zwm integer;
+  declare @typ_twr integer;
+  declare @zatwierdzony integer;
+  declare @poleodkladcze integer;
+
+
+  set @typ_pm = 1089
+  set @typ_wm = 1601
+  set @typ_mp = 1602
+  set @typ_awd = 1093
+  set @typ_zwm = 1605
+  set @typ_twr = 16
+  set @zatwierdzony = 3
+  set @poleodkladcze = 0
+
+
+  declare @zajetosc integer;			--0-wolny 1-częściowo zajęty 2-całkowicie zajęty
+  declare @jestnieluzem integer;		--1-jest taka partia towaru w dowolnej jednostce nie luzem
+  declare @twrnumer integer;			--identyfikator towaru
+  declare @objetoscnosnosc varchar(128);	--objetość i nośność oddzielona ':'
+  declare @objetosc decimal(28,4);		--objętość
+  declare @nosnosc decimal(28,4);		--nośność
+  declare @zasoby decimal(28,4)			--ilość w zasobach
+  declare @dozwolona decimal(28,4)		--ilość dozwolona
+  declare @roznica decimal(28,4)		--róznica @dozwolona-@zasoby
+  declare @rodzaj integer;                      --rodzaj adresu
+
+
+  declare @miejscewystapienia integer;
+
+
+  set @retval = 0
+  set @rodzaj = (select mpa_rodzaj from cdn.magadresy join cdn.magparadr on mpa_id=mga_mpaid where mga_id=@p_mga)
+  if @rodzaj &lt;&gt; @poleodkladcze
+    begin
+      set @zajetosc = cdn.sprawdzczyadresjestwolny(@p_mga)
+    end
+  else
+    begin
+      set @zajetosc = 0
+    end
+  if @zajetosc &lt;&gt; 0 and @p_jms = 0
+    begin
+      if exists (select tzm_jednostkalog from cdn.twrzasobymag --Sprawdzenie że są w zasobach towary tej partii w innych jednostkach niż luzem
+      where tzm_tpaid=@p_tpa and tzm_mgaid=@p_mga and tzm_jednostkalog&lt;&gt;0)
+        begin
+          set @jestnieluzem = 1
+        end
+      else
+        begin
+          set @jestnieluzem = 0
+        end
+    end
+  else
+    begin
+      set @jestnieluzem = 0
+    end
+  if @zajetosc &lt;&gt; 2 or @jestnieluzem = 1
+    begin
+      set @retval = cdn.sprawdzczytowardozwolonywtymobszarze(@p_tpa,@p_mga,0)
+      if @retval = 0 and @rodzaj&lt;&gt;@poleodkladcze--Dozwolone jest składowanie dowolnego towaru (@retval=0) lub tego konkretnego
+        begin
+          if @jestnieluzem = 0 and not exists (select mpj_mpaid from cdn.magadresy --Sprawdzenie że nie jest dozwolone składowanie takich jednostek
+          left outer join cdn.magparjednostki on mpj_mpaid=mga_mpaid
+          where mga_id=@p_mga and mpj_jednostkalog=@p_jms)
+            set @retval = 3         
+          else
+            if @zajetosc = 1 --Zajęte częściowo
+              begin
+                if @jestnieluzem = 0 and exists (select tzm_jednostkalog from cdn.twrzasobymag --Sprawdzenie że są w zasobach towary w innych jednostkach
+                where tzm_mgaid=@p_mga and not tzm_jednostkalog in(0,@p_jms))
+                  begin
+                    set @retval = 4
+                  end
+                if exists (select map_jednostkalog from cdn.magpelem --Sprawdzenie że są w subelementach niezatwierdzonych dokumentów towary w innych jednostkach
+                join cdn.magnag on man_gidnumer=map_gidnumer
+                where map_gidtyp in(@typ_pm,@typ_wm,@typ_mp,@typ_awd,@typ_zwm) and man_stan&lt;@zatwierdzony
+                and map_mgaid=@p_mga and not map_jednostkalog in(0,@p_jms))
+                  begin
+                    set @retval = 4
+                  end
+              end
+        end
+      if @retval = 0 and @rodzaj&lt;&gt;@poleodkladcze--Do tej pory wszystko O.K.
+        begin
+          select @twrnumer=tpa_twrnumer from cdn.twrpartie where tpa_id=@p_tpa -- znalezienie identyfikatora towaru
+          set @objetoscnosnosc = cdn.obliczobjetoscinosnoscadresu(@p_mga) --obliczamy dostępną objętość i nośność
+          set @miejscewystapienia = patindex('%:%',@objetoscnosnosc)
+          set @objetosc = cast(substring(@objetoscnosnosc,1,@miejscewystapienia-1) as decimal(28,4))
+          set @nosnosc = cast(substring(@objetoscnosnosc,@miejscewystapienia+1,28) as decimal(28,4))
+          if @p_jms = 0 --Nie określono jednostki
+            begin
+              if @objetosc=0 or @objetosc&lt;(select case when upper(twr_wymjm)='MM' then (@p_ilosc*(twr_objetoscl/twr_objetoscm))/1000000000 --pozostaje za mało objetości
+              when upper(twr_wymjm)='CM' then (@p_ilosc*(twr_objetoscl/twr_objetoscm))/1000000
+              when upper(twr_wymjm)='DM' then (@p_ilosc*(twr_objetoscl/twr_objetoscm))/1000
+              else @p_ilosc*(twr_objetoscl/twr_objetoscm) end from cdn.twrkarty where twr_gidnumer=@twrnumer)
+                set @retval = 7
+              else
+                if @nosnosc=0 or @nosnosc&lt;(select (case when upper(twr_wjm)='GRAM' then (abs(@p_ilosc)*twr_wagabrutto)/1000
+                when upper(twr_wjm)='DKG' then (abs(@p_ilosc)*twr_wagabrutto)/100
+                when upper(twr_wjm)='TONA' then (abs(@p_ilosc)*twr_wagabrutto)/.001
+                else abs(@p_ilosc)*twr_wagabrutto end)
+                from cdn.twrkarty where twr_gidnumer=@twrnumer)
+                  set @retval = 6
+            end
+          else          --Określono jednostkę
+            begin
+              select @zasoby=isnull(count(tzm_tpaid),0) from cdn.twrzasobymag
+              where tzm_mgaid=@p_mga and tzm_jednostkalog=@p_jms
+              select @zasoby=@zasoby+isnull(count(map_gidtyp),0) from cdn.magpelem
+              join cdn.magnag on man_gidnumer=map_gidnumer
+              where map_gidtyp in(@typ_pm,@typ_wm,@typ_mp,@typ_awd,@typ_zwm) and man_stan&lt;@zatwierdzony
+              and map_mgaid=@p_mga and map_jednostkalog=@p_jms
+              select @dozwolona=mpj_iloscmaks from cdn.magparjednostki
+              join cdn.magadresy on mga_mpaid=mpj_mpaid where mga_id=@p_mga and mpj_jednostkalog=@p_jms
+              if @zasoby &lt; @dozwolona	--zasobów jest mniej niż dozwolono
+                begin
+                  set @roznica=@dozwolona-@zasoby
+                  if @roznica=0
+                    set @retval = 1
+                  else
+                    begin
+                      if @roznica&gt;0 and @p_iloscjms&gt;@roznica
+                        set @retval = 5
+                      else
+                        begin
+                          if exists (select mpa_id from cdn.magparadr join cdn.magadresy on mpa_id=mga_mpaid
+                          where mga_id=@p_mga and (@p_dlugosc&gt;mpa_dlugosc or @p_szerokosc&gt;mpa_szerokosc or @p_wysokosc&gt;mpa_wysokosc))
+                            set @retval = 8
+                          else
+                            if @nosnosc=0 or @nosnosc&lt;(select (case when upper(twr_wjm)='GRAM' then (abs(@p_ilosc)*twr_wagabrutto)/1000
+                            when upper(twr_wjm)='DKG' then (abs(@p_ilosc)*twr_wagabrutto)/100
+                            when upper(twr_wjm)='TONA' then (abs(@p_ilosc)*twr_wagabrutto)/.001
+                            else abs(@p_ilosc)*twr_wagabrutto end)+(select slw_wartoscn4 from cdn.slowniki where slw_id=@p_jms)
+                            from cdn.twrkarty where twr_gidnumer=@twrnumer)
+                              set @retval = 6
+                        end
+                    end
+                end
+              else
+                set @retval = 1
+            end
+        end
+    end
+  else
+    set @retval = 1
+
+  if @retval=0 and exists(select A.MgA_Id
+	from CDN.InwNag
+	inner join CDN.InwArk on InA_InNId=InN_Id
+	inner join CDN.MagAdresy O on O.MgA_Id=InA_MgAIdOd
+	inner join CDN.MagAdresy D on D.MgA_Id=InA_MgAIdDo
+	inner join CDN.MagAdresy A on A.MgA_MgOId=InA_MgOId and A.MgA_Segment1+A.MgA_Segment2+A.MgA_Segment3+A.MgA_Segment4 between O.MgA_Segment1+O.MgA_Segment2+O.MgA_Segment3+O.MgA_Segment4 and D.MgA_Segment1+D.MgA_Segment2+D.MgA_Segment3+D.MgA_Segment4
+	where InN_TStampZam=0 and A.MgA_Id=@p_MgA)
+    set @retval = 9
+
+  return @retval
+
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

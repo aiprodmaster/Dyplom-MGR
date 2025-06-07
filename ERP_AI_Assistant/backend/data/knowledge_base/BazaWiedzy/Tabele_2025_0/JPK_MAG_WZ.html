@@ -1,0 +1,478 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="JPKMAG_WZWartosc"></A><PRE>
+          <FONT SIZE="2"><I>/* JPKMAG_WZWartosc */</I><BR>
+CREATE  FUNCTION CDN.JPKMAG_WZWartosc
+(
+	@arg_okres_od		int,			--okres za jaki dane mają być zaczytane. 
+	@arg_okres_do		int,			--okres za jaki dane mają być zaczytane.
+	@arg_magazyn		int,			--MAG_gidnumer/SC_gidnumer
+	@arg_magazynTyp		int,			--rozróznienie czy magazyn czy skład celny (Typ_Mag/Typ_SC)
+	@RodzajDaty			tinyint			--1-data operacji (Trn_DataMag), 2-data dokumentu (Trn_Data2)
+)
+RETURNS 
+@Dane TABLE 
+(
+	jpk_NumerWZ				nvarchar(256),
+	jpk_DataWZ				int,
+	jpk_WartoscWZ			decimal(18,2),
+	jpk_DataOtrzymaniaWZ	int,
+	jpk_OdbiorcaWZ			nvarchar(256),
+	jpk_NumerFaWZ			nvarchar(256),
+	jpk_DataFaWZ			int,
+	jpk_gidnumer			int,
+	jpk_gidtyp				int
+)
+AS
+BEGIN
+
+	DECLARE @TYPY TABLE(GIDTYP INT,Korekta INT)
+	INSERT INTO @TYPY(GIDTYP,Korekta) VALUES(2033,0),(1824,0),(2037,0),(1828,0),(2041,1),(1832,1),(2045,1),(1836,1),(2034,0),(2042,1),(2035,0),(2043,1),(2009,1),(2008,1),(2013,1),(2001,0),(2000,0),(2005,0)	--SPR
+
+	DECLARE @SPINACZE TABLE(GIDTYP INT, GIDNUMER INT, NUMERDOK NVARCHAR(256), ORGTYP INT, ORGNUMER INT)
+
+	if @arg_magazynTyp = 208
+	begin
+		insert into @Dane
+		select distinct
+			case when (select korekta from @TYPY where gidtyp=DOK.trn_gidtyp)=0 AND exists(select * from cdn.tranag kor where kor.trn_zwrnumer=DOK.trn_gidnumer and kor.trn_stan &gt; 2 and kor.trn_korektadanych=1) then '&lt;&lt;korekta_danych&gt;&gt;' else CDN.NumerDokumentu(DOK.TrN_GIDTyp,DOK.TrN_SpiTyp,DOK.TrN_TrNTyp,DOK.TrN_TrNNumer,DOK.TrN_TrNRok,DOK.TrN_TrNSeria,DOK.TrN_TrNMiesiac) end,
+			dok.trn_Data2,
+			isnull((select sum(ts.TrS_KosztKsiegowy) from CDN.TraSElem ts join cdn.traelem te on te.tre_gidnumer = ts.TrS_GIDNumer and te.tre_gidlp = ts.trs_gidlp join cdn.twrkarty on te.TrE_TwrNumer = Twr_GIDNumer and twr_typ not in (3,4,6)  where ts.trs_gidnumer = dok.TrN_GIDNumer and ts.TrS_GIDTyp = dok.TrN_GIDTyp and ts.TrS_MagNumer = @arg_magazyn ),0),
+			dok.trn_DataMag,
+			KnA_Nazwa1+' '+KnA_Nazwa2,
+			case when dok.trn_spityp&lt;0
+					then '&lt;&lt;dok_spiety&gt;&gt;'
+			    when dok.TrN_SpiNumer = 0 
+					then case when (select korekta from @TYPY where gidtyp=DOK.trn_gidtyp)=0 AND exists(select * from cdn.tranag kor where kor.trn_zwrnumer=DOK.trn_gidnumer and kor.trn_stan &gt; 2 and kor.trn_korektadanych=1) then '&lt;&lt;korekta_danych3&gt;&gt;' else dok.trn_DokumentObcy end
+				else 
+					case when (select korekta from @TYPY where gidtyp=spinacz.trn_gidtyp)=0 AND exists(select * from cdn.tranag kor where kor.trn_zwrnumer=spinacz.trn_gidnumer and kor.trn_stan &gt; 2 and kor.trn_korektadanych=1) then '&lt;&lt;korekta_danych2&gt;&gt;' else spinacz.trn_DokumentObcy END 
+				end,
+			case when dok.TrN_SpiNumer = 0 then dok.TrN_Data2  else spinacz.TrN_Data2 end,
+			dok.TrN_GIDNumer,
+			dok.TrN_GIDTyp
+		from cdn.tranag DOK
+			left join CDN.TraNag spinacz on DOK.trn_spinumer = spinacz.TrN_GIDNumer and DOK.TrN_SpiTyp  =spinacz.TrN_GIDTyp
+			left join cdn.KntAdresy on dok.TrN_KAGNumer = KnA_GidNumer			
+			left join CDN.TraElem on dok.trn_GIDTyp=TrE_GIDTyp AND dok.trn_GIDNumer=TrE_GIDNumer
+			left join cdn.traselem on TrE_GIDTyp=TrS_GIDTyp AND TrE_GIDNumer=TrS_GIDNumer AND TrE_GIDLp=TrS_GIDLp and TrS_MagNumer = @arg_magazyn
+			join cdn.magazyny on TrS_Magnumer = mag_gidnumer and trs_magtyp = mag_gidtyp
+		where dok.trn_Stan in (3,4,5)
+		and (dok.trn_gidtyp in (2001,2000,2005,2034,2009,2008,2013,2042) or (dok.trn_GIDTyp in (2033,2037,2041,2045) and dok.trn_spinumer &lt;&gt;0))
+		and mag_gidnumer = @arg_magazyn
+		and (select case when @RodzajDaty = 1 then dok.trn_DataMag else dok.Trn_Data2 end) &gt;= @arg_okres_od
+		and (select case when @RodzajDaty = 1 then dok.trn_DataMag else dok.Trn_Data2 end) &lt;= @arg_okres_do
+		and dok.trn_KosztUstalono =1
+		and dok.TrN_Korektadanych = 0
+	end
+	else
+	begin
+		select @arg_magazyn = sc_gidnumer from CDN.SkladyCelne where SC_GIDNumer = @arg_magazyn
+		insert into @Dane
+		select distinct
+			case when (select korekta from @TYPY where gidtyp=DOK.trn_gidtyp)=0 AND exists(select * from cdn.tranag kor where kor.trn_zwrnumer=DOK.trn_gidnumer and kor.trn_stan &gt; 2 and kor.trn_korektadanych=1) then '&lt;&lt;korekta_danych&gt;&gt;' else CDN.NumerDokumentu(DOK.TrN_GIDTyp,DOK.TrN_SpiTyp,DOK.TrN_TrNTyp,DOK.TrN_TrNNumer,DOK.TrN_TrNRok,DOK.TrN_TrNSeria,DOK.TrN_TrNMiesiac) end,
+			dok.trn_Data2,
+			isnull((select sum(ts.TrS_KosztKsiegowy) from CDN.TraSElem ts join cdn.traelem te on te.tre_gidnumer = ts.TrS_GIDNumer and te.tre_gidlp = ts.trs_gidlp join cdn.twrkarty on te.TrE_TwrNumer = Twr_GIDNumer and twr_typ not in (3,4,6) where ts.trs_gidnumer = dok.TrN_GIDNumer and ts.TrS_GIDTyp = dok.TrN_GIDTyp and ts.TrS_MagNumer = @arg_magazyn ),0),
+			dok.trn_DataMag,
+			KnA_Nazwa1+' '+KnA_Nazwa2,
+			case when dok.trn_spityp&lt;0
+					then '&lt;&lt;dok_spiety&gt;&gt;'
+			    when dok.TrN_SpiNumer = 0 
+					then case when (select korekta from @TYPY where gidtyp=DOK.trn_gidtyp)=0 AND exists(select * from cdn.tranag kor where kor.trn_zwrnumer=DOK.trn_gidnumer and kor.trn_stan &gt; 2 and kor.trn_korektadanych=1) then '&lt;&lt;korekta_danych3&gt;&gt;' else dok.trn_DokumentObcy end
+				else 
+					case when (select korekta from @TYPY where gidtyp=spinacz.trn_gidtyp)=0 AND exists(select * from cdn.tranag kor where kor.trn_zwrnumer=spinacz.trn_gidnumer and kor.trn_stan &gt; 2 and kor.trn_korektadanych=1) then '&lt;&lt;korekta_danych2&gt;&gt;' else spinacz.trn_DokumentObcy END 
+				end,
+			case when dok.TrN_SpiNumer = 0 then dok.TrN_Data2  else spinacz.TrN_Data2 end,
+			dok.TrN_GIDNumer,
+			dok.TrN_GIDTyp
+		from cdn.tranag DOK
+			left join CDN.TraNag spinacz on DOK.trn_spinumer = spinacz.TrN_GIDNumer and DOK.TrN_SpiTyp  =spinacz.TrN_GIDTyp
+			left join cdn.KntAdresy on dok.TrN_KAGNumer = KnA_GidNumer
+			left join CDN.TraElem on dok.trn_GIDTyp=TrE_GIDTyp AND dok.trn_GIDNumer=TrE_GIDNumer
+			left join cdn.traselem on TrE_GIDTyp=TrS_GIDTyp AND TrE_GIDNumer=TrS_GIDNumer AND TrE_GIDLp=TrS_GIDLp and TrS_MagNumer = @arg_magazyn
+			join cdn.Skladycelne on TrS_Magnumer = sc_gidnumer and trs_magtyp = sc_gidtyp
+		where dok.trn_Stan in (3,4,5)
+		and (dok.trn_gidtyp in (2001,2000,2005,2034,2009,2008,2013,2042) or (dok.trn_GIDTyp in (2033,2037,2041,2045) and dok.trn_spinumer &lt;&gt;0))
+		and SC_GIDNumer = @arg_magazyn
+		and (select case when @RodzajDaty = 1 then dok.trn_DataMag else dok.Trn_Data2 end) &gt;= @arg_okres_od
+		and (select case when @RodzajDaty = 1 then dok.trn_DataMag else dok.Trn_Data2 end) &lt;= @arg_okres_do			
+		and dok.trn_KosztUstalono = 1
+		and dok.TrN_Korektadanych = 0
+		union all
+			
+		select distinct 
+		CDN.NumerDokumentu(t1.san_GIDTyp,0,t1.san_sanTyp,t1.san_sanNumer,t1.san_sanRok,t1.san_sanSeria,t1.san_sanMiesiac),
+		DateDiff(d, convert(datetime,'28-12-1800',105),(select DATEADD(second,t1.SaN_TStampU,convert(datetime,'01-01-1990',105)))),
+		sum(isnull(agrilosc,0)*SaE_Ilosc),		
+		t1.SaN_DataPrzyjecia,
+		Frm_DNazwa,
+		imn_dokumentobcy,	
+		ImN_DataWystawienia,
+		t1.san_gidnumer,
+		sae_gidtyp
+		from cdn.sadnag t1		
+		join cdn.SadElem on t1.SaN_GIDNumer=SaE_GIDNumer
+		join cdn.sadselem sad on sad.SaS_GIDNumer = SaE_GIDNumer and sad.sas_gidlp =SaE_GIDLp and sad.sas_subgidlp =1
+		join (select dst_gidnumer,sae_gidnumer as sscNumer,sae_gidlp as ssclp,sae_gidtyp as ssctyp 
+				from cdn.dostawy
+				join cdn.impelem im on im.ime_gidnumer = dst_trnnumer and im.ime_gidlp = dst_trnlp and im.ime_gidtyp = dst_trntyp
+				join cdn.sadelem on sae_impnumer = ime_gidnumer and SaE_ImpLp = ime_gidlp
+				where dst_subtrnlp = 1 and sae_gidtyp = 3377
+			  ) a on dst_gidnumer = sad.sas_dstnumer
+		left join (
+			select cast(round(
+				isnull(max(sn1.SaN_KursL)/max(sn1.SaN_KursM),1)*sum(SaS_WartoscDostawy)+
+				case when max(sn1.san_waluta) = max(sas_walutaKosztuKrajowego) then isnull(max(sn1.SaN_KursL)/max(sn1.SaN_KursM),1)*sum(SaS_KosztKraj)	else sum(SaS_KosztKraj) end +
+				case when max(sn1.san_waluta) = max(sas_walutakosztuzagranicznego) then isnull(max(sn1.SaN_KursL)/max(sn1.SaN_KursM),1)*sum(SaS_KosztZagr)	else sum(SaS_KosztZagr) end
+			,2) as decimal(22,12))/sum(sas_ilosc) as agrilosc					 
+			,min(sas_gidnumer) as sas_gidnumer, min(sas_gidlp) as sas_gidlp,min(sas_subgidlp) as sas_subgidlp
+			from cdn.SadSElem 
+			left join cdn.sadnag sn1 on sn1.san_gidnumer = sas_gidnumer
+			group by sas_gidnumer, sas_gidlp
+		) s2 on  s2.sas_gidnumer = sscNumer and  s2.sas_gidlp = sscLp and s2.sas_subgidlp = 1
+		join cdn.impnag on imn_gidnumer = 
+		   (select top 1 i.imn_gidnumer 
+			from cdn.sadselem s
+			join cdn.dostawy on s.sas_dstnumer = dst_gidnumer
+			join cdn.impnag i on i.imn_gidnumer = dst_trnnumer
+			where s.sas_Gidtyp = 3376	and s.sas_gidnumer = t1.san_gidnumer order by i.imn_wartosc desc, i.imn_gidnumer)
+		join cdn.firma on t1.SaN_FrmNumer = frm_gidnumer
+		join cdn.Skladycelne on t1.SaN_SCNumer = sc_gidnumer
+		join cdn.TwrKarty on SaE_TwrNumer = Twr_GIDNumer and twr_typ not in (3,4,6)
+		where 
+		t1.SaN_Stan in (3,4,5)
+		and SC_GIDNumer = @arg_magazyn
+		and t1.SaN_Gidtyp = 3376
+		and (select case when @RodzajDaty = 1 then t1.SaN_DataPrzyjecia else DateDiff(d, convert(datetime,'28-12-1800',105),(select DATEADD(second,t1.SaN_TStampU,convert(datetime,'01-01-1990',105)))) end) &gt;= @arg_okres_od
+		and (select case when @RodzajDaty = 1 then t1.SaN_DataPrzyjecia else DateDiff(d, convert(datetime,'28-12-1800',105),(select DATEADD(second,t1.SaN_TStampU,convert(datetime,'01-01-1990',105)))) end) &lt;= @arg_okres_do
+		and t1.san_zrodlo in (1,3)
+		group by sae_gidtyp,Frm_DNazwa,t1.san_gidtyp,t1.SaN_SaNTyp,t1.SaN_SaNNumer,t1.SaN_SaNRok,t1.SaN_SaNSeria,t1.SaN_SaNMiesiac,t1.SaN_TStampU,t1.SaN_DataPrzyjecia,ImN_DokumentObcy,ImN_DataWystawienia,t1.SaN_GIDNumer
+	end
+
+	declare @num int,
+		@num2 int,
+		@numORG int,
+		@p_6 int,
+		@data2 int,
+		@dokObcy nvarchar(41),
+		@dokObcyTMP nvarchar(41),
+		@numZRD int
+		
+	--Ustalanie jpk_NumerWZ dla dok. posiadających korektę danych
+	select top 1 @num = jpk_gidnumer from @Dane where jpk_NumerWZ='&lt;&lt;korekta_danych&gt;&gt;'
+	WHILE @num is not null
+	BEGIN	
+		select @dokObcy = CDN.NumerDokumentu(TrN_GIDTyp,TrN_SpiTyp,TrN_TrNTyp,TrN_TrNNumer,TrN_TrNRok,TrN_TrNSeria,TrN_TrNMiesiac) from cdn.tranag where trn_gidnumer=@num
+		set @dokObcyTMP= @dokObcy
+		set @numORG = @num
+		set @num2=@num		
+		WHILE 1 = 1
+		BEGIN	
+			set @num = @num2
+			set @dokObcy = coalesce(@dokObcyTMP,@dokObcy)
+			set @num2 = null
+			
+			select @dokObcyTMP = case when trn_stan &gt; 2 AND TrN_KorektaDanych=1 AND tsv_gidnumer is not null then CDN.NumerDokumentu(TrN_GIDTyp,TrN_SpiTyp,TrN_TrNTyp,TrN_TrNNumer,TrN_TrNRok,TrN_TrNSeria,TrN_TrNMiesiac) 
+				   else @dokObcy end, @num2=trn_gidnumer 
+				from cdn.tranag 
+				left join cdn.trasvat on tsv_gidtyp=trn_gidTyp and tsv_gidnumer=trn_gidnumer 
+				where trn_zwrnumer=@num
+
+			IF @num2 = @numORG
+				BREAK
+		END	
+		UPDATE @Dane set jpk_NumerWZ = @dokObcy where jpk_gidnumer = @numORG		
+		set @num = null
+		select top 1 @num = jpk_gidnumer from @Dane where jpk_NumerWZ='&lt;&lt;korekta_danych&gt;&gt;'
+	END
+	
+    --Ustalanie jpk_NumerFAWZ dla dok. nie spiętych posiadających korektę danych
+	select top 1 @numZRD = jpk_gidnumer, @num = trn_gidnumer from @Dane join cdn.tranag on trn_gidnumer=jpk_gidnumer and trn_gidtyp=jpk_gidtyp where jpk_NumerFAWZ='&lt;&lt;korekta_danych3&gt;&gt;'		
+	WHILE @num is not null
+	BEGIN	
+		select @dokObcy = trn_dokumentobcy from cdn.tranag where trn_gidnumer=@num
+		set @dokObcyTMP= @dokObcy
+		set @numORG = @num
+		set @num2=@num		
+		WHILE 1 = 1
+		BEGIN	
+			set @num = @num2
+			set @dokObcy = coalesce(@dokObcyTMP,@dokObcy)
+			set @num2 = null
+			
+			select @dokObcyTMP = case when trn_stan &gt; 2 AND TrN_KorektaDanych=1 AND tsv_gidnumer is not null then trn_dokumentobcy else @dokObcy end, @num2=trn_gidnumer 
+				from cdn.tranag 
+				left join cdn.trasvat on tsv_gidtyp=trn_gidTyp and tsv_gidnumer=trn_gidnumer 
+				where trn_zwrnumer=@num
+
+			IF @num2 = @numORG
+				BREAK
+		END	
+		UPDATE @Dane set jpk_NumerFAWZ = @dokObcy where jpk_gidnumer = @numZRD		
+		set @num = null
+		select top 1 @numZRD = jpk_gidnumer, @num = trn_gidnumer from @Dane join cdn.tranag on trn_gidnumer=jpk_gidnumer and trn_gidtyp=jpk_gidtyp where jpk_NumerFAWZ='&lt;&lt;korekta_danych3&gt;&gt;'
+	END
+	
+   --Ustalanie jpk_NumerFAWZ dla dok. spiętych do spinacza nagłówkowego posiadającego korektę danych
+	select top 1 @numZRD = jpk_gidnumer, @num = trn_spinumer from @Dane join cdn.tranag on trn_gidnumer=jpk_gidnumer and trn_gidtyp=jpk_gidtyp where jpk_NumerFAWZ='&lt;&lt;korekta_danych2&gt;&gt;'
+	WHILE @num is not null
+	BEGIN	
+		select @dokObcy = trn_dokumentobcy from cdn.tranag where trn_gidnumer=@num
+		set @dokObcyTMP= @dokObcy
+		set @numORG = @num
+		set @num2=@num		
+		WHILE 1 = 1
+		BEGIN	
+			set @num = @num2
+			set @dokObcy = coalesce(@dokObcyTMP,@dokObcy)
+			set @num2 = null
+			
+			select top 1 @dokObcyTMP = case when trn_stan &gt; 2 AND TrN_KorektaDanych=1 AND tsv_gidnumer is not null then trn_dokumentobcy else @dokObcy end, @num2=trn_gidnumer 
+				from cdn.tranag 
+				left join cdn.trasvat on tsv_gidtyp=trn_gidTyp and tsv_gidnumer=trn_gidnumer 
+				where trn_zwrnumer=@num
+				order by trn_korektadanych desc
+
+			IF @num2 = @numORG or @num2 is null
+				BREAK
+		END	
+		UPDATE @Dane set jpk_NumerFAWZ = @dokObcy where jpk_gidnumer = @numZRD		
+		set @num = null
+		select top 1 @numZRD = jpk_gidnumer, @num = trn_spinumer from @Dane join cdn.tranag on trn_gidnumer=jpk_gidnumer and trn_gidtyp=jpk_gidtyp where jpk_NumerFAWZ='&lt;&lt;korekta_danych2&gt;&gt;'
+	END
+	
+
+	--Ustalanie spinaczy elementów dla dok. spiętych
+	INSERT INTO @SPINACZE select distinct trs_gidtyp,trs_gidnumer,
+		case when (select korekta from @TYPY where gidtyp=trn_gidtyp)=0 AND exists(select * from cdn.tranag kor where kor.trn_zwrnumer=trs_gidnumer and kor.trn_stan &gt; 2 and kor.trn_korektadanych=1) then '&lt;&lt;korekta_danych&gt;&gt;' else TrN_DokumentObcy end,
+		jpk_gidtyp,jpk_gidnumer
+	FROM @Dane 
+	join cdn.TraSElem on TrS_SpiNumer=jpk_gidnumer
+	join cdn.tranag on trn_gidnumer = TrS_GIDNumer
+	where jpk_NumerFAWZ = '&lt;&lt;dok_spiety&gt;&gt;' AND trn_gidTyp in (2033,2034,2041,2042,2037,2045)
+
+	--Szukanie korekt danych dla tych spinaczy
+	select top 1 @num = GIDNUMER from @SPINACZE where NumerDOK='&lt;&lt;korekta_danych&gt;&gt;'
+	WHILE @num is not null
+	BEGIN	
+		select @dokObcy = trn_dokumentobcy from cdn.tranag where trn_gidnumer=@num
+		set @dokObcyTMP= @dokObcy
+		set @numORG = @num
+		set @num2=@num		
+		WHILE 1 = 1
+		BEGIN	
+			set @num = @num2
+			set @dokObcy = coalesce(@dokObcyTMP,@dokObcy)
+			set @num2 = null
+			
+			select @dokObcyTMP = case when trn_stan &gt; 2 AND TrN_KorektaDanych=1 AND tsv_gidnumer is not null then trn_dokumentobcy
+				   else @dokObcy end, @num2=trn_gidnumer 
+				from cdn.tranag 
+				left join cdn.trasvat on tsv_gidtyp=trn_gidTyp and tsv_gidnumer=trn_gidnumer 
+				where trn_zwrnumer=@num
+
+			IF @num2 = @numORG
+				BREAK
+		END	
+		UPDATE @SPINACZE set NumerDOK = @dokObcy where GIDNUMER = @numORG		
+		set @num = null
+		select top 1 @num = GIDNUMER from @SPINACZE where NumerDOK='&lt;&lt;korekta_danych&gt;&gt;'
+	END
+
+	--aktualizacja jpk_NumerFaWZ w głównej tabeli dla dok. spiętych
+	UPDATE @Dane set jpk_NumerFaWZ= 
+			isnull((select STUFF(REPLACE((SELECT '@@@'+NUMERDOK AS 'data()'
+				from @SPINACZE					
+				where ORGNUMER=jpk_gidnumer AND ORGTYP=jpk_gidtyp
+				FOR XML PATH('')),' @@@',', '),1,3,'')),'')
+			where jpk_NumerFaWZ='&lt;&lt;dok_spiety&gt;&gt;'
+
+	RETURN
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="JPKMAG_WZWiersz"></A><PRE>
+          <FONT SIZE="2"><I>/* JPKMAG_WZWiersz */</I><BR>
+CREATE  FUNCTION CDN.JPKMAG_WZWiersz
+(
+	@arg_gidtyp			int,
+	@arg_gidnumer		int,
+	@arg_magazyn		int,			--MAG_gidnumer/SC_gidnumer
+	@arg_magazynTyp		int				--rozróznienie czy magazyn czy skład celny (Typ_Mag/Typ_SC)
+)
+RETURNS 
+@Dane TABLE 
+(
+	jpk_Numer2WZ			NVARCHAR(256),
+	jpk_KodTowaruWZ			NVARCHAR(256),
+	jpk_NazwaTowaruWZ		NVARCHAR(256),
+	jpk_IloscPrzyjetaWZ		DECIMAL(18,6),
+	jpk_JednostkaMiaryWZ	NVARCHAR(256),
+	jpk_CenaJednWZ			DECIMAL(18,2),
+	jpk_WartoscPozycjiWZ	DECIMAL(18,2),
+	jpk_gidnumer			int,
+	jpk_gidtyp				int,
+	jpk_gidlp				int
+
+)
+AS
+BEGIN
+	DECLARE @TYPY TABLE(GIDTYP INT,Korekta INT)
+	INSERT INTO @TYPY(GIDTYP,Korekta) VALUES(2033,0),(1824,0),(2037,0),(1828,0),(2041,1),(1832,1),(2045,1),(1836,1),(2034,0),(2042,1),(2035,0),(2043,1),(2009,1),(2008,1),(2013,1),(2001,0),(2000,0),(2005,0)	--SPR
+
+	if @arg_magazynTyp = 208
+	begin
+		insert into @Dane
+		select distinct
+			case when (select korekta from @TYPY where gidtyp=tn.trn_gidtyp)=0 AND exists(select * from cdn.tranag kor where kor.trn_zwrnumer=tn.trn_gidnumer and kor.trn_stan &gt; 2 and kor.trn_korektadanych=1) then '&lt;&lt;korekta_danych&gt;&gt;' else CDN.NumerDokumentu(tn.TrN_GIDTyp,tn.TrN_SpiTyp,tn.TrN_TrNTyp,tn.TrN_TrNNumer,tn.TrN_TrNRok,tn.TrN_TrNSeria,tn.TrN_TrNMiesiac) end,
+			tre_twrkod,
+			tre_twrNazwa,
+			(select sum(ts.trs_ilosc) from CDN.TraSElem ts where ts.trs_gidnumer = TrN_GIDNumer and ts.TrS_GIDTyp = TrN_GIDTyp and ts.TrS_MagNumer = @arg_magazyn and ts.TrS_GIDLp= tre_gidlp) * case when trs_gidtyp in (2008,2009,2013,2041,2045) and tre_ilosc&lt;0 and tre_ilosc&gt;0 then -1 else 1 end,
+			Twr_Jm,
+			(select avg(ts.TrS_KosztKsiegowy/(case when ts.TrS_Ilosc = 0 then 1 else ts.TrS_Ilosc end)) from CDN.TraSElem ts where ts.trs_gidnumer = TrN_GIDNumer and ts.TrS_GIDTyp = TrN_GIDTyp and ts.TrS_MagNumer = @arg_magazyn and ts.TrS_GIDLp= tre_gidlp),
+			(select sum(ts.TrS_KosztKsiegowy) from CDN.TraSElem ts where ts.trs_gidnumer = TrN_GIDNumer and ts.TrS_GIDTyp = TrN_GIDTyp and ts.TrS_MagNumer = @arg_magazyn and ts.TrS_GIDLp= tre_gidlp),
+			TrN_GIDNumer,
+			TrN_GIDTyp,
+			TrE_GIDLp
+		from CDN.TraNag tn
+		left join CDN.TraElem on TrN_GIDTyp=TrE_GIDTyp AND TrN_GIDNumer=TrE_GIDNumer
+		left join cdn.traselem on TrE_GIDTyp=TrS_GIDTyp AND TrE_GIDNumer=TrS_GIDNumer AND TrS_GIDLp = TrE_GIDLp
+		join cdn.magazyny on TrS_Magnumer = mag_gidnumer and trs_magtyp = mag_gidtyp
+		left join CDN.TwrKarty on TrE_TwrNumer = Twr_GIDNumer
+		where TrN_Stan in (3,4,5)
+		and trn_gidtyp = @arg_gidtyp
+		and TrN_GIDNumer = @arg_gidnumer
+		and mag_gidnumer = @arg_magazyn
+		and TrN_KosztUstalono = 1
+		and twr_typ not in (3,4,6)
+	end
+	else
+	begin
+		select @arg_magazyn = sc_gidnumer from CDN.SkladyCelne where sc_gidnumer = @arg_magazyn
+		insert into @Dane
+		select distinct
+			case when (select korekta from @TYPY where gidtyp=tn.trn_gidtyp)=0 AND exists(select * from cdn.tranag kor where kor.trn_zwrnumer=tn.trn_gidnumer and kor.trn_stan &gt; 2 and kor.trn_korektadanych=1) then '&lt;&lt;korekta_danych&gt;&gt;' else CDN.NumerDokumentu(tn.TrN_GIDTyp,tn.TrN_SpiTyp,tn.TrN_TrNTyp,tn.TrN_TrNNumer,tn.TrN_TrNRok,tn.TrN_TrNSeria,tn.TrN_TrNMiesiac) end,
+			tre_twrkod,
+			tre_twrNazwa,
+			(select sum(ts.trs_ilosc) from CDN.TraSElem ts where ts.trs_gidnumer = TrN_GIDNumer and ts.TrS_GIDTyp = TrN_GIDTyp and ts.TrS_MagNumer = @arg_magazyn and ts.TrS_GIDLp= tre_gidlp) * case when trs_gidtyp in (2008,2009,2013,2041,2045) and tre_ilosc&lt;0 and tre_ilosc&gt;0 then -1 else 1 end,
+			Twr_Jm,
+			(select avg(ts.TrS_KosztKsiegowy/(case when ts.TrS_Ilosc = 0 then 1 else ts.TrS_Ilosc end)) from CDN.TraSElem ts where ts.trs_gidnumer = TrN_GIDNumer and ts.TrS_GIDTyp = TrN_GIDTyp and ts.TrS_MagNumer = @arg_magazyn and ts.TrS_GIDLp= tre_gidlp),
+			(select sum(ts.TrS_KosztKsiegowy) from CDN.TraSElem ts where ts.trs_gidnumer = TrN_GIDNumer and ts.TrS_GIDTyp = TrN_GIDTyp and ts.TrS_MagNumer = @arg_magazyn and ts.TrS_GIDLp= tre_gidlp),
+			TrN_GIDNumer,
+			TrN_GIDTyp,
+			TrE_GIDLp
+		from CDN.TraNag tn
+		left join CDN.TraElem on TrN_GIDTyp=TrE_GIDTyp AND TrN_GIDNumer=TrE_GIDNumer
+		left join cdn.traselem on TrE_GIDTyp=TrS_GIDTyp AND TrE_GIDNumer=TrS_GIDNumer and tre_gidlp = trs_gidlp
+		left join cdn.SkladyCelne on TrS_Magnumer = sc_gidnumer and trs_magtyp = sc_gidtyp
+		left join CDN.TwrKarty on TrE_TwrNumer = Twr_GIDNumer
+		where TrN_Stan in (3,4,5)
+		and trn_gidtyp = @arg_gidtyp 
+		and TrN_GIDNumer = @arg_gidnumer
+		and trs_magnumer = @arg_magazyn 
+		and trs_magtyp = @arg_magazynTyp
+		and TrN_KosztUstalono = 1
+		and twr_typ not in (3,4,6)
+		union all
+
+		select distinct
+		CDN.NumerDokumentu(org.san_GIDTyp,0,org.san_sanTyp,org.san_sanNumer,org.san_sanRok,org.san_sanSeria,org.san_sanMiesiac),
+		SaE_TwrKod,
+		SaE_TwrNazwa,
+		SaE_Ilosc,
+		Twr_jm,
+		sum(isnull(agrilosc,0)),
+		sum(isnull(agrilosc,0)*SaE_Ilosc),
+		sae_gidnumer,
+		sae_gidtyp,
+		SaE_GIDLp
+		from cdn.SadNag org
+		join cdn.SadElem se on org.san_GIDNumer=se.SaE_GIDNumer			
+		join cdn.twrkarty on Twr_GIDNumer = SaE_TwrNumer
+		left join cdn.sadnag zw on zw.san_gidnumer = org.SaN_SaCNumer	
+
+		join cdn.sadselem sad on sad.SaS_GIDNumer = SaE_GIDNumer and sad.sas_gidlp =SaE_GIDLp and sad.sas_subgidlp =1
+		join (select dst_gidnumer,sae_gidnumer as sscNumer,sae_gidlp as ssclp,sae_gidtyp as ssctyp 
+				from cdn.dostawy
+				join cdn.impelem im on im.ime_gidnumer = dst_trnnumer and im.ime_gidlp = dst_trnlp and im.ime_gidtyp = dst_trntyp
+				join cdn.sadelem on sae_impnumer = ime_gidnumer and SaE_ImpLp = ime_gidlp
+				where dst_subtrnlp = 1 and sae_gidtyp = 3377
+			  ) a on dst_gidnumer = sad.sas_dstnumer
+		left join (
+			select cast(round(
+				isnull(max(sn1.SaN_KursL)/max(sn1.SaN_KursM),1)*sum(SaS_WartoscDostawy)+
+				case when max(sn1.san_waluta) = max(sas_walutaKosztuKrajowego) then isnull(max(sn1.SaN_KursL)/max(sn1.SaN_KursM),1)*sum(SaS_KosztKraj)	else sum(SaS_KosztKraj) end +
+				case when max(sn1.san_waluta) = max(sas_walutakosztuzagranicznego) then isnull(max(sn1.SaN_KursL)/max(sn1.SaN_KursM),1)*sum(SaS_KosztZagr)	else sum(SaS_KosztZagr) end
+			,2) as decimal(22,12))/sum(sas_ilosc) as agrilosc					 
+			,min(sas_gidnumer) as sas_gidnumer, min(sas_gidlp) as sas_gidlp,min(sas_subgidlp) as sas_subgidlp
+			from cdn.SadSElem 
+			left join cdn.sadnag sn1 on sn1.san_gidnumer = sas_gidnumer
+			group by sas_gidnumer, sas_gidlp
+		) s2 on  s2.sas_gidnumer = sscNumer and  s2.sas_gidlp = sscLp and s2.sas_subgidlp = 1
+		where 			
+		org.san_Stan in (3,4,5)
+		and org.san_SCnumer = @arg_magazyn
+		and org.san_gidtyp = @arg_gidtyp 
+		and org.san_gidnumer = @arg_gidnumer
+		and org.san_zrodlo in (1,3)
+		and twr_typ not in (3,4,6)
+		group by Twr_jm,sae_gidtyp,sae_gidnumer,SaE_GIDLp,org.san_GIDTyp,org.san_sanTyp,org.san_sanNumer,org.san_sanRok,org.san_sanSeria,org.san_sanMiesiac,SaE_TwrKod,SaE_TwrNazwa,SaE_Ilosc
+	end
+	update @Dane set jpk_IloscPrzyjetaWZ=0, jpk_WartoscPozycjiWZ=0 where jpk_WartoscPozycjiWZ is null and jpk_IloscPrzyjetaWZ is null
+
+	declare @num int,
+		@num2 int,
+		@numORG int,
+		@p_6 int,
+		@data2 int,
+		@dokObcy nvarchar(41),
+		@dokObcyTMP nvarchar(41),
+		@numZRD int 
+
+	select top 1 @num = jpk_gidnumer from @Dane where jpk_Numer2WZ='&lt;&lt;korekta_danych&gt;&gt;'
+	WHILE @num is not null
+	BEGIN	
+		select @dokObcy = trn_dokumentobcy from cdn.tranag where trn_gidnumer=@num
+		set @dokObcyTMP= @dokObcy
+		set @numORG = @num
+		set @num2=@num		
+		WHILE 1 = 1
+		BEGIN	
+			set @num = @num2
+			set @dokObcy = coalesce(@dokObcyTMP,@dokObcy)
+			set @num2 = null
+			
+			select @dokObcyTMP = case when trn_stan &gt; 2 AND TrN_KorektaDanych=1 AND tsv_gidnumer is not null then CDN.NumerDokumentu(TrN_GIDTyp,TrN_SpiTyp,TrN_TrNTyp,TrN_TrNNumer,TrN_TrNRok,TrN_TrNSeria,TrN_TrNMiesiac) else @dokObcy end, @num2=trn_gidnumer 
+				from cdn.tranag 
+				left join cdn.trasvat on tsv_gidtyp=trn_gidTyp and tsv_gidnumer=trn_gidnumer 
+				where trn_zwrnumer=@num
+
+			IF @num2 = @numORG
+				BREAK
+		END	
+		UPDATE @Dane set jpk_Numer2WZ = @dokObcy where jpk_gidnumer = @numORG		
+		set @num = null
+		select top 1 @num = jpk_gidnumer from @Dane where jpk_Numer2WZ='&lt;&lt;korekta_danych&gt;&gt;'
+	END
+
+
+RETURN
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

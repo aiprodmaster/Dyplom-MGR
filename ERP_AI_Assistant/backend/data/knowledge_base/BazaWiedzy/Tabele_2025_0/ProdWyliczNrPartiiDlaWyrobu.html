@@ -1,0 +1,229 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="ProdWyliczNrPartiiDlaWyrobu"></A><PRE>
+          <FONT SIZE="2"><I>/* ProdWyliczNrPartiiDlaWyrobu */</I><BR>
+CREATE PROCEDURE CDN.ProdWyliczNrPartiiDlaWyrobu (
+	@IdWzorca INT, 
+	@PZAId INT, 
+	@PCZId INT,
+	@PZLId INT,
+	@NumerPartii VARCHAR(256) OUTPUT,
+	@Wynik INT OUTPUT,
+	@BledneSegmentySQL varchar(max) OUTPUT
+)
+
+AS
+BEGIN
+	DECLARE @TypWzorca INT,
+			@SQL NVarchar(MAX)
+	SELECT @TypWzorca =  WNP_Rodzaj, @SQL = WNP_SQL FROM CDN.ProdWzorceNumerowPartii WHERE WNP_Id = @IdWzorca
+	SET @NumerPartii = ''
+	SET @Wynik = 0
+	SET @BledneSegmentySQL = ''
+
+	IF @TypWzorca = 0
+	BEGIN
+		DECLARE @Nazwa VARCHAR(255), @CzyPredef TINYINT, @SeparatorPo VARCHAR(255), @SeparatorW VARCHAR(255), @IloscZnakow INT, @DataWazn INT, @DataWaznJedn TINYINT
+		DECLARE @SegmentDoDodania VARCHAR(255)
+
+		declare segmenty_cursor cursor fast_forward for
+		SELECT PSG_Nazwa, PSG_Predefiniowany, ISNULL(SepPo.Slw_WartoscS,'') SeparatorPo,ISNULL(SepW.SLW_WartoscS,'') SeparatorW, PSGW_IloscZnakow, PSGW_DataWaznosci, 
+		PSGW_DataWaznosciJedn, PSGW_SQL
+		FROM CDN.ProdSegmentyWlasciwosci
+		JOIN CDN.ProdSegmenty ON PSG_Id = PSGW_PSGId
+		LEFT JOIN CDN.Slowniki SepPo ON SepPo.SLW_ID = PSGW_SeparatorPo
+		LEFT JOIN CDN.Slowniki SepW ON SepW.SLW_ID = PSGW_SeparatorW
+		WHERE PSGW_ObiTyp = 1 AND PSGW_ObiNumer = @IdWzorca
+		ORDER BY PSGW_Lp
+
+		DECLARE @Segment VARCHAR(255) = ''
+		DECLARE @SeparatorPoprz VARCHAR(255) = ''
+	
+		open segmenty_cursor
+		fetch next from segmenty_cursor into  @Nazwa, @CzyPredef, @SeparatorPo, @SeparatorW, @IloscZnakow, @DataWazn, @DataWaznJedn, @SQL
+
+		while @@FETCH_STATUS = 0 
+		begin
+			IF UPPER(@SeparatorW) = '&lt;SPACJA&gt;'
+				SET @SeparatorW = ' '
+
+			SET @Segment = ''
+			IF @CzyPredef = 0
+			BEGIN
+				SET @Segment = @Nazwa
+			END
+			ELSE IF @CzyPredef = 2
+			BEGIN
+				DECLARE @WynikZap TABLE (Segm VARCHAR(255))
+
+				BEGIN TRY
+					SELECT @SQL = REPLACE(@SQL,'{FiltrSQL}',' PZA_Id = @PZAId')
+
+					INSERT @WynikZap
+					EXECUTE sp_executesql @SQL, N'@PZAId int',@PZAId = @PZAId
+					SELECT @Segment = Segm FROM @WynikZap
+				END TRY
+				BEGIN CATCH
+					IF @@ERROR &lt;&gt; 0
+					BEGIN
+						SET @Segment = ''
+						SET @Wynik = 1
+						SET @BledneSegmentySQL = @BledneSegmentySQL+CASE WHEN @BledneSegmentySQL = '' THEN '' ELSE ', ' END+@Nazwa
+					END
+				END CATCH
+				
+			END
+			BEGIN
+				IF @Nazwa ='Numer NZP'
+				BEGIN
+					SELECT @Segment = @Segment + CASE WHEN @Segment = '' THEN '' ELSE @SeparatorW END +
+					SUBSTRING(CDN.NumerDokumentu(14368,0,14368,PNZ_Numer,PNZ_Rok,PNZ_Seria,PNZ_Miesiac),1,@IloscZnakow)
+					FROM CDN.ProdNadzleceniaLinki
+					JOIN CDN.ProdNadzlecenia ON PNZ_Id = PNL_PNZId
+					WHERE PNL_PZLId = @PZLId
+					ORDER BY PNL_Id
+				END
+				ELSE IF @Nazwa ='Numer ZP'
+				BEGIN
+					SELECT @Segment = CDN.NumerDokumentu(CASE WHEN PZL_PrjId = 0 THEN 14343 ELSE 14350 END,0,CASE WHEN PZL_PrjId = 0 THEN 14343 ELSE 1450 END,PZL_Numer,PZL_Rok,PZL_Seria,PZL_Miesiac)
+					FROM CDN.ProdZlecenia
+					WHERE PZL_Id = @PZLId
+				END
+				ELSE IF @Nazwa = 'Kod procesu'
+				BEGIN
+					SELECT @Segment =  PTE_Kod
+					FROM CDN.ProdCzynnosci
+					JOIN CDN.ProdProcesy ON PCZ_Proces = PPC_Id
+					JOIN CDN.ProdTechnologia ON PTE_Id = PPC_Technologia
+					WHERE PCZ_Id = @PCZId
+				END
+				ELSE IF @Nazwa = 'Kod operacji'
+				BEGIN
+					SELECT @Segment = PTC_Kod
+					FROM CDN.ProdCzynnosci
+					JOIN CDN.ProdTechnologiaCzynnosci ON PTC_Id = PCZ_TechnologiaCzynnosc
+					WHERE PCZ_Id = @PCZId
+				END
+				ELSE IF @Nazwa = 'Kod materiału'
+				BEGIN
+					SELECT @Segment = @Segment + CASE WHEN @Segment = '' THEN '' ELSE @SeparatorW END + 
+					SUBSTRING(ISNULL(Twr_Kod, PTZ_Kod),1,@IloscZnakow)
+					FROM CDN.ProdCzynnosci
+					JOIN CDN.ProdZasoby ON PZA_Czynnosc = PCZ_Id
+					JOIN CDN.ProdTechnologiaZasoby ON PTZ_Id = PZA_TechnologiaZasob
+					LEFT JOIN CDN.TwrKarty ON Twr_GIDNumer = PZA_TwrNumer AND PZA_TwrTyp = 16
+					WHERE PCZ_Id = @PCZId AND PTZ_UwzglednijWNrSeryjnym = 1 AND PZA_TypZasobu = 1
+				END		
+				ELSE IF @Nazwa = 'Kod wyrobu'
+				BEGIN
+					SELECT @Segment = ISNULL(Twr_Kod, PTZ_Kod)
+					FROM CDN.ProdZasoby
+					LEFT JOIN CDN.ProdTechnologiaZasoby ON PTZ_Id = PZA_TechnologiaZasob
+					LEFT JOIN CDN.TwrKarty ON Twr_GIDNumer = PZA_TwrNumer AND PZA_TwrTyp = 16
+					WHERE PZA_Id = @PZAId
+				END				
+				ELSE IF @Nazwa  = 'Kod gniazda'
+				BEGIN
+
+					SELECT @Segment = @Segment + CASE WHEN @Segment = '' THEN '' ELSE @SeparatorW END + 
+					SUBSTRING(PFU_Kod,1,@IloscZnakow)
+					FROM CDN.ProdCzynnosciObiekty
+					JOIN CDN.ProdFunkcje ON PCO_Funkcja = PFU_Id
+					WHERE PCO_Czynnosc = @PCZId AND PFU_UwzglednijWNrSeryjnym = 1
+					ORDER BY PFU_Kod
+				END				
+				ELSE IF @Nazwa  = 'Kod zasobu'
+				BEGIN
+
+					SELECT @Segment = @Segment + CASE WHEN @Segment = '' THEN '' ELSE @SeparatorW END + 
+					SUBSTRING(POB_Kod,1,@IloscZnakow)
+					FROM CDN.ProdCzynnosciObiekty
+					JOIN CDN.ProdObiekty ON PCO_Obiekt = POB_Id
+					WHERE PCO_Czynnosc = @PCZId AND POB_UwzglednijWNrSeryjnym = 1
+					ORDER BY POB_Kod
+				END	
+				ELSE IF @Nazwa = 'Numer partii/seryjny półproduktu'
+				BEGIN
+					SELECT @Segment = @Segment + CASE WHEN @Segment = '' THEN '' ELSE @SeparatorW END + 
+					SUBSTRING(LTRIM(RTRIM(P.PZA_NumerSeryjny)),1,@IloscZnakow)
+					FROM CDN.ProdCzynnosci
+					JOIN CDN.ProdZasoby S ON S.PZA_Czynnosc = PCZ_Id
+					JOIN CDN.ProdZasoby P ON P.PZA_Id = S.PZA_Zasob
+					WHERE PCZ_Id = @PCZId AND S.PZA_TypZasobu = 1
+				END
+				ELSE IF @Nazwa IN('Data wytworzenia wyrobu','Data rozpoczęcia produkcji','Data ważności wyrobu')
+				BEGIN
+					DECLARE @DataDlaSegmentu INT = 0
+					SELECT @DataDlaSegmentu = CASE @Nazwa 
+					WHEN 'Data wytworzenia wyrobu' THEN PCZ_TerminZakonczenia 
+					WHEN 'Data rozpoczęcia produkcji' THEN PCZ_TerminRozpoczecia
+					WHEN 'Data ważności wyrobu' THEN CASE WHEN PCZ_TerminZakonczenia = 0 THEN 0 ELSE PCZ_TerminZakonczenia + @DataWazn END END
+					FROM CDN.ProdCzynnosci
+					WHERE PCZ_Id = @PCZId
+
+					IF @DataDlaSegmentu &gt; 0 
+						SET @Segment = FORMAT(DATEADD(S,@DataDlaSegmentu,'19900101'),'dd.MM.yyyy HH:mm')
+					ELSE
+						SET @Segment = ''
+				END
+
+			END
+
+			IF LTRIM(RTRIM(@Segment)) != ''
+			BEGIN
+				IF @Nazwa NOT IN ('Numer NZP','Numer partii/seryjny półproduktu','Kod zasobu','Kod gniazda','Kod materiału')
+					SET @NumerPartii = LTRIM(RTRIM(@NumerPartii)) + @SeparatorPoprz + LTRIM(RTRIM(SUBSTRING(@Segment,1,@IloscZnakow)))
+				ELSE
+					SET @NumerPartii = LTRIM(RTRIM(@NumerPartii)) + @SeparatorPoprz + LTRIM(RTRIM(@Segment))
+				SET @SeparatorPoprz = @SeparatorPo
+			END
+
+			IF UPPER(@SeparatorPoprz) = '&lt;SPACJA&gt;'
+				SET @SeparatorPoprz = ' '
+
+			fetch next from segmenty_cursor into @Nazwa, @CzyPredef, @SeparatorPo, @SeparatorW, @IloscZnakow, @DataWazn, @DataWaznJedn, @SQL
+		end
+
+		close segmenty_cursor 
+		deallocate segmenty_cursor
+	END
+	ELSE
+	BEGIN
+		DECLARE @WynikZapNrPartii TABLE (Segm VARCHAR(256))
+
+		BEGIN TRY
+			SELECT @SQL = REPLACE(@SQL,'{FiltrSQL}',' PZA_Id = @PZAId')
+
+			INSERT @WynikZapNrPartii
+			EXECUTE sp_executesql @SQL, N'@PZAId int',@PZAId = @PZAId
+
+			SELECT @NumerPartii = Segm
+			FROM @WynikZapNrPartii
+		END TRY
+		BEGIN CATCH
+			IF @@ERROR &lt;&gt; 0
+			BEGIN
+				SET @Wynik = 1
+				SET @BledneSegmentySQL = @Nazwa
+				SET @NumerPartii = ''
+			END
+		END CATCH
+		
+	END
+	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

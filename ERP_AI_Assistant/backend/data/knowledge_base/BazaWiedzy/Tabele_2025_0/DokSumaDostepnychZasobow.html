@@ -1,0 +1,167 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="DokSumaDostepnychZasobow"></A><PRE>
+          <FONT SIZE="2"><I>/* DokSumaDostepnychZasobow */</I><BR>
+CREATE      function CDN.DokSumaDostepnychZasobow(
+@p_gt smallint,
+@p_gn integer,
+@p_typilosci smallint,
+@p_biezacadata integer,
+@r_gt   smallint,
+@r_gn   integer,
+@p_FrsId integer,
+@p_FrsIdW integer,
+@p_TypDok smallint,
+@p_ZrdTyp smallint,
+@p_ZrdNumer integer,
+@p_FrsIDZrd integer,
+@p_TypDokZrd smallint,
+@p_UwzgledniajChronologie integer
+)
+
+
+
+RETURNS varchar(128)
+ AS
+BEGIN
+declare @ilosc Decimal(28,4);
+declare @iloscRez Decimal(28,4);
+declare @iloscDst Decimal(28,4);
+
+declare @S_Priorytet    smallint;
+declare @S_DataRealizacji int;
+declare @S_DataWaznosci int;
+declare @S_RezNumer int;
+declare @S_DataRezerwacji int;
+
+declare @retval varchar(128);
+declare @dstnumer int;
+
+
+
+select  @S_Priorytet = Rez_Priorytet, @S_DataRealizacji = Rez_DataRealizacji,
+        @S_DataWaznosci = Rez_DataWaznosci, @S_RezNumer = Rez_GidNumer,
+        @S_DataRezerwacji = Rez_DataRezerwacji,
+        @dstnumer = Rez_DstNumer
+From    CDN.Rezerwacje
+Where   Rez_GIDTyp = @r_gt and Rez_GIDNumer = @r_gn
+
+ SET  @Ilosc = (select IsNull(SUM(
+
+                                case when @p_TypIlosci=0 then twz_ilspr
+                                         when @p_TypIlosci=1 then twz_ilMag
+                                         when @p_TypIlosci=2 then (case when twz_ilspr &lt;TWZ_Ilosc then Twz_IlSpr else Twz_Ilosc end )
+                                         when @p_TypIlosci=3 then (case when twz_ilMag &lt;TWZ_Ilosc then Twz_IlMag else Twz_Ilosc end )
+                                         else Twz_IlSpr
+                                end
+                 ),0)
+                FROM cdn.DokDostepneMagazyny(@p_FrSID,@p_FrSIDW,@p_typDok, @p_ZrdTyp, @p_ZrdNumer,@p_FrsIDZrd, @p_TypDokZrd)
+                JOIN   cdn.twrzasoby on TwZ_MagNumer = Mag_GIDNumer
+                WHERE
+                        TwZ_TwrNumer = @p_gn
+               /* GROUP BY TwZ_MagNumer*/)
+                -
+                        -- TID: 102850 - wykomentowane i zamienione na poniższą linię
+            (SELECT IsNull(SUM(rez_ilosc - rez_zrealizowano - (case when IsNull(MAG_WMS,0) &lt;&gt; 0 and Rez_MagNumer &lt;&gt; 0 and @p_typilosci = 0 and @r_gt = 0 and @p_TypDok = 0 and @p_ZrdTyp = 0 then 0 else rez_iloscmag end)),0)	--Nomad
+            FROM CDN.Rezerwacje
+			left join CDN.Magazyny on MAG_GIDNumer = Rez_MagNumer
+            WHERE Rez_GIDNumer IN
+            (
+            SELECT Rez_GIDNumer
+            FROM        cdn.rezerwacje
+                        join cdn.rezmagazyny on
+                        rez_gidtyp = rem_reztyp and
+                        rez_gidnumer = rem_reznumer
+                        join cdn.DokDostepneMagazyny(@p_FrSID,@p_FrSIDW,@p_typDok, @p_ZrdTyp, @p_ZrdNumer,@p_FrsIDZrd, @p_TypDokZrd) on rem_magnumer = Mag_GIDNumer 
+            WHERE   rez_gidtyp = 2576
+                        AND Rez_twrnumer = @p_gn
+                        --AND Rez_MagNumer = Mag_Gidnumer       MF - TID: 111457 oraz TID: 121031 - dodany join do cdn.rezmagazyny oraz poniższy warunek
+                        --and rem_magnumer = Mag_GIDNumer
+                        AND Rez_DataWaznosci &gt;= @p_biezacadata
+                        AND (   case when Rez_DstNumer&lt;&gt;0 then 1
+                          when Rez_DstNumer=0 and Rez_DataAktywacji &lt;= @p_biezacadata then 1
+                          else 0
+                        end ) =1
+                        AND Rez_aktywna = 1
+                        AND Rez_Typ =1
+                        AND Rez_Ilosc &lt;&gt; 0
+
+
+                        AND
+                        (       Case    -- sprawdzenie czy sprawdzana rezerwacja rezerwuje zasób
+                                        when @dstnumer&lt;&gt;0 and Rez_DstNumer=0 then 0-- jeśli tak to analizujemy tylko rezeracje z zasobami
+                                        else    1
+                                End) =1
+                        AND ( -- sprawdzenie priorytetów
+                                (case
+                                        when @dstnumer&lt;&gt;0 then  0
+                                        else Rez_DstNumer       -- rezerwacje za zasobie najwyższy priorytet
+                                end) &lt;&gt;0 OR
+                                Rez_Priorytet &lt; @S_Priorytet OR
+                                @p_UwzgledniajChronologie=1 AND Rez_Priorytet = @S_Priorytet AND REZ_DataRealizacji &lt; @S_DataRealizacji OR
+                                @p_UwzgledniajChronologie=1 AND Rez_Priorytet = @S_Priorytet AND REZ_DataRealizacji = @S_DataRealizacji AND REZ_DataWaznosci &lt; @S_DataWaznosci  OR
+                                @p_UwzgledniajChronologie=1 AND Rez_Priorytet = @S_Priorytet AND REZ_DataRealizacji = @S_DataRealizacji AND REZ_DataWaznosci = @S_DataWaznosci AND REZ_DataRezerwacji &lt; @S_DataRezerwacji-- OR
+                                )
+                                /*GROUP BY Rem_MagNumer*/)
+                                )
+          --      As ILE
+        --FROM cdn.DokDostepneMagazyny(@p_FrSID,@p_FrSIDW,@p_typDok, @p_ZrdTyp, @p_ZrdNumer,@p_FrsIDZrd, @p_TypDokZrd)  
+       -- GROUP BY mag_gidnumer, mag_kod
+   
+
+
+
+           --
+        if (@dstnumer=0)
+      set @IloscRez =  CDN.DokStanRezerwacjiWszystkich
+                        (@p_gT,
+                         0,
+                         @p_gN,
+                         @p_biezacadata,
+                         @p_FrsId,
+                         @p_FrsIdW,
+                         @p_TypDok,
+                         @p_ZrdTyp,
+                         @p_ZrdNumer,
+                         @p_FrsIDZrd,
+                         @p_TypDokZrd,
+                         @r_gt,
+                         @r_gn,
+                         @Ilosc,
+                         5,
+                         case when @p_TypIlosci=0 or @p_typilosci = 2 then 0 else 1 end,
+                         0
+                        )
+
+
+        set @iloscRez=IsNull(@iloscRez,0);
+
+       if (@ilosc - @iloscRez) &lt; 0
+         begin
+         set @iloscDst = 0;
+        end
+      else
+         begin
+         set @iloscDst = @ilosc - @iloscRez;
+         if @iloscDst &lt; 0
+            set @iloscDst = 0 ;
+        end;
+       set @retval=cast(@ilosc as varchar(28))+':'+cast(@iloscDst as varchar(28))+':'+cast(@iloscRez as varchar(28));
+
+  return @retval;
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

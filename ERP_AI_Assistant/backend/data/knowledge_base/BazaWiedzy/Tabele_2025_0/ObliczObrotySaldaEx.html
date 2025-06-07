@@ -1,0 +1,1169 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie procedury ObliczObrotySaldaEx"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie procedury ObliczObrotySaldaEx */</I><BR>
+IF EXISTS (SELECT name  FROM sysobjects WHERE name = 'ObliczObrotySaldaEx' AND type = 'P')
+  DROP PROCEDURE CDN.ObliczObrotySaldaEx;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury ObliczObrotySaldaEx"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury ObliczObrotySaldaEx */</I><BR>
+CREATE PROCEDURE CDN.ObliczObrotySaldaEx
+  @CDN_Data_od INTEGER,
+  @CDN_Data_do  INTEGER,
+  @CDN_Bufor smallint,
+  @KKSGIDNumer int=0,
+  @Konto varchar(50)='',
+  @CDN_FiltrWybraneKonta tinyint=0,
+  @CDN_FiltrUsera1 nvarchar(3000) = '',
+  @CDN_FiltrUsera2 nvarchar(3000) = '',
+  @CDN_FiltrUsera3 nvarchar(3000) = '',
+  @Wyrazenie varchar(40)='',
+  @Syntetyka smallint,
+  @WgMiesiecy smallint = 0,
+  @BezStanow smallint = 0,
+  @DolaczNazwy smallint = 0,
+  @CDN_FiltrDekrety nvarchar(max) = '',
+  @CDN_FiltrDekretyID int = 0,
+  @CDN_KwotyWmr tinyint = 0,
+  @CDN_FiltrWmr nvarchar(max) = '', 
+  @CDN_OpeNumer int=0,
+  @PONNumer int=0,
+  @CDN_ZestawieniaTakNie tinyint=0,
+  @CDN_TypZestawienia tinyint=100   
+AS
+begin
+set nocount on
+
+declare @PoczatekOOPoczC int
+declare @KoniecOOPoczC int
+declare @OkresIDKoniec int
+declare @OkresIDPoczatek int
+declare @Poziom smallint
+declare @PoczatekC int
+set @PoczatekC = @CDN_Data_od
+declare @KoniecC int
+set @KoniecC = @CDN_Data_do
+declare @Filtr nvarchar(max)
+
+
+declare @Bufor smallint
+set @Bufor = @CDN_Bufor
+
+declare @sSQLKonta1 nvarchar(4000)
+declare @sSQLKonta3 nvarchar(4000)
+
+declare @ObrotySQL smallint
+set @ObrotySQL = 0
+
+declare @bWezTylkoSyntetyke smallint
+set @bWezTylkoSyntetyke = 0
+
+declare @WskazaneKonto varchar(50)
+set @WskazaneKonto = ''
+
+
+declare @NumerKlasyKonta int
+set @NumerklasyKonta = 0
+
+declare @MaskaKonta smallint
+set @MaskaKonta = 0
+
+declare @sSQL nvarchar(max)
+
+/*
+select
+[KKS_GIDNumer]=1, [KKS_SynNumer]=1, [KKS_Poziom]=1, [KKS_Rozrachunkowe]=1, [KKS_Analityka]=1, [KKS_SaldoWgObr]=1
+,[KKS_TypKonta]=1, [Rok]=1, [Miesiac]=1, [BODT]=1.00, [BOCT]=1.00, [ODTP]=1.00, [OCTP]=1.00, [SDTP]=1.00, [SCTP]=1.00
+, [ODT]=1.00,[OCT]=1.00, [ODTK]=1.00, [OCTK]=1.00, [SDT]=1.00, [SCT]=1.00, [SDTK]=1.00, [SCTK]=1.00
+, [KKS_Konto]='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',[KKS_Nazwa]='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', [KKS_Waluta]='ccc' 
+*/
+
+
+
+select 
+	@OkresIDKoniec = Okr_ID
+from cdn.Okresy
+where Okr_Poczatek &lt;= @KoniecC and Okr_Koniec &gt;= @KoniecC
+
+select 
+	@PoczatekOOPoczC = Okr_Poczatek,
+	@KoniecOOPoczC = Okr_Koniec,
+	@OkresIDPoczatek = Okr_ID
+from cdn.Okresy
+where Okr_Poczatek &lt;= @PoczatekC and Okr_Koniec &gt;= @PoczatekC
+
+set @PoczatekOOPoczC = isnull(@PoczatekOOPoczC, 0)
+
+
+
+
+select @ObrotySQL=isnull(kon_wartosc,0) from cdn.konfig with(nolock) where kon_numer = 2091;
+
+
+set @Filtr = @CDN_FiltrUsera1 + @CDN_FiltrUsera2 + @CDN_FiltrUsera3
+
+
+if left(@Konto,1) = '@' and @KKSGIDNumer = 0 and @Konto &lt;&gt; ''
+begin
+	select @NumerKlasyKonta = Naz_GidLp from cdn.Nazwy where Naz_GIDTyp = 2896 and Naz_Nazwa = substring(@Konto, 2, len(@Konto))
+	if isnull(@NumerKlasyKonta,0) = 0
+		return
+	else
+	begin
+		if rtrim(@Filtr) &lt;&gt; ''
+			set @Filtr = @Filtr + N' and '
+		
+		set @Filtr = @Filtr + N'KKS_Klasa = @NumerKlasyKonta'
+			
+		set @Syntetyka = 1
+	end
+
+end
+else if charindex('?', @Konto) &gt; 0 or charindex('*', @Konto) &gt; 0 and @KKSGIDNumer = 0 and @Konto &lt;&gt; ''
+begin
+	set @Konto = replace(@Konto, '?', '_')
+	set @Konto = replace(@Konto, '*', '%')
+
+
+	if rtrim(@Filtr) &lt;&gt; ''
+			set @Filtr = @Filtr + N' and '
+			
+	set @Filtr = @Filtr + N'KKS_Konto like @Konto'
+	set @Syntetyka = 1
+	set @MaskaKonta = 1
+end
+else if @KKSGIDNumer = 0 and @Konto &lt;&gt; '' and right(RTRIM(@Konto), 1) &lt;&gt; '%' and @Syntetyka &lt;&gt; 0 
+begin
+	set @WskazaneKonto = @Konto
+	set @Konto = rtrim(@Konto) + '%'
+	set @bWezTylkoSyntetyke = 1
+end
+	
+
+if @KKSGIDNumer = 0 and @Konto = '' and @Filtr = '' and @Wyrazenie = ''
+	set @Konto = '%'
+
+
+
+
+if @KKSGIDNumer = 0 
+begin
+	if @Konto &lt;&gt; '' or @Filtr &lt;&gt; '' or @CDN_FiltrWybraneKonta&lt;&gt;0
+	begin
+		create table #Obroty (KKS_GIDNumer int,
+					KKS_SynNumer int, KKS_Konto varchar(50), KKS_Poziom smallint, KKS_Rozrachunkowe smallint,
+					KKS_Analityka smallint, KKS_SaldoWgObr smallint, KKS_TypKonta smallint, KKS_Archiwalny tinyint,
+					Rok smallint, Miesiac smallint,
+					BODT decimal(15,2), BOCT decimal(15,2), 
+					ODTP decimal(15,2), OCTP decimal(15,2),
+					SDTP decimal(15,2), SCTP decimal(15,2), 
+					ODT decimal(15,2), OCT decimal(15,2), 
+					ODTK decimal(15,2), OCTK decimal(15,2), 
+					SDT decimal(15,2), SCT decimal(15,2),
+					SDTK decimal(15,2), SCTK decimal(15,2)
+		PRIMARY KEY (KKS_GIDNumer)--, KKS_Poziom)
+		)
+	end
+	
+
+	if (@Konto = '' and @Filtr &lt;&gt; '') or (@Konto &lt;&gt; '' and (@NumerKlasyKonta &lt;&gt; 0 or @MaskaKonta &lt;&gt; 0)) or @CDN_FiltrWybraneKonta&lt;&gt;0 or @CDN_ZestawieniaTakNie&lt;&gt;0
+	begin
+		create table #tmpKonta(KKS_GIDNumer int,
+					KKS_SynNumer int,
+					KKS_Konto varchar(50),
+					KKS_OkresId int,
+					KKS_Poziom smallint,
+					KKS_Rozrachunkowe smallint,
+					KKS_Analityka smallint,
+					KKS_SaldoWgObr smallint,
+					KKS_TypKonta smallint,
+					KKS_Archiwalny tinyint,					
+					WlasciweKonto smallint			
+					Primary key(KKS_GIDNumer))
+
+
+		set @sSQLKonta1 = 'insert into #tmpKonta ' +
+				' select a.KKS_GIDNumer, ' +
+				' a.KKS_SynNumer, ' +
+				' a.KKS_Konto, ' + 
+				' a.KKS_OkresID, ' +
+				' a.KKS_Poziom, ' +
+				' a.KKS_Rozrachunkowe, ' +
+				' a.KKS_Analityka, ' +
+				' a.KKS_SaldoWgObr, ' +
+				' a.KKS_TypKonta, ' +
+				' a.KKS_Archiwalny, ' +
+				' max(case when KKL_SynNumer = KKL_KKSNumer then 1 else 0 end) ' +
+				' from cdn.Konta ' +
+				' 	join cdn.KontaLinki ' +
+				'		on KKS_GIDNumer = KKL_SynNumer and KKS_OkresID = @OkresIDKoniec'
+
+
+		set @sSQLKonta3 = '' +
+				'	join cdn.Konta a ' +
+				'		on KKL_KKSNumer = a.KKS_GIDNumer ' +
+				' group by a.KKS_GIDNumer, ' +
+				' 	a.KKS_SynNumer, ' +
+				' 	a.KKS_Konto, ' +
+				'   a.KKS_OkresID, ' +
+				' 	a.KKS_Poziom, ' +
+				' 	a.KKS_Rozrachunkowe, ' +
+				' 	a.KKS_Analityka, ' +
+				' 	a.KKS_SaldoWgObr, ' +
+				' 	a.KKS_TypKonta, '+	
+				' 	a.KKS_Archiwalny'
+
+
+		if @CDN_ZestawieniaTakNie&lt;&gt;0
+		begin 
+			create table #Zestawienia (GIDNumerKonta int, TypZestawienia tinyint)
+
+			insert into #Zestawienia
+			exec cdn.KSIZestawieniaDlaKonta @KKSGIDNumer=0,@OkresID=@OkresIDKoniec,@Tryb=3,@FiltrKont=@Filtr
+
+			set @Filtr = @Filtr + case when rtrim(ltrim(@Filtr)) &lt;&gt; '' then  N' and ' else N'' end + case when @CDN_ZestawieniaTakNie=2 then N' not ' else N'' end +
+					'exists(select 1 from #Zestawienia zest where zest.GIDNumerKonta=KKS_GIDNumer' + 
+						case when @CDN_TypZestawienia=100 then N'' else N' and zest.TypZestawienia=' +convert(varchar(5),@CDN_TypZestawienia) end +')'
+		end
+
+
+		if (@Konto &lt;&gt; '' and (@NumerKlasyKonta &lt;&gt; 0 or @MaskaKonta &lt;&gt; 0))
+		begin
+			set @sSQL = @sSQLKonta1 + case when rtrim(ltrim(@Filtr)) &lt;&gt; '' then  N' and ' else N'' end + @Filtr + @sSQLKonta3
+			
+			exec sp_executeSQL @sSQL, 
+					N'@OkresIDKoniec int, @NumerKlasyKonta int, @Konto varchar(50)',
+					@OkresIDKoniec = @OkresIDKoniec,
+					@NumerKlasyKonta = @NumerKlasyKonta, 
+					@Konto = @Konto
+		end
+		else if @CDN_FiltrWybraneKonta&lt;&gt;0
+		begin
+			set @sSQL = @sSQLKonta1 + case when rtrim(ltrim(@Filtr)) &lt;&gt; '' then  N' and ' else N'' end + @Filtr + N' and exists(select 1 from cdn.KontaListaWybrane where KLW_OpeNumer='+CONVERT(varchar,@CDN_OpeNumer)+N' and KLW_KKSKonto=KKS_Konto)' + @sSQLKonta3
+			
+			exec sp_executeSQL @sSQL, 
+					N'@OkresIDKoniec int, @NumerKlasyKonta int, @Konto varchar(50)',
+					@OkresIDKoniec = @OkresIDKoniec,
+					@NumerKlasyKonta = @NumerKlasyKonta, 
+					@Konto = @Konto
+		end		
+		else
+		begin	
+			set @sSQL = @sSQLKonta1 + case when rtrim(ltrim(@Filtr)) &lt;&gt; '' then  N' and ' else N'' end + @Filtr + @sSQLKonta3	
+				
+			exec sp_executeSQL @sSQL,
+					N'@OkresIDKoniec int, @NumerKlasyKonta int, @Konto varchar(50)',
+					@OkresIDKoniec = @OkresIDKoniec,
+					@NumerKlasyKonta = @NumerKlasyKonta, 
+					@Konto = @Konto
+		end
+
+	end
+end
+-------------------------------------------
+
+
+
+
+if isnull(@CDN_FiltrDekrety,'') &lt;&gt; '' or @CDN_FiltrDekretyID &lt;&gt; 0
+begin
+	declare @sSQLBufor nvarchar(50)
+	declare @sSQLFrom nvarchar(max)
+	declare @sSQLGroup nvarchar(500)
+	declare @sGroupFields nvarchar(30)
+	declare @sSQLPre nvarchar(2000)
+	declare @sParams nvarchar(200)
+	declare @sFiltrDekrety nvarchar(max)
+	declare @sFiltrWmr nvarchar(max)
+	
+	
+	
+		
+	
+	
+	if @CDN_FiltrDekretyID &lt;&gt; 0
+	begin
+		select	
+			@sFiltrDekrety = DFN_FiltrSQL
+			, @sFiltrWmr = DFN_FiltrWmrSQL
+		from CDN.DekretyFiltryNag where DFN_ID = @CDN_FiltrDekretyID
+		if @@Error &lt;&gt; 0 or @@ROWCOUNT=0
+		begin
+			raiserror('Podano nieprawidłowy identyfikator filtra dla dekretów',16,1)
+			return
+		end
+		if ISNULL(@sFiltrDekrety,'') = ''
+		begin
+			set @sFiltrDekrety = '(1=1)'
+			set @sFiltrWmr = '(1=1)'
+		end
+	end	
+	else
+	begin	
+		set @sFiltrDekrety = @CDN_FiltrDekrety	
+		set @sFiltrWmr = @CDN_FiltrWmr
+	end
+	
+	
+	if @CDN_KwotyWmr=1 and isnull(@sFiltrWmr,'') = ''
+	begin
+		raiserror('Błędny warunek filtra po opisie analitycznym. Podnieś do edycji ''Warunek dekretu'' i zapisz go ponownie',16,1)
+		return
+	end
+	
+
+
+	if @Bufor = 0
+		set @sSQLBufor = '(dt.DT_Bufor = '''')'					
+	else
+		set @sSQLBufor = '(1=1)'
+	
+	
+	if @KKSGIDNumer &lt;&gt; 0
+		set @sGroupFields = ' ,kl.KKL_KKSNumer'
+	else
+		set @sGroupFields = ''
+		
+		
+	
+	if @KKSGIDNumer &lt;&gt; 0 
+	begin
+		if @OkresIDPoczatek &lt;&gt; @OkresIDKoniec
+		begin --rozne okresy
+			set @sSQLFrom = '' +
+					' from cdn.Konta a' + 
+						' join cdn.KontaLinki kl' +
+							' on a.KKS_GIDNumer = kl.KKL_SynNumer' +
+						' join cdn.Konta kA' +
+							' on kl.KKL_KKSNumer = kA.KKS_GIDNumer and kA.KKS_Analityka = 1' +
+						' join cdn.KontaNastLinki b' +
+							' on kl.KKL_KKSNumer = b.KLI_NastNumer' +
+						' join cdn.Okresy o' +
+							' on o.Okr_ID = b.KLI_PoprzOkresID' +
+						' left join cdn.Dekrety dt' +
+							case when @CDN_KwotyWmr=0 then ''
+							else
+							' join cdn.OpisWymElem owe' +
+								' on owe.OWE_GIDTyp=432 and owe.OWE_GIDNumer=dt.DT_GIDNumer' +
+									' and ((owe.OWE_Pozycja=dt.DT_GIDLp or owe.OWE_Pozycja=0) and case when dt.DT_DC=1 then 1 else -1 end=owe.OWE_Kierunek)' +
+									' and ' + @sFiltrWmr
+							end + 
+							' on b.KLI_PoprzNumer = dt.DT_KKSNumer' +
+								' and (dt.DT_DataDekr Between @PoczatekOOPoczC and @KoniecC)' +												
+								' and ' + @sSQLBufor + 
+								case when @CDN_KwotyWmr=0 then
+								' and ' + @sFiltrDekrety
+								else '' end +
+					' where a.KKS_GIDNumer = @KKSGIDNumer' +
+						' and o.Okr_Poczatek Between @PoczatekOOPoczC and @KoniecC'
+		end
+		else
+		begin
+			set @sSQLFrom = '' +
+					' from cdn.Konta a' + 
+						' join cdn.KontaLinki kl' +
+							' on a.KKS_GIDNumer = kl.KKL_SynNumer' +
+						' join cdn.Konta kA' +
+							' on kl.KKL_KKSNumer = kA.KKS_GIDNumer and kA.KKS_Analityka = 1' +
+						' left join cdn.Dekrety dt' +
+							case when @CDN_KwotyWmr=0 then ''
+							else
+							' join cdn.OpisWymElem owe' +
+								' on owe.OWE_GIDTyp=432 and owe.OWE_GIDNumer=dt.DT_GIDNumer' +
+									' and ((owe.OWE_Pozycja=dt.DT_GIDLp or owe.OWE_Pozycja=0) and case when dt.DT_DC=1 then 1 else -1 end=owe.OWE_Kierunek)' +
+									' and ' + @sFiltrWmr
+							end + 
+							' on kl.KKL_KKSNumer = dt.DT_KKSNumer' +
+								' and (dt.DT_DataDekr Between @PoczatekOOPoczC and @KoniecC)' +								
+								' and ' + @sSQLBufor + 
+								case when @CDN_KwotyWmr=0 then
+								' and ' + @sFiltrDekrety
+								else '' end +
+					' where a.KKS_GIDNumer = @KKSGIDNumer'
+		end
+	end
+	else
+	begin
+		if (@Konto = '' and @Filtr &lt;&gt; '') or (@Konto &lt;&gt; '' and (@NumerKlasyKonta &lt;&gt; 0 or @MaskaKonta &lt;&gt; 0))
+		begin
+			if @OkresIDPoczatek &lt;&gt; @OkresIDKoniec
+			begin --rozne okresy	
+				set @sSQLFrom = '' +					
+						' from #tmpKonta a' +
+							' join cdn.KontaNastLinki b' +
+								' on a.KKS_GIDNumer = b.KLI_NastNumer' +
+							' join cdn.Okresy o' +
+								' on o.Okr_ID = b.KLI_PoprzOkresID' +
+							' left join cdn.Dekrety dt ' +
+								case when @CDN_KwotyWmr=0 then ''
+								else
+								' join cdn.OpisWymElem owe' +
+								' on owe.OWE_GIDTyp=432 and owe.OWE_GIDNumer=dt.DT_GIDNumer' +
+									' and ((owe.OWE_Pozycja=dt.DT_GIDLp or owe.OWE_Pozycja=0) and case when dt.DT_DC=1 then 1 else -1 end=owe.OWE_Kierunek)' +
+									' and ' + @sFiltrWmr
+								end + 
+								' on b.KLI_PoprzNumer = dt.DT_KKSNumer' +
+									' and (dt.DT_DataDekr Between @PoczatekOOPoczC and @KoniecC)' +
+									' and ' + @sSQLBufor + 
+									case when @CDN_KwotyWmr=0 then
+									' and ' + @sFiltrDekrety
+									else '' end +
+						' where o.Okr_Poczatek Between @PoczatekOOPoczC and @KoniecC'
+			end
+			else
+			begin --ten sam okres
+				set @sSQLFrom = '' +					
+						' from #tmpKonta a' +												
+							' left join cdn.Dekrety dt ' +
+								case when @CDN_KwotyWmr=0 then ''
+								else
+								' join cdn.OpisWymElem owe' +
+								' on owe.OWE_GIDTyp=432 and owe.OWE_GIDNumer=dt.DT_GIDNumer' +
+									' and ((owe.OWE_Pozycja=dt.DT_GIDLp or owe.OWE_Pozycja=0) and case when dt.DT_DC=1 then 1 else -1 end=owe.OWE_Kierunek)' +
+									' and ' + @sFiltrWmr
+								end + 
+								' on a.KKS_GIDNumer = dt.DT_KKSNumer' +
+									' and (dt.DT_DataDekr Between @PoczatekOOPoczC and @KoniecC)' +
+									' and ' + @sSQLBufor + 
+									case when @CDN_KwotyWmr=0 then
+									' and ' + @sFiltrDekrety
+									else '' end +
+						' where a.KKS_OkresID = @OkresIDKoniec'
+			end		
+		end
+		else
+		begin --Konto
+			if @OkresIDPoczatek &lt;&gt; @OkresIDKoniec
+			begin --rozne okresy	
+				set @sSQLFrom = '' +					
+						' from cdn.Konta a' +
+							' join cdn.KontaNastLinki b' +
+								' on a.KKS_GIDNumer = b.KLI_NastNumer' +
+							' join cdn.Okresy o' +
+								' on o.Okr_ID = b.KLI_PoprzOkresID' +
+							' left join cdn.Dekrety dt ' +
+								case when @CDN_KwotyWmr=0 then ''
+								else
+								' join cdn.OpisWymElem owe' +
+								' on owe.OWE_GIDTyp=432 and owe.OWE_GIDNumer=dt.DT_GIDNumer' +
+									' and ((owe.OWE_Pozycja=dt.DT_GIDLp or owe.OWE_Pozycja=0) and case when dt.DT_DC=1 then 1 else -1 end=owe.OWE_Kierunek)' +
+									' and ' + @sFiltrWmr
+								end + 
+								' on b.KLI_PoprzNumer = dt.DT_KKSNumer' +
+									' and (dt.DT_DataDekr Between @PoczatekOOPoczC and @KoniecC)' +
+									' and ' + @sSQLBufor + 
+									case when @CDN_KwotyWmr=0 then
+									' and ' + @sFiltrDekrety
+									else '' end +
+						' where a.KKS_OkresID = @OkresIDKoniec and a.KKS_Konto like @Konto' +
+								' and o.Okr_Poczatek Between @PoczatekOOPoczC and @KoniecC'
+													
+			end
+			else
+			begin --ten sam okres
+				set @sSQLFrom = '' +					
+						' from cdn.Konta a' +												
+							' left join cdn.Dekrety dt ' +
+								case when @CDN_KwotyWmr=0 then ''
+								else
+								' join cdn.OpisWymElem owe' +
+								' on owe.OWE_GIDTyp=432 and owe.OWE_GIDNumer=dt.DT_GIDNumer' +
+									' and ((owe.OWE_Pozycja=dt.DT_GIDLp or owe.OWE_Pozycja=0) and case when dt.DT_DC=1 then 1 else -1 end=owe.OWE_Kierunek)' +
+									' and ' + @sFiltrWmr
+								end + 
+								' on a.KKS_GIDNumer = dt.DT_KKSNumer' +
+									' and (dt.DT_DataDekr Between @PoczatekOOPoczC and @KoniecC)' +
+									' and ' + @sSQLBufor + 
+									case when @CDN_KwotyWmr=0 then
+									' and ' + @sFiltrDekrety
+									else '' end +
+						' where a.KKS_OkresID = @OkresIDKoniec and (a.KKS_Konto like @Konto)'																	
+			end
+		end
+	end
+	
+
+	set @sSQL = '' +
+			' select' +
+				' ob.KKS_GIDNumer,' +
+				' ob.KKS_SynNumer,' +
+				' ob.KKS_Konto,' +
+				' ob.KKS_Poziom,' +
+				' ob.KKS_Rozrachunkowe,' +
+				' ob.KKS_Analityka,' +
+				' ob.KKS_SaldoWgObr,' +
+				' ob.KKS_TypKonta,' +
+				' ob.KKS_Archiwalny,' +
+				' 0 Rok, 0 Miesiac,' +
+				'' +
+				' sum(' +
+					' case when ob.KKS_SaldoWgObr = 1 then' +
+						' BODT' +
+					' else' +
+						' case when BODT - BOCT &gt; 0 then BODT - BOCT else 0 end' +
+					' end' +
+				' ) BODT,' +
+				'' +
+				'' +
+				' sum(' +
+					' case when ob.KKS_SaldoWgObr = 1 then' +
+						' BOCT' +
+					' else' +
+						' case when BODT - BOCT &lt; 0 then BOCT - BODT else 0 end' +
+					' end' +
+				' ) BOCT,' +
+				'' +
+				'' +
+				' sum(ODTP) ODTP,' +
+				' sum(OCTP) OCTP,' +
+				'' +
+				'' +
+				' sum(' +
+					' case when ob.KKS_SaldoWgObr = 1 then' +
+						' BODT + ODTP' +
+					' else' +
+						' case when BODT - BOCT + ODTP - OCTP &gt; 0 then BODT - BOCT + ODTP - OCTP else 0 end' +
+					' end' +
+				' ) SDTP,' +
+				'' +
+				' sum(' +
+					' case when ob.KKS_SaldoWgObr = 1 then' +
+						' BOCT + OCTP' +
+					' else' +
+						' case when BODT - BOCT + ODTP - OCTP &lt; 0 then abs(BODT - BOCT + ODTP - OCTP) else 0 end' +
+					' end' +
+				' ) SCTP,' +
+				'' +
+				'' +
+				' sum(ODT) ODT,' +
+				' sum(OCT) OCT,' +
+				'' +
+				'' +
+				' sum(ODTP) + sum(ODT) ODTK,' +
+				' sum(OCTP) + sum(OCT) OCTK,' +
+				'' +
+				'' +
+				' sum(' +
+					' case when ob.KKS_SaldoWgObr = 1 then' +
+						' ODT' +
+					' else' +
+						' case when ODT - OCT &gt; 0 then ODT - OCT else 0 end' +
+					' end' +
+				' ) SDT,' +
+				'' +
+				' sum(' +
+					' case when ob.KKS_SaldoWgObr = 1 then' +
+						' OCT' +
+					' else' +
+						' case when ODT - OCT &lt; 0 then abs(ODT - OCT) else 0 end' +
+					' end' +
+				' ) SCT,' +
+				'' +
+				'' +
+				' sum(' +
+					' case when ob.KKS_SaldoWgObr = 1 then' +
+						' BODT + ODTP + ODT' +
+					' else' +
+						' case when BODT - BOCT + ODTP - OCTP + ODT - OCT &gt; 0 then BODT - BOCT + ODTP - OCTP + ODT - OCT else 0 end' +
+					' end' +
+				' ) SDTK,' +
+				'' +
+				' sum(' +
+					' case when ob.KKS_SaldoWgObr = 1 then' +
+						' BOCT + OCTP + OCT' +
+					' else' +
+						' case when BODT - BOCT + ODTP - OCTP + ODT - OCT &lt; 0 then abs(BODT - BOCT + ODTP - OCTP + ODT - OCT) else 0 end' +
+					' end' +
+				' ) SCTK' +
+			'' +
+			' from (' +
+				'' +
+				' select' +
+				'' +
+					' a.KKS_GIDNumer,' +
+					' a.KKS_SynNumer,' +
+					' a.KKS_Konto,' +
+					' a.KKS_Poziom,' +
+					' a.KKS_Rozrachunkowe,' +
+					' a.KKS_Analityka,' +
+					' a.KKS_SaldoWgObr,' +
+					' a.KKS_TypKonta,' +
+					' a.KKS_Archiwalny,' +
+					'' +
+					case when @CDN_KwotyWmr=0 then					
+						' sum(case when dt.DT_KorektaBO = 1 and dt.DT_DataDekr &lt;= @KoniecOOPoczC and dt.DT_DC = 1 then dt.DT_Kwota else 0 end) BODT,' +
+						' sum(case when dt.DT_KorektaBO = 1 and dt.DT_DataDekr &lt;= @KoniecOOPoczC and dt.DT_DC = 2 then dt.DT_Kwota else 0 end) BOCT,' +
+						'' +
+						' sum(case when dt.DT_KorektaBO = 0 and dt.DT_DataDekr &lt; @PoczatekC and dt.DT_DC = 1 then dt.DT_Kwota else 0 end) ODTP,' +
+						' sum(case when dt.DT_KorektaBO = 0 and dt.DT_DataDekr &lt; @PoczatekC and dt.DT_DC = 2 then dt.DT_Kwota else 0 end) OCTP,' +
+						'' +
+						'' +
+						' sum(case when dt.DT_KorektaBO = 0 and dt.DT_DataDekr &gt;= @PoczatekC and dt.DT_DC = 1 then dt.DT_Kwota else 0 end) ODT,' +
+						' sum(case when dt.DT_KorektaBO = 0 and dt.DT_DataDekr &gt;= @PoczatekC and dt.DT_DC = 2 then dt.DT_Kwota else 0 end) OCT'
+					else
+						' sum(case when dt.DT_KorektaBO = 1 and dt.DT_DataDekr &lt;= @KoniecOOPoczC and dt.DT_DC = 1 then owe.OWE_Wartosc else 0 end) BODT,' +
+						' sum(case when dt.DT_KorektaBO = 1 and dt.DT_DataDekr &lt;= @KoniecOOPoczC and dt.DT_DC = 2 then owe.OWE_Wartosc else 0 end) BOCT,' +
+						'' +
+						' sum(case when dt.DT_KorektaBO = 0 and dt.DT_DataDekr &lt; @PoczatekC and dt.DT_DC = 1 then owe.OWE_Wartosc else 0 end) ODTP,' +
+						' sum(case when dt.DT_KorektaBO = 0 and dt.DT_DataDekr &lt; @PoczatekC and dt.DT_DC = 2 then owe.OWE_Wartosc else 0 end) OCTP,' +
+						'' +
+						'' +
+						' sum(case when dt.DT_KorektaBO = 0 and dt.DT_DataDekr &gt;= @PoczatekC and dt.DT_DC = 1 then owe.OWE_Wartosc else 0 end) ODT,' +
+						' sum(case when dt.DT_KorektaBO = 0 and dt.DT_DataDekr &gt;= @PoczatekC and dt.DT_DC = 2 then owe.OWE_Wartosc else 0 end) OCT'
+					end +
+					''
+	
+	
+						
+	
+	set @sSQLGroup = ' group by a.KKS_GIDNumer,' +
+							' a.KKS_SynNumer,' +
+							' a.KKS_Konto,' +
+							' a.KKS_Poziom,' +
+							' a.KKS_Rozrachunkowe,' +
+							' a.KKS_Analityka,' +
+							' a.KKS_SaldoWgObr,' +
+							' a.KKS_TypKonta,' +
+							' a.KKS_Archiwalny' +
+							@sGroupFields +
+						' ) ob' +
+					' group by ob.KKS_GIDNumer,' +
+						' ob.KKS_SynNumer,' +
+						' ob.KKS_Konto,' +
+						' ob.KKS_Poziom,' +
+						' ob.KKS_Rozrachunkowe,' +
+						' ob.KKS_Analityka,' +
+						' ob.KKS_SaldoWgObr,' +
+						' ob.KKS_TypKonta,' +
+						' ob.KKS_Archiwalny' 
+	
+	
+	
+	
+	set @sSQLPre = ' select' +
+					' KKS_GIDNumer,' + 
+					' KKS_SynNumer,' +
+					' KKS_Konto,' +
+					' KKS_Poziom,' +
+					' KKS_Rozrachunkowe,' +
+					' KKS_Analityka,' +
+					' KKS_SaldoWgObr,' +
+					' KKS_TypKonta,' + 
+					' KKS_Archiwalny,' +				
+					' 0 Rok,' +
+					' 0 Miesiac,' +
+					' case when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then' +
+						' BODT' +
+					' else' +
+						' case when BODT - BOCT &gt; 0 then BODT - BOCT else 0 end' +
+					' end BODT,' +
+					' case when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then' +
+						' BOCT' +
+					' else' +
+						' case when BODT - BOCT &lt; 0 then BOCT - BODT else 0 end' +
+					' end BOCT,' +
+					' ODTP,' +
+					' OCTP,' +
+					' case when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then' +
+						' SDTP' +
+					' else' +
+						' case when SDTP &gt; SCTP then SDTP - SCTP else 0 end' +
+					' end SDTP,' +
+					' case when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then' +
+						' SCTP' +
+					' else' +
+						' case when SDTP &lt; SCTP then abs(SDTP - SCTP) else 0 end' +
+					' end SCTP,' +
+					' ODT,' +
+					' OCT,' +
+					' ODTP + ODT as ODTK,' +
+					' OCTP + OCT as OCTK,' +
+					' case when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then' +
+						' ODT' +
+					' else' +
+						' case when ODT &gt; OCT then ODT - OCT else 0 end' +
+					' end SDT,' +
+					' case when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then' +
+						' OCT' +
+					' else' +
+						' case when ODT &lt; OCT then OCT - ODT else 0 end' +
+					' end SCT,' +
+					' case when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then' +
+						' SDTK' +
+					' else' +
+						' case when SDTK &gt; SCTK then SDTK - SCTK else 0 end' +
+					' end SDTK,' +
+					' case when KKS_SaldoWgObr = 1 or (KKS_Analityka = 0 and (KKS_Rozrachunkowe = 1 or KKS_TypKonta = 5)) then' +
+						' SCTK' +
+					' else' +
+						' case when SDTK &lt; SCTK then SCTK - SDTK else 0 end' +
+					' end SCTK'
+	
+	
+	
+	
+	if @KKSGIDNumer &lt;&gt; 0
+		set @sSQL = @sSQLPre + N' from (' + @sSQL + @sSQLFrom + @sSQLGroup + N') ob1'
+	else
+		set @sSQL = N'insert into #Obroty ' + @sSQL + @sSQLFrom + @sSQLGroup
+
+	
+	set @sParams = N'@PoczatekC int, @KoniecC int, @PoczatekOOPoczC int, @KoniecOOPoczC int, @OkresIDPoczatek int, @OkresIDKoniec int, @Konto varchar(50), @KKSGIDNumer int' 
+	
+	--select @sSQL
+	--return
+		
+	exec sp_executesql @sSQL, @sParams,
+		@PoczatekC = @PoczatekC,
+		@KoniecC = @KoniecC,
+		@PoczatekOOPoczC = @PoczatekOOPoczC,
+		@KoniecOOPoczC = @KoniecOOPoczC,
+		@OkresIDPoczatek = @OkresIDPoczatek,
+		@OkresIDKoniec = @OkresIDKoniec,
+		@Konto = @Konto,
+		@KKSGIDNumer = @KKSGIDNumer
+		 
+
+--select @sSQL
+
+	if @KKSGIDNumer = 0
+		goto lSyntetyka
+	else
+		return
+end
+
+
+if @OkresIDPoczatek = @OkresIDKoniec and @ObrotySQL = 0 and @BezStanow = 0 and --1=2 and 
+	exists(select o1.OkM_OkrID 
+		from cdn.OkresyMiesiace o1
+			join cdn.OkresyMiesiace o2
+				on o1.OkM_OkrID = o2.OkM_OkrID
+		where o1.OkM_MiesiacOd = @PoczatekC and o2.OkM_MiesiacDo = @KoniecC)
+--wg stanow
+begin
+	declare @PoczatekD datetime
+	declare @KoniecD datetime
+	declare @PoczRok smallint
+	declare @PoczMiesiac smallint
+	declare @KoniecRok smallint
+	declare @KoniecMiesiac smallint
+
+	set @PoczatekC = @PoczatekC
+	set @PoczatekD = dateadd(dd, @PoczatekC, convert(datetime, '18001228',120))
+	set @PoczRok = year(@PoczatekD)
+	set @PoczMiesiac = month(@PoczatekD)
+
+	set @KoniecD = dateadd(dd, @KoniecC, convert(datetime, '18001228',120))
+	set @KoniecRok = year(@KoniecD)
+	set @KoniecMiesiac = month(@KoniecD)
+
+
+	if @KKSGIDNumer &lt;&gt; 0
+	begin
+		if @WgMiesiecy = 0
+		begin
+			exec cdn.OOSEx_StanyNumer @KKSGIDNumer, @Bufor, @PoczRok, @PoczMiesiac, @KoniecRok, @KoniecMiesiac
+		end
+		else
+		begin
+			--wg miesiecy
+			exec cdn.OOSEx_StanyNumerWgMiesiecy @KKSGIDNumer, @Bufor, @PoczRok, @PoczMiesiac, @KoniecRok, @KoniecMiesiac
+		end
+
+
+		return	
+
+	end
+	else if @Konto &lt;&gt; '' and (@NumerKlasyKonta = 0 and @MaskaKonta = 0)
+	begin		
+
+		insert into #Obroty 			
+		exec cdn.OOSEx_StanyKonto @Konto, @Bufor, @OkresIDPoczatek, @PoczRok, @PoczMiesiac, @KoniecRok, @KoniecMiesiac		
+	end
+	else --filtr
+	begin
+		insert into #Obroty 
+		exec cdn.OOSEx_StanyFiltr @Bufor, @PoczRok, @PoczMiesiac, @KoniecRok, @KoniecMiesiac
+	end
+
+
+	goto lSyntetyka
+end
+------------------------------------------------------------------------------------------------
+
+
+if @KKSGIDNumer &lt;&gt; 0
+begin
+	set nocount off
+
+	if @OkresIDPoczatek &lt;&gt; @OkresIDKoniec
+	begin
+		exec CDN.OOSEx_BiezNumerOkresy @KKSGIDNumer, @Bufor, @PoczatekOOPoczC, @KoniecOOPoczC, @PoczatekC, @KoniecC	
+	end
+	else
+	begin
+		exec CDN.OOSEx_BiezNumer @KKSGIDNumer, @Bufor, @PoczatekOOPoczC, @KoniecOOPoczC, @PoczatekC, @KoniecC
+	end
+
+
+	return
+end
+else -- podane konto @Konto lub @Filtr
+begin
+
+	if (@Konto = '' and @Filtr &lt;&gt; '') or (@Konto &lt;&gt; '' and (@NumerKlasyKonta &lt;&gt; 0 or @MaskaKonta &lt;&gt; 0))
+	begin		
+
+		if @OkresIDPoczatek &lt;&gt; @OkresIDKoniec
+		begin	
+			insert into #Obroty 
+			exec cdn.OOSEx_BiezFiltrOkresy @Bufor, @PoczatekOOPoczC, @KoniecOOPoczC, @PoczatekC, @KoniecC
+
+		end
+		else -- Filtr z jednego okresu
+		begin				
+			insert into #Obroty 
+			exec cdn.OOSEx_BiezFiltr @Bufor, @PoczatekOOPoczC, @KoniecOOPoczC, @OkresIDKoniec, @PoczatekC, @KoniecC
+		end
+	end
+	else -- podane KKS_Konto
+	begin
+
+		if @OkresIDPoczatek &lt;&gt; @OkresIDKoniec
+		begin
+			insert into #Obroty 			
+			exec cdn.OOSEx_BiezKontoOkresy @Konto, @Bufor, @PoczatekOOPoczC, @KoniecOOPoczC, @OkresIDKoniec, @PoczatekC, @KoniecC
+
+		end
+		else --Konto z danego okresu
+		begin						
+			insert into #Obroty 		
+			exec cdn.OOSEx_BiezKonto @Konto, @Bufor, @PoczatekOOPoczC, @KoniecOOPoczC, @OkresIDKoniec, @PoczatekC, @KoniecC
+		end
+	end
+
+
+
+end
+
+lSyntetyka:
+if @Syntetyka = 0 
+begin
+	set nocount off
+	select * from #Obroty	
+	drop table #Obroty
+
+
+	if @KKSGIDNumer = 0 and @Konto = ''
+		drop table #tmpKonta
+
+	return
+end
+
+
+set @Poziom = 9
+while @Poziom &gt;= 0
+begin
+	update d set
+		d.BODT = case when d.KKS_SaldoWgObr = 1 or (d.KKS_Rozrachunkowe = 1 or d.KKS_TypKonta = 5) then
+					c.BODT
+				else
+					case when c.BODT &gt; c.BOCT then c.BODT - c.BOCT else 0 end
+				end,
+		d.BOCT = case when d.KKS_SaldoWgObr = 1 or (d.KKS_Rozrachunkowe = 1 or d.KKS_TypKonta = 5) then
+					c.BOCT
+				else
+					case when c.BODT &lt; c.BOCT then c.BOCT - c.BODT else 0 end
+				end,
+
+		d.ODTP = c.ODTP,
+		d.OCTP = c.OCTP,
+		d.SDTP = case when d.KKS_SaldoWgObr = 1 or (d.KKS_Rozrachunkowe = 1 or d.KKS_TypKonta = 5) then
+					c.SDTP
+				else
+					case when c.SDTP &gt; c.SCTP then c.SDTP - c.SCTP else 0 end
+				end,
+		d.SCTP = case when d.KKS_SaldoWgObr = 1 or (d.KKS_Rozrachunkowe = 1 or d.KKS_TypKonta = 5) then
+					c.SCTP
+				else
+					case when c.SDTP &lt; c.SCTP then c.SCTP - c.SDTP else 0 end
+				end,
+		d.ODT = c.ODT,
+		d.OCT = c.OCT,
+		d.ODTK = c.ODTK,
+		d.OCTK = c.OCTK,
+		d.SDT = case when d.KKS_SaldoWgObr = 1 or (d.KKS_Rozrachunkowe = 1 or d.KKS_TypKonta = 5) then
+					c.SDT
+				else
+					case when c.SDT &gt; c.SCT then c.SDT - c.SCT else 0 end
+				end,
+		d.SCT = case when d.KKS_SaldoWgObr = 1 or (d.KKS_Rozrachunkowe = 1 or d.KKS_TypKonta = 5) then
+					c.SCT
+				else
+					case when c.SDT &lt; c.SCT then c.SCT - c.SDT else 0 end
+				end,
+		d.SDTK = case when d.KKS_SaldoWgObr = 1 or (d.KKS_Rozrachunkowe = 1 or d.KKS_TypKonta = 5) then
+					c.SDTK
+				else
+					case when c.SDTK &gt; c.SCTK then c.SDTK - c.SCTK else 0 end
+				end,
+		d.SCTK = case when d.KKS_SaldoWgObr = 1 or (d.KKS_Rozrachunkowe = 1 or d.KKS_TypKonta = 5) then
+					c.SCTK
+				else
+					case when c.SDTK &lt; c.SCTK then c.SCTK - c.SDTK else 0 end
+				end
+	from #Obroty d
+		join (
+			select 
+				a.KKS_GIDNumer KKS_GIDNumer,
+				sum(b.BODT) BODT,
+				sum(b.BOCT) BOCT,
+				sum(b.ODTP) ODTP,
+				sum(b.OCTP) OCTP,
+				sum(b.SDTP) SDTP,			
+				sum(b.SCTP) SCTP,
+				sum(b.ODT) ODT,
+				sum(b.OCT) OCT,
+				sum(b.ODTK) ODTK,
+				sum(b.OCTK) OCTK,
+				sum(b.SDT) SDT,
+				sum(b.SCT) SCT,
+				sum(b.SDTK) SDTK,
+				sum(b.SCTK) SCTK
+			from #Obroty a
+				join #Obroty b
+					on a.KKS_Poziom = @Poziom and a.KKS_GIDNumer = b.KKS_SynNumer
+			group by a.KKS_GIDNumer
+			) c
+			on d.KKS_GIDNumer = c.KKS_GIDNumer
+
+
+	set @Poziom = @Poziom - 1
+end
+
+
+set nocount off
+
+if @NumerKlasyKonta &lt;&gt; 0
+begin
+
+	select 
+		0 as KKS_GIDNumer,
+		0 as KKS_SynNumer,
+		'' as KKS_Konto,
+		0 as KKS_Poziom,
+		0 as KKS_Rozrachunkowe,
+		0 as KKS_Analityka,
+		0 as KKS_SaldoWgObr, 
+		0 as KKS_TypKonta,
+		0 as KKS_Archiwalny,
+		0 as Rok,
+		0 as Miesiac,
+		sum(o.BODT) BODT,
+		sum(o.BOCT) BOCT,
+		sum(o.ODTP) ODTP,
+		sum(o.OCTP) OCTP,
+		sum(o.SDTP) SDTP,			
+		sum(o.SCTP) SCTP,
+		sum(o.ODT) ODT,
+		sum(o.OCT) OCT,
+		sum(o.ODTK) ODTK,
+		sum(o.OCTK) OCTK,
+		sum(o.SDT) SDT,
+		sum(o.SCT) SCT,
+		sum(o.SDTK) SDTK,
+		sum(o.SCTK) SCTK
+		
+	from #Obroty o 
+		join #tmpKonta f 
+			on o.KKS_GIDNumer = f.KKS_GIDNumer and f.WlasciweKonto = 1
+
+	
+end
+else if @MaskaKonta &lt;&gt; 0
+begin
+
+
+	select 
+		0 as KKS_GIDNumer,
+		0 as KKS_SynNumer,
+		'' as KKS_Konto,
+		0 as KKS_Poziom,
+		0 as KKS_Rozrachunkowe,
+		0 as KKS_Analityka,
+		0 as KKS_SaldoWgObr, 
+		0 as KKS_TypKonta,
+		0 as KKS_Archiwalny,
+		0 as Rok,
+		0 as Miesiac,
+		sum(o.BODT) BODT,
+		sum(o.BOCT) BOCT,
+		sum(o.ODTP) ODTP,
+		sum(o.OCTP) OCTP,
+		sum(o.SDTP) SDTP,			
+		sum(o.SCTP) SCTP,
+		sum(o.ODT) ODT,
+		sum(o.OCT) OCT,
+		sum(o.ODTK) ODTK,
+		sum(o.OCTK) OCTK,
+		sum(o.SDT) SDT,
+		sum(o.SCT) SCT,
+		sum(o.SDTK) SDTK,
+		sum(o.SCTK) SCTK
+		
+	from #Obroty o 
+		join #tmpKonta f 
+			on o.KKS_GIDNumer = f.KKS_GIDNumer
+	where not exists
+		(select KKL_SynNumer
+		from cdn.KontaLinki
+			join #tmpKonta f1 on KKL_SynNumer = f1.KKS_GIDNumer and KKL_KKSNumer &lt;&gt; KKL_SynNumer			
+		where KKL_KKSNumer = f.KKS_GIDNumer )
+
+
+end
+else if @KKSGIDNumer = 0 and @Konto = '' and @Filtr &lt;&gt; ''
+begin --wg filtra
+	if @DolaczNazwy = 0
+		select o.*
+		from #Obroty o 
+			join #tmpKonta f 
+				on o.KKS_GIDNumer = f.KKS_GIDNumer and f.WlasciweKonto = 1
+
+	else if @DolaczNazwy = 101
+		set @sSQL = N'
+                select o.*, k.KKS_Konto Konto, k.KKS_Nazwa Nazwa, k.KKS_Waluta, k.KKS_KontoOrd
+                ,LEFT(o.KKS_Konto,1) as JPKKodZespolu
+                ,LEFT(o.KKS_Konto,1) as JPKOpisZespolu
+                ,LEFT(o.KKS_Konto,2) as JPKKodKategorii
+                ,LEFT(o.KKS_Konto,2) as JPKOpisKategorii
+                ,ks.KKS_Konto as JPKKodPodkategorii
+                ,ks.KKS_Nazwa as JPKOpisPodkategorii
+                ,case when o.KKS_TypKonta in (3,4) then ''wynikowe'' else case when o.KKS_Rozrachunkowe=1 then ''rozrachunkowe'' else ''bilansowe'' end end JPKTypKonta
+                ,448 as KKS_GIDTyp
+                into ##tmpKonta_' + convert(nvarchar,@PONNumer) +
+                N' from #Obroty o
+                        join #tmpKonta f
+                                on o.KKS_GIDNumer = f.KKS_GIDNumer and f.WlasciweKonto = 1
+                        join cdn.Konta k
+                                on o.KKS_GIDNumer = k.KKS_GIDNumer
+                        join cdn.KontaLinki
+                                on o.KKS_GIDNumer = KKL_KKSNumer
+                        join cdn.Konta ks
+                                on KKL_SynNumer = ks.KKS_GIDNumer and ks.KKS_SynNumer=0                         
+                order by k.KKS_KontoOrd'
+	else
+		select o.*, k.KKS_Konto, k.KKS_Nazwa, k.KKS_Waluta, k.KKS_KontoOrd
+		from #Obroty o 
+			join #tmpKonta f 
+				on o.KKS_GIDNumer = f.KKS_GIDNumer and f.WlasciweKonto = 1
+			join cdn.Konta k
+				on o.KKS_GIDNumer = k.KKS_GIDNumer
+		order by k.KKS_KontoOrd	
+	
+end
+else if @KKSGIDNumer = 0 and @Konto &lt;&gt; '' and @bWezTylkoSyntetyke &lt;&gt; 0
+begin
+	if @DolaczNazwy = 0
+		select o.* from #Obroty o join cdn.Konta k on o.KKS_GIDNumer = k.KKS_GIDNumer
+		where k.KKS_Konto = @WskazaneKonto
+	else if @DolaczNazwy = 101
+		select o.*, k.KKS_Konto, k.KKS_Nazwa, k.KKS_Waluta, k.KKS_KontoOrd
+		,LEFT(o.KKS_Konto,1) as JPKKodZespolu
+		,LEFT(o.KKS_Konto,1) as JPKOpisZespolu
+		,LEFT(o.KKS_Konto,2) as JPKKodKategorii
+		,LEFT(o.KKS_Konto,2) as JPKOpisKategorii
+		,ks.KKS_Konto as JPKKodPodkategorii
+		,ks.KKS_Nazwa as JPKOpisPodkategorii
+		,case when o.KKS_TypKonta in (3,4) then 'wynikowe' else case when o.KKS_Rozrachunkowe=1 then 'rozrachunkowe' else 'bilansowe' end end JPKTypKonta
+		,448 as KKS_GIDTyp
+		from #Obroty o join cdn.Konta k on o.KKS_GIDNumer = k.KKS_GIDNumer
+			join cdn.KontaLinki
+				on o.KKS_GIDNumer = KKL_KKSNumer
+			join cdn.Konta ks
+				on KKL_SynNumer = ks.KKS_GIDNumer and ks.KKS_SynNumer=0
+		where k.KKS_Konto = @WskazaneKonto
+		order by k.KKS_KontoOrd
+	else
+		select o.*, k.KKS_Konto, k.KKS_Nazwa, k.KKS_Waluta, k.KKS_KontoOrd 
+		from #Obroty o join cdn.Konta k on o.KKS_GIDNumer = k.KKS_GIDNumer
+		where k.KKS_Konto = @WskazaneKonto
+		order by k.KKS_KontoOrd
+end
+else
+begin
+	if @DolaczNazwy = 0
+		select * from #Obroty
+	else if @DolaczNazwy = 101
+		select o.*, k.KKS_Konto, k.KKS_Nazwa, k.KKS_Waluta, k.KKS_KontoOrd
+		,LEFT(o.KKS_Konto,1) as JPKKodZespolu
+		,LEFT(o.KKS_Konto,1) as JPKOpisZespolu
+		,LEFT(o.KKS_Konto,2) as JPKKodKategorii
+		,LEFT(o.KKS_Konto,2) as JPKOpisKategorii
+		,ks.KKS_Konto as JPKKodPodkategorii
+		,ks.KKS_Nazwa as JPKOpisPodkategorii
+		,case when o.KKS_TypKonta in (3,4) then 'wynikowe' else case when o.KKS_Rozrachunkowe=1 then 'rozrachunkowe' else 'bilansowe' end end JPKTypKonta
+		,448 as KKS_GIDTyp
+		from #Obroty o join cdn.Konta k on o.KKS_GIDNumer = k.KKS_GIDNumer
+			join cdn.KontaLinki
+				on o.KKS_GIDNumer = KKL_KKSNumer
+			join cdn.Konta ks
+				on KKL_SynNumer = ks.KKS_GIDNumer and ks.KKS_SynNumer=0
+		order by k.KKS_KontoOrd
+	else
+		select o.*, k.KKS_Konto, k.KKS_Nazwa, k.KKS_Waluta, k.KKS_KontoOrd
+		from #Obroty o join cdn.Konta k on o.KKS_GIDNumer = k.KKS_GIDNumer
+		order by k.KKS_KontoOrd
+end
+
+
+
+if @DolaczNazwy = 101
+begin
+	exec sp_executeSQL @sSQL
+end
+
+
+
+drop table #Obroty
+
+
+
+if (@KKSGIDNumer = 0 and @Konto = '') or @NumerKlasyKonta &lt;&gt; 0 or @MaskaKonta &lt;&gt; 0 or @CDN_ZestawieniaTakNie&lt;&gt;0
+begin
+	drop table #tmpKonta
+	if @CDN_ZestawieniaTakNie&lt;&gt;0
+		drop table #Zestawienia
+end
+
+return
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury ObliczObrotySaldaEx"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury ObliczObrotySaldaEx */</I><BR>
+GRANT EXECUTE ON CDN.ObliczObrotySaldaEx TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

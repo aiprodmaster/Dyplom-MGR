@@ -1,0 +1,83 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="GetObslugujacyWH"></A><PRE>
+          <FONT SIZE="2"><I>/* GetObslugujacyWH */</I><BR>
+CREATE FUNCTION CDN.GetObslugujacyWH
+(	
+/* ==========================================================================================
+	Funkcja ustala osobę obsługującą wizytę handlową  na podstawie kontrahenta, 
+
+	Parametry wejściowe: 
+   ========================================================================================== */
+	@PrcNumer					INT,				-- GidNumer pracownika, który wykonuje tą operacje
+	@KntNumer					INT,				-- Numer kontrahenta głównego
+	@Data						INT,				-- Data, dla której sprawdzamy aktualność opiekunów
+	@UwzgledniajStrukturePodl	TINYINT = null		-- Wartość parametru 'Osoba obsługująca wizytę z uwzględnieniem struktury podległościowej'
+)
+RETURNS INT 
+/* ==========================================================================================
+	Return:
+	&gt;0 : Operacja zakończona sukcesem (zwrócono ID pracownika)
+   ========================================================================================== */
+AS
+BEGIN
+
+	DECLARE @PrcObslugujacy INT -- Identyfikator pracownika obsługującego
+	SET @PrcObslugujacy = 0
+
+	IF @UwzgledniajStrukturePodl is null BEGIN
+		SELECT @UwzgledniajStrukturePodl=Kon_Wartosc FROM CDN.Konfig WHERE Kon_Numer=2913
+	END
+
+	IF @UwzgledniajStrukturePodl = 1 BEGIN
+
+		DECLARE @FrsPodl INT
+		SELECT @FrsPodl = FRS_GRONumer FROM CDN.FrmStruktura 
+		WHERE FRS_Warstwa=3 AND FRS_GIDTyp=944 AND FRS_GIDNumer=@PrcNumer AND FRS_GROTyp=-4272 AND (IsNull(@Data,0)=0 OR (@Data BETWEEN FRS_AktywnyOd AND FRS_AktywnyDo) OR (@Data&gt;=FRS_AktywnyOd AND FRS_AktywnyDo=0))
+
+		IF @FrsPodl &gt; 0 BEGIN -- ustalono Id centrum podległościowego
+
+			SELECT @PrcObslugujacy=KtO_PrcNumer 
+			FROM CDN.KntOpiekun 
+			JOIN CDN.FrmStruktura ON FRS_GIDTyp=944 AND FRS_GIDNumer=KtO_PrcNumer AND FRS_Warstwa=3 AND FRS_GROTyp=-4272 AND FRS_GRONumer=@FrsPodl AND (IsNull(@Data,0)=0 OR (@Data BETWEEN FRS_AktywnyOd AND FRS_AktywnyDo) OR (@Data&gt;=FRS_AktywnyOd AND FRS_AktywnyDo=0))
+			WHERE KtO_KntNumer=@KntNumer AND KtO_KntTyp=32 AND KtO_PrcNumer&gt;0 AND (IsNull(@Data,0)=0 OR (KtO_DataOd=0 AND KtO_DataDo=0) OR (@Data&gt;=KtO_DataOd AND KtO_DataDo=0) OR (@Data BETWEEN KtO_DataOd and KtO_DataDo))
+
+			IF (@PrcObslugujacy IS NULL OR @PrcObslugujacy=0) BEGIN
+				
+				SELECT TOP 1 @PrcObslugujacy=KtO_PrcNumer
+				FROM CDN.KntRejony
+				JOIN CDN.KntOpiekun ON KtO_KntTyp=948 AND KtO_KntNumer=KnR_Rejon
+				JOIN CDN.PrcKarty ON KtO_PrcNumer=Prc_GIDNumer
+				JOIN CDN.FrmStruktura ON FRS_GIDTyp=944 AND FRS_GIDNumer=KtO_PrcNumer AND FRS_Warstwa=3 AND FRS_GROTyp=-4272 AND FRS_GRONumer=@FrsPodl AND (IsNull(@Data,0)=0 OR (@Data BETWEEN FRS_AktywnyOd AND FRS_AktywnyDo) OR (@Data&gt;=FRS_AktywnyOd AND FRS_AktywnyDo=0))
+				WHERE KnR_KntTyp=32 AND KnR_KntNumer=@KntNumer AND KtO_PrcNumer&gt;0 AND (IsNull(@Data,0)=0 OR (KtO_DataOd=0 AND KtO_DataDo=0) OR (@Data&gt;=KtO_DataOd AND KtO_DataDo=0) OR (@Data BETWEEN KtO_DataOd and KtO_DataDo))
+				ORDER BY Prc_Nazwisko,Prc_Akronim
+
+			END
+			
+
+		END ELSE BEGIN -- nie ustalono Id centrum podległościowego
+			SELECT @PrcObslugujacy = CDN.GetKntOpiekun(@KntNumer, @Data)
+		END
+		
+	END ELSE BEGIN -- Parametr 'Osoba obsługująca wizytę z uwzględnieniem struktury podległościowej' jest odznaczony
+		SELECT @PrcObslugujacy = CDN.GetKntOpiekun(@KntNumer, @Data)
+	END
+
+	RETURN @PrcObslugujacy
+
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

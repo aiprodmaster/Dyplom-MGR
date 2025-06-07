@@ -1,0 +1,104 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[ProdTechnologiaDomyslna]"></A><PRE>
+          <FONT SIZE="2"><I>/* [ProdTechnologiaDomyslna] */</I><BR>
+CREATE FUNCTION [CDN].[ProdTechnologiaDomyslna] (@TwrNumer int,@KlasaCechy INT = NULL,@Cecha VARCHAR(255) = NULL, 
+	@KntTyp SMALLINT = NULL,@KntNumer int = NULL,@DataOd INT = NULL,@DataDo INT = NULL)
+RETURNS INT
+AS
+BEGIN
+	DECLARE @TechId	INT
+	SET @TechId = 0
+	
+	IF @KlasaCechy IS NULL
+		SET @KlasaCechy = 0
+	
+	IF @Cecha IS NULL
+		SET @Cecha = ''
+	
+	IF @KntTyp IS NULL
+	BEGIN
+		SET @KntTyp = 0
+		SET @KntNumer = 0
+	END	
+	
+	IF @KntNumer IS NULL
+		SET @KntNumer = 0
+
+	IF @DataOd IS NULL
+		SET @DataOd = DATEDIFF(d,'18001228',GETDATE()) 
+
+	IF @DataDo IS NULL
+		SET @DataDo = DATEDIFF(d,'18001228',GETDATE()) 
+	
+	IF @KntTyp = 32
+	BEGIN
+		SELECT TOP 1 @TechId = PTD_PTEID 
+		FROM CDN.ProdTechnologieDomyslne
+			JOIN CDN.ProdTechnologiaZasoby ON PTD_PtzId = PTZ_Id 
+			JOIN CDN.ProdTechnologia ON PTD_PTEID = PTE_Id
+			JOIN CDN.ProdTechnologiaTerminy ON PTR_TechnologiaId = PTE_Id
+		WHERE PTD_KntNumer = @KntNumer AND PTD_KntTyp = 32 AND PTZ_TwrNumer = @TwrNumer AND PTE_DataZatw&lt;&gt;0 and PTZ_TwrTyp=16 AND PTZ_TypZasobu=0 
+			AND PTE_Archiwalny = 0 
+			AND (@DataOd BETWEEN PTR_TerminOd AND PTR_TerminDo OR @DataDo BETWEEN PTR_TerminOd AND PTR_TerminDo OR (@DataOd &lt; PTR_TerminOd AND @DataDo &gt; PTR_TerminDo))
+			AND (@KlasaCechy = 0 OR (@KlasaCechy &lt;&gt; 0 AND (PTZ_EdycjaCechy=1 or PTZ_Cecha='&lt;&lt;Numer seryjny&gt;' or (PTZ_KlasaCechy=@KlasaCechy and PTZ_Cecha=@Cecha))))
+			AND PTD_Domyslna = 1
+		ORDER BY PTZ_PodstawowaTechnologiaDlaProduktu DESC, PTE_DataZatw DESC, PTE_Id DESC
+	END
+	
+
+	IF @TechId = 0	
+		SELECT @TechId = 
+		CASE WHEN Twr_ProdAktualnaWersja = 1 THEN 
+			ISNULL((SELECT PTE_Wersja FROM CDN.ProdTechnologia WHERE PTE_Id=Twr_ProdTechnologia),	0)	
+			ELSE Twr_ProdTechnologia END FROM CDN.TwrKarty WHERE Twr_GIDNumer = @TwrNumer
+			
+		IF @TechId &lt;&gt; 0
+		BEGIN
+			SELECT @TechId = CASE WHEN EXISTS(SELECT * FROM CDN.ProdTechnologia 
+				JOIN CDN.ProdTechnologiaCzynnosci ON PTE_Id = PTC_Technologia
+				JOIN CDN.ProdTechnologiaZasoby ON PTC_Id = PTZ_TechnologiaCzynnosc
+				JOIN CDN.ProdTechnologiaTerminy ON PTR_TechnologiaId = PTE_Id
+				WHERE PTC_Technologia = @TechId AND PTE_DataZatw &lt;&gt; 0
+					AND PTE_Archiwalny = 0 
+					AND (@DataOd BETWEEN PTR_TerminOd AND PTR_TerminDo OR @DataDo BETWEEN PTR_TerminOd AND PTR_TerminDo OR (@DataOd &lt; PTR_TerminOd AND @DataDo &gt; PTR_TerminDo))
+					AND (@KlasaCechy = 0 OR (@KlasaCechy &lt;&gt; 0 AND (PTZ_EdycjaCechy=1 or PTZ_Cecha='&lt;&lt;Numer seryjny&gt;' or (PTZ_KlasaCechy=@KlasaCechy and PTZ_Cecha=@Cecha))))
+			)
+			THEN @TechId ELSE 0 END			
+		END
+
+	
+    IF @TechId = 0 
+		BEGIN
+			--domyślna wersja z najpóźniejszą datą zatwierdzenia
+			SELECT @TechId =  ISNULL((SELECT TOP 1 Wersje.IdTech FROM (
+				SELECT ISNULL(PTE_Id,0) IdTech, CASE WHEN PTE_Id = PTE_Wersja THEN 1 ELSE 0 END DomyslnaW,PTE_DataZatw,PTE_Kod, PTZ_PodstawowaTechnologiaDlaProduktu
+				FROM CDN.ProdTechnologia 
+					LEFT OUTER JOIN CDN.ProdTechnologiaCzynnosci ON PTE_Id= PTC_Technologia
+					LEFT OUTER JOIN CDN.ProdTechnologiaZasoby ON PTC_Id= PTZ_TechnologiaCzynnosc
+					JOIN CDN.ProdTechnologiaTerminy ON PTR_TechnologiaId = PTE_Id
+				WHERE PTE_DataZatw&lt;&gt;0 and PTZ_TwrTyp=16 and PTZ_TwrNumer=@TwrNumer and PTZ_TypZasobu=0
+					AND PTE_Archiwalny = 0 
+					AND (@DataOd BETWEEN PTR_TerminOd AND PTR_TerminDo OR @DataDo BETWEEN PTR_TerminOd AND PTR_TerminDo OR (@DataOd &lt; PTR_TerminOd AND @DataDo &gt; PTR_TerminDo))
+					AND (@KlasaCechy = 0 OR 
+						(@KlasaCechy &lt;&gt; 0 AND (PTZ_EdycjaCechy=1 or PTZ_Cecha='&lt;&lt;Numer seryjny&gt;' or (PTZ_KlasaCechy=@KlasaCechy and PTZ_Cecha=@Cecha))))
+			) Wersje 
+			ORDER BY PTZ_PodstawowaTechnologiaDlaProduktu DESC, Wersje.DomyslnaW DESC, WERSJE.PTE_DataZatw DESC, Wersje.IdTech DESC),0)
+		END
+	RETURN @TechId
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

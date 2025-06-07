@@ -1,0 +1,195 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[WypelnijTabeleDKDoPPK]"></A><PRE>
+          <FONT SIZE="2"><I>/* [WypelnijTabeleDKDoPPK] */</I><BR>
+CREATE PROCEDURE [CDN].[WypelnijTabeleDKDoPPK] 
+	 @DataOd DATETIME
+	,@SourceName VARCHAR(255)
+	,@SourceDatabase VARCHAR(255)	
+	,@SameServer TINYINT = 1
+AS
+BEGIN
+	SET NOCOUNT OFF
+
+	DECLARE @RM INT
+	DECLARE @R VARCHAR(4)
+	DECLARE @M VARCHAR(2)
+
+	DECLARE @DKD_Numer INTEGER
+	DECLARE @DKD_KwotaL DECIMAL(15, 2)
+	DECLARE @DKD_KwotaM DECIMAL(15, 2)
+	DECLARE @DKD_Opis VARCHAR(100)
+	DECLARE @DKD_DkNID INTEGER
+
+	DECLARE @sql NVARCHAR(4000)
+	DECLARE @params NVARCHAR(4000)
+
+	SET @R = CAST(DATEPART(year, @DataOd) AS VARCHAR)
+	SET @M = CAST(DATEPART(month, @DataOd) AS VARCHAR)
+	IF LEN(@M) &lt; 2 	SET @M = '0' + @M
+	SET @RM = CAST(@R + @M AS VARCHAR)	
+
+	DECLARE @nKwotaM INT
+	DECLARE @DkNID INT    
+    DECLARE @pDkNID INT
+
+	DECLARE @SumaSklPodstPrcPPK		Decimal(15,2)	--1 Suma składek podstawowych PPK pracownika
+    DECLARE @SumaSklDodPrcPPK		Decimal(15,2)	--2 Suma składek dodatkowych PPK pracownika
+    DECLARE @SumaSklPodstFirPPK		Decimal(15,2)	--3 Suma składek podstawowych PPK firmy
+    DECLARE @SumaSklDodFirPPK		Decimal(15,2)	--4 Suma składek dodatkowych PPK firmy
+    DECLARE @KwotaDoZaplaty_SumaPPK Decimal(15,2)	--5 Kwota do zapłaty (Suma składki podstawowej PPK pracownika + Suma składki dodatkowej PPK pracownika + Suma składki podstawowej PPK firmy + Suma składki dodatkowej PPK firmy)
+
+	SELECT @DkNID = 0 --dla pierwszego przebiegu kursora
+
+	 --zerowanie kwot dla pierwszej pobranej deklaracji
+	SELECT @SumaSklPodstPrcPPK		=0	
+	SELECT @SumaSklDodPrcPPK		=0	
+	SELECT @SumaSklPodstFirPPK		=0	
+	SELECT @SumaSklDodFirPPK		=0	
+	SELECT @KwotaDoZaplaty_SumaPPK  =0	
+
+	DECLARE @sqlFromJoinWHEREDelkElem NVARCHAR(1500)		
+
+	IF @SameServer = 1 
+	BEGIN
+		set @sqlFromJoinWHEREDelkElem = ' [' + @SourceName + '].[' + @SourceDatabase + '].cdn.deklelem JOIN
+			[' + @SourceName + '].[' + @SourceDatabase + '].cdn.deklnag ON dke_dknid = dkn_dknid
+			WHERE dkn_typdeklar = 500 and dkn_rokmiesiac &gt;= @RM AND dkn_zablokowana=1 '					
+	END		
+	ELSE
+	BEGIN
+		set @sqlFromJoinWHEREDelkElem = ' ##DKDDoPPKTemp '
+			
+	END
+
+	--pobranie wszystkich kwot do deklaracji PPK
+	SELECT @sql = N'
+       DECLARE CursorForDKD CURSOR FAST_FORWARD READ_ONLY FOR
+       SELECT DKE_Numer,DKE_WartoscL,DKE_WartoscM,DKE_Opis,DKE_DkNID FROM '+@sqlFromJoinWHEREDelkElem+'  
+       OPEN CursorForDKD ;		
+		'					
+
+	SELECT @params = N'@RM INT'
+
+	EXEC sp_executesql @sql	,@params,@RM
+
+	WHILE 1 = 1
+	BEGIN
+		FETCH NEXT FROM CursorForDKD INTO @DKD_Numer,--DKE_Numer
+										  @DKD_KwotaL,--DKE_WartoscL
+										  @DKD_KwotaM,--DKE_WartoscM
+										  @DKD_Opis,--DKE_Opis
+										  @DKD_DkNID --DKE_DkNID
+
+		--wstawianie wartosci
+		IF (@DkNID &lt;&gt; @DKD_DkNID AND @DkNID &lt;&gt; 0) OR (@@FETCH_STATUS &lt;&gt; 0 AND @DkNID &lt;&gt; 0)
+		BEGIN
+
+			DELETE	FROM [CDN].[##DtsTempOptimaDeklKwoty] WHERE DKD_DkNId = @DkNID
+
+			SET @pDkNID = @DkNID
+
+			IF @SumaSklPodstPrcPPK &gt; 0
+				SELECT @nKwotaM = 1
+			ELSE
+				SELECT @nKwotaM = 0
+
+			INSERT INTO [CDN].[##DtsTempOptimaDeklKwoty] (DKD_Numer,DKD_KwotaL,DKD_KwotaM,DKD_Nazwa,DKD_Opis,DKD_DKNID)
+			VALUES (1,@SumaSklPodstPrcPPK,@nKwotaM,'Suma składek podstawowych na PPK finansowanych przez pracowników','Suma składek podstawowych na PPK finansowanych przez pracowników',@DKNID)
+
+			IF @SumaSklDodPrcPPK &gt; 0
+				SELECT @nKwotaM = 1
+			ELSE
+				SELECT @nKwotaM = 0
+
+			INSERT INTO [CDN].[##DtsTempOptimaDeklKwoty] (DKD_Numer,DKD_KwotaL,DKD_KwotaM,DKD_Nazwa,DKD_Opis,DKD_DKNID)
+			VALUES (2,@SumaSklDodPrcPPK,@nKwotaM,'Suma składek dodatkowych na PPK finansowanych przez pracowników','Suma składek dodatkowych na PPK finansowanych przez pracowników',@DKNID)
+
+			IF @SumaSklPodstFirPPK &gt; 0
+				SELECT @nKwotaM = 1
+			ELSE
+				SELECT @nKwotaM = 0
+
+			INSERT INTO [CDN].[##DtsTempOptimaDeklKwoty] (DKD_Numer,DKD_KwotaL,DKD_KwotaM,DKD_Nazwa,DKD_Opis,DKD_DKNID)
+			VALUES (3,@SumaSklPodstFirPPK,@nKwotaM,'Suma składek podstawowych na PPK finansowanych przez firmę','Suma składek podstawowych na PPK finansowanych przez firmę',@DKNID)
+
+			IF @SumaSklDodFirPPK &gt; 0
+				SELECT @nKwotaM = 1
+			ELSE
+				SELECT @nKwotaM = 0
+
+			INSERT INTO [CDN].[##DtsTempOptimaDeklKwoty] (DKD_Numer,DKD_KwotaL,DKD_KwotaM,DKD_Nazwa,DKD_Opis,DKD_DKNID)
+			VALUES (4,@SumaSklDodFirPPK,@nKwotaM,'Suma składek dodatkowych na PPK finansowanych przez firmę','Suma składek dodatkowych na PPK finansowanych przez firmę',@DKNID)
+
+			IF @KwotaDoZaplaty_SumaPPK &gt; 0
+				SELECT @nKwotaM = 1
+			ELSE
+				SELECT @nKwotaM = 0
+
+			INSERT INTO [CDN].[##DtsTempOptimaDeklKwoty] (DKD_Numer,DKD_KwotaL,DKD_KwotaM,DKD_Nazwa,DKD_Opis,DKD_DKNID)
+			VALUES (5,@KwotaDoZaplaty_SumaPPK,@nKwotaM,'Sumaryczna kwota składek na PPK do zapłaty','Sumaryczna kwota składek na PPK do zapłaty',@DKNID)			
+
+			--po wstawieniu zerowanie kwot dla każdej następnej deklaracji aby nie dodawaly sie tez te z poprzedniej
+			SELECT @SumaSklPodstPrcPPK= 0
+			SELECT @SumaSklDodPrcPPK = 0
+			SELECT @SumaSklPodstFirPPK = 0
+			SELECT @SumaSklDodFirPPK = 0
+			SELECT @KwotaDoZaplaty_SumaPPK = 0
+						
+			--po wstawieniu podstawic aktualny ID wlasciwej deklaracji
+			SELECT @DkNID = @DKD_DkNID
+		END
+
+		IF @@FETCH_STATUS &lt;&gt; 0
+			BREAK
+
+		IF (@DkNID = @DKD_DkNID	OR @DkNID = 0)
+		BEGIN
+			IF @DKD_Numer = 500003 
+			BEGIN
+				SELECT @SumaSklPodstPrcPPK = @SumaSklPodstPrcPPK + @DKD_KwotaL --1
+			END
+
+			IF @DKD_Numer = 500005
+			BEGIN
+				SELECT @SumaSklDodPrcPPK = @SumaSklDodPrcPPK + @DKD_KwotaL --2
+			END
+
+			IF @DKD_Numer = 500004
+			BEGIN
+				SELECT @SumaSklPodstFirPPK = @SumaSklPodstFirPPK + @DKD_KwotaL --3
+			END
+
+			IF @DKD_Numer = 500006
+			BEGIN
+				SELECT @SumaSklDodFirPPK = @SumaSklDodFirPPK + @DKD_KwotaL --4
+			END
+
+			IF @DKD_Numer = 500007
+			BEGIN
+				SELECT @KwotaDoZaplaty_SumaPPK = @KwotaDoZaplaty_SumaPPK + @DKD_KwotaL --5
+			END			
+
+			SELECT @DkNID = @DKD_DkNID
+		END
+	END
+
+	CLOSE CursorForDKD
+	DEALLOCATE CursorForDKD
+END
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

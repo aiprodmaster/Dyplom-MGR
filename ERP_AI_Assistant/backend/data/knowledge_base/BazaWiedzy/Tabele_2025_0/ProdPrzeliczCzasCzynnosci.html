@@ -1,0 +1,125 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="ProdPrzeliczCzasCzynnosci"></A><PRE>
+          <FONT SIZE="2"><I>/* ProdPrzeliczCzasCzynnosci */</I><BR>
+CREATE PROCEDURE CDN.ProdPrzeliczCzasCzynnosci @lCzynnosc int
+as
+begin 
+
+	declare @Nadmiar real
+	declare @CzasRealizacji int
+	declare @PlanowacOd int  
+	select @Nadmiar =  MIN(Nadmiar), @CzasRealizacji = isnull(PCZ_WzorcowyCzasRealizacji,PCZ_CzasRealizacji) , @PlanowacOd = PPC_PlanowacOd
+		From ( 
+		select 1.0 * count(PCO_Funkcja )/ PTF_LiczbaObiektow Nadmiar , PCZ_CzasRealizacji, PPC_PlanowacOd, PCZ_WzorcowyCzasRealizacji
+		from Cdn.ProdCzynnosci
+		inner join Cdn.ProdProcesy on PPC_Id = PCZ_Proces
+		inner join Cdn.ProdCzynnosciObiekty on  PCO_Czynnosc = PCZ_Id
+		inner join Cdn.ProdTechnologiaFunkcje on PTF_Funkcja = PCO_Funkcja and PTF_TechnologiaCzynnosc = PCZ_TechnologiaCzynnosc
+		where PCZ_Id = @lCzynnosc
+		group by PCO_Funkcja, PTF_LiczbaObiektow, PCZ_CzasRealizacji, PPC_PlanowacOd, PCZ_WzorcowyCzasRealizacji
+	) T 
+	group by PCZ_CzasRealizacji, PPC_PlanowacOd, PCZ_WzorcowyCzasRealizacji
+
+	declare  @PctId int , @PctCzas int, @Czas int
+	set @Czas = 0 
+	if @PlanowacOd &gt;= 0
+	begin
+		if @Nadmiar &lt;=1		
+			update CT 
+			set PCT_TerminDo =  CT.PCT_TerminOd + (CT.PCT_TerminDo - CT.PCT_TerminOd)*1/@Nadmiar
+			from 
+			(	select TOP 1 PCT_Id , PCT_TerminDo 
+				from 
+				CDN.ProdCzynnosciTerminy 
+				where PCT_Czynnosc = @lCzynnosc
+				order by PCT_TerminOd
+			)T
+			inner join CDN.ProdCzynnosciTerminy CT on CT.PCT_Id = T.PCT_Id
+		else 
+			begin
+			DECLARE Terminy CURSOR LOCAL FAST_FORWARD FOR 
+				SELECT PCT_ID, PCT_TerminDo - PCT_TerminOd
+				FROM CDN.ProdCzynnosciTerminy
+				WHERE PCT_Czynnosc = @lCzynnosc 
+				ORDER BY PCT_TerminOd
+			OPEN Terminy
+			WHILE 1=1
+			BEGIN
+			  FETCH NEXT FROM Terminy INTO @PctId, @PctCzas
+			  IF @@FETCH_STATUS&lt;&gt;0 BREAK
+			  set @Czas = @Czas +@PctCzas
+			  IF @Czas &gt; @CzasRealizacji / @Nadmiar
+			  begin
+				IF @Czas - @CzasRealizacji / @Nadmiar &gt;= @PctCzas
+					delete from Cdn.ProdCzynnosciTerminy where PCT_Id = @PctId
+				else 
+					update Cdn.ProdCzynnosciTerminy set PCT_TerminDo = PCT_TerminOd + @Czas - @CzasRealizacji / @Nadmiar where PCT_Id = @PctId
+					update Cdn.ProdCzynnosci set 
+						PCZ_TerminZakonczenia =  (select PCT_TerminDo from  Cdn.ProdCzynnosciTerminy where PCT_Id = @PctId),
+						PCZ_CzasRealizacji = (select sum(PCT_TerminDo - PCT_TerminOd) from Cdn.ProdCzynnosciTerminy where PCT_Czynnosc = @lCzynnosc )
+					where Pcz_Id = @lCzynnosc
+			  end 				  
+			END
+			CLOSE Terminy
+			DEALLOCATE Terminy		 		
+		end 
+	end 
+	else 
+	begin
+		if @Nadmiar &lt;=1		
+			update CT 
+			set PCT_TerminOd =  CT.PCT_TerminOD - (CT.PCT_TerminDo - CT.PCT_TerminOd)*1/@Nadmiar
+			from 
+			(	select TOP 1 PCT_Id , PCT_TerminDo 
+				from 
+				CDN.ProdCzynnosciTerminy 
+				where PCT_Czynnosc = @lCzynnosc
+				order by PCT_TerminOd desc
+			)T
+			inner join CDN.ProdCzynnosciTerminy CT on CT.PCT_Id = T.PCT_Id
+		else 
+			begin
+			DECLARE Terminy CURSOR LOCAL FAST_FORWARD FOR 
+				SELECT PCT_ID, PCT_TerminDo - PCT_TerminOd
+				FROM CDN.ProdCzynnosciTerminy
+				WHERE PCT_Czynnosc = @lCzynnosc 
+				ORDER BY PCT_TerminOd desc
+			OPEN Terminy
+			WHILE 1=1
+			BEGIN
+			  FETCH NEXT FROM Terminy INTO @PctId, @PctCzas
+			  IF @@FETCH_STATUS&lt;&gt;0 BREAK
+			  set @Czas = @Czas +@PctCzas
+			  IF @Czas &gt; @CzasRealizacji / @Nadmiar
+			  begin
+				IF @Czas - @CzasRealizacji / @Nadmiar &gt;= @PctCzas
+					delete from Cdn.ProdCzynnosciTerminy where PCT_Id = @PctId
+				else 
+					update Cdn.ProdCzynnosciTerminy set PCT_TerminOd = PCT_TerminDo - ( @Czas - @CzasRealizacji / @Nadmiar )	where PCT_Id = @PctId
+					update Cdn.ProdCzynnosci set 
+						PCZ_TerminRozpoczecia =  (select PCT_TerminOd from  Cdn.ProdCzynnosciTerminy where PCT_Id = @PctId) ,
+						PCZ_CzasRealizacji = (select sum(PCT_TerminDo - PCT_TerminOd) from Cdn.ProdCzynnosciTerminy where PCT_Czynnosc = @lCzynnosc )
+					where Pcz_Id = @lCzynnosc
+			  end 				  
+			END
+			CLOSE Terminy
+			DEALLOCATE Terminy		 		
+		end 
+	end 
+end 
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

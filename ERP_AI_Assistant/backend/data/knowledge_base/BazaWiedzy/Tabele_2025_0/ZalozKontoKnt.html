@@ -1,0 +1,280 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Usuwanie procedury ZalozKontoKnt"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Usuwanie procedury ZalozKontoKnt */</I><BR>
+if exists (select * from sysobjects where name = 'ZalozKontoKnt' and xtype = 'P')
+  drop procedure CDN.ZalozKontoKnt
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury ZalozKontoKnt"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury ZalozKontoKnt */</I><BR>
+CREATE PROCEDURE CDN.ZalozKontoKnt
+		@KontoKnt varchar(70),
+		@Akronim varchar(20),
+		@Miasto varchar(30),
+		@Nazwa varchar(40),
+		@KntGIDTyp smallint,
+		@KntGIDFirma int,
+		@KntGIDNumer int,
+		@SmkID int,
+		@TylkoKntKonta smallint,
+		@Error int OUTPUT
+--Procedura zakłada konto kontrahenta w okresie obrachunkowym operatora.
+
+--Wersja 1.00	4.02.2004
+
+--Parametry:
+-- @KontoKnt		Konto kontrahenta w trybie rozszerzonym
+-- @Akronim			Akronim kontrahenta
+-- @KntGIDTyp		GIDTyp kontrahenta
+-- @KntGIDFirma		GIDFirma kontrahenta
+-- @KntGIDNumer		GIDNumer kontrahenta
+-- @SmkID			ID rekordu z tabeli SymboleKont
+-- @TylkoKntKonta   parametr określający, że ma być zrobiony wpis tylko do tabeli KntKonta
+-- @Error			Zwracany błąd, jeśli równy 0 to wszystko OK
+
+AS
+DECLARE @KksGIDNumer int
+DECLARE @Rok int
+DECLARE @Miesiac int
+DECLARE @Poziom int
+DECLARE @Rozrachunkowe int
+DECLARE @TypKonta int
+DECLARE @Waluta varchar(3)
+DECLARE @Kontrola int
+DECLARE @PoziomUprawnien int
+DECLARE @Lokalne int
+DECLARE @PoczatekOO int
+DECLARE @OkresID int
+DECLARE @PoprzedniOkresID int
+DECLARE @Dzis datetime
+DECLARE @PoczatekOkresu datetime
+DECLARE @KoniecOkresu datetime
+DECLARE @Syntetyka varchar(50)
+DECLARE @NazwaKonta varchar(60)
+declare @KKSSynNumer int
+declare @KKSSubKonto varchar(50)
+declare @SaldoWgObr smallint
+declare @OpeGIDNumer int
+
+SET NOCOUNT ON
+
+--pobranie bierzącego okresu obrachunkowego
+Set @Dzis = GETDATE()
+exec CDN.PobierzOO @Dzis,@PoczatekOkresu OUTPUT,@KoniecOkresu OUTPUT
+Set @PoczatekOO =  DATEDIFF(DAY,CONVERT(DATETIME,'1800-12-28',120),@PoczatekOkresu)
+Set @Rok=DATEPART(YEAR,DATEADD(DAY,@PoczatekOO,CONVERT(DATETIME,'1800-12-28',120)))
+Set @Miesiac=DATEPART(MONTH,DATEADD(DAY,@PoczatekOO,CONVERT(DATETIME,'1800-12-28',120)))
+--pobranie id okresu obrachunkowego z tabeli Okresy
+select @OkresID=OKR_ID from cdn.okresy where OKR_Poczatek = @PoczatekOO
+
+
+--pobranie syntetyki z symboli kont
+select @Syntetyka = Smk_Konto from cdn.SymboleKont where smk_id = @SmkID
+--pobranie danych z syntetyki
+Select @Poziom=KKS_Poziom+1,@Rozrachunkowe=KKS_Rozrachunkowe,@TypKonta=KKS_TypKonta,@Waluta=KKS_Waluta,@Kontrola=KKS_Kontrola,
+	@PoziomUprawnien=KKS_PoziomUprawnien,@Lokalne=KKS_Lokalne, @KKSSynNumer = KKS_GIDNumer, @SaldoWgObr = KKS_SaldoWgObr
+from cdn.konta where kks_konto=@Syntetyka and kks_OkresId = @OkresID
+
+
+set @KontoKnt = replace(@KontoKnt, '--', '-')
+set @KKSSubKonto = Substring(@KontoKnt, len(@Syntetyka) + 2, len(@KontoKnt))
+
+
+--ustalenie nazwy konta
+select @NazwaKonta = Kon_Wartosc from cdn.konfig where kon_numer = 2087
+IF @NazwaKonta IS NULL OR @NazwaKonta = ''
+	Set @NazwaKonta = @KontoKnt
+ELSE
+	Set @NazwaKonta = REPLACE(REPLACE(REPLACE(@NazwaKonta,'@NAZ',@Nazwa),'@KON',@Akronim),'@MIA',@Miasto)
+
+
+--pobranie gidnumeru konta
+SELECT top 1 @KksGIDNumer=  KKS_GIDNumer FROM CDN.Konta WHERE KKS_OkresID=@OkresID AND KKS_Konto=@KontoKnt order by kks_gidnumer desc
+If isnull(@KksGIDNumer,0) = 0 
+	Set @TylkoKntKonta = 0
+
+
+--pobranie operatora
+select @OpeGIDNumer = isnull(CDN.PolaczenieInfo(5),'') 
+if @OpeGIDNumer = 0
+begin
+	select top 1 @OpeGIDNumer = Ope_GIDNumer
+	from cdn.Sesje with(nolock) 
+		join cdn.OpeKarty
+			on SES_OpeIdent=Ope_Ident
+	where (SES_ClarionSPID = @@SPID or SES_ADOSPID = @@SPID) and SES_Aktywna = 0 order by SES_Start desc
+	if @@ROWCOUNT = 0
+	begin 
+		set @OpeGIDNumer = 0
+	end
+end		
+
+IF @TylkoKntKonta = 0 and isnull(@KksGIDNumer,0) = 0 
+BEGIN
+	--założenie konta
+	--pobranie gidnumeru dla nowego konta
+	select @KksGIDNumer=isnull(max(kks_gidnumer),0)+1 from cdn.konta
+
+	insert into cdn.konta
+	(
+	KKS_GIDTyp,
+	KKS_GIDFirma,
+	KKS_GIDNumer,
+	KKS_GIDLp,
+	KKS_Rok,
+	KKS_Miesiac,
+	KKS_SynNumer,
+	KKS_SubKonto,
+	KKS_Nazwa,
+	KKS_Nazwa2,
+--	KKS_Poziom,
+--	KKS_Syntetyka,
+	KKS_DataZal,
+	KKS_Rozrachunkowe,
+	KKS_Pozabilansowe,
+	KKS_TypKonta,
+	KKS_Waluta,
+	KKS_Kontrola,
+	KKS_PoziomUprawnien,
+	KKS_KZKonto,
+	KKS_Lokalne,
+	KKS_TStamp,
+	KKS_SaldoWgObr,
+	KKS_BODebet,
+	KKS_BOCredit,
+--	KKS_BODebet_2,
+--	KKS_BOCredit_2,
+	KKS_Analityka,
+	KKS_Klasa,
+	KKS_KntTyp,
+	KKS_KntFirma,
+	KKS_KntNumer,
+	KKS_KntLp,
+	KKS_OkresID,
+	KKS_CzasModyfikacji,
+	KKS_OpeNumer,
+	KKS_OpeZaklNumer,
+	KKS_NastKonto,
+	KKS_NastTyp,
+	KKS_NastNumer,
+	KKS_AktualizujPodrz,
+	KKS_Aktywny,
+	KKS_Archiwalny,
+	KKS_KKZDKKSNumer
+--	KKS_Specjalne,	
+	)
+	Values
+	(
+	448,
+	@KntGIDFirma,  --KKS_GIDFirma
+	@KksGIDNumer,
+	0,		--KKS_GIDLp
+	@Rok,		--KKS_Rok
+	@Miesiac,	--KKS_Miesiac
+	@KKSSynNumer,   --KKS_SynNumer
+	@KKSSubKonto,	--KKS_SubKonto
+	--@KontoKnt,	--KKS_Konto
+	@NazwaKonta,	--KKS_Nazwa
+	'',		--KKS_Nazwa2
+--	@Poziom,	--KKS_Poziom
+--	LEN(@Syntetyka)+1, --KKS_Syntetyka
+	DATEDIFF(DAY,CONVERT(datetime,'1800-12-28',120),GETDATE()), --KKS_DataZal - ilosc dni od 1800-12-28
+	@Rozrachunkowe,
+	0,		--KKS_PozaBilansowe
+	@TypKonta,
+	@Waluta,
+	@Kontrola,	
+	@PoziomUprawnien,
+	'',		--KKS_KZKonto
+	@Lokalne,
+	DATEDIFF(s, '19900101' , GETDATE()),	--KKS_TStamp
+	@SaldoWgObr,
+	0.00,		--KKS_BODebet
+	0.00,		--KKS_BOCredit
+--	0.00,		--KKS_BODebet_2
+--	0.00,		--KKS_BOCredit_2
+	1,		--KKS_Analityka
+	0,		--KKS_Klasa
+	@KntGIDTyp,
+	@KntGIDFirma,
+	@KntGIDNumer,
+	0,		--KKS_KntLp	
+	@OkresID,
+	DATEDIFF(DAY,CONVERT(datetime,'1800-12-28',120),GETDATE()),
+	@OpeGIDNumer,
+	@OpeGIDNumer,
+	'',	--KKS_KontoNast
+	1,
+	0,
+	0,
+	0,
+	0,
+	0
+--	0,		--KKS_Specjalne	
+--	@KKSID,
+	)
+	Set @Error = @@Error
+	IF @Error &lt;&gt; 0 
+		RETURN
+	
+END
+
+
+--wypełnienie tabeli kntkonta
+insert into CDN.KntKonta
+(
+ KKT_KntTyp,
+ KKT_KntNumer,
+ KKT_OkresID,
+ KKT_SMKID,
+ KKT_KKSNumer, 
+ KKT_ZalozKonto, 
+ KKT_Konto
+)
+values
+(
+ 32,  --KKT_KntTyp
+ @KntGIDNumer,
+ @OkresID,
+ @SmkID,
+ @KKSGIDNumer,
+ 0,   --KKT_ZalozKonto
+ @KontoKnt
+)
+Set @Error = @@Error
+
+SET NOCOUNT OFF
+--IF @@ERROR &lt;&gt; 0 
+--	RETURN @@ERROR
+--ELSE
+--	RETURN 0
+--END	
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury ZalozKontoKnt"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury ZalozKontoKnt */</I><BR>
+GRANT EXECUTE ON CDN.ZalozKontoKnt TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

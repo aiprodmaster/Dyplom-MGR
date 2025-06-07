@@ -1,0 +1,114 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="OFFLXLSrv_ImportTwO"></A><PRE>
+          <FONT SIZE="2"><I>/* OFFLXLSrv_ImportTwO */</I><BR>
+CREATE PROCEDURE CDN.OFFLXLSrv_ImportTwO
+ @Twr_GIDTyp SMALLINT
+,@Twr_GIDNumer INT
+,@xml XML
+,@LogID INT = -1		-- ID loga synchronizacji
+,@PicoTyp SMALLINT = NULL
+
+AS
+SET NOCOUNT ON
+DECLARE	@TwO_TwrTyp SMALLINT,
+		@TwO_TwrFirma INT,
+		@TwO_TwrNumer INT,
+		@TwO_TwrLp SMALLINT,
+		@TwO_Typ TINYINT,
+		@TwO_Jezyk INT,
+		@TwO_Opis VARCHAR(MAX),
+		@TwO_CzasModyfikacji INT
+
+DECLARE	@index					INT,
+		@max_index              INT,
+		@ok_index				INT,
+		@buffer_size			INT,
+		@xml_buffer				XML,
+		@xml_tmp				XML,
+		@xml_child				XML
+
+DECLARE	@Opis					VARCHAR(512)
+
+SET		@xml = @xml.query('/TWOI/TWO')
+
+SELECT	@index = 0,
+		@ok_index = 0,
+		@max_index = CAST(CAST(@xml.query('count(TWO)') AS VARCHAR(20)) AS INT),
+		@buffer_size = 200
+
+SELECT	@Opis = 'Opisy towaru'
+
+EXEC CDN.Log_OtworzPoziom @LogID, @Opis
+
+WHILE @index &lt; @max_index
+BEGIN
+	SET XACT_ABORT ON;
+
+	BEGIN TRY
+		BEGIN TRANSACTION;
+
+		IF @index % @buffer_size = 0
+			SET @xml_buffer = ( SELECT @xml.query('TWO[position()&gt; sql:variable("@index") and position() &lt;= sql:variable("@index") + sql:variable("@buffer_size") ] ')  )
+		SET @xml_tmp = ( SELECT @xml_buffer.query('TWO[position()= (sql:variable("@index") mod sql:variable("@buffer_size")) + 1 ] ')  )
+
+		SELECT
+			@TwO_TwrTyp = ISNULL(@Twr_GIDTyp,16),
+			@TwO_TwrFirma = CDN.GIDFirma(),
+			@TwO_TwrNumer = ISNULL(@Twr_GIDNumer,TWO.Attribute.value('@TwrNumer','INT')),
+			@TwO_TwrLp = 0,
+			@TwO_Typ = TWO.Attribute.value('@Typ','TINYINT'),
+			@TwO_Jezyk = ISNULL(TWO.Attribute.value('@Jezyk','INT'),0),
+			@TwO_Opis = TWO.Attribute.value('@Opis','VARCHAR(MAX)'),
+			@TwO_CzasModyfikacji = TWO.Attribute.value('@CzasModyfikacji','INT')
+		FROM @xml_tmp.nodes('TWO') AS TWO(Attribute)
+
+		IF EXISTS(SELECT * FROM CDN.TwrOpisy WHERE TwO_TwrTyp = @TwO_TwrTyp AND TwO_TwrFirma = @TwO_TwrFirma AND TwO_TwrNumer = @TwO_TwrNumer AND TwO_TwrLp = @TwO_TwrLp AND TwO_Jezyk = @TwO_Jezyk) -- Aktualizacja opisu
+		BEGIN
+			UPDATE CDN.TwrOpisy
+			SET
+				TwO_Typ = ISNULL(@TwO_Typ,TwO_Typ),
+				TwO_Opis = ISNULL(@TwO_Opis,TwO_Opis),
+				TwO_CzasModyfikacji = ISNULL(@TwO_CzasModyfikacji,TwO_CzasModyfikacji)
+			WHERE TwO_TwrTyp = @TwO_TwrTyp AND TwO_TwrFirma = @TwO_TwrFirma AND TwO_TwrNumer = @TwO_TwrNumer AND TwO_TwrLp = @TwO_TwrLp AND TwO_Jezyk = @TwO_Jezyk
+		END
+		ELSE
+		BEGIN
+			INSERT INTO CDN.TwrOpisy (TwO_TwrTyp, TwO_TwrFirma, TwO_TwrNumer, TwO_TwrLp, TwO_Typ, TwO_Jezyk, TwO_Opis, TwO_CzasModyfikacji)
+			VALUES (@TwO_TwrTyp, @TwO_TwrFirma, @TwO_TwrNumer, @TwO_TwrLp, ISNULL(@TwO_Typ,0), @TwO_Jezyk, ISNULL(@TwO_Opis,''), ISNULL(@TwO_CzasModyfikacji,0))
+		END
+
+		COMMIT TRANSACTION;
+		SET @ok_index = @ok_index + 1
+	END TRY
+
+	BEGIN CATCH
+		IF XACT_STATE() &lt;&gt; 0
+			ROLLBACK TRANSACTION;
+
+		SELECT @Opis = @TwO_Jezyk + ' - błąd podczas importu opisu towaru: ' + CDN.Log_SzczegolyBledu(ERROR_NUMBER(),ERROR_PROCEDURE(),ERROR_LINE(),ERROR_MESSAGE())
+		PRINT @Opis
+		EXEC CDN.Log_Dopisz @LogID, @Opis, 2
+	END CATCH
+
+	SET @index = @index + 1
+END
+
+SELECT @Opis = 'Ilość zaimportowanych opisów towaru: '  + CAST(@ok_index AS NVARCHAR(10)) + ' z ' + CAST(@max_index AS NVARCHAR(10))
+EXEC CDN.Log_Dopisz @LogID, @Opis, 0
+EXEC CDN.Log_ZamknijPoziom @LogID
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

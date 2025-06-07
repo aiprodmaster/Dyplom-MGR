@@ -1,0 +1,86 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[POS_EksportLimityKredytoweKontrahentow]"></A><PRE>
+          <FONT SIZE="2"><I>/* [POS_EksportLimityKredytoweKontrahentow] */</I><BR>
+CREATE PROCEDURE [CDN].[POS_EksportLimityKredytoweKontrahentow]
+	@RowVersion BIGINT,
+	@PointOfSaleId INT,
+	@CustomerGUID VARCHAR(36) = NULL
+AS
+BEGIN
+SET NOCOUNT ON;
+	if (select PcK_LimitKrObs from CDN.PicoKonfig join CDN.PicoStanowiska on PcK_PicoID=PSa_PcKID where PSa_ID = @PointOfSaleId) = 0 
+	begin
+		select '' for xml path('CustomerCreditLimits')
+		return
+	end
+
+	declare @knt table(KntGidnumer int,kntGUID nvarchar(41),KntLp int, juzNieWysylany int, KntLimitTermin int)
+	if(@CustomerGUID is not null)
+		insert into @knt select kntgidnumer,kntGUID,KntLp,juzNieWysylany,KntLimitTermin from cdn.POS_KntDoEksportu(@PointOfSaleId,@rowVersion) where kntGUID = @CustomerGUID
+	else
+		insert into @knt select kntgidnumer,kntGUID,KntLp,juzNieWysylany,KntLimitTermin from cdn.POS_KntDoEksportu(@PointOfSaleId,@rowVersion) where juzNieWysylany = 0
+	declare @PckCentrumId int = (select Pck_centrumID from cdn.PicoKonfig join CDN.PicoStanowiska on PSa_PcKID = PcK_PicoID and psa_id = @PointOfSaleId)
+	declare @FSDef table(UwzglDokBezPlat tinyint, UwzglZam tinyint, UwzglSaldoKntGlownego tinyint)
+	insert into @FSDef select distinct Dok_LimitUwzglDokBezPlat, Dok_LimitUwzglZam, Dok_LimitUwzglSaldoKntGlownego from cdn.DokDefinicje join @knt on Dok_FrsId = @PckCentrumId where Dok_Symbol='FS'
+	declare @TS int = (CDN.DateToTS(GETDATE()))
+
+	select * into #DoEksportu from
+		(
+
+		Select 
+				KLK_Id as [@Id],
+				KntGUID as [@CustomerGUID],
+				convert(date, CDN.TSToDate(KLK_DataOd,0)) as [@StartDate],
+				convert(date, CDN.TSToDate(KLK_DataDo,0)) as [@EndDate],
+				KLK_MaxLimitWart as [@Limit],
+				KLK_MaxLimitWart - CDN.SumaWartosciKredytuKontrahenta(@TS,KLK_KntNumer,(select UwzglDokBezPlat from @FSDef),(select UwzglZam from @FSDef),(select UwzglSaldoKntGlownego from @FSDef),0,0) as [@AvailableAmount],
+				WaN_Id as [@CurrencyId],
+				CDN.TSToDate(KLK_CzasModyfikacji,1) as [@ReceivedDate]
+		from cdn.KntLimityK
+				join cdn.WalNag on KLK_Waluta=WaN_Symbol
+				join @knt ON KLK_KntNumer = KntGidnumer
+				join CDN.Konfig ON Kon_Numer = 9964 and Kon_Wartosc = 0
+		where CDN.TSToDate(KLK_DataDo,0)&gt;=Convert(date,GETDATE()) and KntLimitTermin = 1
+				
+
+		
+		)a
+	INSERT INTO #DoEksportu
+		select  
+			KLS_KntNumer as [@Id],
+			KntGUID AS [@CustomerGUID],
+			convert(date, GETDATE()) as [@StartDate],
+			convert(date, '2058-01-19' ) as [@EndDate],
+			KLS_KwotaLimitu as [@Limit],
+			KLS_KwotaLimitu - CDN.SumaWartosciKredytuAkwizytora(KLS_FrsID,@TS,KLS_KntNumer,(select UwzglDokBezPlat from @FSDef),(select UwzglZam from @FSDef)) as [@AvailableAmount],
+			(select WaN_Id from CDN.Konfig join cdn.WalNag on Kon_Wartosc=WaN_Symbol where Kon_Komentarz = 'waluta systemowa') as [@CurrencyId],
+			GETDATE() as [@ReceivedDate]
+		from CDN.KntLimityS
+			join @knt ON KLS_KntNumer = KntGidnumer 
+			join CDN.Konfig ON Kon_Numer = 9964 and Kon_Wartosc = 1
+		where KLS_FrsID = @PckCentrumId
+
+
+	select
+		0 as [@RowVersion], ( Select [@Id], [@CustomerGUID], [@StartDate], [@EndDate], [@Limit], [@AvailableAmount], [@CurrencyId], [@ReceivedDate], 0 as [@IsUnlimited] from #DoEksportu 
+		for xml path('CustomerCreditLimit'), type) 
+	for xml path('CustomerCreditLimits')
+	SET NOCOUNT OFF;
+	Drop table #DoEksportu
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

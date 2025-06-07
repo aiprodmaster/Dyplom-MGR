@@ -1,0 +1,76 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[POS_EksportCenyTowarow]"></A><PRE>
+          <FONT SIZE="2"><I>/* [POS_EksportCenyTowarow] */</I><BR>
+CREATE PROCEDURE [CDN].[POS_EksportCenyTowarow]
+	@rowVersion bigint,
+	@PointOfSaleId int,
+	@IdentsToResend XML
+AS
+BEGIN
+SET NOCOUNT ON;	
+
+	declare @Cenniki table(id int, PriceListId int, ProductId int,GrossPrice decimal(15,4),NetPrice decimal(15,4),CurrencyId int,UnitId int,Points int,ValidityStartDate datetime,PriceTypeId int,LastMod int,Resend TINYINT)
+	insert into @cenniki
+	select distinct 
+			twc_id as [@Id],
+			tcn_id as [@PriceListId],
+			TwC_TwrNumer as [@ProductId],
+			CASE WHEN SUBSTRING(naz_nazwa,11,1) = 'B' THEN Twc_Wartosc else ROUND(TwC_Wartosc * (1 + (TwrStawkaPodSpr / 100)), ( select case when TwC_Zaok=0.1 then 1 when TwC_Zaok=0.01 then 2 when TwC_Zaok=0.001 then 3 else 4 end)) + TwC_Offset end as [@GrossPrice],
+			CASE WHEN SUBSTRING(naz_nazwa,11,1) = 'B' THEN ROUND(Twc_Wartosc / (1 + (TwrStawkaPodSpr / 100)), ( select case when TwC_Zaok=0.1 then 1 when TwC_Zaok=0.01 then 2 when TwC_Zaok=0.001 then 3 else 4 end)) + TwC_Offset ELSE TwC_Wartosc end as [@NetPrice],
+			WaNid as [@CurrencyId],
+			(select naz_gidlp from cdn.Nazwy where Naz_Nazwa = Twr_Jm AND naz_gidtyp=144) as [@UnitId],
+			0 as [@Points],
+			DATEADD(second,TwC_DataOd,convert(datetime,'01-01-1990',105)) as [@ValidityStartDate],
+			TCN_RodzajCeny as [@PriceTypeId],
+			CASE WHEN @PointOfSaleId is null and oddzialBylWyslany = 0 then (SELECT MAX(rw) FROM (VALUES (TwC_CzasModyfikacji),(WaNCzasModyfikacji),(PSaDataDodania), (TwrLastMod)) AS rws(rw)) else
+			CASE WHEN TwC_CzasModyfikacji &gt; WaNCzasModyfikacji AND TwC_CzasModyfikacji &gt; TwrLastMod THEN TwC_CzasModyfikacji 
+				 WHEN WaNCzasModyfikacji &gt; TwC_CzasModyfikacji AND WaNCzasModyfikacji &gt; TwrLastMod THEN WaNCzasModyfikacji
+				 ELSE TwrLastMod END END,
+			CASE WHEN Resend.PriceToResendID IS NOT NULL THEN 1 ELSE 0 END AS Resend
+	FROM cdn.POS_OddzialyDoEksportu(@PointOfSaleId, @rowVersion)
+	cross apply CDN.POS_TwrDoEksportu(PSaID,0)
+	join cdn.TwrKarty on Twr_GIDNumer=twrgidnumer
+	join cdn.TwrCeny on TwC_TwrNumer = TwrGIDNumer
+	join cdn.TwrCenyNag on TwC_TcnId = TCN_Id
+	cross apply cdn.Pos_WanDoEksportu(PSaID,0)
+	cross apply cdn.POS_TCNDoEksportu(PSaID)
+	join cdn.nazwy on Naz_GIDTyp = 64 and Naz_GIDLp = CenaLP
+	left join (
+		select IDs.Ident.value('.','INT') as PriceToResendID from @IdentsToResend.nodes('/Ident') as Ids(Ident)
+		) Resend on Resend.PriceToResendID = TwC_ID
+	where tcn_stan = 5 and TwC_Waluta = WanSymbol and CenaLP = TCN_RodzajCeny
+
+	SELECT isnull((select max(c1.LastMod) from @Cenniki c1 where LastMod &gt; @RowVersion),@rowVersion) AS [@RowVersion]
+		,(		
+			select distinct
+				Id as [@Id],
+				PriceListId as [@PriceListId],
+				ProductId as [@ProductId],
+				GrossPrice as [@GrossPrice],
+				NetPrice as [@NetPrice],
+				CurrencyId as [@CurrencyId],
+				UnitId as [@UnitId],
+				Points as [@Points],
+				ValidityStartDate as [@ValidityStartDate]
+			 from @Cenniki c1 
+			 where LastMod &gt; @RowVersion OR (@RowVersion = 0) OR Resend = 1
+			for xml path('ProductPrice'), type)
+	for xml path('ProductPrices')
+	SET NOCOUNT OFF;	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

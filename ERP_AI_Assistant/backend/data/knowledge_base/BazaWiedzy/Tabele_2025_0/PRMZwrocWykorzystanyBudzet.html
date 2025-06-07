@@ -1,0 +1,73 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="PRMZwrocWykorzystanyBudzet"></A><PRE>
+          <FONT SIZE="2"><I>/* PRMZwrocWykorzystanyBudzet */</I><BR>
+CREATE FUNCTION CDN.PRMZwrocWykorzystanyBudzet
+(
+	/*
+	Funkcja zwraca sumę rabatów (kwot) naliczonych z danego budżetu rabatowego rozumianą jako wartość netto w walucie systemowej.
+	Jeżeli dokument nie jest przesyłany, oznacza to, że funkcja ma zwrócić wielkość wykorzystaną budżetu, obliczoną j.n. na podstawie rabatów udzielonych na wszystkich elementach dokumentów.
+	Jeżeli dokument jest przysyłany, oznacza to, że funkcja ma zwrócić wielkość wykorzystaną budżetu, obliczoną na podstawie elementów innych, niż należące do przekazanego dokumentu.
+	Jeżeli LP jest przysłane, oznacza to, że funkcja ma zwrócić wielkość wykorzystaną budżetu, obliczoną na podstawie elementów innych, niż przekazany element dokumentu.
+	*/
+	@p_IdPromocji	INTEGER,		-- Id promocji
+	@p_IdBudzetu	INTEGER,		-- Id budżetu - Dla promocji prm_typ=10 (budżet kontrahenta) będzie to kpr_Id rekordu kntpromocje, Dla promocji prm_typ=9 (budżet operatora) będzie to opm_id rekordu opepromocj
+	@p_DokTyp		SMALLINT=null,	-- GidTyp dokumentu
+	@p_DokNumer		INTEGER=null,	-- GidNumer dokumentu
+	@p_DokLp		SMALLINT=null	-- GidLp dokumentu
+
+)
+RETURNS  DECIMAL(15,2) --wykorzystana wielkość budżetu 
+AS
+BEGIN
+	RETURN
+	(	
+		SELECT IsNull(SUM(IsNull(Wartosc_Wykorzystana,0)),0)
+		FROM (	SELECT
+					CASE WHEN PrH_GIDTyp=960 THEN -- zamowienia
+						CASE WHEN ZaN_Stan&lt;=4 THEN -- zam niepotwierdzone/potwierdzone
+							CASE WHEN ZaE_FlagaNB='N' THEN --od netto
+								round(PrH_RabatKwotaDokl,2)					
+							ELSE -- od brutto - jw. tylko 'unettowiona' wartość
+								round((PrH_RabatKwotaDokl/(100+ZaE_StawkaPod)*100),2)
+							END
+						ELSE -- zam w realizacji - PrH_RabatKwotaDokl * iloscN / Zae_Ilosc, gdzie IloscN - ilośc niezrealizowana dokumentami handlowymi dla danego elementu ZS
+							CASE WHEN ZaE_FlagaNB='N' THEN --od netto
+								round(PrH_RabatKwotaDokl*round((select sum(Rez_Ilosc-Rez_Zrealizowano) from cdn.Rezerwacje where Rez_ZrdTyp=ZaE_GidTyp and Rez_ZrdNumer=ZaE_GidNumer and Rez_ZrdLp=ZaE_GidLp),2)/zae_ilosc,2)
+							ELSE -- od brutto - jw. tylko 'unettowiona' wartość
+								round((round(PrH_RabatKwotaDokl*round((select sum(Rez_Ilosc-Rez_Zrealizowano) from cdn.Rezerwacje where Rez_ZrdTyp=ZaE_GidTyp and Rez_ZrdNumer=ZaE_GidNumer and Rez_ZrdLp=ZaE_GidLp),2)/zae_ilosc,2)/(100+ZaE_StawkaPod)*100),2)
+							END
+						END
+					ELSE --handlowe
+						CASE WHEN TrE_FlagaNB='N' THEN --od netto
+							round(PrH_RabatKwotaDokl,2)					
+						ELSE -- od brutto - jw. tylko 'unettowiona' wartość
+							round((PrH_RabatKwotaDokl/(100+TrE_StawkaPod)*100),2)
+						END
+					END as Wartosc_Wykorzystana
+				FROM CDN.PrmHistoria 
+		LEFT JOIN CDN.ZamElem on ZaE_GIDTyp=PrH_GIDTyp AND ZaE_GIDNumer=PrH_GIDNumer AND ZaE_GIDLp=PrH_GIDLp
+		LEFT JOIN CDN.ZamNag on ZaN_GIDTyp=ZaE_GIDTyp and ZaN_GIDNumer=ZaE_GIDNumer
+		LEFT JOIN CDN.TraElem on TrE_GIDTyp=PrH_GIDTyp AND TrE_GIDNumer=PrH_GIDNumer AND TrE_GIDLp=PrH_GIDLp
+		LEFT JOIN CDN.TraNag on TrN_GIDTyp=TrE_GIDTyp and TrN_GIDNumer=TrE_GIDNumer
+		WHERE  PrH_IDPrm=@p_IdPromocji AND PrH_BudzetId=@p_IdBudzetu AND (ZaN_Stan is null or (ZaN_Stan is not null and ZaN_Stan&amp;32&lt;&gt;32 and ZaN_Stan&lt;&gt;19)) -- pomijamy anulowane oraz zamknięte - maska 32 / odrzucone = 19
+			AND ((@p_DokTyp is null and @p_DokNumer is null) or ((@p_DokTyp is not null and @p_DokNumer is not null) and (PrH_GIDTyp&lt;&gt;@p_DokTyp or PrH_GIDNumer&lt;&gt;@p_DokNumer) or @p_DokLp is not null))
+			AND ((@p_DokLp is null or @p_DokTyp is null or @p_DokNumer is null) or ((@p_DokTyp is not null and @p_DokNumer is not null and @p_DokLp is not null) and not (PrH_GIDTyp=@p_DokTyp and PrH_GIDNumer=@p_DokNumer and PrH_GIDLp=@p_DokLp)))
+		) A
+	)
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

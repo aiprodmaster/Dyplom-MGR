@@ -1,0 +1,130 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="PotwierdzZmianyKntZMoS"></A><PRE>
+          <FONT SIZE="2"><I>/* PotwierdzZmianyKntZMoS */</I><BR>
+CREATE PROCEDURE CDN.PotwierdzZmianyKntZMoS
+(
+	@KntNumer INT	-- Numer kontrahenta
+)
+AS
+BEGIN
+
+	DECLARE @ZewnetrznyId INT = 0
+	DECLARE @KntOsoba INT = 0
+	DECLARE @MaxLp INT = 0
+	DECLARE @MaxPozycja INT = 0
+
+	SELECT TOP 1 @KntOsoba = isnull(MSKnS_KntLp,0), @ZewnetrznyId = isnull(MSKnS_ZewnetrznyId,0)
+	FROM CDN.MSKntOsoby
+	WHERE MSKnS_KntNumer=@KntNumer and MSKnS_KntTyp=32 AND ISNULL(MSKnS_CzyDomyslna,0)&gt;0 AND MSKnS_Upowazniona&gt;0 -- tylko osoba upoważniona do odbioru faktur jest może być domyślna
+	ORDER BY MSKnS_CzasModyfikacji DESC
+
+	SELECT @MaxLp=isnull(max(KnS_KntLp),0), @MaxPozycja=isnull(max(KnS_Pozycja),0) FROM CDN.KntOsoby WHERE KnS_KntNumer=@KntNumer and KnS_KntTyp=32
+
+	MERGE CDN.KntOsoby AS t
+	USING (SELECT ROW_NUMBER() OVER (ORDER BY MSKnS_KntLp,MSKnS_CzyDomyslna DESC,MSKnS_Upowazniona DESC,MSKnS_CzasModyfikacji DESC) AS Lp,* FROM CDN.MSKntOsoby WHERE MSKnS_KntNumer=@KntNumer and MSKnS_KntTyp=32) AS s 
+	--row_number jako pierwsze są osoby nowo dodawane, domyślne o najbardziej aktualnym czasie modyfikacji
+	ON t.KnS_KntNumer = s.MSKnS_KntNumer AND t.KnS_KntLp = s.MSKnS_KntLp AND t.KnS_KntTyp = s.MSKnS_KntTyp
+	WHEN MATCHED THEN
+		UPDATE SET t.KnS_Upowazniona = ISNULL(s.MSKnS_Upowazniona, t.KnS_Upowazniona),
+					t.KnS_UpowaznionaZam = ISNULL(s.MSKnS_UpowaznionaZam, t.KnS_UpowaznionaZam),
+					t.KnS_Dzial = ISNULL(s.MSKnS_Dzial, t.KnS_Dzial),
+					t.KnS_Stanowisko = ISNULL(s.MSKnS_Stanowisko, t.KnS_Stanowisko),
+					t.KnS_Tytul = ISNULL(s.MSKnS_Tytul, t.KnS_Tytul),
+					t.KnS_Nazwa = ISNULL(s.MSKnS_Nazwa, t.KnS_Nazwa),
+					t.KnS_Telefon = ISNULL(s.MSKnS_Telefon, t.KnS_Telefon),
+					t.KnS_EMail = ISNULL(s.MSKnS_EMail, t.KnS_EMail),
+					t.KnS_HasloChk = ISNULL(s.MSKnS_HasloChk, t.KnS_HasloChk),
+					t.KnS_HasloOsoby = ISNULL(s.MSKnS_HasloOsoby, t.KnS_HasloOsoby),
+					t.KnS_Notatki = ISNULL(s.MSKnS_Notatki, t.KnS_Notatki),
+					t.KnS_RolaDecyzyjna = ISNULL(s.MSKnS_RolaDecyzyjna, t.KnS_RolaDecyzyjna),
+					t.KnS_Fax = ISNULL(s.MSKnS_Fax, t.KnS_Fax),
+					t.KnS_TelefonK = ISNULL(s.MSKnS_TelefonK, t.KnS_TelefonK),
+					t.KnS_UpoDoK = ISNULL(s.MSKnS_UpoDoK, t.KnS_UpoDoK),
+					t.KnS_Archiwalny = ISNULL(s.MSKnS_Archiwalny, t.KnS_Archiwalny),
+					t.KnS_Pozycja = ISNULL(s.MSKnS_Pozycja, t.KnS_Pozycja),
+					t.KnS_CzasModyfikacji = ISNULL(s.MSKnS_CzasModyfikacji, datediff(s, '19900101', getdate())),
+					t.KnS_AdresId = ISNULL(s.MSKnS_AdresId, t.KnS_AdresId)
+	WHEN NOT MATCHED AND s.MSKnS_KntLp=0 THEN
+		INSERT (KnS_KntTyp, 
+				KnS_KntFirma, 
+				KnS_KntNumer, 
+				KnS_KntLp, 
+				KnS_Upowazniona, 
+				KnS_UpowaznionaZam, 
+				KnS_Dzial, 
+				KnS_Stanowisko, 
+				KnS_Tytul, 
+				KnS_Nazwa, 
+				KnS_Telefon, 
+				KnS_EMail, 
+				KnS_HasloChk, 
+				KnS_HasloOsoby, 
+				KnS_Notatki, 
+				KnS_RolaDecyzyjna,
+				KnS_Fax, 
+				KnS_TelefonK, 
+				KnS_UpoDoK, 
+				KnS_Archiwalny, 
+				KnS_Pozycja,
+				KnS_CzasModyfikacji,
+				KnS_AdresId
+				)
+		VALUES (s.MSKnS_KntTyp,
+				CDN.GidFirma(), 
+				s.MSKnS_KntNumer, 
+				ISNULL(@MaxLp+Lp,1),
+				ISNULL(s.MSKnS_Upowazniona,0), 
+				ISNULL(s.MSKnS_UpowaznionaZam,0), 
+				ISNULL(s.MSKnS_Dzial,''), 
+				ISNULL(s.MSKnS_Stanowisko,''), 
+				ISNULL(s.MSKnS_Tytul,''), 
+				ISNULL(s.MSKnS_Nazwa,''), 
+				ISNULL(s.MSKnS_Telefon,''), 
+				ISNULL(s.MSKnS_EMail,''), 
+				ISNULL(s.MSKnS_HasloChk,''), 
+				ISNULL(s.MSKnS_HasloOsoby,''), 
+				ISNULL(s.MSKnS_Notatki,''), 
+				ISNULL(s.MSKnS_RolaDecyzyjna,0), 
+				ISNULL(s.MSKnS_Fax,''), 
+				ISNULL(s.MSKnS_TelefonK,''), 
+				ISNULL(s.MSKnS_UpoDoK,0), 
+				ISNULL(s.MSKnS_Archiwalny,0), 
+				CASE WHEN ISNULL(s.MSKnS_Pozycja,0)&gt;0 THEN s.MSKnS_Pozycja ELSE ISNULL(@MaxPozycja+Lp,1) END, 
+				ISNULL(s.MSKnS_CzasModyfikacji,datediff(s, '19900101', getdate())),
+				ISNULL(s.MSKnS_AdresId,0)
+				);
+
+	IF @ZewnetrznyId &lt;&gt; 0 AND (@KntOsoba&gt;0 OR EXISTS(SELECT KnS_KntLp FROM CDN.KntOsoby WHERE KnS_KntNumer=@KntNumer AND KnS_KntLp=@MaxLp+1 and KnS_KntTyp=32)) --zapisanie domyślnej osoby na karcie knt
+   		UPDATE CDN.KntKarty SET Knt_Osoba = (CASE WHEN @KntOsoba&gt;0 THEN @KntOsoba ELSE @MaxLp+1 END),
+								Knt_LastModL = datediff(s, '19900101', getdate())
+		WHERE Knt_GidNumer = @KntNumer	
+	
+	MERGE cdn.PicoLog as t
+	USING (SELECT DISTINCT MSKnS_OddzialId,CASE MSKnS_KntLp WHEN 0 THEN @MaxLp+ROW_NUMBER() OVER (ORDER BY MSKnS_KntLp,MSKnS_CzyDomyslna DESC,MSKnS_Upowazniona DESC,MSKnS_CzasModyfikacji DESC) ELSE MSKnS_KntLp END AS MSKnS_KntLp, MSKnS_KntNumer, 8211 AS ObiektId, MSKnS_ZewnetrznyId, '' AS Komentarz, '' AS Info, DATEDIFF(s,'1990-01-01',GETDATE()) AS TStamp FROM CDN.MSKntOsoby WHERE MSKnS_KntNumer=@KntNumer) AS s 
+	--row_number jako pierwsze są osoby nowo dodawane, domyślne o najbardziej aktualnym czasie modyfikacji
+	ON t.PcL_PcKId = s.MSKnS_OddzialId AND t.PcL_ObiNumer = s.MSKnS_KntNumer AND t.PcL_ObiTyp = s.MSKnS_KntLp 
+	WHEN MATCHED THEN
+		UPDATE SET t.PcL_TStamp = DATEDIFF(s,'1990-01-01',GETDATE())
+	WHEN NOT MATCHED THEN															
+	    INSERT (PcL_PcKID, PcL_ObiTyp, PcL_ObiNumer, PcL_ObiektTyp, PcL_ObiektID, PcL_Komentarz, PcL_Info, PcL_TStamp)
+		VALUES (s.MSKnS_OddzialId, s.MSKnS_KntLp, s.MSKnS_KntNumer, s.ObiektId, s.MSKnS_ZewnetrznyId, s.Komentarz, s.Info ,s.TStamp);
+
+	DELETE CDN.MSKntOsoby WHERE MSKnS_KntNumer = @KntNumer -- usunięcie danych o osobach knt z tabeli tymczasowej
+	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

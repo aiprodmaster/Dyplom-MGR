@@ -1,0 +1,205 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="SumaKontrolna"></A><PRE>
+          <FONT SIZE="2"><I>/* SumaKontrolna */</I><BR>
+CREATE FUNCTION cdn.SumaKontrolna (@NrRachunku VARCHAR(256), @Kraj CHAR(2) = 'PL')
+RETURNS CHAR(2) AS
+BEGIN
+DECLARE @Numer AS VARCHAR(518)
+DECLARE @Suma AS CHAR(2)
+
+SET @Numer = cdn.NormalizujNumer(@NrRachunku + @Kraj + '00') 
+
+IF LEN(@Numer) &gt; 38 RETURN '--'
+
+SET @Suma = CAST(98 - cdn.MODULO(CAST(@Numer AS DECIMAL(38)),97) AS CHAR(2))
+
+IF LEN(@Suma) = 1 SET @Suma = '0' + @Suma 
+
+RETURN(@Suma)
+
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="MODULO"></A><PRE>
+          <FONT SIZE="2"><I>/* MODULO */</I><BR>
+CREATE FUNCTION cdn.MODULO(@PAR1 AS DECIMAL(38), @PAR2 AS INT) 
+RETURNS INT AS
+BEGIN
+DECLARE @RetVal AS INT
+
+SET @RetVal = CAST(@PAR1-FLOOR(@PAR1/@PAR2)*@PAR2 AS INT)
+
+RETURN @RetVal
+
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="NormalizujNumer"></A><PRE>
+          <FONT SIZE="2"><I>/* NormalizujNumer */</I><BR>
+CREATE FUNCTION cdn.NormalizujNumer (@pText  VARCHAR(256))  
+
+RETURNS VARCHAR(256)  AS  
+BEGIN 
+
+DECLARE @WorkTekst	VARCHAR(256);
+DECLARE @RetVal		VARCHAR(512);
+DECLARE @Licz		INTEGER;
+DECLARE @Znak		CHAR;
+
+SET @WorkTekst = UPPER(@pText);
+/* %%% Pozbywamy się polskich liter z tekstu %%%%*/
+	SET @WorkTekst = REPLACE(@WorkTekst,'Ą','A');
+	SET @WorkTekst = REPLACE(@WorkTekst,'Ć','C');
+	SET @WorkTekst = REPLACE(@WorkTekst,'Ę','E');
+	SET @WorkTekst = REPLACE(@WorkTekst,'Ł','L');
+	SET @WorkTekst = REPLACE(@WorkTekst,'Ń','N');
+	SET @WorkTekst = REPLACE(@WorkTekst,'Ó','O');
+	SET @WorkTekst = REPLACE(@WorkTekst,'Ś','S');
+	SET @WorkTekst = REPLACE(@WorkTekst,'Ź','Z');
+	SET @WorkTekst = REPLACE(@WorkTekst,'Ż','Z');
+
+/*%%%% Pozbywamy się znaków niealfanumerycznych %%%%% i wymieniamy litery na liczby*/
+SET @Licz = 1 ;
+SET @RetVal='';
+WHILE @Licz &lt;= LEN(@WorkTekst)
+	BEGIN 
+		SET @Znak = SUBSTRING(@WorkTekst,@Licz,1)
+		IF (ASCII(@Znak)&gt;=ASCII('0') AND ASCII(@Znak)&lt;=ASCII('9')) 
+			BEGIN
+				SET @RetVal = @RetVal + @Znak
+			END
+		ELSE IF (ASCII(@Znak)&gt;=ASCII('A') AND ASCII(@Znak)&lt;=ASCII('Z'))
+			BEGIN
+				SET @RetVal = @RetVal + CAST(ASCII(@Znak) - ASCII('A') + 10 AS VARCHAR)
+			END
+		SET @Licz = @Licz +1;
+	END 
+
+Return @RetVal
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="WirtualnyNumerRachunku"></A><PRE>
+          <FONT SIZE="2"><I>/* WirtualnyNumerRachunku */</I><BR>
+CREATE FUNCTION cdn.WirtualnyNumerRachunku (@BnkNumer VARCHAR(8), @KarRachIdent VARCHAR(6), @KntGIDNumer INT, @Kraj CHAR(2) = 'PL')
+RETURNS CHAR(40)
+AS
+BEGIN
+
+IF @BnkNumer IS NULL
+  RETURN '';
+
+SET @Kraj=ISNULL(@Kraj,'PL')
+SET @KarRachIdent=ISNULL(@KarRachIdent,'')
+
+DECLARE @Numer AS VARCHAR(518)
+DECLARE @KntNumer AS VARCHAR(10)
+DECLARE @Suma AS CHAR(2)
+
+SET @Numer = REPLACE(LEFT(@BnkNumer+'00000000',8),' ','0')+REPLACE(LEFT(@KarRachIdent+'000000',6),' ','0')
+SET @KntNumer = REPLACE(RIGHT('00000000'+STR(@KntGIDNumer),8),' ','0')
+SET @Suma = cdn.SumaKontrolna (@KntNumer, @Kraj)
+
+SET @Numer = @Numer + @KntNumer + @Suma
+SET @Suma = cdn.SumaKontrolna (@Numer, @Kraj)
+SET @Numer = @Suma + @Numer
+
+SET @Numer = SUBSTRING(@Numer,1,2)+' '+SUBSTRING(@Numer,3,4)+' '+SUBSTRING(@Numer,7,4)+' '+SUBSTRING(@Numer,11,4)+' '+SUBSTRING(@Numer,15,4)+' '+SUBSTRING(@Numer,19,4)+' '+SUBSTRING(@Numer,23,4)
+
+RETURN(@Numer)
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="TylkoCyfry"></A><PRE>
+          <FONT SIZE="2"><I>/* TylkoCyfry */</I><BR>
+CREATE FUNCTION cdn.TylkoCyfry (@str VARCHAR(256))
+RETURNS VARCHAR(256)
+AS
+BEGIN
+	DECLARE @intAlpha INT
+
+	SET @intAlpha = PATINDEX('%[^0-9]%', @str)
+
+	WHILE @intAlpha &gt; 0
+	BEGIN
+		SET @str = STUFF(@str, @intAlpha, 1, '')
+		SET @intAlpha = PATINDEX('%[^0-9]%', @str)
+	END
+
+	RETURN ISNULL(@str, 0)
+END
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="WstawZnakPowtarzalnie"></A><PRE>
+          <FONT SIZE="2"><I>/* WstawZnakPowtarzalnie */</I><BR>
+CREATE FUNCTION CDN.WstawZnakPowtarzalnie (
+	@str VARCHAR(256)
+	, @pozycjaPierwszego INT
+	, @pozycjaPowtarzajCo INT
+	, @znak VARCHAR(1)
+	)
+RETURNS VARCHAR(256)
+AS
+BEGIN
+	DECLARE @i INT = @pozycjaPierwszego
+
+	WHILE @i &lt; LEN(@str)
+	BEGIN
+		SELECT @str = STUFF(@str, @i, 0, @znak)
+
+		SET @i = @i + @pozycjaPowtarzajCo
+	END
+
+	RETURN ISNULL(@str, '')
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="FormatujNumerRachunku"></A><PRE>
+          <FONT SIZE="2"><I>/* FormatujNumerRachunku */</I><BR>
+CREATE FUNCTION CDN.FormatujNumerRachunku (@str VARCHAR(256))
+RETURNS VARCHAR(256)
+AS
+BEGIN
+	RETURN CDN.WstawZnakPowtarzalnie(@str, 3, 5, ' ')
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

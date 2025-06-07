@@ -1,0 +1,379 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Usuwanie procedury POS_EksportUstawienia"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Usuwanie procedury POS_EksportUstawienia */</I><BR>
+if exists (select name from sysobjects where name = 'POS_EksportUstawienia' and type = 'P')
+drop procedure CDN.POS_EksportUstawienia;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury POS_EksportUstawienia"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury POS_EksportUstawienia */</I><BR>
+CREATE PROCEDURE [CDN].[POS_EksportUstawienia] 
+	@rowVersion bigint,
+	@pointOfSaleId int,
+	@keyHash varchar(50)
+AS
+BEGIN
+SET NOCOUNT ON;
+	DECLARE @dbts BIGINT = cast(@@DBTS AS BIGINT);
+	SELECT 0 AS [@RowVersion]
+		,(
+	select u.kolumna [@Name], u.val [@Value], case when @pointOfSaleId is null then u.PosId end as [@PosId] from
+	(
+		select 
+			--STANOWISKO--	
+			cast(PSa_Seria as nvarchar(max)) as [POSSeries],
+			cast(case when PSa_GenKpKwOtwarcie = 1 then 'true' else 'false' end as nvarchar(max)) as [GenerateCashDocAtSessionStartDiff],
+			cast(case when PSa_GenKpKwZamkniecie = 1 then 'true' else 'false' end as nvarchar(max)) as [GenerateCashDocAtSessionEndDiff],
+			cast(case when PSa_OtwZamBezStanu = 1 then 'true' else 'false' end as nvarchar(max)) as [AllowEmptyRealBalance],
+			cast(case when PSa_AutoZamkniecieDnia = 1 then 'Nowithdrawal' else 'Disabled' end as nvarchar(max)) as [DayClosureOnSessionAction],								
+			CONVERT(nvarchar(max), DATEADD(s, PSa_CzasZamkniecia/100 , 0), 108) as [DayClosureTime],
+			cast(case when PSa_DfiskWydruk = 1 then 'true' else 'false' end as nvarchar(max)) as [FiscalPrintReports],
+			cast(case when PSa_TylkoDostepneTwr = 1 then 'true' else 'false' end as nvarchar(max)) as [ProductsShowOnlyAvailable],
+			cast(case when PSa_Szuflada = 1 then 'true' else 'false' end as nvarchar(max)) as [UseDrawer],
+			cast(case when PSa_SzufladaOtwPlatnosc = 1 then 'true' else 'false' end as nvarchar(max)) as [OpenDrawerForFiscalDocumentsBeforePrinting],
+			cast(case when PSa_SzufladaOtwPlatnosc = 2 then 'true' else 'false' end as nvarchar(max)) as [OpenDrawerForFiscalDocumentsAfterPrinting],
+			cast(case when PSa_SzufladaOtwWystawianie = 1 then 'true' else 'false' end as nvarchar(max)) as [OpenDrawerForCashTransaction],
+			cast(case when PSa_SzufladaOtwZliczanie = 1 then 'true' else 'false' end as nvarchar(max)) as [OpenDrawerWhenCountingCashRegister],
+			cast(case when PSa_SzufladaOtwZmianaOtw = 1 then 'true' else 'false' end as nvarchar(max)) as [OpenDrawerWhenOpeningTheShift],
+			cast(case when PSa_SzufladaOtwZmianaZamk = 1 then 'true' else 'false' end as nvarchar(max)) as [OpenDrawerWhenEndingTheShift],
+			cast(case when PSa_wydrukNaDOmyslnejDrukarce = 1 then 'true' else 'false' end as nvarchar(max)) as [PrintOnDefaultSystemPrinter],
+			cast(case when PSa_KlawiaturaNumeryczna = 1 then 'true' else 'false' end as nvarchar(max)) as [EnableNumericKeypad],
+			cast(Pck_LogowanieKarta as nvarchar(max)) as [LoginWithUserCardMode],
+			cast(case when PSa_SzybkaSprzedaz = 1 then 'QuickSales' else 'Standard' end as nvarchar(max)) as [SalesMode],
+			cast(isnull((select CAST(PFP_FormaNr as Nvarchar)+';' from cdn.picostanowiskaformypl where PFP_PSaID = @pointOfSaleId AND PFP_BezKpKw = 1 for xml path('')),'') as nvarchar(max)) as [CreditLimitPaymentForms],
+
+			--ODDZIAŁ--
+			cast(case when PcK_FaDoPAPoTerminie = 1 then 'true' else 'false' end as nvarchar(max)) as [EnableInvoiceGenerationAfterDeadline],
+			cast(PcK_SposobWyszukiwania as nvarchar(max)) as [DocumentsFilterMode],
+			cast(case when PcK_AutoZamykanieOkna = 1 then 'true' else 'false' end as nvarchar(max)) as [AutomaticallyClosePaymentWindow],
+			cast(case when PcK_BlokadawieleDok = 1 then 'true' else 'false' end as nvarchar(max)) as [BlockMultipleTradeDocuments],
+			cast(case when PcK_Minimalizacja = 1 then 'true' else 'false' end as nvarchar(max)) as [AllowMinimization],			
+			cast(case when PcK_PrzeliczajBezPytania = 1 then 'true' else 'false' end as nvarchar(max)) as [RecalculateDocumentWOPrompting],
+			cast(case when PcK_UjemnaKasaAutoryzacja = 1 then 'true' else 'false' end as nvarchar(max)) as [BlockNegativeCashState],
+			cast(PcK_NrCenyDomyslnej as nvarchar(max)) as [DefaultPriceTypeId],
+			cast(case when PcK_SprWroznychWalutach = 1 then 'true' else 'false' end as nvarchar(max)) as [SalesInDifferentCurrencies],		
+			cast(PcK_KnGENumer as nvarchar(max)) as [DefaultCustomerCategoryId],
+			cast(PcK_TwGENumer as nvarchar(max)) as [DefaultProductCategoryId],
+			cast(case when PcK_PodpLogowania = 1 then 'True' else 'False' end as nvarchar(max)) as [EnableLoginSuggestion],			
+			cast(PcK_POSAgentHost as nvarchar(max)) as [BosHost],
+			cast(PcK_POSAgentPort as nvarchar(max)) as [BosPort],
+			cast(PcK_CentrumID as nvarchar(max)) as [CompanyUnitId],			
+			cast(case when PcK_AutomatyczneMMW = 1 then 'True' else 'False' end as nvarchar(max)) as [AutomaticallyGenerateWMForRemainingItems],			
+			cast(PcK_IloscPozycji as nvarchar(max)) as [ItemsLimitOnManualWMMinusDocument],
+			cast(case when Pck_AutomatycznePWRW = 1 then 'True' else 'False' end as nvarchar(max)) as [GenerateInternalReleaseDocumentWhenShipmentDiscrepancy],
+			cast(case when PcK_LimitKrObs = 1 then 'True' else 'False' end as nvarchar(max)) as [EnableCreditLimit],
+			cast(case when PcK_LimitKrObs = 1 then PcK_LimitKrMaksCzas end as nvarchar(max)) as [CreditLimitExpiresAfterMinutes],
+			cast(case when PcK_LimitKrObs = 1 then (case when PcK_LimitKrPrez = 1 then 'Subtract'  when PcK_LimitKrPrez = 2 then 'DoNotSubtract' else 'DoNotShow'end) end as nvarchar(max)) as [CreditLimitDisplayMode],
+			cast(case when PcK_InwObs = 1 then 'True' else 'False' end as nvarchar(max)) as [EnableInventoryCount],
+			cast(case when PcK_InwOstDodawTwrNaDok = 1 then 'True' else 'False' end as nvarchar(max)) as [WarnAboutOngoingInventoryProcess],
+			cast('False' as nvarchar(max)) as [EnableManyWarehousesOnICL],
+			cast('0' as nvarchar(max)) as [VerificationCodeHandling],
+			cast(case when PcK_IgnorujTerminPlatZS = 1 then 'True' else 'False' end as nvarchar(max)) as [IgnorePaymentDateFromSalesOrder],
+
+
+			--INNE--
+			cast((select kpc_id from cdn.KrajeCelne where kpc_kod = (case when Frm_Kraj = '' OR Frm_Kraj is null then 'PL' else Frm_Kraj end)) as nvarchar(max)) as [DefaultCountryId],
+			cast('2' as nvarchar(max)) as [VatAggregationTypeForReceipts],
+			cast('2' as nvarchar(max)) as [VATAggregationTypeForSalesInvoices],
+			cast('2' as nvarchar(max)) as [VATAggregationTypeForSalesOrders],
+			cast('2' as nvarchar(max)) as [VATAggregationTypeForSalesQuotes],
+			cast((select Dok_NettoBrutto+1 from cdn.DokDefinicje where dok_gidtyp=2033 and Dok_FrsId = FRS_ID) as nvarchar(max)) as [VATDirectionForSalesInvoices],
+			cast((select Dok_NettoBrutto+1 from CDN.DokDefinicje where Dok_GIDTyp=9472 AND Dok_FrsId = FRS_ID) as nvarchar(max)) as [VATDirectionForSalesOrders],
+			cast('1' as nvarchar(max)) as [VATDirectionForSalesQuotes],
+			cast('false' as nvarchar(max)) as [UseCategoryInsteadOfTypeForProducts],
+			cast('Auto' as nvarchar(max)) as [HandledByMode],
+			cast('ListAndCard' as nvarchar(max)) as [HandledBySelectionMethod],
+			cast('False' as nvarchar(max)) as [BlockDocumentsGenerationBeyondTradingPeriod],
+			cast('False' as nvarchar(max)) as [BlockDocumentsConfirmationAfterUnclosedTradingPeriod],
+			cast('False' as nvarchar(max)) as [ShowOuterPOSCashBankTransactions],
+			cast(2 - PCK_AutomatyczneNaliczaniePP as nvarchar(max)) as [DiscountBundleModeForReceipts],
+			cast(2 - PCK_AutomatyczneNaliczaniePP as nvarchar(max)) as [DiscountBundleModeForSalesInvoices],
+			cast(2 - PCK_AutomatyczneNaliczaniePP as nvarchar(max)) as [DiscountBundleModeForSalesOrders],
+			cast(2 - PCK_AutomatyczneNaliczaniePP as nvarchar(max)) as [DiscountBundleModeForSalesQuotes],
+			cast( case when Pck_KopiujIloscZZamSpr = 0 then 'False' else 'True' end as nvarchar(max)) as [CopyQuantityFromSalesOrder],
+			cast('False' as nvarchar(max)) as [HandleOuterPOSCashBankTransactions],
+			cast('False' as nvarchar(max)) as [DefaultAutomaticNumerationOfCashBankTransactions],
+			cast('False' as nvarchar(max)) as [PrintInvoicesOnReceiptPrinter],
+			cast('False' as nvarchar(max)) as [OpenDrawerForNonFiscalDocumentsBeforePayment],
+			cast('False' as nvarchar(max)) as [OpenDrawerForNonFiscalDocumentsAfterPayment],
+			cast('True' as nvarchar(max)) as [GetCustomerAddressFromGeneratedDocument],
+			cast('0' as nvarchar(max)) as [DiscountBundleItemsCorrectingModeForReceiptCorrections],
+			cast('0' as nvarchar(max)) as [DiscountBundleItemsCorrectingModeForSalesInvoiceCorrections],
+			cast('False' as nvarchar(max)) as [AllowPriceZeroOnDocumentItem],
+			cast('False' as nvarchar(max)) as [ChangeDueRegistration],
+			cast('False' as nvarchar(max)) as [AdvanceInvoiceFullDeduction],
+			cast('' as nvarchar(max)) as [BIPointUrl],
+			cast('False' as nvarchar(max)) as [CheckCorrectionsOnline],
+			cast('True' as nvarchar(max)) as [CheckSalesOrderOnline],
+			cast('False' as nvarchar(max)) as [CheckWarehouseDocumentsOnline],
+			cast('False' as nvarchar(max)) as [EnableExchangeForItemsOfLowerValue],
+			cast('False' as nvarchar(max)) as [EnableMaximumCashStateOnFinalWithdrawal],
+			cast('False' as nvarchar(max)) as [EnableMinimalCashStateOnCorrections],
+			cast('False' as nvarchar(max)) as [EnableMinimalCashStateOnWithdrawals],
+			cast('Offline' as nvarchar(max)) as [FiscalPrinterMode],
+			cast('False' as nvarchar(max)) as [RelatedProductsShowOnlyAvailable],
+			cast('True' as nvarchar(max)) as [SetArticlePriceOnManualCorrection],
+			cast('False' as nvarchar(max)) as [UnconfirmedDocumentsHaveNumber],
+			cast('True' as nvarchar(max)) as [ChangePasswordWithHash],
+			cast('True' as nvarchar(max)) as [EnableMessageService],
+			cast('True' as nvarchar(max)) as [EnableStoreSummary], 
+			cast('False' as nvarchar(max)) as [PaymentSlipDP],
+			cast('True' as nvarchar(max)) as [EnablePOSSyncService],
+			cast('True' as nvarchar(max)) as [StartSyncAfterPOSStart],
+			cast('False' as nvarchar(max)) as [SalesInvoiceConfirmationWithDefaultCustomer],
+			cast('False' as nvarchar(max)) as [GenerateTaxFreeToConfirmedReceipt],
+			cast('True' as nvarchar(max)) as [RequireCustomerDataForLoyaltyCard],
+			cast('False' as nvarchar(max)) as [ValueControl],
+			cast('0' as nvarchar(max)) as [PaymentRoundingMethod],
+			cast('2' as nvarchar(max)) as [VATRateDisplayPrecision],
+			cast('True' as nvarchar(max)) as [IsDrawerInvertedOpenState],
+			cast('False' as nvarchar(max)) as [IsAdyenTerminalTestModeEnabled],
+			cast('False' as nvarchar(max)) as [EnablePriceChangeAsPercentageOfBasePrice],
+			cast('True' as nvarchar(max)) as [EnableContextBarcodeScanner],
+			cast('False' as nvarchar(max)) as [UseDeliveryNotes],
+			cast('False' as nvarchar(max)) as [GenerateBarcodeForWMMinus],
+			cast('False' as nvarchar(max)) as [ReceiptOnlyPickedUpParcels],
+			cast('False' as nvarchar(max)) as [EnableStoreCodeScanningForUnexpectedParcels],
+			cast('True' as nvarchar(max)) as [PreferDefaultWarehouseForReturnedItemsForReceiptCorrections],
+			cast('True' as nvarchar(max)) as [PreferDefaultWarehouseForReturnedItemsForSalesInvoiceCorrections],
+			cast('False' as nvarchar(max)) as [UsePendingQuantityToReleaseColumn],
+			cast((select case when Dok_Rezerwacje = 0 then '0' when Dok_Rezerwacje = 1 then (case when Dok_RezerwujZasoby = 0 then '2' else '1' end) end from CDN.DokDefinicje where Dok_GIDTyp=9472 AND Dok_FrsId = FRS_ID) as nvarchar(max)) as [ReservationsKind],
+			cast('False' as nvarchar(max)) as [EnableShiftWork],
+			cast('False' as nvarchar(max)) as [EnableVaultBalance],
+			cast('False' as nvarchar(max)) as [PrintSessionAfterEachLogout],
+
+			cast('True' as nvarchar(max)) as [EnableVouchersWithUsageLimit],
+			cast(0 as nvarchar(max)) as [DailyVoucherPaymentLimit],
+			cast('True' as nvarchar(max)) as [EnableExceedingTheLimitPayableByVouchers],
+			cast(0 as nvarchar(max)) as [AmountVaultLimit],
+			cast(0 as nvarchar(max)) as [TimeLimitSinceLastWithdrawal],
+			cast('True' as nvarchar(max)) as [ShowDateInTitleBar],
+			cast('True' as nvarchar(max)) as [ShowMissingPrintoutErrorNotification],
+			cast('False' as nvarchar(max)) as [CheckWarehouseMovementMinusInErpBeforeCancel],
+			cast('True' as nvarchar(max)) as [UpdateCreditLimitOnlyIfExistsLocally],
+			cast('False' as nvarchar(max)) as [EnablePriceMarking],
+			cast('True' as nvarchar(max)) as [EnableWarehouseReceiptDocumentsCanceling],
+			cast('True' as nvarchar(max)) as [EnableCreationOfInternalOrders],
+			cast('False' as nvarchar(max)) as [CheckInternalOrdersOnline],
+			cast('True' as nvarchar(max)) as [PresentPurchasePriceOnPOR],
+			cast('False' as nvarchar(max)) as [SetConfirmedQuantityTotalPORStatus],
+			cast('True' as nvarchar(max)) as [ManualPurchaseOrderReceptionReferenceNumberRequired],
+			cast(2 as nvarchar(max)) as [VATAggregationTypeForPurchaseOrderReception],
+			cast('True' as nvarchar(max)) as [UseFirstLotAsDefault],
+			--DefinicjeDokumentów
+			CAST((select case when Dok_BlokadaZatwZNiezgodnymNIP = 0 then 'False' else 'True' end from CDN.DokDefinicje where Dok_GIDTyp=2033 AND Dok_FrsId=PcK_CentrumID) as nvarchar(max)) as [TINVerificationOnInvoiceToReceipt],
+			cast((select case when Dok_KntLimitPrawo = 0 then '2' when Dok_KntLimitPrawo = 1 then '1' when Dok_KntLimitPrawo = 2 then '0' end from CDN.DokDefinicje where Dok_GIDTyp=2034 AND Dok_FrsId=PcK_CentrumID) as nvarchar(max)) as [CreditLimitDocumentConfirmationModeForReceipts],
+			cast((select case when Dok_KntLimitPrawo = 0 then '2' when Dok_KntLimitPrawo = 1 then '1' when Dok_KntLimitPrawo = 2 then '0' end from CDN.DokDefinicje where Dok_GIDTyp=2033 AND Dok_FrsId=PcK_CentrumID) as nvarchar(max)) as [CreditLimitDocumentConfirmationModeForSalesInvoices],
+			cast((select case when Dok_KntLimitPrawo = 0 then '2' when Dok_KntLimitPrawo = 1 then '1' when Dok_KntLimitPrawo = 2 then '0' end from CDN.DokDefinicje where Dok_GIDTyp=9472 AND Dok_FrsId=PcK_CentrumID) as nvarchar(max)) as [CreditLimitDocumentConfirmationModeForSalesOrders],
+			cast((select case when Dok_WystPrawo = 0 then 'False' else 'True' end from CDN.DokDefinicje where Dok_GIDTyp=1489 AND Dok_FrsId=PcK_CentrumID) as nvarchar(max)) as [EnablePurchaseOrderReception],
+			cast((select Dok_NettoBrutto+1 from CDN.DokDefinicje where Dok_GIDTyp=1489 AND Dok_FrsId=PcK_CentrumID) as nvarchar(max)) as [VatDirectionForPurchaseOrderReception],
+			cast((select case when Dok_WystPrawo = 0 then 'False' else 'True' end from CDN.DokDefinicje where Dok_GIDTyp=1489 AND Dok_FrsId=PcK_CentrumID) as nvarchar(max)) as [EnableManualPurchaseOrderReception],
+			cast((select Dok_PosTerminRozpRLS from CDN.DokDefinicje where Dok_GIDTyp=3584 AND Dok_FrsId=PcK_CentrumID) as nvarchar(max)) as [ComplaintConsiderationDays],
+			--Konfiguracja			
+			cast((select case when kon_wartosc = 0 then 'False' else 'True' end from CDN.Konfig where Kon_Numer=9844) as nvarchar(max)) as [EnableSplitPayment],
+			CAST('False' AS NVARCHAR(max)) AS [EnableParking],
+			cast('True' AS NVARCHAR(max)) AS [EnableGUSVerification],
+			cast('True' AS NVARCHAR(max)) AS [EnableVIESVerification],
+			cast(@keyHash AS NVARCHAR(max)) AS [LicenseKeyHash],
+			cast('0' AS NVARCHAR(max))  AS [AutoSaveInterval],
+			cast('True' AS NVARCHAR(max)) AS [UseGratisVerification],
+			case when @pointOfSaleId is null then cast((case when PSa_Drukarka &lt;&gt; '' then 'True' else 'False' end) as nvarchar(max)) end as [webPOS_EnableFiscalization],
+			PSa_ID as [PosId],
+			case when PSa_TypAplikacji = 1 then cast('1' AS NVARCHAR(max)) end as [IsXL]
+
+		from cdn.PicoStanowiska 
+		join cdn.picoKonfig on pck_picoid=psa_pckid
+		join cdn.FrmStruktura on FRS_Id = PcK_CentrumID
+		join cdn.Firma on FRS_FrmNumer = Frm_GidNumer
+		where ((@PointOfSaleId is not null and PSa_ID = @PointOfSaleId) or (@PointOfSaleId is null and PSa_TypAplikacji = 2))
+		) s
+		unpivot
+		(
+			val
+			for kolumna in (
+			[POSSeries], 
+			[GenerateCashDocAtSessionStartDiff],
+			[GenerateCashDocAtSessionEndDiff],
+			[AllowEmptyRealBalance],
+			[DayClosureOnSessionAction],
+			[DayClosureTime],
+			[FiscalPrintReports],
+			[ProductsShowOnlyAvailable],
+			[UseDrawer],
+			[OpenDrawerForFiscalDocumentsBeforePrinting],
+			[OpenDrawerForFiscalDocumentsAfterPrinting],
+			[OpenDrawerForCashTransaction],
+			[OpenDrawerWhenCountingCashRegister],
+			[OpenDrawerWhenOpeningTheShift],
+			[OpenDrawerWhenEndingTheShift],
+			[AutomaticallyClosePaymentWindow],
+			[BlockMultipleTradeDocuments],
+			[AllowMinimization],
+			[PrintOnDefaultSystemPrinter],
+			[EnableNumericKeypad],
+			[LoginWithUserCardMode],
+			[SalesMode],
+			[DocumentsFilterMode],
+			[EnableInvoiceGenerationAfterDeadline],
+			[RecalculateDocumentWOPrompting],
+			[BlockNegativeCashState],
+			[DefaultPriceTypeId],
+			[DefaultCountryId],
+			[VatAggregationTypeForReceipts],
+			[VATAggregationTypeForSalesInvoices],
+			[VATAggregationTypeForSalesOrders],
+			[VATAggregationTypeForSalesQuotes],
+			[VATDirectionForSalesOrders],
+			[VATDirectionForSalesQuotes],
+			[UseCategoryInsteadOfTypeForProducts],
+			[HandledByMode],
+			[HandledBySelectionMethod],
+			[CreditLimitPaymentForms],
+			[BlockDocumentsGenerationBeyondTradingPeriod],
+			[BlockDocumentsConfirmationAfterUnclosedTradingPeriod],
+			[ShowOuterPOSCashBankTransactions],
+			[VatDirectionForSalesInvoices],
+			[SalesIndifferentCurrencies],
+			[DiscountBundleModeForReceipts],
+			[DiscountBundleModeForSalesInvoices],
+			[DiscountBundleModeForSalesOrders],
+			[DiscountBundleModeForSalesQuotes],
+			[EnableCreditLimit],
+			[CopyQuantityFromSalesOrder],
+			[HandleOuterPOSCashBankTransactions],
+			[DefaultAutomaticNumerationOfCashBankTransactions],
+			[PrintInvoicesOnReceiptPrinter],
+			[OpenDrawerForNonFiscalDocumentsBeforePayment],
+			[OpenDrawerForNonFiscalDocumentsAfterPayment],
+			[GetCustomerAddressFromGeneratedDocument],
+			[DiscountBundleItemsCorrectingModeForReceiptCorrections],
+			[AllowPriceZeroOnDocumentItem],
+			[DiscountBundleItemsCorrectingModeForSalesInvoiceCorrections],
+			[ChangeDueRegistration],
+			[AdvanceInvoiceFullDeduction],
+			[BIPointUrl],
+			[CheckCorrectionsOnline],
+			[CheckSalesOrderOnline],
+			[CheckWarehouseDocumentsOnline],
+			[ComplaintConsiderationDays],
+			[CreditLimitDisplayMode],
+			[CreditLimitDocumentConfirmationModeForReceipts],
+			[CreditLimitDocumentConfirmationModeForSalesInvoices],
+			[CreditLimitDocumentConfirmationModeForSalesOrders],
+			[CreditLimitExpiresAfterMinutes],
+			[DefaultCustomerCategoryId],
+			[DefaultProductCategoryId],
+			[EnableLoginSuggestion],
+			[BosHost],
+			[BosPort],
+			[CompanyUnitId],
+			[AutomaticallyGenerateWMForRemainingItems],
+			[ItemsLimitOnManualWMMinusDocument],
+			[GenerateInternalReleaseDocumentWhenShipmentDiscrepancy],
+			[EnableExchangeForItemsOfLowerValue],
+			[EnableMaximumCashStateOnFinalWithdrawal],
+			[EnableMinimalCashStateOnCorrections],
+			[EnableMinimalCashStateOnWithdrawals],
+			[FiscalPrinterMode],
+			[RelatedProductsShowOnlyAvailable],
+			[SetArticlePriceOnManualCorrection],
+			[UnconfirmedDocumentsHaveNumber],
+			[ChangePasswordWithHash],
+			[EnableMessageService],
+			[EnableStoreSummary],
+			[PaymentSlipDP],
+			[EnablePOSSyncService],
+			[StartSyncAfterPOSStart],
+			[SalesInvoiceConfirmationWithDefaultCustomer],
+			[GenerateTaxFreeToConfirmedReceipt],
+			[RequireCustomerDataForLoyaltyCard],
+			[ValueControl],
+			[PaymentRoundingMethod],
+			[VATRateDisplayPrecision],
+			[IsDrawerInvertedOpenState],
+			[IsAdyenTerminalTestModeEnabled],
+			[EnablePriceChangeAsPercentageOfBasePrice],	
+			[EnableContextBarcodeScanner],		
+			[UseDeliveryNotes],	
+			[GenerateBarcodeForWMMinus],	
+			[ReceiptOnlyPickedUpParcels],	
+			[EnableStoreCodeScanningForUnexpectedParcels],		
+			[PreferDefaultWarehouseForReturnedItemsForReceiptCorrections],	
+			[PreferDefaultWarehouseForReturnedItemsForSalesInvoiceCorrections],	 
+			[UsePendingQuantityToReleaseColumn],	
+			[ReservationsKind],	
+			[EnableShiftWork],	
+			[EnableVaultBalance],	
+			[PrintSessionAfterEachLogout],	
+			[EnableVouchersWithUsageLimit],
+			[DailyVoucherPaymentLimit],
+			[EnableExceedingTheLimitPayableByVouchers],
+			[AmountVaultLimit],
+			[TimeLimitSinceLastWithdrawal],
+			[ShowDateInTitleBar],
+			[ShowMissingPrintoutErrorNotification],
+			[CheckWarehouseMovementMinusInErpBeforeCancel],
+			[UpdateCreditLimitOnlyIfExistsLocally],
+			[EnablePriceMarking],
+			[EnableWarehouseReceiptDocumentsCanceling],
+			[TINVerificationOnInvoiceToReceipt],
+			[EnableSplitPayment],
+			[EnableCreationOfInternalOrders],
+			[CheckInternalOrdersOnline],
+			[EnableParking],
+			[EnablePurchaseOrderReception],
+			[PresentPurchasePriceOnPOR],
+			[SetConfirmedQuantityTotalPORStatus],
+			[ManualPurchaseOrderReceptionReferenceNumberRequired],
+			[VatDirectionForPurchaseOrderReception],
+			[EnableManualPurchaseOrderReception],
+			[VATAggregationTypeForPurchaseOrderReception],
+			[UseFirstLotAsDefault],
+			[EnableGUSVerification],
+			[EnableVIESVerification],
+			[LicenseKeyHash],
+			[AutoSaveInterval],
+			[EnableInventoryCount],
+			[WarnAboutOngoingInventoryProcess],
+			[EnableManyWarehousesOnICL],
+			[VerificationCodeHandling],
+			[UseGratisVerification],
+			[webPOS_EnableFiscalization],
+			[IsXL],
+			[IgnorePaymentDateFromSalesOrder]
+			)
+		) u
+
+		for xml path('Setting'), type)
+	for xml path('Settings')
+	SET NOCOUNT OFF;	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury POS_EksportUstawienia"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury POS_EksportUstawienia */</I><BR>
+GRANT EXECUTE ON CDN.POS_EksportUstawienia TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

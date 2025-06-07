@@ -1,0 +1,148 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="PCWartosciObiektow"></A><PRE>
+          <FONT SIZE="2"><I>/* PCWartosciObiektow */</I><BR>
+CREATE FUNCTION CDN.PCWartosciObiektow(@_WyPId integer, @_WagaJm varchar(5), @_ObjJm varchar(5))  
+RETURNS TABLE 
+AS 
+RETURN select ObiTyp, ObiNumer, ObiLp, ObiSubLp,
+	sum(Ilosc/(CASE UPPER(@_WagaJm) WHEN 'GRAM' THEN 1 WHEN 'DKG' THEN 10 WHEN 'KG' THEN 1000 WHEN 'TONA' THEN 1000000 ELSE NULL END)
+		*ISNULL(TwJ_Waga*PrzeliczM/NULLIF(PrzeliczL,0)*(CASE UPPER(ISNULL(TwJ_WJm,'')) WHEN 'GRAM' THEN 1 WHEN 'DKG' THEN 10 WHEN 'KG' THEN 1000 WHEN 'TONA' THEN 1000000 ELSE NULL END),
+		ISNULL(Twr_Waga*(CASE UPPER(ISNULL(Twr_WJm,'')) WHEN 'GRAM' THEN 1 WHEN 'DKG' THEN 10 WHEN 'KG' THEN 1000 WHEN 'TONA' THEN 1000000 ELSE NULL END),0))
+	) Waga,
+	sum(Ilosc/(CASE UPPER(@_WagaJm) WHEN 'GRAM' THEN 1 WHEN 'DKG' THEN 10 WHEN 'KG' THEN 1000 WHEN 'TONA' THEN 1000000 ELSE NULL END)
+		*ISNULL(TwJ_WagaBrutto*PrzeliczM/NULLIF(PrzeliczL,0)*(CASE UPPER(ISNULL(TwJ_WJmBrutto,'')) WHEN 'GRAM' THEN 1 WHEN 'DKG' THEN 10 WHEN 'KG' THEN 1000 WHEN 'TONA' THEN 1000000 ELSE NULL END),
+		ISNULL(Twr_WagaBrutto*(CASE UPPER(case when isnull(Twr_WJmBrutto,'') in ('','0') then ISNULL(Twr_WJm,'') else Twr_WJmBrutto end) 
+						WHEN 'GRAM' THEN 1 WHEN 'DKG' THEN 10 WHEN 'KG' THEN 1000 WHEN 'TONA' THEN 1000000 ELSE NULL END),0))
+	) WagaBrutto,
+	sum(
+		Ilosc/(CASE UPPER(@_ObjJm) WHEN 'MM' THEN 1 WHEN 'CM' THEN 1000 WHEN 'DM' THEN 1000000 WHEN 'M' THEN 1000000000 ELSE NULL END)
+		*ISNULL(TwJ_ObjetoscL*PrzeliczM/NULLIF(TwJ_ObjetoscM*PrzeliczL,0)
+					*(CASE UPPER(ISNULL(TwJ_WymJm,'')) WHEN 'MM' THEN 1 WHEN 'CM' THEN 1000 WHEN 'DM' THEN 1000000 WHEN 'M' THEN 1000000000 ELSE NULL END)
+				,Twr_ObjetoscL/NULLIF(Twr_ObjetoscM,0)
+					*(CASE UPPER(ISNULL(Twr_WymJm,'')) WHEN 'MM' THEN 1 WHEN 'CM' THEN 1000 WHEN 'DM' THEN 1000000 WHEN 'M' THEN 1000000000 ELSE NULL END))	
+	) Objetosc,
+	sum(case ObiTyp when TrETyp then VatTrE/IloscTrE*(case Ilosc when 0 then IloscTrE else Ilosc end) else 0 end) 
+		+ isnull((select sum(zav_vat*zav_kursl/zav_kursm)
+			from cdn.zamvat
+			where ZaV_GIDTyp = ObiTyp and ZaV_GIDNumer = ObiNumer and ObiLp=0),0)
+		+ sum(Ilosc)*isnull((select sum((case ZaE_FlagaNB when 'N' then ZaV_StawkaPod/100 else ZaV_StawkaPod/(100+ZaV_StawkaPod) end)*ZaE_WartoscPoRabacie/ZaE_Ilosc*ZaV_KursL/ZaV_KursM)
+			from cdn.ZamElem
+			join cdn.ZamVat on ZaE_GIDNumer=ZaV_GIDNumer
+			where ZaE_Waluta=ZaV_Waluta and ZaE_StawkaPod=ZaV_StawkaPod and ZaE_FlagaVAT=ZaV_FlagaVat
+				and ZaE_GidTyp = ObiTyp and ZaE_GidNumer = ObiNumer and ZaE_GidLp = ObiLp),0) Vat,
+	sum(case ObiTyp when TrETyp then NettoTrE/IloscTrE*(case Ilosc when 0 then IloscTrE else Ilosc end) else 0 end) 
+		+ isnull((select sum((case ZaN_FlagaNB when 'N' then zav_netto else zav_brutto-zav_vat end)*zav_kursl/zav_kursm)
+			from cdn.zamvat
+			join cdn.zamnag on ZaN_GIDNumer=ZaV_GIDNumer
+			where ZaN_GidTyp = ObiTyp and ZaN_GidNumer = ObiNumer and ObiLp=0),0)
+		+ sum(Ilosc)*isnull((select sum((case ZaE_FlagaNB when 'N' then 1 else 100/(100+ZaV_StawkaPod) end)*ZaE_WartoscPoRabacie*(ZaV_KursL/ZaV_KursM)/ZaE_Ilosc)
+			from cdn.ZamElem
+			join cdn.ZamVat on ZaE_GIDNumer=ZaV_GIDNumer
+			where ZaE_Waluta=ZaV_Waluta and ZaE_StawkaPod=ZaV_StawkaPod and ZaE_FlagaVAT=ZaV_FlagaVat
+				and ZaE_GidTyp = ObiTyp and ZaE_GidNumer = ObiNumer and ZaE_GidLp = ObiLp),0) Netto,
+	sum(Ilosc) Ilosc, sum(IloscTrE) IloscTrE
+from (select WyR_DokTyp ObiTyp, WyR_DokNumer ObiNumer, WyR_DokLp ObiLp, WyR_DokSubLp ObiSubLp, TrE_GIDTyp TrETyp, tre.TrE_Ilosc Ilosc, tre.TrE_JmZ JmZ, 
+			tre.TrE_PrzeliczL PrzeliczL, tre.TrE_PrzeliczM PrzeliczM, tre.TrE_TwrNumer TwrNumer, tre.TrE_KsiegowaBrutto - tre.TrE_KsiegowaNetto VatTrE, tre.TrE_KsiegowaNetto NettoTrE, 
+			case TrE_Ilosc when 0 then (select sum(trso.TrS_Ilosc) 
+			from CDN.TraSElem trs 
+			join CDN.TraSElem trso on trso.TrS_OrgNumer = trs.TrS_OrgNumer and trso.TrS_OrgLp = trs.TrS_OrgLp and trso.TrS_SubOrgLp = trs.TrS_SubOrgLp
+			where trs.TrS_GIDNumer = tre.TrE_GIDNumer and trs.TrS_GIDLp = tre.TrE_GIDLp and trso.TrS_GIDNumer &lt;= tre.TrE_GIDNumer) else TrE_Ilosc end IloscTrE
+			from CDN.WysRelacje
+			join CDN.TraElem tre on WyR_DokTyp = tre.TrE_GIDTyp and WyR_DokNumer = tre.TrE_GIDNumer and WyR_DokLp = 0
+			where WYR_IdPaczki = @_WyPId
+			union all
+			select WyR_DokTyp ObiTyp, WyR_DokNumer ObiNumer, WyR_DokLp ObiLp, WyR_DokSubLp ObiSubLp, TrE_GIDTyp TrETyp, WyR_Ilosc Ilosc, tre.TrE_JmZ JmZ,
+			tre.TrE_PrzeliczL PrzeliczL, tre.TrE_PrzeliczM PrzeliczM, tre.TrE_TwrNumer TwrNumer, tre.TrE_KsiegowaBrutto - tre.TrE_KsiegowaNetto VatTrE, tre.TrE_KsiegowaNetto NettoTrE, 
+			case TrE_Ilosc when 0 then (select sum(trso.TrS_Ilosc) 
+			from CDN.TraSElem trs 
+			join CDN.TraSElem trso on trso.TrS_OrgNumer = trs.TrS_OrgNumer and trso.TrS_OrgLp = trs.TrS_OrgLp and trso.TrS_SubOrgLp = trs.TrS_SubOrgLp
+			where trs.TrS_GIDNumer = tre.TrE_GIDNumer and trs.TrS_GIDLp = tre.TrE_GIDLp and trso.TrS_GIDNumer &lt;= tre.TrE_GIDNumer) else TrE_Ilosc end IloscTrE	
+			from CDN.WysRelacje
+			join CDN.TraElem tre on WyR_DokTyp = tre.TrE_GIDTyp and WyR_DokNumer = tre.TrE_GIDNumer and WyR_DokLp = tre.TrE_GIDLp and WYR_DokSubLp = 0
+			where WYR_IdPaczki = @_WyPId
+			union all
+			select WyR_DokTyp ObiTyp, WyR_DokNumer ObiNumer, WyR_DokLp ObiLp, WyR_DokSubLp ObiSubLp, TrE_GIDTyp TrETyp, WyR_Ilosc Ilosc, tre.TrE_JmZ JmZ,
+			tre.TrE_PrzeliczL PrzeliczL, tre.TrE_PrzeliczM PrzeliczM, tre.TrE_TwrNumer TwrNumer, tre.TrE_KsiegowaBrutto - tre.TrE_KsiegowaNetto VatTrE, tre.TrE_KsiegowaNetto NettoTrE, 
+			case TrE_Ilosc when 0 then (select sum(trso.TrS_Ilosc) 
+			from CDN.TraSElem trso 
+			where tre.TrE_Ilosc = 0 and trso.TrS_OrgNumer = trs.TrS_OrgNumer and trso.TrS_OrgLp = trs.TrS_OrgLp and trso.TrS_SubOrgLp = trs.TrS_SubOrgLp and trso.TrS_GIDNumer &lt;= trs.TrS_GIDNumer) else TrE_Ilosc end IloscTrE	
+			from CDN.WysRelacje
+			join CDN.TraSElem trs on WyR_DokTyp = trs.TrS_GIDTyp and WyR_DokNumer = trs.TrS_GIDNumer and WyR_DokLp = trs.TrS_GIDLp and WYR_DokSubLp = trs.TrS_SubGIDLp
+			join cdn.TraElem tre on trs.TrS_GIDNumer = tre.TrE_GIDNumer and trs.TrS_GIDLp = tre.TrE_GIDLp 
+			where WYR_IdPaczki = @_WyPId
+			union all
+			select WyR_DokTyp ObiTyp, WyR_DokNumer ObiNumer, WyR_DokLp ObiLp, WyR_DokSubLp ObiSubLp, 0 TrETyp, MaE_Ilosc Ilosc, MaE_JmZ JmZ,
+			MaE_PrzeliczL PrzeliczL, MaE_PrzeliczM PrzeliczM, MaE_TwrNumer TwrNumer, 0 VatTrE, 0 NettoTrE, 1 IloscTrE
+			from CDN.WysRelacje 	
+			join CDN.MagElem on WyR_DokTyp = MaE_GIDTyp and WYR_DokNumer = MaE_GIDNumer and WyR_DokLp = 0	
+			where WyR_IdPaczki = @_WyPId and WyR_Kierunek = 0
+			union all
+			select WyR_DokTyp ObiTyp, WyR_DokNumer ObiNumer, WyR_DokLp ObiLp, WyR_DokSubLp ObiSubLp, 0 TrETyp, WyR_Ilosc Ilosc, MaE_JmZ JmZ,
+			MaE_PrzeliczL PrzeliczL, MaE_PrzeliczM PrzeliczM, MaE_TwrNumer TwrNumer, 0 VatTrE, 0 NettoTrE, 1 IloscTrE
+			from CDN.WysRelacje 	
+			join CDN.MagElem on WyR_DokTyp = MaE_GIDTyp and WYR_DokNumer = MaE_GIDNumer and WyR_DokLp = MaE_GIDLp	
+			where WyR_IdPaczki = @_WyPId and WyR_Kierunek = 0
+			union all
+			select WyR_DokTyp ObiTyp, WyR_DokNumer ObiNumer, WyR_DokLp ObiLp, WyR_DokSubLp ObiSubLp, 0 TrETyp, ZaE_Ilosc Ilosc, ZaE_JmZ JmZ,
+			ZaE_PrzeliczL PrzeliczL, ZaE_PrzeliczM PrzeliczM, ZaE_TwrNumer TwrNumer, 0 VatTrE, 0 NettoTrE, 1 IloscTrE  -- TFS 345718
+			from CDN.WysRelacje 
+			join CDN.ZamElem on WyR_DokTyp = ZaE_GIDTyp and WYR_DokNumer = ZaE_GIDNumer and WyR_DokLp =0	
+			where WyR_IdPaczki = @_WyPId
+			union all
+			select WyR_DokTyp ObiTyp, WyR_DokNumer ObiNumer, WyR_DokLp ObiLp, WyR_DokSubLp ObiSubLp, 0 TrETyp, WyR_Ilosc Ilosc, ZaE_JmZ JmZ,
+			ZaE_PrzeliczL PrzeliczL, ZaE_PrzeliczM PrzeliczM, ZaE_TwrNumer TwrNumer, 0 VatTrE, 0 NettoTrE, 1 IloscTrE  -- TFS 345718
+			from CDN.WysRelacje 
+			join CDN.ZamElem on WyR_DokTyp = ZaE_GIDTyp and WYR_DokNumer = ZaE_GIDNumer and WyR_DokLp = ZaE_GIDLp	
+			where WyR_IdPaczki = @_WyPId
+			union all
+			select WyR_DokTyp ObiTyp, WyR_DokNumer ObiNumer, WyR_DokLp ObiLp, WyR_DOkSubLp ObiSubLp, 0 TrETyp, WyR_Ilosc Ilosc, NULL JmZ,
+			1 PrzeliczL, 1 PrzeliczM, RLE_TwrNumer TwrNumer, 0 VatTrE, 0 NettoTrE, 1 IloscTrE  -- TFS 345718
+			from CDN.WysRelacje 
+			join CDN.ReklElem on  WyR_DokTyp = 3586 and WyR_DokNumer = RLE_Id
+			where WyR_IdPaczki = @_WyPId
+			union all
+			select WyR_DokTyp ObiTyp, WyR_DokNumer ObiNumer, WyR_DokLp ObiLp, WyR_DokSubLp ObiSubLp, 0 TrETyp, RLE_Ilosc Ilosc, NULL JmZ,
+			1 PrzeliczL, 1 PrzeliczM, RLE_TwrNumer TwrNumer, 0 VatTrE, 0 NettoTrE, 1 IloscTrE  -- TFS 345718
+			from CDN.WysRelacje 
+			join CDN.ReklElem on WyR_DokTyp = 3584 and WyR_DokNumer = RLE_RLNId
+			where WyR_IdPaczki = @_WyPId
+			union all
+			select WyR_DokTyp ObiTyp, WyR_DokNumer ObiNumer, WyR_DokLp ObiLp, WyR_DokSubLp ObiSubLp, 0 TrETyp, RLE_Ilosc Ilosc, NULL JmZ,
+			1 PrzeliczL, 1 PrzeliczM, RLE_TwrNumer TwrNumer, 0 VatTrE, 0 NettoTrE, 1 IloscTrE  -- TFS 345718
+			from CDN.WysRelacje 
+			join CDN.ReklElem on WyR_DokTyp = 3585 and WyR_DokNumer = RLE_RLNId
+			where WyR_IdPaczki = @_WyPId
+			union all
+			select WyR_DokTyp ObiTyp, WyR_DokNumer ObiNumer, WyR_DokLp ObiLp, WyR_DokSubLp ObiSubLp, 0 TrETyp, 1 Ilosc, NULL JmZ,
+			1 PrzeliczL, 1 PrzeliczM, SrU_ObiNumer TwrNumer, 0 VatTrE, 0 NettoTrE, 1 IloscTrE  -- TFS 345718
+			from CDN.WysRelacje 
+			join CDN.SrwZlcUrz on WyR_DokTyp = 4700 and WYR_DokNumer = SZU_SZNId
+			join CDN.SrwUrzadzenia on SZU_SrUId = SrU_Id and SrU_ObiTyp = 16
+			where WyR_IdPaczki = @_WyPId
+			union all
+			select WyR_DokTyp ObiTyp, WyR_DokNumer ObiNumer, WyR_DokLp ObiLp, WyR_DokSubLp ObiSubLp, 0 TrETyp, 1 Ilosc, NULL JmZ,
+			1 PrzeliczL, 1 PrzeliczM, SrU_ObiNumer TwrNumer, 0 VatTrE, 0 NettoTrE, 1 IloscTrE  -- TFS 345718
+			from CDN.WysRelacje 
+			join CDN.SrwZlcUrz on WyR_DokTyp = 4704 and WYR_DokNumer = SZU_Id
+			join CDN.SrwUrzadzenia on SZU_SrUId = SrU_Id and SrU_ObiTyp = 16
+			where WyR_IdPaczki = @_WyPId
+	) elem
+join CDN.TwrKarty on elem.TwrNumer = Twr_GIDNumer
+left join CDN.TwrJm on Twr_GIDNumer=TwJ_TwrNumer and TwJ_JmZ = JmZ
+group by ObiTyp, ObiNumer, ObiLp, ObiSubLp
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

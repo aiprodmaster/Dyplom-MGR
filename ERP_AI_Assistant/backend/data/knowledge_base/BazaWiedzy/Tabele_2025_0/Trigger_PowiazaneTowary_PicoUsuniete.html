@@ -1,0 +1,442 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[PowiazaneTowaryDelete_PicoUsuniete]"></A><PRE>
+          <FONT SIZE="2"><I>/* [PowiazaneTowaryDelete_PicoUsuniete] */</I><BR>
+CREATE TRIGGER [CDN].[PowiazaneTowaryDelete_PicoUsuniete]
+   ON  [CDN].[FrsZamienniki]
+   FOR DELETE
+AS 
+BEGIN
+
+	SET NOCOUNT ON;
+
+    IF NOT EXISTS(SELECT 1 FROM CDN.PicoKonfig WHERE PcK_Typ = 8) RETURN
+    
+    DECLARE  @Count		INT
+            ,@Indeks    INT
+
+    DECLARE	 @PcKId     INT
+            ,@ObiTyp    SMALLINT
+            ,@ObiNumer  INT
+			,@ObiektID	INT
+			,@ObiektTyp	SMALLINT
+			,@PsaID		INT
+    
+	SELECT * 
+	INTO #Deleted
+	FROM(  
+	
+	SELECT
+		PcK_PicoID
+		,FRZ_Id
+		,ROW_NUMBER() OVER( ORDER BY PcK_PicoID) Indeks
+		,PSa_ID
+		FROM DELETED 
+		join CDN.PicoKonfig ON FRZ_FrsId=PcK_CentrumID
+		left join CDN.TwrPodm ON FRZ_TwPId = TwP_Id
+		join CDN.PicoStanowiska ON PcK_PicoID=PSa_PcKID
+		WHERE PcK_Typ = 8
+		
+	UNION
+
+	SELECT
+		PcK_PicoID
+		,FRZ_Id
+		,ROW_NUMBER() OVER( ORDER BY PcK_PicoID) Indeks
+		,PSa_ID
+		FROM DELETED
+		join CDN.FrmLinki ON FrL_GrONumer = FRZ_FrsId
+		join CDN.PicoKonfig ON FrL_GIDNumer=PcK_CentrumID
+		left join CDN.TwrPodm ON FRZ_TwPId = TwP_Id 
+		join CDN.PicoStanowiska ON PcK_PicoID=PSa_PcKID
+		WHERE PcK_Typ = 8 
+	)a
+	SELECT 
+		@Count = COUNT(*)
+		,@Indeks = 1
+	FROM #Deleted
+		
+	WHILE @Indeks &lt;= @Count
+    BEGIN
+		   
+		SELECT 
+			@PcKId = PcK_PicoID
+			,@ObiNumer = FRZ_Id
+			,@ObiTyp = 14600
+			,@ObiektID = FRZ_Id
+			,@ObiektTyp = 14600
+			,@PsaID = PSa_ID
+		FROM #Deleted
+		WHERE Indeks = @Indeks
+			
+        IF ISNULL(@PcKId,0) &lt;&gt; 0  AND ISNULL(@ObiNumer,0) &lt;&gt; 0 AND ISNULL(@ObiTyp,0) &lt;&gt; 0 AND ISNULL(@ObiektID,0) &lt;&gt; 0 AND ISNULL(@ObiektTyp,0) &lt;&gt; 0 
+		AND NOT EXISTS(
+		SELECT 1 FROM cdn.PicoUsuniete
+		WHERE PcU_PcKId = @PcKId and PcU_ObiNumer=@ObiNumer and PcU_ObiTyp=@ObiTyp and PcU_ObiektID = @ObiektID and PcU_ObiektTyp=@ObiektTyp and PcU_PsaID = @PsaID
+		)
+        BEGIN
+			Insert into cdn.picousuniete([PcU_PcKId], [PcU_ObiTyp], [PcU_ObiNumer], [PcU_ObiektTyp], [PcU_ObiektID], [PcU_TSUsuniecia], [PcU_Stan], [pcu_ident], [pcu_psaid])
+			select @PcKId,@ObiTyp,@ObiNumer,@ObiektTyp,@ObiektID,DATEDIFF(second, convert(datetime,'01-01-1990',105),GETDATE()),0,+CAST(@ObiNumer as nvarchar),@PsaID
+        END
+        SET @Indeks = @Indeks + 1
+    END        
+	
+    
+    DROP TABLE #Deleted
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[PowiazaneTowaryUpdate_PicoUsuniete]"></A><PRE>
+          <FONT SIZE="2"><I>/* [PowiazaneTowaryUpdate_PicoUsuniete] */</I><BR>
+CREATE TRIGGER [CDN].[PowiazaneTowaryUpdate_PicoUsuniete]
+   ON  [CDN].[TwrPodm]
+   AFTER UPDATE
+   AS
+   IF UPDATE(TwP_PrzeliczM) OR UPDATE(TwP_PrzeliczL) OR UPDATE(Twp_DokRodzaj)
+   BEGIN
+   UPDATE cdn.TwrPodm 
+   SET cdn.TwrPodm.TwP_CzasModyfikacji = ISNULL ((SELECT INSERTED.TwP_CzasModyfikacji From inserted where INSERTED.TwP_ZamNumer = cdn.TwrPodm.TwP_TwrNumer and INSERTED.TwP_TwrNumer=cdn.TwrPodm.TwP_ZamNumer and INSERTED.TwP_RodzajPowiazania=cdn.TwrPodm.TwP_RodzajPowiazania and inserted.TwP_Warstwa=cdn.TwrPodm.TwP_Warstwa), cdn.TwrPodm.TwP_CzasModyfikacji)
+   
+   DECLARE  @Count		INT
+            ,@Indeks    INT
+
+    DECLARE	 @PcKId     INT
+            ,@ObiTyp    SMALLINT
+            ,@ObiNumer  INT
+			,@ObiektID	INT
+			,@ObiektTyp	SMALLINT
+			,@PsaID		INT
+
+	SELECT * INTO #Updated1 FROM(
+    SELECT 
+		PcK_PicoID
+		,FRZ_Id
+		,ROW_NUMBER() OVER( ORDER BY PcK_PicoID) Indeks
+		,PSa_ID
+	
+	FROM INSERTED
+		join CDN.FrsZamienniki ON TwP_Id=FRZ_TwPId
+		join CDN.PicoKonfig ON FRZ_FrsId=PcK_CentrumID
+		join CDN.PicoStanowiska ON PcK_PicoID=PSa_PcKID
+		WHERE PcK_Typ = 8
+		AND (TwP_PrzeliczL &lt;&gt; 1
+		or TwP_PrzeliczM &lt;&gt; 1
+		or TwP_DokRodzaj = 2)
+
+		UNION
+
+	SELECT
+		PcK_PicoID
+		,FRZ_Id
+		,ROW_NUMBER() OVER( ORDER BY PcK_PicoID) Indeks
+		,PSa_ID
+		FROM INSERTED
+		join			CDN.FrsZamienniki ON TwP_Id=FRZ_TwPId
+		join CDN.FrmLinki ON FrL_GrONumer = FRZ_FrsId
+		join CDN.PicoKonfig ON FrL_GIDNumer=PcK_CentrumID
+		join CDN.PicoStanowiska ON PcK_PicoID=PSa_PcKID
+
+		WHERE PcK_Typ = 8
+		AND (TwP_PrzeliczL &lt;&gt; 1
+		or TwP_PrzeliczM &lt;&gt; 1
+		or TwP_DokRodzaj = 2)
+
+	)a
+	Select * INTO #Updated2 from(
+		SELECT 
+		PcK_PicoID
+		,FRZ_Id
+		,ROW_NUMBER() OVER( ORDER BY PcK_PicoID) Indeks
+		,PSa_ID
+	FROM INSERTED
+		join CDN.FrsZamienniki ON TwP_Id=FRZ_TwPId
+		join CDN.PicoKonfig ON FRZ_FrsId=PcK_CentrumID
+		join CDN.PicoStanowiska ON PcK_PicoID=PSa_PcKID
+		WHERE PcK_Typ = 8
+		and TwP_PrzeliczL = 1
+		and TwP_PrzeliczM = 1
+		and TwP_DokRodzaj &lt;&gt; 2
+
+		UNION
+
+	SELECT
+		PcK_PicoID
+		,FRZ_Id
+		,ROW_NUMBER() OVER( ORDER BY PcK_PicoID) Indeks
+		,PSa_ID
+		FROM INSERTED
+		join CDN.FrsZamienniki ON TwP_Id=FRZ_TwPId
+		join CDN.FrmLinki ON FrL_GrONumer = FRZ_FrsId
+		join CDN.PicoKonfig ON FrL_GIDNumer=PcK_CentrumID
+		join CDN.PicoStanowiska ON PcK_PicoID=PSa_PcKID
+		WHERE PcK_Typ = 8
+		and TwP_PrzeliczL = 1
+		and TwP_PrzeliczM = 1
+		and TwP_DokRodzaj &lt;&gt; 2
+
+		)a
+		
+
+	SELECT 
+		@Count = MAX(Indeks)
+		,@Indeks = 1
+	FROM #Updated1
+		
+	WHILE @Indeks &lt;= @Count
+    BEGIN
+		   
+		SELECT 
+			@PcKId = PcK_PicoID
+			,@ObiNumer = FRZ_Id
+			,@ObiTyp = 14600
+			,@ObiektID = FRZ_Id
+			,@ObiektTyp = 14600
+			,@PsaID = PSa_ID
+		FROM #Updated1
+		WHERE Indeks = @Indeks 
+		IF ISNULL(@PcKId,0) &lt;&gt; 0  AND ISNULL(@ObiNumer,0) &lt;&gt; 0 AND ISNULL(@ObiTyp,0) &lt;&gt; 0 AND ISNULL(@ObiektID,0) &lt;&gt; 0 AND ISNULL(@ObiektTyp,0) &lt;&gt; 0
+			if NOT EXISTS(
+		Select 1 from cdn.PicoUsuniete
+		where PcU_PcKId = @PcKId and PcU_ObiNumer=@ObiNumer and PcU_ObiTyp=@ObiTyp and PcU_ObiektID = @ObiektID and PcU_ObiektTyp=@ObiektTyp and PcU_PsaID = @PsaID
+		)
+		BEGIN
+			Insert into cdn.picousuniete([PcU_PcKId], [PcU_ObiTyp], [PcU_ObiNumer], [PcU_ObiektTyp], [PcU_ObiektID], [PcU_TSUsuniecia], [PcU_Stan], [pcu_ident], [pcu_psaid])
+				select @PcKId,@ObiTyp,@ObiNumer,@ObiektTyp,@ObiektID,DATEDIFF(second, convert(datetime,'01-01-1990',105),GETDATE()),0,+CAST(@ObiNumer as nvarchar),@PsaID
+
+        END
+        SET @Indeks = @Indeks + 1
+
+
+    END	
+    
+	SELECT
+		@Count = MAX(Indeks)
+		,@Indeks = 1
+	FROM #Updated2
+		
+	WHILE @Indeks &lt;= @Count
+	BEGIN
+		   
+		SELECT 
+			@PcKId = PcK_PicoID
+			,@ObiNumer = FRZ_Id
+			,@ObiTyp = 14600
+			,@ObiektID = FRZ_Id
+			,@ObiektTyp = 14600
+		FROM #Updated2
+		WHERE Indeks = @Indeks 
+		if EXISTS(
+		Select 1 from cdn.PicoUsuniete
+		where PcU_PcKId = @PcKId and PcU_ObiNumer=@ObiNumer and PcU_ObiTyp=@ObiTyp and PcU_ObiektID = @ObiektID and PcU_ObiektTyp=@ObiektTyp
+		)
+		BEGIN
+		DELETE from cdn.PicoUsuniete
+		where PcU_PcKId = @PcKId and PcU_ObiNumer=@ObiNumer and PcU_ObiTyp=@ObiTyp and PcU_ObiektID = @ObiektID and PcU_ObiektTyp=@ObiektTyp and PcU_PsaID = @PsaID
+		END
+		SET @Indeks = @Indeks + 1
+	END
+
+    DROP TABLE #Updated1
+	DROP TABLE #Updated2
+
+
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[PowiazaneTowaryUpdateSlowniki_PicoUsuniete]"></A><PRE>
+          <FONT SIZE="2"><I>/* [PowiazaneTowaryUpdateSlowniki_PicoUsuniete] */</I><BR>
+CREATE TRIGGER [CDN].[PowiazaneTowaryUpdateSlowniki_PicoUsuniete]
+   ON  [CDN].[Slowniki]
+   AFTER UPDATE
+   AS
+   IF UPDATE(SLW_Aktywny) 
+   BEGIN
+   UPDATE cdn.TwrPodm 
+   SET cdn.TwrPodm.TwP_CzasModyfikacji = ISNULL ((SELECT INSERTED.SLW_CzasModyfikacji From inserted where INSERTED.SLW_ID = cdn.TwrPodm.TwP_RodzajPowiazania and INSERTED.SLW_Kategoria='Rodzaje powiązań towarów'), cdn.TwrPodm.TwP_CzasModyfikacji)  
+   where
+   cdn.TwrPodm.TwP_RodzajPowiazania &lt;&gt; 0
+   DECLARE  @Count		INT
+            ,@Indeks    INT
+
+    DECLARE	 @PcKId     INT
+            ,@ObiTyp    SMALLINT
+            ,@ObiNumer  INT
+			,@ObiektID	INT
+			,@ObiektTyp	SMALLINT
+			,@PsaID		INT
+
+	SELECT * INTO #Updated1 FROM(
+    SELECT 
+		PcK_PicoID
+		,FRZ_Id
+		,ROW_NUMBER() OVER( ORDER BY PcK_PicoID) Indeks
+		,PSa_ID
+	
+	FROM INSERTED
+		join CDN.TwrPodm ON SLW_ID = TwP_RodzajPowiazania
+		join CDN.FrsZamienniki ON TwP_Id=FRZ_TwPId
+		join CDN.PicoKonfig ON FRZ_FrsId=PcK_CentrumID
+		join CDN.PicoStanowiska ON PcK_PicoID=PSa_PcKID
+		WHERE PcK_Typ = 8
+		AND SLW_Aktywny = 0
+		
+
+		UNION
+
+	SELECT
+		PcK_PicoID
+		,FRZ_Id
+		,ROW_NUMBER() OVER( ORDER BY PcK_PicoID) Indeks
+		,PSa_ID
+		FROM INSERTED
+		join CDN.TwrPodm ON SLW_ID = TwP_RodzajPowiazania
+		join CDN.FrsZamienniki ON TwP_Id=FRZ_TwPId
+		join CDN.FrmLinki ON FrL_GrONumer = FRZ_FrsId
+		join CDN.PicoKonfig ON FrL_GIDNumer=PcK_CentrumID
+		join CDN.PicoStanowiska ON PcK_PicoID=PSa_PcKID
+
+		WHERE PcK_Typ = 8
+		AND SLW_Aktywny = 0
+	)a
+	Select * INTO #Updated2 from(
+		SELECT 
+		PcK_PicoID
+		,FRZ_Id
+		,ROW_NUMBER() OVER( ORDER BY PcK_PicoID) Indeks
+		,PSa_ID
+	FROM INSERTED
+		join CDN.TwrPodm ON SLW_ID = TwP_RodzajPowiazania
+		join CDN.FrsZamienniki ON TwP_Id=FRZ_TwPId
+		join CDN.PicoKonfig ON FRZ_FrsId=PcK_CentrumID
+		join CDN.PicoStanowiska ON PcK_PicoID=PSa_PcKID
+		WHERE PcK_Typ = 8
+		AND SLW_Aktywny = 1
+
+		UNION
+
+	SELECT
+		PcK_PicoID
+		,FRZ_Id
+		,ROW_NUMBER() OVER( ORDER BY PcK_PicoID) Indeks
+		,PSa_ID
+		FROM INSERTED
+		join CDN.TwrPodm ON SLW_ID = TwP_RodzajPowiazania
+		join CDN.FrsZamienniki ON TwP_Id=FRZ_TwPId
+		join CDN.FrmLinki ON FrL_GrONumer = FRZ_FrsId
+		join CDN.PicoKonfig ON FrL_GIDNumer=PcK_CentrumID
+		join CDN.PicoStanowiska ON PcK_PicoID=PSa_PcKID
+		WHERE PcK_Typ = 8
+		AND SLW_Aktywny = 1
+		
+		)a
+		
+
+	SELECT 
+		@Count = MAX(Indeks)
+		,@Indeks = 1
+	FROM #Updated1
+		
+	WHILE @Indeks &lt;= @Count
+    BEGIN
+		   
+		SELECT 
+			@PcKId = PcK_PicoID
+			,@ObiNumer = FRZ_Id
+			,@ObiTyp = 14600
+			,@ObiektID = FRZ_Id
+			,@ObiektTyp = 14600
+			,@PsaID = PSa_ID
+		FROM #Updated1
+		WHERE Indeks = @Indeks 
+		IF ISNULL(@PcKId,0) &lt;&gt; 0  AND ISNULL(@ObiNumer,0) &lt;&gt; 0 AND ISNULL(@ObiTyp,0) &lt;&gt; 0 AND ISNULL(@ObiektID,0) &lt;&gt; 0 AND ISNULL(@ObiektTyp,0) &lt;&gt; 0
+			if NOT EXISTS(
+		Select 1 from cdn.PicoUsuniete
+		where PcU_PcKId = @PcKId and PcU_ObiNumer=@ObiNumer and PcU_ObiTyp=@ObiTyp and PcU_ObiektID = @ObiektID and PcU_ObiektTyp=@ObiektTyp and PcU_PsaID = @PsaID
+		)
+		BEGIN
+			Insert into cdn.picousuniete([PcU_PcKId], [PcU_ObiTyp], [PcU_ObiNumer], [PcU_ObiektTyp], [PcU_ObiektID], [PcU_TSUsuniecia], [PcU_Stan], [pcu_ident], [pcu_psaid])
+				select @PcKId,@ObiTyp,@ObiNumer,@ObiektTyp,@ObiektID,DATEDIFF(second, convert(datetime,'01-01-1990',105),GETDATE()),0,+CAST(@ObiNumer as nvarchar),@PsaID
+
+        END
+        SET @Indeks = @Indeks + 1
+
+
+    END	
+    
+	SELECT
+		@Count = MAX(Indeks)
+		,@Indeks = 1
+	FROM #Updated2
+		
+	WHILE @Indeks &lt;= @Count
+	BEGIN
+		   
+		SELECT 
+			@PcKId = PcK_PicoID
+			,@ObiNumer = FRZ_Id
+			,@ObiTyp = 14600
+			,@ObiektID = FRZ_Id
+			,@ObiektTyp = 14600
+		FROM #Updated2
+		WHERE Indeks = @Indeks 
+		if EXISTS(
+		Select 1 from cdn.PicoUsuniete
+		where PcU_PcKId = @PcKId and PcU_ObiNumer=@ObiNumer and PcU_ObiTyp=@ObiTyp and PcU_ObiektID = @ObiektID and PcU_ObiektTyp=@ObiektTyp and PcU_PsaID = @PsaID
+		)
+		BEGIN
+		DELETE from cdn.PicoUsuniete
+		where PcU_PcKId = @PcKId and PcU_ObiNumer=@ObiNumer and PcU_ObiTyp=@ObiTyp and PcU_ObiektID = @ObiektID and PcU_ObiektTyp=@ObiektTyp and PcU_PsaID = @PsaID
+		END
+		SET @Indeks = @Indeks + 1
+	END
+
+    DROP TABLE #Updated1
+	DROP TABLE #Updated2
+
+
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="[PowiazaneTowaryInsertFrsZamienniki]"></A><PRE>
+          <FONT SIZE="2"><I>/* [PowiazaneTowaryInsertFrsZamienniki] */</I><BR>
+CREATE TRIGGER [CDN].[PowiazaneTowaryInsertFrsZamienniki]
+	ON  [CDN].[FrsZamienniki]
+	AFTER INSERT
+	AS 
+	BEGIN
+
+		DECLARE
+			@id int
+			set @id=(Select FRZ_Id from inserted)
+
+		DELETE FROM cdn.PicoUsuniete
+		where PcU_ObiNumer NOT IN (select FRZ_Id from cdn.FrsZamienniki)
+		and PcU_ObiNumer = (@id-1)
+	END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

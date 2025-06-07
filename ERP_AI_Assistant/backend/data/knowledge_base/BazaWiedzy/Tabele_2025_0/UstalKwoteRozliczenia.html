@@ -1,0 +1,747 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="UstalKwoteRozliczenia"></A><PRE>
+          <FONT SIZE="2"><I>/* UstalKwoteRozliczenia */</I><BR>
+CREATE PROCEDURE CDN.UstalKwoteRozliczenia
+@Waluta1 varchar(3),
+@KwotaTRWal1 decimal(15,2),
+@KwotaTRSys1 decimal(15,2),
+@KwotaDTWal1 decimal(15,2),
+@KwotaDTSys1 decimal(15,2),
+
+@Waluta2 varchar(3),
+@KwotaTRWal2 decimal(15,2),
+@KwotaTRSys2 decimal(15,2),
+@KwotaDTWal2 decimal(15,2),
+@KwotaDTSys2 decimal(15,2),
+
+@WalutaSys varchar(3),
+@Kwota decimal(15,2),
+@WymusPodanaKwote tinyint=0,
+
+@poz_DecKwota smallint,
+@Tryb smallint = 0, --0 dodajrozliczenie, dodajrozrachunek, 1 - pozostale
+@DopasujKurs smallint = 0, 
+@Kurs1 decimal(29,10) output,
+@Kurs2 decimal(29,10) output,
+@KwotaWal decimal(15,2) output,
+@KwotaSys decimal(15,2) output,
+@RozliczenieCalkowite smallint output,
+@RoznicaKursowa decimal(15,2) output,
+@StronaRK smallint output,
+@BZ smallint output,
+@KwotaRozSys1 decimal(15,2) output,
+@KwotaRozSys2 decimal(15,2) output,
+@StronaRozl tinyint output
+
+AS
+
+declare @KwotaWal1 decimal(15,2)
+declare @KwotaSys1 decimal(15,2)
+declare @KwotaWal2 decimal(15,2)
+declare @KwotaSys2 decimal(15,2)
+declare @tmpKwotaSys decimal(15,2)
+declare @bPodanaKwota smallint
+
+set @KwotaRozSys1 = 0
+set @KwotaRozSys2 = 0
+
+declare @KursZKwot1 decimal(29,10)
+declare @KursZKwot2 decimal(29,10)
+
+	if @KwotaTRWal1 is null and @KwotaDTWal1 is null or @KwotaTRWal2 is null and @KwotaDTWal2 is null
+	begin
+		ROLLBACK TRAN
+		raiserror('Błędne parametry procedury UstalKwoteRozliczenia',16,1)
+	end
+		
+	set @BZ = 0
+	set @RoznicaKursowa = 0
+
+
+	if @DopasujKurs &lt;&gt; 0
+	begin
+		set @KwotaWal1 = @KwotaTRWal1
+		set @KwotaWal2 = @KwotaTRWal2
+		set @KwotaSys1 = @KwotaTRSys1
+		set @KwotaSys2 = @KwotaTRSys2
+
+		if @KwotaWal1 &lt; @KwotaWal2
+		begin			
+			set @KwotaWal = @KwotaWal1
+			set @StronaRozl = 1
+
+			if @DopasujKurs = 1
+			begin
+				set @Kurs1 = @Kurs2
+				set @KwotaSys1 = @KwotaWal*@Kurs1
+				if @KwotaSys1 &gt; @KwotaSys2								
+					set @KwotaSys1 = @KwotaWal*(@KwotaSys2/@KwotaWal2)
+				set @KwotaSys = @KwotaSys1				
+			end
+			else
+			begin
+				set @Kurs2 = @Kurs1
+				set @KwotaSys2 = @KwotaSys1
+				set @KwotaSys = @KwotaSys2				
+			end
+		end
+		else if @KwotaWal1 &gt; @KwotaWal2
+		begin
+			set @KwotaWal = @KwotaWal2
+			set @StronaRozl = 2
+
+			if @DopasujKurs = 1
+			begin
+				set @Kurs1 = @Kurs2
+				set @KwotaSys1 = @KwotaSys2
+				set @KwotaSys = @KwotaSys1				
+			end
+			else
+			begin
+				set @Kurs2 = @Kurs1
+				set @KwotaSys2 = @KwotaWal*@Kurs2
+				if @KwotaSys2 &gt; @KwotaSys1
+						set @KwotaSys2 = @KwotaWal*(@KwotaSys1/@KwotaWal1)
+				set @KwotaSys = @KwotaSys2				
+			end
+		end
+		else
+		begin
+			set @KwotaWal = @KwotaWal1
+			set @StronaRozl = 0
+
+
+			if @DopasujKurs = 1
+			begin
+				set @Kurs1 = @Kurs2
+				set @KwotaSys1 = @KwotaSys2
+				set @KwotaSys = @KwotaSys1				
+			end
+			else
+			begin
+				set @Kurs2 = @Kurs1
+				set @KwotaSys2 = @KwotaSys1
+				set @KwotaSys = @KwotaSys2				
+			end
+		end
+
+		set @StronaRK = 1 -- niewazne
+		set @RoznicaKursowa = 0
+		set @BZ = 0
+		set @RozliczenieCalkowite = 0
+			
+		set @KwotaRozSys1 = @KwotaSys
+		set @KwotaRozSys2 = @KwotaSys
+
+		return
+	end
+
+
+
+
+	if @KwotaTRWal1 is null
+	begin
+		set @KwotaWal1 = @KwotaDTWal1 
+		set @KwotaSys1 = @KwotaDTSys1 
+	end
+	else if @KwotaDTWal1 is null
+	begin
+		set @KwotaWal1 = @KwotaTRWal1 
+		set @KwotaSys1 = @KwotaTRSys1 
+	end
+	else
+	begin
+		IF ((@Waluta1 = @WalutaSys OR @Waluta2 = @WalutaSys) and @KwotaDTSys1 &gt; @KwotaTRSys1) or --porownanie w oparciu o kwote w walucie sys
+		(not (@Waluta1 = @WalutaSys OR @Waluta2 = @WalutaSys) and @KwotaDTWal1 &gt; @KwotaTRWal1) --porownanie w oparciu o kwote w walucie rozl
+		begin
+			set @KwotaWal1 = @KwotaTRWal1 
+			set @KwotaSys1 = @KwotaTRSys1 
+		end
+		else
+		begin
+			set @KwotaWal1 = @KwotaDTWal1 
+			set @KwotaSys1 = @KwotaDTSys1 
+		end
+	end
+
+	if @KwotaTRWal2 is null
+	begin
+		set @KwotaWal2 = @KwotaDTWal2 
+		set @KwotaSys2 = @KwotaDTSys2 
+	end
+	else if @KwotaDTWal2 is null
+	begin
+		set @KwotaWal2 = @KwotaTRWal2 
+		set @KwotaSys2 = @KwotaTRSys2 
+	end
+	else
+	begin
+		IF ((@Waluta1 = @WalutaSys OR @Waluta2 = @WalutaSys) and @KwotaDTSys2 &gt; @KwotaTRSys2) or --porownanie w oparciu o kwote w walucie sys
+		(not (@Waluta1 = @WalutaSys OR @Waluta2 = @WalutaSys) and @KwotaDTWal2 &gt; @KwotaTRWal2) --porownanie w oparciu o kwote w walucie rozl
+		begin
+			set @KwotaWal2 = @KwotaTRWal2
+			set @KwotaSys2 = @KwotaTRSys2
+		end
+		else
+		begin
+			set @KwotaWal2 = @KwotaDTWal2
+			set @KwotaSys2 = @KwotaDTSys2
+		end
+	end
+
+
+
+
+	IF @Waluta1 = @WalutaSys OR @Waluta2 = @WalutaSys  -- rozliczenie w walucie systemowej
+	BEGIN
+		if @KwotaSys1 &lt; @KwotaSys2
+		begin
+			set @KwotaWal = @KwotaWal1
+			set @KwotaSys = @KwotaSys1
+		end
+		else
+		begin
+			set @KwotaWal = @KwotaWal2
+			set @KwotaSys = @KwotaSys2
+		end
+
+
+
+
+		if isnull(@Kwota,0) &lt;&gt; 0
+		begin
+			if abs(@Kwota) = @KwotaSys
+			begin				
+				set @bPodanaKwota = 0
+				set @RozliczenieCalkowite = 1		
+				set @KwotaSys = abs(@Kwota)
+			end
+			else if abs(@Kwota) &lt; @KwotaSys
+			begin
+				set @bPodanaKwota = 1		
+				set @RozliczenieCalkowite = 0
+				set @KwotaSys = abs(@Kwota)
+			end
+			else if abs(@Kwota) &gt; @KwotaSys
+			begin
+				if @WymusPodanaKwote = 0
+				begin
+					set @bPodanaKwota = 0
+					set @RozliczenieCalkowite = 1
+					--set @KwotaSys = abs(@Kwota)
+				end
+				else
+				begin
+					set @bPodanaKwota = 1
+					set @KwotaWal = 0
+					set @KwotaSys = 0
+					set @RozliczenieCalkowite = 0				
+				end
+			end				
+		end
+		else
+		begin		
+			set @bPodanaKwota = 0
+			set @RozliczenieCalkowite = 1		
+		end
+
+
+
+
+		
+		
+		set @KwotaRozSys1 = @KwotaSys
+		set @KwotaRozSys2 = @KwotaSys
+
+
+		set @RoznicaKursowa = 0
+		set @Kurs1 = 1.00
+		set @Kurs2 = 1.00
+		
+		
+
+		IF @Waluta1 = @WalutaSys AND @Waluta2 = @WalutaSys
+			set @KwotaWal = @KwotaSys
+	
+
+		return
+	END
+	ELSE 
+	BEGIN
+		if @KwotaWal1 &lt; @KwotaWal2 or @KwotaWal1 = @KwotaWal2 and @KwotaSys1 &lt; @KwotaSys2
+		begin
+			set @KwotaWal = @KwotaWal1
+			set @StronaRozl = 1
+		end
+		else if @KwotaWal2 &lt; @KwotaWal1 or @KwotaWal1 = @KwotaWal2 and @KwotaSys2 &lt; @KwotaSys1
+		begin
+			set @KwotaWal = @KwotaWal2
+			set @StronaRozl = 2
+		end
+		else
+		begin
+			set @KwotaWal = @KwotaWal1
+			set @StronaRozl = 0 --obydwie kwoty sa sobie rowne
+		end
+	END
+
+
+
+
+	if @Tryb &lt;&gt; 0
+	begin
+		if (@KwotaDTWal1 &lt; @KwotaTRWal1 or @KwotaDTWal2 &lt; @KwotaTRWal2) or
+			((@KwotaDTWal1 &lt;= @KwotaTRWal1 and @KwotaDTWal2 &lt;= @KwotaTRWal2) and
+			(@KwotaDTSys1 &lt; @KwotaTRSys1 or @KwotaDTSys2 &lt; @KwotaTRSys2))
+			return -- na zewnatrz bedzie blad
+
+
+		--ponizej jest zawsze sytuacja ze kwoty z dekretow sa rowne lub wieksze od kwoty rozlczenia
+
+		set @KwotaWal1 = @KwotaDTWal1
+		set @KwotaSys1 = @KwotaDTSys1
+		set @KwotaWal2 = @KwotaDTWal2
+		set @KwotaSys2 = @KwotaDTSys2
+
+		set @KwotaWal = @KwotaTRWal1
+		set @KwotaSys = @KwotaTRSys1
+
+
+		if @KwotaWal &lt; @KwotaWal1 and @KwotaWal &lt; @KwotaWal2
+			set @StronaRozl = 0 --kwota rozliczenia jest mniejsza niz kwota z dekretow
+		else
+		begin --kwota rozliczenia jest rowna kwocie z dekretow
+			if @KwotaWal1 &lt; @KwotaWal2 or @KwotaWal1 = @KwotaWal2 and @KwotaSys1 &lt; @KwotaSys2
+				set @StronaRozl = 1
+			else if @KwotaWal2 &lt; @KwotaWal1 or @KwotaWal2 = @KwotaWal1 and @KwotaSys2 &lt; @KwotaSys1
+				set @StronaRozl = 2
+			else
+				set @StronaRozl = 0
+		end		
+	end
+
+	
+
+	if isnull(@Kwota,0) &lt;&gt; 0
+	begin
+		if abs(@Kwota) = @KwotaWal
+		begin
+			set @bPodanaKwota = 0
+			set @RozliczenieCalkowite = 1		
+			set @KwotaWal = abs(@Kwota)
+		end
+		else if abs(@Kwota) &lt; @KwotaWal
+		begin
+			set @bPodanaKwota = 1		
+			set @RozliczenieCalkowite = 0
+			set @KwotaWal = abs(@Kwota)
+		end
+		else if abs(@Kwota) &gt; @KwotaWal
+		begin
+			if @WymusPodanaKwote = 0
+			begin
+				set @bPodanaKwota = 0
+				set @RozliczenieCalkowite = 1
+				--set @KwotaWal = abs(@Kwota)
+			end
+			else
+			begin
+				set @bPodanaKwota = 1
+				set @KwotaWal = 0
+				set @KwotaSys = 0
+				set @RozliczenieCalkowite = 0				
+			end
+		end				
+	end
+	else
+	begin		
+		set @bPodanaKwota = 0
+		set @RozliczenieCalkowite = 1		
+	end
+
+	if @KwotaDTSys1 is null
+		set @KursZKwot1 = @KwotaTRSys1 / CASE @KwotaTRWal1 WHEN 0 THEN 1 ELSE @KwotaTRWal1 END
+	else
+		set @KursZKwot1 = @KwotaDTSys1 / CASE @KwotaDTWal1 WHEN 0 THEN 1 ELSE @KwotaDTWal1 END
+
+	if @KwotaDTSys2 is null
+		set @KursZKwot2 = @KwotaTRSys2 / CASE @KwotaTRWal2 WHEN 0 THEN 1 ELSE @KwotaTRWal2 END
+	else
+		set @KursZKwot2 = @KwotaDTSys2 / CASE @KwotaDTWal2 WHEN 0 THEN 1 ELSE @KwotaDTWal2 END
+
+	if isnull(@Kurs1,0) = 0 OR 
+		((@Kurs1&gt;@Kurs2 AND @KursZKwot1&lt;@KursZKwot2) OR (@Kurs1&lt;@Kurs2 AND @KursZKwot1&gt;@KursZKwot2))
+	BEGIN
+		set @Kurs1 = @KursZKwot1	
+		set @Kurs2 = @KursZKwot2
+	END
+
+	--oblicz kwote sys
+	IF @Kurs1 &lt; @Kurs2
+	begin
+		SET @StronaRK = 2
+
+		if @Tryb = 0
+		begin
+			if @bPodanaKwota = 1
+			begin
+				set @KwotaSys = round(abs(@KwotaWal * @Kurs1), @poz_DecKwota)
+
+				set @KwotaRozSys1 = @KwotaSys
+				set @KwotaRozSys2 = round(abs(@KwotaWal * @Kurs2), @poz_DecKwota)
+
+				set @RoznicaKursowa = abs(@KwotaRozSys2 - @KwotaRozSys1)
+			end
+			else if @StronaRozl = 1
+			begin			
+				set @KwotaSys = @KwotaSys1
+				set @KwotaRozSys1 = @KwotaSys1 --kwota rozliczenia dla dokumentu 1 w walucie sys
+	
+				if @KwotaWal = @KwotaWal2
+					set @KwotaRozSys2 = @KwotaSys2 --kwota rozliczenia dla dokumentu 2 w walucie sys
+				else
+					set @KwotaRozSys2 = round(Abs( @KwotaWal * @Kurs2 ), @poz_DecKwota)
+
+
+				set @RoznicaKursowa = abs(@KwotaRozSys2 - @KwotaRozSys1)
+
+			end
+			else if @StronaRozl = 2
+			begin
+				if @KwotaWal = @KwotaWal1
+				begin
+					if @KwotaSys2 &lt; @KwotaSys1					
+					begin 
+						set @KwotaSys = @KwotaSys2
+						set @StronaRK = 1 --zmien strone rk
+					end
+					else
+					begin
+						set @KwotaSys = @KwotaSys1
+					end
+
+					
+					set @KwotaRozSys1 = @KwotaSys1
+					set @KwotaRozSys2 = @KwotaSys2
+				end
+				else
+				begin
+					set @KwotaSys = round(abs(@KwotaWal * @Kurs1), @poz_DecKwota)										
+
+					set @KwotaRozSys1 = @KwotaSys
+					set @KwotaRozSys2 = @KwotaSys2
+				end
+				
+				set @RoznicaKursowa = abs(@KwotaRozSys2 - @KwotaRozSys1)
+			end
+			else if @StronaRozl = 0
+			begin
+				set @KwotaSys = @KwotaSys1 -- niewazne , i tak sa te same
+
+				set @KwotaRozSys1 = @KwotaSys
+				set @KwotaRozSys2 = @KwotaSys
+
+				set @RoznicaKursowa = 0
+			end
+		end
+
+		/* --dla trybu &lt;&gt; 0 bierz kwote sys z rozliczenia
+		rozliczanie moze byc przeprowadzone w innej kolejnosci niz ksiegowanie
+		dlatego kwotasys ostatniego rozliczenia moze byc dobijana do ktoregos z dokumentow (korekta wartosci sys)
+		a pozniej taka para dokumentow moze byc rozrachowywana w pierwszej kolejnosci i wyliczenie 
+		na podstawie dekretow bedzie bez 'dobijania'
+		*/
+	end
+	else if @Kurs1 &gt; @Kurs2
+	begin
+		SET @StronaRK = 1
+
+		if @Tryb = 0
+		begin
+			if @bPodanaKwota = 1
+			begin
+				set @KwotaSys = round(abs(@KwotaWal * @Kurs2), @poz_DecKwota)
+
+				set @KwotaRozSys2 = @KwotaSys
+				set @KwotaRozSys1 = round(abs(@KwotaWal * @Kurs1), @poz_DecKwota)
+
+
+				set @RoznicaKursowa = abs(@KwotaRozSys2 - @KwotaRozSys1)
+			end
+			else if @StronaRozl = 2
+			begin		
+				set @KwotaSys = @KwotaSys2
+				set @KwotaRozSys2 = @KwotaSys2
+
+				if @KwotaWal = @KwotaWal1
+					set @KwotaRozSys1 = @KwotaSys1
+				else
+					set @KwotaRozSys1 = round(Abs( @KwotaWal * @Kurs1 ), @poz_DecKwota)
+
+
+				set @RoznicaKursowa = abs(@KwotaRozSys2 - @KwotaRozSys1)
+
+			end
+			else if @StronaRozl = 1
+			begin
+				if @KwotaWal = @KwotaWal2
+				begin
+					if @KwotaSys1 &lt; @KwotaSys2
+					--przypadek gdy kwoty w walucie sys nie odpowiadają kursom (bledy zaokraglen) (np podczas koncowego rozliczania dokumentow wielokrotenie wczesniej czesciwow rozliczanych)
+					--kwota sys dok2 wskazuje na wyzszy kurs dok2 a nie dok1 mimo ze kursy na dokumentach sa na odwrot
+					begin 
+						set @KwotaSys = @KwotaSys1
+						set @StronaRK = 2 --zmien strone rk
+					end
+					else
+					begin
+						set @KwotaSys = @KwotaSys2
+					end
+
+					
+					set @KwotaRozSys2 = @KwotaSys2
+					set @KwotaRozSys1 = @KwotaSys1
+				end
+				else
+				begin
+					set @KwotaSys = round(abs(@KwotaWal * @Kurs2), @poz_DecKwota)										
+
+					set @KwotaRozSys2 = @KwotaSys
+					set @KwotaRozSys1 = @KwotaSys1
+				end
+				
+				set @RoznicaKursowa = abs(@KwotaRozSys2 - @KwotaRozSys1)
+			end
+			else if @StronaRozl = 0
+			begin
+				set @KwotaSys = @KwotaSys1
+
+				set @KwotaRozSys2 = @KwotaSys
+				set @KwotaRozSys1 = @KwotaSys
+
+
+				set @RoznicaKursowa = 0
+			end
+		end
+	end
+	else -- te same kursy
+	begin
+		set @RoznicaKursowa = 0
+		
+
+
+		set @tmpKwotaSys = round(abs(@KwotaWal * @Kurs1), @poz_DecKwota)
+
+		if @Tryb = 0 
+			set @KwotaSys = @tmpKwotaSys
+		else
+			set @KwotaSys = @KwotaTRSys1
+
+
+
+
+		if @bPodanaKwota = 1
+		begin
+			set @StronaRK = 1 --to jest nieistotne
+			
+			if @Tryb = 0
+			begin			
+				set @KwotaRozSys1 = @KwotaSys
+				set @KwotaRozSys2 = @KwotaSys
+			end			
+		end
+		else if @StronaRozl = 0 --rozliczenie na mniejsza kwote niz dopuszczalne dla trybu &lt;&gt; 0
+		begin			
+			set @StronaRK = 1 --to jest nieistotne
+
+			if @Tryb = 0
+			begin
+				set @KwotaSys = @KwotaSys1
+
+				set @KwotaRozSys1 = @KwotaSys
+				set @KwotaRozSys2 = @KwotaSys
+			end
+		end
+		else if @StronaRozl = 1 --strona 1 jest mniejsza
+		begin
+			--dla trybu &lt;&gt; 0 KwotaWal1 i Wal2 zawierają KwotaDTWal
+
+			if @KwotaWal1 = @KwotaWal2
+			begin --kwoty w walucie rozliczenia sa te same
+				--wygeneruj dok RK(BZ) po stronie wiekszej kwoty sys
+				if @KwotaSys &lt; @KwotaSys1
+				begin
+					if @KwotaSys = @KwotaSys2
+					begin --po drugiej stronie jest wlasciwa kwota sys (nie powinno sie zdarzyc)
+						set @StronaRK = 1
+						set @RoznicaKursowa = (@KwotaSys1 - @KwotaSys)
+						set @BZ = 1
+
+						if @Tryb = 0
+						begin
+							set @KwotaRozSys1 = @KwotaSys1
+							set @KwotaRozSys2 = @KwotaSys2
+						end
+					end
+					else
+					begin --obie kwoty sys sa zmodyfikowane , wez do rozliczonia mniejsza kwote
+						-- dok RK(BZ) podpnij do wiekszej
+						set @StronaRK = 2
+						set @KwotaSys = @KwotaSys1 
+						set @RoznicaKursowa = (@KwotaSys2 - @KwotaSys1) 
+						set @BZ = 1
+
+						if @Tryb = 0
+						begin
+							set @KwotaRozSys1 = @KwotaSys1
+							set @KwotaRozSys2 = @KwotaSys2
+						end
+					end				
+				end
+				else --if @KwotaSys &lt; @KwotaSys2
+				begin
+					set @StronaRK = 2
+					set @KwotaSys = @KwotaSys1
+					set @RoznicaKursowa = (@KwotaSys2 - @KwotaSys1)
+					set @BZ = 1	
+
+					if @Tryb = 0
+					begin
+						set @KwotaRozSys1 = @KwotaSys1
+						set @KwotaRozSys2 = @KwotaSys2
+					end		
+				end
+
+			end
+			else -- kwoty w walucie rozliczenia nie sa takie same
+			begin
+				--dobijamy do strony 1, wiec sprawdz czy to jest ta sama kwota w walucie sys
+				--jesli nie wygeneruj dok RK(BZ)
+				if @KwotaSys &lt; @KwotaSys1
+				begin 
+					set @StronaRK = 1
+					set @RoznicaKursowa = (@KwotaSys1 - @KwotaSys)
+					set @BZ = 1	
+
+					if @Tryb = 0
+					begin
+						set @KwotaRozSys1 = @KwotaSys1
+						set @KwotaRozSys2 = @KwotaSys
+					end		
+				end
+				else if @KwotaSys &gt; @KwotaSys1
+				begin --kwota sys po tej stronie jest za mała wygeneruj dok RK(BZ) po stronie przeciwnej
+					if @Tryb = 0
+					begin
+						set @KwotaRozSys1 = @KwotaSys1
+						set @KwotaRozSys2 = @KwotaSys
+					end		
+
+					set @StronaRK = 2
+					set @RoznicaKursowa = (@KwotaSys - @KwotaSys1)
+					set @KwotaSys = @KwotaSys1 				
+					set @BZ = 1
+				end
+			end
+
+		end
+		else if @StronaRozl = 2 --strona 2 jest mniejsza
+		begin
+			if @KwotaWal1 = @KwotaWal2
+			begin --kwoty w walucie rozliczenia sa te same
+				--wygeneruj dok RK(BZ) po stronie wiekszej kwoty sys
+				if @KwotaSys &lt; @KwotaSys2
+				begin
+					if @KwotaSys = @KwotaSys1
+					begin --po drugiej stronie jest wlasciwa kwota sys
+						set @StronaRK = 2
+						set @RoznicaKursowa = (@KwotaSys2 - @KwotaSys)
+						set @BZ = 1
+
+						if @Tryb = 0
+						begin
+							set @KwotaRozSys1 = @KwotaSys1
+							set @KwotaRozSys2 = @KwotaSys2
+						end
+					end
+					else
+					begin --obie kwoty sys sa zmodyfikowane , wez do rozliczonia mniejsza kwote
+						-- dok RK(BZ) podpnij do wiekszej
+						set @StronaRK = 1
+						set @KwotaSys = @KwotaSys2
+						set @RoznicaKursowa = (@KwotaSys1 - @KwotaSys2)
+						set @BZ = 1
+
+						if @Tryb = 0
+						begin
+							set @KwotaRozSys1 = @KwotaSys1
+							set @KwotaRozSys2 = @KwotaSys2
+						end
+					end				
+				end
+				else --if @KwotaSys &lt; @KwotaSys2
+				begin
+					set @StronaRK = 1
+					set @KwotaSys = @KwotaSys2
+					set @RoznicaKursowa = (@KwotaSys1 - @KwotaSys2)
+					set @BZ = 1
+
+					if @Tryb = 0
+					begin
+						set @KwotaRozSys1 = @KwotaSys1
+						set @KwotaRozSys2 = @KwotaSys2
+					end
+				end
+			end
+			else -- kwoty w walucie rozliczenia nie sa takie same
+			begin
+				--dobijamy do strony 2, wiec sprawdz czy to jest ta sama kwota w walucie sys
+				--jesli nie wygeneruj dok RK(BZ)
+				if @KwotaSys &lt; @KwotaSys2
+				begin 
+					set @StronaRK = 2
+					set @RoznicaKursowa = (@KwotaSys2 - @KwotaSys)
+					set @BZ = 1
+
+					if @Tryb = 0
+					begin
+						set @KwotaRozSys1 = @KwotaSys
+						set @KwotaRozSys2 = @KwotaSys2
+					end
+				end
+				else if @KwotaSys &gt; @KwotaSys2
+				begin --kwota sys po tej stronie jest za mała wygeneruj dok RK(BZ) po stronie przeciwnej
+					if @Tryb = 0
+					begin
+						set @KwotaRozSys1 = @KwotaSys
+						set @KwotaRozSys2 = @KwotaSys2
+					end
+
+					set @StronaRK = 1
+					set @RoznicaKursowa = (@KwotaSys - @KwotaSys2)
+					set @KwotaSys = @KwotaSys2
+					set @BZ = 1
+				end
+			end
+
+		end
+	end
+
+
+	return			
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

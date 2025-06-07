@@ -1,0 +1,171 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="XLDodajElementWzorca"></A><PRE>
+          <FONT SIZE="2"><I>/* XLDodajElementWzorca */</I><BR>
+CREATE PROCEDURE CDN.XLDodajElementWzorca
+(
+/* ==========================================================================================
+	SQL API: Procedura serwerowa do dodawania elementów wzorca wizyty handlowej
+
+	Dla uproszczenia założono, że jeżeli w systemie zewnętrznym zostanie wystawiony element wzorca wizyty handlowa,
+	to w trakcie wystawiania jej przez API nie ma potrzeby kontrolowania uprawnień do obiektów, z których ona korzysta.
+	
+	Parametry wejściowe: 
+   ========================================================================================== */
+	@CWETyp					SMALLINT,			-- GidTyp elementu, 4181 - element wzorca, 4182 - wzorzec elementu
+	@CWENumer				INT,				-- jeśli wołane w kontekście wzorca elementu to 0, w przeciwnym wypadku identyfikator wzorca do którego dodawany jest element
+	@OpeNumer				INT,				-- GidNumer operatora, który wykonuje tą operacje
+	@RodzajId				INTEGER,			-- Identyfikator rodzaju elementu wizyty	
+	@Kod					VARCHAR(20),		-- Kod elementu wizyty
+	@Nazwa					VARCHAR(255)=NULL,	-- Nazwa elementu wizyty
+	@Wymagany				TINYINT=NULL,		-- Czy wymagany do wykonania (0 - nie; 1 - tak)
+	@Wykonano				TINYINT=NULL,		-- Czy wykonano (0 - nie; 1 - tak)
+	@PowodNiewykonaniaId	INTEGER=NULL,		-- Identyfikator powodu niewykonania wizyty
+	@PowodNiewykonania		VARCHAR(49)=NULL,	-- Powód niewykonania elementu wizyty
+	@Opis					VARCHAR(1024)=NULL,	-- Opis elementu wizyty
+	@OpisWykonania			TEXT=NULL,			-- Opis wykonania elementu wizyty
+	@DataUtworzenia			INTEGER=NULL,		-- Data utworzenia - co do sekundy
+	@Archiwalny				TINYINT=NULL,		-- Czy element archwiwalny
+	@Url					VARCHAR(255)=NULL,	-- Adres URL
+	@Przypisz				TINYINT=NULL,		-- Przypisz niezakończone działania/wątki/zadania operatora
+	@PrzypiszPrzed			INTEGER=NULL,		-- Termin Od (przed wizytą)
+	@PrzypiszPo				INTEGER=NULL,		-- Termin Do (po wizycie)
+	@Oddzialowy				TINYINT=NULL		-- Czy element został wysłany do oddziału
+/* ==========================================================================================
+	Return:
+	 0 : Operacja zakończona sukcesem (zwrócono ID nowej wizyty)
+	-1 : Nie powiodło się dodawanie wpisu do tabeli CDN.CRMWizytyElem
+	-2 : Wystąpił błąd podczas dodawania elementu wzorca wizyty handlowej. Podany wzorzec nie występuje w bazie.
+	-3 : Wystąpił błąd podczas dodawania elementu wzorca wizyty handlowej. Podany operator nie występuje w bazie.
+	-4 : Wystąpił błąd podczas dodawania elementu wzorca wizyty handlowej. Błędne parametry
+   ========================================================================================== */   	
+)
+AS
+BEGIN
+
+
+			
+    DECLARE @CWELp SMALLINT
+    DECLARE @Pozycja SMALLINT
+
+    DECLARE @Typ_CWW SMALLINT
+    DECLARE @Typ_CEW SMALLINT
+
+    SET @Typ_CWW = 4181
+	SET @Typ_CEW = 4182
+    
+	IF (@CWETyp not in (@Typ_CWW,@Typ_CEW) or (@CWETyp=@Typ_CWW and @CWENumer=0))  BEGIN 
+		RAISERROR ('Wystąpił błąd podczas dodawania elementu wzorca wizyty handlowej. Błędne parametry.', 16, 1)
+		RETURN -4
+	END
+
+	IF @CWETyp = @Typ_CEW BEGIN
+		SELECT @CWELp=0, @Pozycja=1
+	END ELSE BEGIN
+		SELECT @CWELp=IsNull(MAX(CWE_GidLp),0)+1, @Pozycja=IsNull(MAX(CWE_Pozycja),0)+1 FROM CDN.CRMWizytyElem WHERE CWE_GidTyp=@Typ_CWW AND CWE_GidNumer=@CWENumer
+	END
+
+	DECLARE @TimeStamp INT
+    SET @TimeStamp = DATEDIFF(s,'19900101',GETDATE())
+
+	INSERT INTO CDN.CRMWizytyElem
+           (CWE_GidTyp
+           ,CWE_GidFirma
+           ,CWE_GidNumer
+           ,CWE_GidLp
+           ,CWE_Kod
+           ,CWE_Nazwa
+           ,CWE_Pozycja
+           ,CWE_Wymagany
+           ,CWE_Wykonano
+           ,CWE_PowodNiewykonaniaId
+           ,CWE_PowodNiewykonania
+           ,CWE_Opis
+           ,CWE_OpisWykonania
+           ,CWE_RodzajId
+           ,CWE_DataUtworzenia
+           ,CWE_OpeNumerU
+           ,CWE_OpeNumerM
+           ,CWE_Url
+           ,CWE_Przypisz
+           ,CWE_PrzypiszPrzed
+           ,CWE_PrzypiszPo
+           ,CWE_CzasModyfikacji
+           ,CWE_CzasModyfikacjiC
+           ,CWE_CzasArchiwizacji
+           ,CWE_OpeNumerA
+           ,CWE_Oddzialowy)
+	SELECT
+			@CWETyp--CWE_GidTyp
+           ,Ope_GIDFirma--CWE_GidFirma
+           ,@CWENumer--CWE_GidNumer
+           ,@CWELp--CWE_GidLp
+           ,@Kod--CWE_Kod
+           ,ISNULL(@Nazwa,'')--CWE_Nazwa
+           ,@Pozycja--CWE_Pozycja
+           ,ISNULL(@Wymagany,0)--CWE_Wymagany
+           ,ISNULL(@Wykonano,0)--CWE_Wykonano
+           ,ISNULL(@PowodNiewykonaniaId,0)--CWE_PowodNiewykonaniaId
+           ,ISNULL(@PowodNiewykonania,'')--CWE_PowodNiewykonania
+           ,ISNULL(@Opis,'')--CWE_Opis
+           ,ISNULL(@OpisWykonania,'')--CWE_OpisWykonania
+           ,ISNULL(SLW_ID,IsNull((SELECT TOP 1 SLW_ID FROM CDN.SlownikiStruktura INNER JOIN CDN.Slowniki ON SLS_Id=SLW_SLSId WHERE SLW_Aktywny=1 AND SLW_Predefiniowany=0 AND SLS_Predefiniowany=97),0))--CWE_RodzajId
+           ,ISNULL(@DataUtworzenia,@TimeStamp)--CWE_DataUtworzenia
+           ,@OpeNumer--CWE_OpeNumerU
+           ,@OpeNumer--CWE_OpeNumerM
+           ,ISNULL(@Url,'')--CWE_Url
+           ,ISNULL(@Przypisz,0)--CWE_Przypisz
+           ,ISNULL(CASE WHEN @Przypisz=0 THEN -1 ELSE @PrzypiszPrzed END,-1)--CWE_PrzypiszPrzed
+           ,ISNULL(CASE WHEN @Przypisz=0 THEN -1 ELSE @PrzypiszPo END,-1)--CWE_PrzypiszPo
+           ,@TimeStamp--CWE_CzasModyfikacji
+           ,@TimeStamp--CWE_CzasModyfikacjiC
+           ,CASE WHEN ISNULL(@Archiwalny,0)=0 THEN 0 ELSE @TimeStamp END--CWE_CzasArchiwizacji
+           ,CASE WHEN ISNULL(@Archiwalny,0)=0 THEN 0 ELSE @OpeNumer END--CWE_OpeNumerA
+           ,ISNULL(@Oddzialowy,0)--CWE_Oddzialowy
+	FROM CDN.OpeKarty
+	LEFT OUTER JOIN CDN.Slowniki ON SLW_ID=@RodzajId
+	WHERE Ope_GIDNumer=@OpeNumer
+
+	IF @@ROWCOUNT=0 BEGIN
+
+		IF NOT EXISTS(SELECT * FROM CDN.CRMWizytyNag WHERE CWN_ID=@CWENumer) BEGIN 
+			RAISERROR ('Wystąpił błąd podczas dodawania elementu wzorca wizyty handlowej. Podany wzorzec nie występuje w bazie.', 16, 1)
+			RETURN -2
+		END
+		IF NOT EXISTS(SELECT * FROM CDN.OpeKarty WHERE Ope_GIDNumer=@OpeNumer) BEGIN
+			RAISERROR ('Wystąpił błąd podczas dodawania elementu wzorca wizyty handlowej. Podany operator nie występuje w bazie.', 16, 1)
+			RETURN -3
+		END				
+			
+		-- inny powód błędu:						
+		RAISERROR ('Nie powiodło się dodawanie wpisu do tabeli CDN.CRMWizytyElem.', 16, 1)
+		RETURN -1
+	END
+	
+	--Atrybuty automatyczne:
+	INSERT INTO CDN.Atrybuty(Atr_ObiTyp,Atr_ObiFirma,Atr_ObiNumer,Atr_ObiLp,Atr_ObiSubLp
+							,Atr_AtkId,Atr_Wartosc,Atr_AtrTyp,Atr_AtrFirma,Atr_AtrNumer,Atr_AtrLp,Atr_AtrSubLp,Atr_OptimaId)
+	SELECT @CWETyp,CDN.GIDFirma(),@CWENumer,@CWELp,0,Atk_Id,'',0,0,0,0,0,0
+	FROM CDN.AtrybutyKlasy
+	JOIN CDN.AtrybutyObiekty ON AtO_AtKId=AtK_ID
+	WHERE AtK_Automat=1 AND AtO_GIDTyp=@CWETyp AND AtO_Element=1
+		                    
+	--OK:
+	RETURN @CWELp
+	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

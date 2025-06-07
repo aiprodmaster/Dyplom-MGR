@@ -1,0 +1,274 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[OFFLXLSrv_EksportROZ]"></A><PRE>
+          <FONT SIZE="2"><I>/* [OFFLXLSrv_EksportROZ] */</I><BR>
+CREATE PROCEDURE [CDN].[OFFLXLSrv_EksportROZ]
+    @ID    INT          -- ID Oddziału Offline
+	,@LogID INT = -1	-- ID loga synchronizacji
+AS
+	SET ARITHABORT ON
+	SET NOCOUNT OFF
+	
+	DECLARE @Opis                   VARCHAR(512),
+			@IloscWierszy			INT
+			
+	/**************** Rozliczenia ********************/
+	SELECT @Opis = 'Rozliczenia'
+	EXEC CDN.Log_OtworzPoziom @LogID, @Opis
+
+	SELECT
+		R2_ID				AS [@ID] 
+		,R2_DokTyp			AS [@Dok1Typ]
+		,R2_DokNumer		AS [@Dok1Numer]
+		,TrN_OddDokId		AS [@Dok1NumerO]
+		,R2_DokLp			AS [@Dok1Lp]
+		,TrN_TrNSeria		AS [@Seria1]
+		,R2_Dok2Typ			AS [@Dok2Typ]
+		,R2_Dok2Numer		AS [@Dok2Numer]
+		,KAZ_ZewnetrznyId	AS [@Dok2NumerO]
+		,R2_Dok2Lp			AS [@Dok2Lp]
+		,KAZ_Seria			AS [@Seria2]
+		,R2_KwotaWal		AS [@Kwota]
+		,CAST(TrP_GIDTyp AS VARCHAR(5))+':'+CAST(TrP_GIDNumer AS VARCHAR(10))+':'+CAST(TrP_GIDLp AS VARCHAR(5))	AS [@NumerPlat]
+		,TrP_ZewnetrznyId	AS [@NumerPlatO]
+		,TrP_KntTyp			AS [@KntTyp]
+		,TrP_KntNumer		AS [@KntNumer]
+		,PcL_ObiektID		AS [@KntNumerO]
+	FROM CDN.TraNag
+		INNER JOIN CDN.TraPlat A
+			ON TrN_GIDTyp = A.TrP_GIDTyp AND TrN_GIDNumer = A.TrP_GIDNumer
+		INNER JOIN 
+		(
+			SELECT 
+				R2_Dok1Typ		AS [R2_DokTyp]
+				,R2_Dok1Numer	AS [R2_dokNumer]
+				,R2_Dok1Lp		AS [R2_DokLp]
+				,R2_Dok2Typ		AS [R2_Dok2Typ]
+				,R2_Dok2Numer	AS [R2_Dok2Numer]
+				,R2_Dok2Lp		AS [R2_Dok2Lp]
+				,R2_KwotaWal1	AS [R2_KwotaWal]
+				,R2_ID			AS [R2_ID]
+            FROM cdn.Rozliczenia
+            WHERE R2_Wycena = 0 
+					AND ISNULL(R2_ZewnetrznyId,0) = 0
+					AND ((R2_Dok1Typ = 784 AND R2_Dok2Typ &lt;&gt; 784) OR (R2_Dok1Typ &lt;&gt; 784 AND R2_Dok2Typ = 784))
+            UNION ALL
+            SELECT 
+				R2_Dok2Typ		AS [R2_DokTyp]
+				,R2_Dok2Numer	AS [R2_dokNumer]
+				,R2_Dok2Lp		AS [R2_DokLp]
+				,R2_Dok1Typ		AS [R2_Dok2Typ]
+				,R2_Dok1Numer	AS [R2_dok2Numer]
+				,R2_Dok1Lp		AS [R2_Dok2Lp]
+				,R2_KwotaWal2	AS [R2_KwotaWal]
+				,R2_ID			AS [R2_ID]
+            FROM cdn.Rozliczenia
+            WHERE R2_Wycena = 0 
+					AND ISNULL(R2_ZewnetrznyId,0) = 0
+					AND ((R2_Dok1Typ = 784 AND R2_Dok2Typ &lt;&gt; 784) OR (R2_Dok1Typ &lt;&gt; 784 AND R2_Dok2Typ = 784))
+        ) B ON A.TrP_GIDTyp = B.R2_DokTyp AND A.TrP_GIDNumer = B.R2_DokNumer AND A.TrP_GIDLp = B.R2_DokLp
+		INNER JOIN CDN.Zapisy Z
+			ON B.R2_Dok2Typ = Z.KaZ_GIDTyp AND B.R2_Dok2Numer = Z.KaZ_GIDNumer
+		LEFT OUTER JOIN CDN.PicoLog ON PcL_PckID = @ID AND PcL_ObiTyp = TrP_KntTyp AND PcL_ObiNumer = TrP_KntNumer
+	WHERE TrN_OddDokId &gt; 0 AND CDN.OFFLXL_FrmOddzial(@ID,TrN_FrsID)=1
+
+	UNION ALL
+
+	-- Dokumenty kompensaty
+	SELECT
+		KMPDokument.R2_ID				AS [@ID] 
+		,KMPDokument.R2_DokTyp			AS [@Dok1Typ]
+		,KMPDokument.R2_DokNumer		AS [@Dok1Numer]
+		,TrN_OddDokId		AS [@Dok1NumerO]
+		,KMPDokument.R2_DokLp			AS [@Dok1Lp]
+		,TrN_TrNSeria		AS [@Seria1]
+		,KMPZapis.R2_DokTyp			AS [@Dok2Typ]
+		,KMPZapis.R2_DokNumer		AS [@Dok2Numer]
+		,KAZ_ZewnetrznyId	AS [@Dok2NumerO]
+		,KMPZapis.R2_DokLp			AS [@Dok2Lp]
+		,KAZ_Seria			AS [@Seria2]
+		,KMPZapis.R2_KwotaWal		AS [@Kwota]
+		,CAST(TrP_GIDTyp AS VARCHAR(5))+':'+CAST(TrP_GIDNumer AS VARCHAR(10))+':'+CAST(TrP_GIDLp AS VARCHAR(5))	AS [@NumerPlat]
+		,TrP_ZewnetrznyId	AS [@NumerPlatO]
+		,TrP_KntTyp			AS [@KntTyp]
+		,TrP_KntNumer		AS [@KntNumer]
+		,PcL_ObiektID		AS [@KntNumerO]
+	FROM CDN.TraNag
+		INNER JOIN CDN.TraPlat A ON TrN_GIDTyp = A.TrP_GIDTyp AND TrN_GIDNumer = A.TrP_GIDNumer
+		INNER JOIN 
+		(
+			SELECT 
+				R2_Dok1Typ		AS [R2_DokTyp]
+				,R2_Dok1Numer	AS [R2_dokNumer]
+				,R2_Dok1Lp		AS [R2_DokLp]
+				,R2_KwotaWal1	AS [R2_KwotaWal]				
+				,R2_ID			AS [R2_ID]
+				,R2_ParID			AS [R2_PARID]
+            FROM cdn.Rozliczenia
+            WHERE R2_Wycena = 0 
+					AND ISNULL(R2_ZewnetrznyId,0) = 0
+					AND (R2_Dok1Typ = 784 AND R2_Dok2Typ = 434)
+			UNION ALL
+			SELECT 
+				R2_Dok2Typ		AS [R2_DokTyp]
+				,R2_Dok2Numer	AS [R2_dokNumer]
+				,R2_Dok2Lp		AS [R2_DokLp]
+				,R2_KwotaWal2	AS [R2_KwotaWal]
+				,R2_ID			AS [R2_ID]
+				,R2_ParID			AS [R2_PARID]				
+            FROM cdn.Rozliczenia
+            WHERE R2_Wycena = 0 
+					AND ISNULL(R2_ZewnetrznyId,0) = 0
+					AND (R2_Dok1Typ = 434 AND R2_Dok2Typ = 784)
+        ) KMPZapis ON 1=1
+		INNER JOIN CDN.Zapisy Z ON KMPZapis.R2_DokTyp = Z.KaZ_GIDTyp AND KMPZapis.R2_dokNumer = Z.KaZ_GIDNumer        
+		INNER JOIN 
+		(
+			SELECT 
+				R2_Dok1Typ		AS [R2_DokTyp]
+				,R2_Dok1Numer	AS [R2_DokNumer]
+				,R2_Dok1Lp		AS [R2_DokLp]
+				,R2_KwotaWal1	AS [R2_KwotaWal]				
+				,R2_ID			AS [R2_ID]
+				,R2_ParID			AS [R2_PARID]
+            FROM cdn.Rozliczenia
+            WHERE R2_Wycena = 0 
+					AND ISNULL(R2_ZewnetrznyId,0) = 0
+					AND (R2_Dok1Typ &lt;&gt; 784 AND R2_Dok2Typ = 434)
+			UNION ALL
+			SELECT 
+				R2_Dok2Typ		AS [R2_DokTyp]
+				,R2_Dok2Numer	AS [R2_DokNumer]
+				,R2_Dok2Lp		AS [R2_DokLp]
+				,R2_KwotaWal2	AS [R2_KwotaWal]
+				,R2_ID			AS [R2_ID]
+				,R2_ParID			AS [R2_PARID]				
+            FROM cdn.Rozliczenia
+            WHERE R2_Wycena = 0 
+					AND ISNULL(R2_ZewnetrznyId,0) = 0
+					AND (R2_Dok1Typ = 434 AND R2_Dok2Typ &lt;&gt; 784)
+        ) KMPDokument  ON TrN_GIDTyp = KMPDokument.R2_DokTyp AND TrN_GIDNumer = KMPDokument.R2_DokNumer
+		LEFT OUTER JOIN CDN.PicoLog ON PcL_PckID = @ID AND PcL_ObiTyp = TrP_KntTyp AND PcL_ObiNumer = TrP_KntNumer
+	WHERE TrN_OddDokId &gt; 0 AND CDN.OFFLXL_FrmOddzial(@ID,TrN_FrsID)=1 
+		AND KMPZapis.R2_PARID = KMPDokument.R2_PARID -- laczenie w jedna kompensate	
+	FOR XML PATH('ROZ'),ROOT('ROZI')
+	
+	SET @IloscWierszy = @@ROWCOUNT
+	
+	-- W tej chwili należy zaktualizować na wysłanych rozliczeniach pole R2_ZewnetrznySys
+	UPDATE CDN.Rozliczenia
+	SET R2_ZewnetrznySys = @ID, R2_ZewnetrznyTyp = 1
+	FROM CDN.TraNag
+		INNER JOIN CDN.TraPlat A ON TrN_GIDTyp = A.TrP_GIDTyp AND TrN_GIDNumer = A.TrP_GIDNumer
+		INNER JOIN 
+		(
+			SELECT 
+				R2_Dok1Typ		AS [DokTyp]
+				,R2_Dok1Numer	AS [DokNumer]
+				,R2_Dok1Lp		AS [DokLp]
+				,R2_Dok2Typ		AS [Dok2Typ]
+				,R2_Dok2Numer	AS [Dok2Numer]
+				,R2_Dok2Lp		AS [Dok2Lp]
+				,R2_KwotaWal1	AS [KwotaWal]
+				,R2_ID			AS [ID]
+            FROM cdn.Rozliczenia
+            WHERE R2_Wycena = 0 
+					AND ISNULL(R2_ZewnetrznyId,0) = 0 
+					AND ((R2_Dok1Typ = 784 AND R2_Dok2Typ &lt;&gt; 784) OR (R2_Dok1Typ &lt;&gt; 784 AND R2_Dok2Typ = 784))
+            UNION ALL
+            SELECT 
+				R2_Dok2Typ		AS [DokTyp]
+				,R2_Dok2Numer	AS [DokNumer]
+				,R2_Dok2Lp		AS [DokLp]
+				,R2_Dok1Typ		AS [Dok2Typ]
+				,R2_Dok1Numer	AS [Dok2Numer]
+				,R2_Dok1Lp		AS [Dok2Lp]
+				,R2_KwotaWal2	AS [KwotaWal]
+				,R2_ID			AS [ID]
+            FROM cdn.Rozliczenia
+            WHERE R2_Wycena = 0 
+					AND ISNULL(R2_ZewnetrznyId,0) = 0
+					AND ((R2_Dok1Typ = 784 AND R2_Dok2Typ &lt;&gt; 784) OR (R2_Dok1Typ &lt;&gt; 784 AND R2_Dok2Typ = 784))
+        ) B ON A.TrP_GIDTyp = B.DokTyp AND A.TrP_GIDNumer = B.DokNumer AND A.TrP_GIDLp = B.DokLp
+		WHERE TrN_OddDokId &gt; 0 AND CDN.OFFLXL_FrmOddzial(@ID,TrN_FrsID)=1 AND R2_ID = B.ID
+
+	UPDATE CDN.Rozliczenia
+	SET R2_ZewnetrznySys = @ID, R2_ZewnetrznyTyp = 1
+	FROM CDN.TraNag
+		INNER JOIN CDN.TraPlat A
+			ON TrN_GIDTyp = A.TrP_GIDTyp AND TrN_GIDNumer = A.TrP_GIDNumer
+		INNER JOIN 
+		(
+			SELECT 
+				R2_Dok1Typ		AS [R2_DokTyp]
+				,R2_Dok1Numer	AS [R2_dokNumer]
+				,R2_Dok1Lp		AS [R2_DokLp]
+				,R2_KwotaWal1	AS [R2_KwotaWal]				
+				,R2_ID			AS [R2_ID]
+				,R2_ParID			AS [R2_PARID]
+            FROM cdn.Rozliczenia
+            WHERE R2_Wycena = 0 
+					AND ISNULL(R2_ZewnetrznyId,0) = 0
+					AND (R2_Dok1Typ = 784 AND R2_Dok2Typ = 434)
+			UNION ALL
+			SELECT 
+				R2_Dok2Typ		AS [R2_DokTyp]
+				,R2_Dok2Numer	AS [R2_dokNumer]
+				,R2_Dok2Lp		AS [R2_DokLp]
+				,R2_KwotaWal2	AS [R2_KwotaWal]
+				,R2_ID			AS [R2_ID]
+				,R2_ParID			AS [R2_PARID]				
+            FROM cdn.Rozliczenia
+            WHERE R2_Wycena = 0 
+					AND ISNULL(R2_ZewnetrznyId,0) = 0
+					AND (R2_Dok1Typ = 434 AND R2_Dok2Typ = 784)
+        ) KMPZapis ON 1=1
+		INNER JOIN CDN.Zapisy Z ON KMPZapis.R2_DokTyp = Z.KaZ_GIDTyp AND KMPZapis.R2_dokNumer = Z.KaZ_GIDNumer        
+		INNER JOIN 
+		(
+			SELECT 
+				R2_Dok1Typ		AS [R2_DokTyp]
+				,R2_Dok1Numer	AS [R2_dokNumer]
+				,R2_Dok1Lp		AS [R2_DokLp]
+				,R2_KwotaWal1	AS [R2_KwotaWal]				
+				,R2_ID			AS [R2_ID]
+				,R2_ParID			AS [R2_PARID]
+            FROM cdn.Rozliczenia
+            WHERE R2_Wycena = 0 
+					AND ISNULL(R2_ZewnetrznyId,0) = 0
+					AND (R2_Dok1Typ &lt;&gt; 784 AND R2_Dok2Typ = 434)
+			UNION ALL
+			SELECT 
+				R2_Dok2Typ		AS [R2_DokTyp]
+				,R2_Dok2Numer	AS [R2_dokNumer]
+				,R2_Dok2Lp		AS [R2_DokLp]
+				,R2_KwotaWal2	AS [R2_KwotaWal]
+				,R2_ID			AS [R2_ID]
+				,R2_ParID			AS [R2_PARID]				
+            FROM cdn.Rozliczenia
+            WHERE R2_Wycena = 0 
+					AND ISNULL(R2_ZewnetrznyId,0) = 0
+					AND (R2_Dok1Typ = 434 AND R2_Dok2Typ &lt;&gt; 784)
+        ) KMPDokument ON TrN_GIDTyp = KMPDokument.R2_DokTyp AND TrN_GIDNumer = KMPDokument.R2_DokNumer
+		LEFT OUTER JOIN CDN.PicoLog ON PcL_PckID = @ID AND PcL_ObiTyp = TrP_KntTyp AND PcL_ObiNumer = TrP_KntNumer
+	WHERE TrN_OddDokId &gt; 0 AND CDN.OFFLXL_FrmOddzial(@ID,TrN_FrsID)=1 
+		AND KMPZapis.R2_PARID = KMPDokument.R2_PARID -- laczenie w jedna kompensate	
+
+	SELECT @Opis = 'Ilość wyeksportowanych rozliczeń: '+ CAST(@IloscWierszy AS VARCHAR(10))
+	EXEC CDN.Log_Dopisz @LogID, @Opis,0	
+	EXEC CDN.Log_ZamknijPoziom @LogID
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

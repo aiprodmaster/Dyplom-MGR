@@ -1,0 +1,252 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="OdbudowaStanowKas"></A><PRE>
+          <FONT SIZE="2"><I>/* OdbudowaStanowKas */</I><BR>
+create procedure CDN.OdbudowaStanowKas( @Seria varchar(6), @bUstawStan tinyint = 0, @_KRP_StanPocz decimal(15,2)=0, @_KRP_StanPoczWal decimal(15,2)=0)
+as
+begin
+
+declare @KAZ_Seria varchar(4)
+declare @KAZ_KrpNumer int
+declare @KAZ_Rok smallint
+declare @KAZ_RP tinyint
+declare @KAO_WplywaNaSrednia tinyint
+declare @PrzyrostWal decimal(15,2)	
+declare @PrzyrostSys decimal(15,2)
+declare @PrzyrostSredWal decimal(15,2)	
+declare @PrzyrostSredSys decimal(15,2)
+declare @PrzyrostRK decimal(15,2)	
+declare @PrzyrostSredRK decimal(15,2)
+
+declare @KRP_StanPocz decimal(15,2)
+declare @KRP_StanPoczWal decimal(15,2)
+declare @KRP_GIDNumer int
+declare @KRP_Numer int
+declare @KRP_RaportBO tinyint
+declare @KRP_CzasOtwarcia int
+declare @KRP_Rok smallint
+
+	if exists(select * from cdn.Raporty where krp_Seria = @Seria and krp_RaportBO = 1)
+	begin
+		update r set
+			KRP_Rozchody = 0,
+			KRP_RozchodyWal = 0,
+			KRP_RozchodyWP = 0,
+			KRP_RozchodyWPWal = 0,
+			KRP_RozchodyRK = 0,
+			KRP_RozchodyWPRK = 0,
+			KRP_Przychody = 0,
+			KRP_PrzychodyWal = 0,
+			KRP_PrzychodyWP = 0,
+			KRP_PrzychodyWPWal = 0,
+			KRP_PrzychodyRK = 0,
+			KRP_PrzychodyWPRK = 0,
+			KRP_StanPocz = 0,
+			KRP_StanPoczWal = 0,
+			KRP_StanPoczWP = 0,
+			KRP_StanPoczWPWal = 0
+		from cdn.raporty r
+		where r.KRP_Seria = @Seria
+	end
+	else
+	begin
+		
+		select 
+			@KRP_StanPocz = KRP_StanPocz,
+			@KRP_StanPoczWal = KRP_StanPoczWal,			
+			@KRP_GIDNumer = KRP_GIDNumer,
+			@KRP_Rok = KRP_Rok,
+			@KRP_Numer = KRP_Numer
+		from cdn.Raporty
+		where krp_gidnumer = (select top 1 krp_gidnumer from cdn.Raporty where krp_seria = @Seria order by krp_rok, krp_numer)
+		
+
+
+		update r set
+			KRP_Rozchody = 0,
+			KRP_RozchodyWal = 0,
+			KRP_RozchodyWP = 0,
+			KRP_RozchodyWPWal = 0,
+			KRP_RozchodyRK = 0,
+			KRP_RozchodyWPRK = 0,
+			KRP_Przychody = 0,
+			KRP_PrzychodyWal = 0,
+			KRP_PrzychodyWP = 0,
+			KRP_PrzychodyWPWal = 0,
+			KRP_PrzychodyRK = 0,
+			KRP_PrzychodyWPRK = 0,
+			KRP_StanPocz = 0,
+			KRP_StanPoczWal = 0,
+			KRP_StanPoczWP = 0,
+			KRP_StanPoczWPWal = 0
+		from cdn.Raporty r
+		where r.KRP_Seria = @Seria
+
+
+		if @bUstawStan &lt;&gt; 0
+		begin
+			set @KRP_StanPocz = @_KRP_StanPocz
+			set @KRP_StanPoczWal = @_KRP_StanPoczWal
+		end
+
+		update r set			
+			KRP_StanPocz = @KRP_StanPocz,
+			KRP_StanPoczWal = @KRP_StanPoczWal			
+		from cdn.Raporty r
+		where r.krp_seria = @Seria and ((r.KRP_Rok = @KRP_Rok and r.KRP_Numer &gt;= @KRP_Numer) or (r.KRP_Rok &gt; @KRP_Rok))
+	end
+
+	
+	if @@Error &lt;&gt; 0
+	begin			
+		Raiserror('Błąd zerowania stanów raportów',16,1)
+
+		return
+	end
+
+
+
+  declare raportyCurs cursor fast_forward
+    for select KRP_GIDNumer
+    from CDN.Raporty
+	where Krp_Seria = @Seria
+	order by 
+			KRP_RaportBO desc, 
+			case when KRP_RaportBO = 1 then KRP_CzasOtwarcia else KRP_Rok end, 
+			KRP_Numer
+  
+ 
+  open raportyCurs;
+  fetch next from raportyCurs into @KAZ_KRPNumer
+  while @@FETCH_STATUS = 0
+  begin
+
+		
+		
+	
+
+		declare ZapisyCurs cursor local fast_forward for
+		select kaz_seria, kaz_krpnumer, kaz_rok, krp_numer, krp_Rok, krp_czasotwarcia, krp_raportBO, kaz_rp, kao_WplywaNaSrednia, sum(a.kaz_kwota) as PrzyrostWal, sum(a.kaz_kwotasys) as PrzyrostSys, sum(case when o.KAO_WplywaNaSrednia &lt;&gt; 0 then a.kaz_kwota else 0 end) as PrzyrostSredWal, sum(case when o.KAO_WplywaNaSrednia &lt;&gt; 0 then a.kaz_kwotasys else 0 end) as PrzyrostSredSys, sum(a.kaz_wycenaRKStan) as PrzyrostRK, sum(case when o.KAO_WplywaNaSrednia &lt;&gt; 0 then a.kaz_WycenaRKStan else 0 end) as PrzyrostSredRK
+		from (
+			select kaz_seria as kaz_seria, kaz_krpnumer as kaz_krpnumer, kaz_rok as kaz_rok, kaz_kaonumer as kaz_kaonumer, kaz_rp as kaz_rp, kaz_kwota as kaz_kwota, kaz_kwotasys as kaz_kwotasys, kaz_wycenaRkStan as kaz_wycenaRkStan
+			from cdn.Zapisy i
+			where KAZ_Seria = @Seria and KAZ_KrpNumer = @KAZ_KrpNumer and KAZ_KrpTyp = 800
+			) a
+			join cdn.Operacje o
+				on kaz_kaonumer = kao_gidnumer
+			join cdn.Raporty
+				on kaz_krpNumer = krp_gidnumer
+		group by kaz_seria, kaz_krpnumer, kaz_rok, krp_numer, krp_rok, krp_czasotwarcia, krp_raportBO, kaz_rp, kao_WplywaNaSrednia
+
+
+
+
+
+ 		open ZapisyCurs
+		fetch next from ZapisyCurs into @Kaz_Seria, @Kaz_KrpNumer, @KAZ_Rok, @Krp_Numer, @Krp_Rok, @Krp_CzasOtwarcia, @Krp_RaportBO, @KAZ_RP, @KAO_WplywaNaSrednia, @PrzyrostWal, @PrzyrostSys, @PrzyrostSredWal, @PrzyrostSredSys, @PrzyrostRK, @PrzyrostSredRK
+			
+
+		while @@FETCH_STATUS = 0
+		begin
+
+			update r set
+				KRP_Rozchody = isnull(KRP_Rozchody,0) + case when @kaz_rp=1 then @PrzyrostSys else 0 end, 
+				KRP_RozchodyWal = isnull(KRP_RozchodyWal,0) + case when @kaz_rp=1 then @PrzyrostWal else 0 end,
+				KRP_RozchodyWP = isnull(KRP_RozchodyWP,0) + case when @kaz_rp=1 then @PrzyrostSredSys else 0 end, 
+				KRP_RozchodyWPWal = isnull(KRP_RozchodyWPWal,0) + case when @kaz_rp=1 then @PrzyrostSredWal else 0 end,
+				KRP_RozchodyRK = isnull(KRP_RozchodyRK,0) + case when @PrzyrostRK &lt; 0 then abs(@PrzyrostRK) else 0 end, 
+				KRP_RozchodyWPRK = isnull(KRP_RozchodyWPRK,0) + case when @PrzyrostSredRK &lt; 0 then abs(@PrzyrostSredRK) else 0 end, 
+ 
+				KRP_Przychody = isnull(KRP_Przychody,0) + case when @kaz_rp=2 then @PrzyrostSys else 0 end, 
+				KRP_PrzychodyWal = isnull(KRP_PrzychodyWal,0) + case when @kaz_rp=2 then @PrzyrostWal else 0 end,
+				KRP_PrzychodyWP = isnull(KRP_PrzychodyWP,0) + case when @kaz_rp=2 then @PrzyrostSredSys else 0 end, 
+				KRP_PrzychodyWPWal = isnull(KRP_PrzychodyWPWal,0) + case when @kaz_rp=2 then @PrzyrostSredWal else 0 end,
+				KRP_PrzychodyRK = isnull(KRP_PrzychodyRK,0) + case when @PrzyrostRK &gt; 0 then abs(@PrzyrostRK) else 0 end, 
+				KRP_PrzychodyWPRK = isnull(KRP_PrzychodyWPRK,0) + case when @PrzyrostSredRK &gt; 0 then abs(@PrzyrostSredRK) else 0 end
+
+			from cdn.raporty r						
+			where r.Krp_GIDNumer = @KAZ_KrpNumer
+			
+
+
+			if @@Error &lt;&gt; 0
+			begin			
+				Raiserror('Błąd modyfikacji stanów raportu (1)',16,1)
+
+				close ZapisyCurs
+				deallocate ZapisyCurs
+
+				close raportyCurs
+				deallocate raportyCurs
+				return
+			end
+
+
+
+
+			if @Krp_RaportBO = 1
+			begin
+				update r set
+					KRP_StanPocz = isnull(KRP_StanPocz,0) + case when @KAZ_RP=1 then -1 else 1 end * @PrzyrostSys + @PrzyrostRK , 
+					KRP_StanPoczWal = isnull(KRP_StanPoczWal,0) + case when @KAZ_RP=1 then -1 else 1 end * @PrzyrostWal,
+					KRP_StanPoczWP = isnull(KRP_StanPoczWP,0) + case when @KAZ_RP=1 then -1 else 1 end * @PrzyrostSredSys + @PrzyrostSredRK, 
+					KRP_StanPoczWPWal = isnull(KRP_StanPoczWPWal,0) + case when @KAZ_RP=1 then -1 else 1 end * @PrzyrostSredWal
+				from cdn.raporty r
+				where r.KRP_Seria = @Seria and ((r.krp_raportBO = 1 and r.krp_czasotwarcia &gt; @krp_czasotwarcia ) or (r.krp_raportBO = 0))
+			end
+			else
+			begin
+				update r set
+					KRP_StanPocz = isnull(KRP_StanPocz,0) + case when @KAZ_RP=1 then -1 else 1 end * @PrzyrostSys + @PrzyrostRK, 
+					KRP_StanPoczWal = isnull(KRP_StanPoczWal,0) + case when @KAZ_RP=1 then -1 else 1 end * @PrzyrostWal,
+					KRP_StanPoczWP = isnull(KRP_StanPoczWP,0) + case when @KAZ_RP=1 then -1 else 1 end * @PrzyrostSredSys + @PrzyrostSredRK, 
+					KRP_StanPoczWPWal = isnull(KRP_StanPoczWPWal,0) + case when @KAZ_RP=1 then -1 else 1 end * @PrzyrostSredWal
+				from cdn.raporty r
+				where r.KRP_Seria = @Seria and ((r.krp_raportBO = 0 and (r.krp_rok = @krp_rok and r.krp_numer &gt; @krp_numer or r.krp_rok &gt; @krp_rok)))
+			end
+
+
+
+
+			if @@Error &lt;&gt; 0
+			begin
+				Raiserror('Błąd modyfikacji stanów raportu (3)',16,1)
+
+				close ZapisyCurs
+				deallocate ZapisyCurs
+
+				close raportyCurs
+				deallocate raportyCurs
+				return
+			end
+
+			fetch next from ZapisyCurs into @Kaz_Seria, @Kaz_KrpNumer, @KAZ_Rok, @Krp_Numer, @Krp_Rok, @Krp_CzasOtwarcia, @Krp_RaportBO, @KAZ_RP, @KAO_WplywaNaSrednia, @PrzyrostWal, @PrzyrostSys, @PrzyrostSredWal, @PrzyrostSredSys, @PrzyrostRK, @PrzyrostSredRK
+		end
+
+		close ZapisyCurs
+		deallocate ZapisyCurs
+
+
+
+		fetch next from raportyCurs into @KAZ_KRPNumer
+  END
+
+  close raportyCurs
+  deallocate raportyCurs
+
+end;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

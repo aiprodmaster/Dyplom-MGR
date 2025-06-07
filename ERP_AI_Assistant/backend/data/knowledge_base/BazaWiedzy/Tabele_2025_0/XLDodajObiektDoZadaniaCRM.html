@@ -1,0 +1,126 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[XLDodajObiektDoZadaniaCRM]"></A><PRE>
+          <FONT SIZE="2"><I>/* [XLDodajObiektDoZadaniaCRM] */</I><BR>
+CREATE PROCEDURE [CDN].[XLDodajObiektDoZadaniaCRM] 
+	@CdzId				int,					
+	@SseNumer			int,				
+	@SseLP				smallint,											
+	@ObiTyp				smallint,	
+	@ObiNumer			int,
+
+	@DataUtworzenia			int = NULL,
+	@IgnorujBledy			tinyint = NULL						
+
+AS
+SET NOCOUNT ON
+BEGIN TRAN XLDodajObiektDoZadaniaCRM
+if @SseNumer is null
+	set @SseNumer = 0
+if @SseLp is null
+	set @SseLp = 0
+if @ObiNumer is null
+	set @ObiNumer = 0
+if @ObiTyp is null
+	set @ObiTyp = 0
+if @CdzId is null
+	set @CdzId = 0
+
+if @CdzId &lt;&gt; 0 and not exists(select * from cdn.CRMDefZadania where CDZ_Id = @CdzId)
+		begin
+			rollback tran XLDodajObiektDoZadaniaCRM
+			if @IgnorujBledy is null
+				raiserror('Nie znaleziono wzorca zadania - (-1)',16,1)
+			return -1
+		end
+else
+	if @SseNumer &lt;&gt; 0 and @SseLP &lt;&gt; 0 and not exists(select * from cdn.SrsElem where SsE_GIDNumer = @SseNumer													and SsE_GIDLp = @SseLp and SsE_ElementTyp = 2 )
+		begin
+			rollback tran XLDodajObiektDoZadaniaCRM
+			if @IgnorujBledy is null
+				raiserror('Nie znaleziono zadania - (-2)',16,1)
+			return -2
+		end
+	else
+		begin
+			rollback tran XLDodajObiektDoZadaniaCRM
+			if @IgnorujBledy is null
+				raiserror('Nie podano wzorca zadania ani zadania - (-3)',16,1)
+			return -3
+		end
+
+if (@ObiTyp = 944 and not exists(select * from cdn.PrcKarty where Prc_GIDNumer = @ObiNumer)) or
+(@ObiTyp = 14337 and not exists(select * from cdn.ProdObiekty where POb_ID = @ObiNumer)) or 
+(@ObiTyp not in (944,14337))
+	begin
+		rollback tran XLDodajObiektDoZadaniaTERMINARZ
+		if @IgnorujBledy is null
+			raiserror('Nie znalezniono obiektu do dodania - (-5)',16,1)
+		return -5
+	end
+
+if @CdzId &lt;&gt; 0
+	select @SseNumer = 0, @SseLP = 0
+
+if exists (select * from cdn.CRMZadaniaObiekty where CZO_CdzId = @CdzId and CZO_SseNumer = @SseNumer
+			and  CZO_SseLp = @SseLP and CZO_ObiTyp = @ObiTyp and CZO_ObiNumer = @ObiNumer)
+	begin
+		rollback tran XLDodajObiektDoZadaniaCRM
+		if @IgnorujBledy is null
+			raiserror('Taki obiekt jest już dodany - (-6)',16,1)
+		return -6
+	end
+
+if @DataUtworzenia is null or @DataUtworzenia &lt; 1
+	select @DataUtworzenia = DATEDIFF(s,'19900101',GETDATE())
+
+if (@CdzId &lt;&gt; 0 and exists(select * from cdn.CrmDefZadania where CDZ_Id = @CdzId and 
+	@DataUtworzenia &lt; CDZ_DataUtworzenia)) or (@SseNumer &lt;&gt; 0 and @SseLP &lt;&gt; 0 and exists(select * from 
+	cdn.SrsElem where SsE_GIDNumer = @SseNumer and SsE_GIDLp = @SseLP and @DataUtworzenia &lt; SsE_TStampDataStart))
+	if @CdzId &lt;&gt; 0
+		select @DataUtworzenia = CDZ_DataUtworzenia from cdn.CrmDefZadania where CDZ_Id = @CdzId
+	else
+		select @DataUtworzenia = SsE_TStampDataStart from cdn.SrsElem where SsE_GIDNumer = @SseNumer and
+				SsE_GIDLp = @SseLP
+
+insert into cdn.CRMZadaniaObiekty(
+CZO_CdzId,
+CZO_SseNumer,
+CZO_SseLp,
+CZO_ObiTyp,
+CZO_ObiNumer,
+CZO_DataUtworzenia
+)values(
+@CdzId,
+@SseNumer,
+@SseLp,
+@ObiTyp,
+@ObiNumer,
+@DataUtworzenia
+)
+if @@error &lt;&gt; 0  
+	begin
+		ROLLBACK TRAN XLDodajObiektDoZadaniaCRM
+		if @IgnorujBledy is null
+			RAISERROR ('Błąd podczas dodawania obiektu - (-33)', 16, 1)
+		return -33
+	end	
+
+COMMIT TRAN XLDodajObiektDoZadaniaCRM
+SET NOCOUNT OFF
+RETURN 0
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

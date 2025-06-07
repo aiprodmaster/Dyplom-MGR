@@ -1,0 +1,337 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Usuwanie funkcji CDN.ProdZlecDrzewo"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Usuwanie funkcji CDN.ProdZlecDrzewo */</I><BR>
+if exists(SELECT name from sysobjects where name='ProdOperacjaDrzewo' and type='TF')
+	drop function CDN.ProdOperacjaDrzewo
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie funkcji CDN.ProdOperacjaDrzewo"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie funkcji CDN.ProdOperacjaDrzewo */</I><BR>
+CREATE FUNCTION CDN.ProdOperacjaDrzewo (@Czynnosc INT,@Identyfikator varchar(7468),@Realizacje tinyint,@Obiekty tinyint,@Surowce tinyint,@Produkty tinyint, @PolProdukty tinyint, @lEtapy tinyint, @Rezerwacje tinyint, @Zgrubne tinyint, 
+@Zamiennik tinyint,@Uboczne TINYINT,@Zaplanowane TINYINT,@Zabiegi TINYINT)
+RETURNS @Procesy TABLE (
+  Etap int,
+  Kod varchar(100),
+  Nazwa varchar(300),
+  Ilosc decimal(11,4),
+  Jednostka varchar(8),
+  Poziom int,
+  Typ smallint,
+  Lp int,
+  Proces int,
+  Czynnosc int,
+  Realizuje int,
+  Obiekt int,
+  Zasob int,
+  Ojciec int,
+  Koszt decimal(15,4),
+  Zrealizowano decimal(11,4),
+  TerminRozpoczecia int,
+  TerminZakonczenia int,
+  Zgrubnie smallint , -- w przypadku surowców i rezerwacji to pole wskazuje czy pozycja jest zamiennikiem 	
+  Identyfikator varchar(7468),
+  IdentyfikatorLp varchar(7468),
+  ZrealizowanoPotw DECIMAL(15,4),
+  Uruchomiona smallint,
+  ZamiennikDo varchar(300),
+  IkonaZasobu TINYINT,
+  RodzajZasobuID int,
+  IloscPom varchar(20),
+  JmPom varchar(8),
+  KJ TINYINT
+)
+AS
+BEGIN
+	DECLARE @Poziom INT
+	SET @Poziom = 2
+
+	;with Operacje_cte(Poziom, Proces, Czynnosc, Ojciec, Identyfikator, Lp, Technologia, TechnologiaCzynnosc)
+	as
+	(
+		SELECT @Poziom, PCZ_Proces, @Czynnosc, @Czynnosc, @Identyfikator, PTC_Lp, PTC_Technologia , PTC_Id
+        FROM CDN.ProdCzynnosci 
+        inner join CDN.ProdTechnologiaCzynnosci on PTC_Id=PCZ_TechnologiaCzynnosc 
+        WHERE PCZ_Id=@Czynnosc AND (@lEtapy = 0 or Pcz_Etap = 1) and (isnull(@Zgrubne,0)&lt;&gt;0 or Pcz_PlanZgrubnie =0 )
+
+		union all
+
+		SELECT Poziom+1,Proces, Nowa.PCZ_Id, Czynnosc, cast(left(left(Identyfikator,50+21*Poziom)+'71'+right(space(10)+convert(varchar,PTC_Lp),10)
+                    +right(space(10)+convert(varchar,Nowa.PCZ_Id),10),7808) as varchar(7468)), PTC_Lp, PTC_Technologia, PTC_Id
+		from Operacje_cte
+        join CDN.ProdCzynnosci as Stara  on Stara.PCZ_Id=Czynnosc
+		inner join CDN.ProdTechnologiaCzynnosci on PTC_Ojciec=TechnologiaCzynnosc and PTC_Technologia=Technologia
+			and not exists(SELECT Inna.PCZ_ID from CDN.ProdCzynnosci Inna where Inna.PCZ_Proces=Proces and       
+			Inna.PCZ_TechnologiaCzynnosc=TechnologiaCzynnosc and Inna.PCZ_Id&lt;Czynnosc)
+        inner join CDN.ProdCzynnosci as Nowa on Nowa.PCZ_Proces=Proces and Nowa.PCZ_TechnologiaCzynnosc=PTC_Id and isnull(Nowa.PCZ_Realizuje,0)=0
+        WHERE (@lEtapy = 0 or Nowa.Pcz_Etap = 1) and (isnull(@Zgrubne,0)&lt;&gt;0 or Nowa.Pcz_PlanZgrubnie =0 )
+		)
+		INSERT INTO @Procesy
+		SELECT Nowa.Pcz_Etap,  convert (varchar, count(N.PCZ_ID))+':'+ PTC_Kod, PTC_Nazwa, Nowa.PCZ_Ilosc, PTC_Jednostka,
+					Poziom, 6, PTC_Lp, Proces, Nowa.PCZ_Id, 0, 0, 0, Ojciec, isnull (PKE.Koszt,0) Koszt,
+                    isnull((SELECT sum(R.PCZ_Ilosc) from CDN.ProdCzynnosci R where R.PCZ_Realizuje= Nowa.Pcz_Id),0) Zrealizowano,
+                    Nowa.Pcz_TerminRozpoczecia TerminRozpoczecia , Nowa.Pcz_TerminZakonczenia TerminZakonczenia ,Nowa.Pcz_PlanZgrubnie,Identyfikator, Identyfikator,
+                    isnull((SELECT sum(R.PCZ_Ilosc) from CDN.ProdCzynnosci R where R.PCZ_Realizuje= Nowa.Pcz_Id),0) ZrealizowanoPotw,0 Uruchomiona,'' ZamiennikDo,0,0,'','',
+					Nowa.PCZ_KontrolaJakosci KJ
+                FROM Operacje_cte
+					inner join CDN.ProdTechnologiaCzynnosci on PTC_Id=TechnologiaCzynnosc
+                    inner join CDN.ProdCzynnosci as Nowa on Nowa.PCZ_Id = Czynnosc
+                    inner join Cdn.ProdCzynnosci as N on Nowa.PCZ_ID &gt;= N.PCZ_ID and N.PCZ_Proces=Proces and N.PCZ_TechnologiaCzynnosc=TechnologiaCzynnosc and isnull(N.PCZ_Realizuje,0)=0
+					left outer join		--TFSID: 128873
+					(
+						select sum(Pke_Kwota) Koszt, PKE_ObiTyp, PKE_ObiNumer from Cdn.ProdKosztyElem
+						left outer join Cdn.ProdKoszty on PKO_Id = PKE_PKOID
+						left outer join Cdn.Slowniki on Pko_Kategoria = Slw_Id and Slw_WartoscN2 = 1
+						group by PKE_ObiTyp, PKE_ObiNumer
+					) PKE on PKE.PKE_ObiTyp = 14345 and PKE.Pke_ObiNumer = Nowa.Pcz_Id
+                GROUP BY PTC_Id, PTC_Kod, PTC_Nazwa, PTC_Jednostka, PTC_Lp,
+					Nowa.PCZ_Id, Nowa.PCZ_Ilosc, Proces, Poziom, Identyfikator, Lp, Nowa.Pcz_etap, Nowa.Pcz_TerminRozpoczecia, Nowa.Pcz_TerminZakonczenia, Nowa.Pcz_PlanZgrubnie,PKE.Koszt, 
+					Nowa.PCZ_KontrolaJakosci, Ojciec
+		
+		IF isnull(@Realizacje,0)&lt;&gt;0
+			INSERT into @Procesy
+				select A.Pcz_Etap,convert (varchar , count (c1.Pcz_Id))+':'+ PTC_Kod, PTC_Nazwa, A.PCZ_Ilosc, PTC_Jednostka, Poziom,
+					   5, PTC_Lp, Proces, A.PCZ_Id, A.PCZ_Realizuje, 0, 0, A.PCZ_Realizuje,Koszt,
+					   Zrealizowano, TerminRozpoczecia, TerminZakonczenia, 0,
+					   left(left(Identyfikator,50+22*Poziom)+'6'+right(space(10)+convert(varchar,PTC_Lp),10)+right(space(10)+convert(varchar,a.PCZ_Id),10),7808), 
+					   left(left(Identyfikator,50+22*Poziom)+'6'+right(space(10)+convert(varchar,PTC_Lp),10)+right(space(10)+convert(varchar,A.PCZ_Id),10),7808),Zrealizowano,
+					   A.PCZ_Uruchomiona,'' ZamiennikDo,0,0,'','',A.PCZ_KontrolaJakosci from
+				(
+						SELECT c.Pcz_Etap, c.PCZ_Ilosc,  Poziom+1 Poziom,Proces, c.PCZ_Id, c.PCZ_Realizuje, isnull (PKE.Koszt,0) Koszt,c.Pcz_Ilosc Zrealizowano, 
+						c.Pcz_TerminRozpoczecia TerminRozpoczecia , c.Pcz_TerminZakonczenia TerminZakonczenia ,Czynnosc,c.PCZ_TechnologiaCzynnosc TechnologiaCzynnosc,Identyfikator,
+						CASE WHEN C.PCZ_Uruchomiona &gt; 0 AND ISNULL(COUNT(PPY_Id),0) &gt; 0 THEN 2 ELSE c.PCZ_Uruchomiona END PCZ_Uruchomiona, c.PCZ_KontrolaJakosci
+						FROM @Procesy
+							inner join CDN.ProdCzynnosci C on c.PCZ_Realizuje=Czynnosc
+							LEFT OUTER JOIN CDN.ProdOperacjePauzy ON PPY_PCZId = C.PCZ_Id AND PPY_TerminKoniec = 0				
+							left outer join(
+								select sum(Pke_Kwota) Koszt, PKE_ObiTyp, PKE_ObiNumer from Cdn.ProdKosztyElem
+								left outer join Cdn.ProdKoszty on PKO_Id = PKE_PKOID
+								left outer join Cdn.Slowniki on Pko_Kategoria = Slw_Id and Slw_WartoscN2 = 1
+                                group by PKE_ObiTyp, PKE_ObiNumer
+                            ) PKE on PKE.PKE_ObiTyp = 14345 and PKE.Pke_ObiNumer =c.Pcz_Id
+						WHERE Typ = 6
+						GROUP BY  c.PCZ_Ilosc,  Proces, c.PCZ_Id, c.PCZ_Realizuje, Poziom, Identyfikator,
+							c.Pcz_Etap,c.Pcz_TerminRozpoczecia, c.Pcz_TerminZakonczenia,Czynnosc,PCZ_TechnologiaCzynnosc,PKE.Koszt,c.PCZ_Uruchomiona,c.PCZ_KontrolaJakosci
+				) A
+				inner join CDN.ProdTechnologiaCzynnosci on PTC_Id= A.TechnologiaCzynnosc
+				inner join Cdn.ProdCzynnosci C1 on  A.Pcz_Id &gt;= c1.Pcz_ID and c1.PCZ_Realizuje=Czynnosc	--(TFSID: 111070 i 126127) join w celu wyliczenia numeru realizacji (count(c1.Pcz_Id)), wyciągnięty z zapytania wewnętrznego bo zaburzał (zwielokrotniał) sumowanie kosztu
+				group by PTC_Kod, PTC_Nazwa, A.PCZ_Ilosc, PTC_Jednostka, PTC_Lp, Proces, A.PCZ_Id, A.PCZ_Realizuje, Poziom, Identyfikator, A.Pcz_Etap,
+							A.TerminRozpoczecia, A.TerminZakonczenia,Zrealizowano,Koszt,A.PCZ_Uruchomiona, A.PCZ_KontrolaJakosci
+
+		IF isnull(@Obiekty,0)&lt;&gt;0
+			INSERT into @Procesy
+				SELECT 0, POB_Kod, POB_Nazwa, 0, '', Poziom+1, 1 , 0, Proces, Czynnosc, COALESCE(T2.PCT_Id*-1,PCO_Termin), PCO_Obiekt, 
+					PCO_Funkcja, Czynnosc, isnull (PKE.Koszt,0) Koszt, 0 Zrealizowano,ISNULL(COALESCE(T1.PCT_TerminOd,T2.PCT_TerminOd),TerminRozpoczecia) TerminRozpoczecia,
+					ISNULL(COALESCE(T1.PCT_TerminDo,T2.PCT_TerminDo),TerminZakonczenia) TerminZakonczenia, PCO_Zablokowany,
+					left(left(Identyfikator,50+22*Poziom)+'1'+CONVERT(VARCHAR(10),ISNULL(COALESCE(T1.PCT_TerminOd,T2.PCT_TerminOd),TerminRozpoczecia))+POB_Kod,7808),
+					left(left(Identyfikator,50+22*Poziom)+'1'+CONVERT(VARCHAR(10),ISNULL(COALESCE(T1.PCT_TerminOd,T2.PCT_TerminOd),TerminRozpoczecia))+POB_Kod,7808),
+					0 ZrealizowanoPotw,0 Uruchomiona,'' ZamiennikDo,CASE WHEN RTRIM(LTRIM(ISNULL(RodzajeZas.SLW_WartoscS2,''))) = '' THEN 0 ELSE 1 END,ISNULL(RodzajeZas.SLW_ID,0),'','',0
+				--FROM @Procesy
+                FROM 
+                (	--MF - (TFSID: 111070 i 126127) sumowanie kosztów realizacji po to aby join do @Procesy nie rozmnażał rekordów. Rozmnożenie rekordów powodowało w efekcie niepoprawną (zwielokrotnioną) sumę w zapytaniu nadrzędnym (pole Koszt -&gt; isnull(sum(Pke_kwota))
+					select Etap, Kod, Nazwa, Ilosc, Jednostka, Poziom, Typ, Lp, Proces, Czynnosc, Realizuje, Obiekt, Zasob, Ojciec, SUM(Koszt) Koszt, Zrealizowano, TerminRozpoczecia, TerminZakonczenia,Zgrubnie, Identyfikator
+					from @Procesy
+					group by Etap, Kod, Nazwa, Ilosc, Jednostka, Poziom, Typ, Lp, Proces, Czynnosc, Realizuje, Obiekt, Zasob, Ojciec, Zrealizowano, TerminRozpoczecia, TerminZakonczenia,Zgrubnie, Identyfikator
+                ) Procesy				
+					inner join CDN.ProdCzynnosciObiekty on PCO_Czynnosc=Czynnosc
+					left join CDN.ProdCzynnosciTerminy T1 ON T1.PCT_Id = PCO_Termin --or (PCO_Termin = 0 and PCT_Czynnosc = Czynnosc)
+					LEFT JOIN CDN.ProdCzynnosciTerminy T2 ON PCO_Termin = 0 and T2.PCT_Czynnosc = Czynnosc
+					inner join CDN.ProdObiekty on POB_Id=PCO_Obiekt
+					LEFT JOIN CDN.Slowniki RodzajeZas on RodzajeZas.SLW_ID = POB_RodzajZasobu
+					left outer join(
+						select sum(Pke_Kwota) Koszt, PKE_ObiTyp, PKE_ObiNumer from Cdn.ProdKosztyElem
+						left outer join Cdn.ProdKoszty on PKO_Id = PKE_PKOID
+						left outer join Cdn.Slowniki RodzajeKosztow on Pko_Kategoria = RodzajeKosztow.Slw_Id and RodzajeKosztow.Slw_WartoscN2 = 1
+						group by PKE_ObiTyp, PKE_ObiNumer
+					) PKE on PKE.PKE_ObiTyp = 14337 and PKE.Pke_ObiNumer =PCO_Id
+				WHERE Typ IN(6,5,15)
+				GROUP BY POB_Kod, POB_Nazwa,  PCO_Termin, PCO_Obiekt, PCO_Funkcja, Poziom, proces, czynnosc, identyfikator,Realizuje,PCO_Zablokowany,
+				T1.PCT_TerminOd,T2.PCT_TerminOd,T1.PCT_TerminDo,T2.PCT_TerminDo,TerminRozpoczecia,TerminZakonczenia,RodzajeZas.SLW_WartoscS2,RodzajeZas.SLW_ID,PKE.Koszt,T2.PCT_Id
+
+		IF (isnull(@Surowce,0)&lt;&gt;0 or isnull(@Produkty,0)&lt;&gt;0 or isnull(@PolProdukty,0)&lt;&gt;0 OR ISNULL(@Uboczne,0) &lt;&gt; 0) 
+			INSERT INTO @Procesy
+				SELECT 0, COALESCE(Twr.Twr_Kod,PTZO.PTZ_Kod,A.PZA_Kod), COALESCE(Twr.Twr_Nazwa,PTZO.PTZ_Nazwa,A.PZA_Nazwa), A.PZA_Ilosc, COALESCE(Twr.Twr_JM,PTZO.PTZ_Jednostka,A.PZA_Jednostka), Poziom+1,
+					 case when A.PZA_TypZasobu=0 AND A.PZA_Planowany = 0 then 4 
+						  when A.PZA_Planowany = 1 AND (PTZO.PTZ_TypZasobu = 0 OR PZA_TypZasobu = 8) then 10
+						  when A.PZA_Planowany = 1 AND (PTZO.PTZ_TypZasobu &lt;&gt; 0 OR PZA_TypZasobu = 9) then 11
+					      when  A.PZA_Planowany = 0 AND (isnull(A.PZA_Zasob,0)&lt;&gt;0 OR
+							exists(SELECT * FROM CDN.ProdZwiazanePolprodukty WHERE PZP_PZAIDPlanowany = A.PZA_Id)) then 3 
+						  when A.PZA_TypZasobu = 4 AND PZA_Planowany = 0 THEN 13
+						  else 2
+				     end,
+                    PTZO.PTZ_Lp, Proces, Czynnosc, Realizuje, 0, A.PZA_Id, Czynnosc, Case When Pza_TypZasobu = 0 then Pza_Koszt  else  isnull(sum(Pke_kwota), PZA_Koszt ) end Koszt,
+					--Case when A.Pza_TwrNumer &gt; 0 then
+	                    isnull(Zasoby.IloscDok,0)+
+                    (SELECT case when A.PZA_Planowany = 1 then 0 when A.PZA_TypZasobu=0 then isnull(ZasobyZwiazane.IloscZas,0) when A.Pza_Zasob &lt;&gt; 0 then A.PZA_Ilosc 
+		     			when A.Pza_TwrNumer = 0 then  A.PZA_Ilosc else 0 end)  Zrealizowano,
+					--else A.PZA_Ilosc end
+                    0 TerminRozpoczecia , 0 TerminZakonczenia , case when isnull(PTZO.PTZ_Zamiennik,0)&gt; 0 then 1 else  0 end ,
+                    left(left(Identyfikator,50+22*Poziom)+ case when PZA_TypZasobu=0 AND PZA_Planowany = 0 then '400'
+																when A.PZA_Planowany = 1 and (PTZO.PTZ_TypZasobu = 0 OR PZA_TypZasobu = 8) then '401'
+																when A.PZA_Planowany = 1 and (PTZO.PTZ_TypZasobu &lt;&gt; 0 OR PZA_TypZasobu = 9) then '310'
+																when  A.PZA_Planowany = 0 AND (PZA_Zasob &lt;&gt; 0 OR
+																	exists(SELECT * FROM CDN.ProdZwiazanePolprodukty 
+																	WHERE PZP_PZAIDPlanowany = A.PZA_Id)) then '300'
+															    when PZA_TypZasobu = 4 THEN '410' --żeby wyświetlało się po produktach
+																else  '200' 
+														   end+
+					COALESCE(Twr.Twr_Kod,PTZO.PTZ_Kod,A.PZA_Kod),7808),
+					CASE WHEN PTZO.PTZ_Lp IS NOT NULL  THEN 
+							left(left(Identyfikator,50+22*Poziom)+ case when PZA_TypZasobu=0 AND PZA_Planowany = 0 then '400'
+																		when A.PZA_Planowany = 1 and PTZO.PTZ_TypZasobu = 0 then '400'
+																        when A.PZA_Planowany = 1 and PTZO.PTZ_TypZasobu &lt;&gt; 0 then '300'
+																		when A.PZA_Planowany = 0 AND (PZA_Zasob &lt;&gt; 0 OR
+																			exists(SELECT * FROM CDN.ProdZwiazanePolprodukty 
+																			WHERE PZP_PZAIDPlanowany = A.PZA_Id)) then '300' 
+																		when PZA_TypZasobu = 4 THEN '400' 
+																		else  '300' 
+																   end+
+                                        CDN.ProdPobierzSciezkeZamiennikaZasobu(PTZO.PTZ_Id),7808)                            
+					ELSE
+						left(left(Identyfikator,50+22*Poziom)+ case when PZA_TypZasobu=0 OR PZA_TypZasobu = 4 then '400' else '300' end,7808)
+						
+                    END,
+                     isnull(Zasoby.IloscDokZrealiz,0) + 
+                    (SELECT case when A.PZA_TypZasobu=0 then isnull(ZasobyZwiazane.IloscZas,0) when A.Pza_Zasob &lt;&gt; 0 then A.PZA_Ilosc 
+		     			when A.Pza_TwrNumer = 0 then  A.PZA_Ilosc else 0 end)  ZrealizowanoPotw,0 Uruchomiona,
+						case when isnull(PTZO.PTZ_Zamiennik,0)&gt; 0 then ISNULL(TWRZ.Twr_Kod,PTZZ.PTZ_Kod)+', '+ISNULL(TwrZ.Twr_Nazwa,PTZZ.PTZ_Nazwa) ELSE '' END ZamiennikDo,0,0,
+						CAST (PZA_IloscPom AS varchar),ISNULL(PTZO.PTZ_JednostkaPom,PZA_JednostkaPom),ISNULL(PZA_PodlegaKJ,0)
+                --FROM @Procesy
+                FROM
+                (SELECT Etap, Kod, Nazwa, Ilosc, Jednostka, Poziom, Typ, Lp, Proces, Czynnosc, Realizuje, Obiekt, Zasob, Ojciec, Koszt, Zrealizowano, TerminRozpoczecia, TerminZakonczenia,Zgrubnie, 
+				Identyfikator,ISNULL(SUM(Trs_Ilosc),0) IloscDok,ISNULL(SUM(case when TrN_Stan in (3,5) then TrS_Ilosc ELSE 0 END),0) IloscDokZrealiz,B.PZA_Id FROM 
+					(       --MF - (TFSID: 111070 i 126127) sumowanie kosztów realizacji po to aby join do @Procesy nie rozmnażał rekordów. Rozmnożenie rekordów powodowało w efekcie niepoprawną (zwielokrotnioną) sumę w zapytaniu nadrzędnym (pole Koszt -&gt; isnull(sum(Pke_kwota))
+					select Etap, Kod, Nazwa, Ilosc, Jednostka, Poziom, Typ, Lp, Proces, Czynnosc, Realizuje, Obiekt, Zasob, Ojciec, SUM(Koszt) Koszt, Zrealizowano, 
+						TerminRozpoczecia, TerminZakonczenia,Zgrubnie, Identyfikator
+					from @Procesy
+					group by Etap, Kod, Nazwa, Ilosc, Jednostka, Poziom, Typ, Lp, Proces, Czynnosc, Realizuje, Obiekt, Zasob, Ojciec, Zrealizowano, TerminRozpoczecia, TerminZakonczenia,
+						Zgrubnie, Identyfikator
+					) Procesy
+                inner join CDN.ProdZasoby B on B.PZA_Czynnosc=Czynnosc
+				left join cdn.TraSElem ON TRS_ZlcNumer = B.PZA_Id and TrS_ZlcTyp = 14346
+				left join Cdn.TraElem on TrE_GIDNumer=TrS_GIDNumer AND TrE_GIDLp=TrS_GIDLp
+                left join cdn.TraNag on TrN_GIDNumer = Tre_GIDNumer 
+				GROUP BY Etap, Kod, Nazwa, Ilosc, Jednostka, Poziom, Typ, Lp, Proces, Czynnosc, Realizuje, Obiekt, Zasob, Ojciec, Koszt, Zrealizowano, TerminRozpoczecia, 
+					TerminZakonczenia,Zgrubnie, Identyfikator,PZA_Id) Zasoby
+					inner join cdn.ProdZasoby A ON Zasoby.PZA_Id = A.PZA_id
+                    left outer join CDN.ProdTechnologiaZasoby PTZO on PTZ_Id=A.PZA_TechnologiaZasob
+                    left outer join CDN.TwrKarty Twr on Twr_GIDNumer=A.PZA_TwrNumer AND A.PZA_TwrTyp = 16
+                    left outer join Cdn.ProdKosztyElem on PKE_ObiTyp = 14346 and Pke_ObiNumer = A.PZA_Id
+                    left outer join Cdn.ProdKoszty on PKO_Id = PKE_PKOID
+                    left outer join Cdn.Slowniki on Pko_Kategoria = Slw_Id  and Slw_WartoscN2 = 1
+ 					left join cdn.ProdZwiazanePolprodukty on PZP_PZAIDPlanowany = A.PZA_Id
+					left join CDN.ProdTechnologiaZasoby PTZZ ON PTZO.PTZ_Zamiennik = PTZZ.PTZ_Id
+					left join CDN.TwrKarty TwrZ ON TwrZ.Twr_GIDNumer = PTZZ.PTZ_TwrNumer AND PTZZ.PTZ_TwrTyp &gt; 0
+					left outer join(
+						select SUM(PZA_Ilosc) IloscZas,PZA_Zasob IdZasZwiaz from cdn.ProdZasoby where PZA_Zasob &gt; 0
+						group by PZA_Zasob
+					) ZasobyZwiazane on ZasobyZwiazane.IdZasZwiaz = A.PZA_Id
+			    WHERE ((Typ=6 AND @Zaplanowane = 1) or  Typ=5 or Typ = 15) and
+                        (isnull(@Surowce,0) &lt;&gt;0 or ISNULL(PTZO.PTZ_TypZasobu,a.PZA_TypZasobu)=0 or ISNULL(PTZO.PTZ_TypZasobu,a.PZA_TypZasobu) = 4  or PZA_TypZasobu = 8
+									or a.Pza_Zasob &lt;&gt; 0 or isnull(PTZO.PTZ_Zamiennik,0)&gt; 0 )
+                                                and (isnull(@Produkty,0)&lt;&gt;0 or (ISNULL(PTZO.PTZ_TypZasobu,a.PZA_TypZasobu)&lt;&gt;0 and PZA_TypZasobu &lt;&gt; 8) or a.Pza_Zasob&lt;&gt; 0 or isnull(PTZO.PTZ_Zamiennik,0)&gt; 0 )
+                                                and (isnull(@PolProdukty,0)&lt;&gt;0 or a.Pza_Zasob= 0 or isnull(PTZO.PTZ_Zamiennik,0)&gt; 0 )												
+                                                and (ISNULL(@zamiennik,0) &lt;&gt;0 or isnull(PTZO.PTZ_Zamiennik,0)= 0) 
+												and (ISNULL(@Uboczne,0) &lt;&gt; 0 OR ISNULL(PTZO.PTZ_TypZasobu,a.PZA_TypZasobu) &lt;&gt; 4 or isnull(PTZO.PTZ_Zamiennik,0)&gt; 0)
+                GROUP BY PTZO.PTZ_Kod,Twr.Twr_Kod, PTZO.PTZ_Nazwa,Twr.Twr_Nazwa , PZA_Ilosc, PTZO.PTZ_Jednostka,Twr.Twr_JM , Poziom, PZA_TypZasobu,
+					PTZO.PTZ_Lp, Proces, Czynnosc, Realizuje, Identyfikator, A.PZA_Id, Czynnosc, Pza_Koszt, A.Pza_TwrNumer, PZA_Zasob,Kod,Nazwa,PTZO.PTZ_Zamiennik,PTZO.PTZ_Id,
+					A.PZA_Planowany, PZP_PZAIDPlanowany,PTZO.PTZ_TypZasobu,PTZZ.PTZ_Kod,PTZZ.PTZ_Nazwa,Zasoby.IloscDok,Zasoby.IloscDokZrealiz, 
+					TwrZ.Twr_Kod,TwrZ.Twr_Nazwa,ZasobyZwiazane.IloscZas, PZA_IloscPom,PTZO.PTZ_JednostkaPom,PZA_JednostkaPom,PZA_PodlegaKJ, A.PZA_Kod, A.PZA_Nazwa,A.PZA_Jednostka
+					
+		IF ((isnull(@Rezerwacje,0)&lt;&gt;0) and isnull(@Surowce,0)&lt;&gt;0 )  AND @Zaplanowane = 1
+			INSERT INTO @Procesy
+				SELECT 0, Twr_Kod + ' ['+ CDN.NumerDokumentu(TRN_GIDTyp, TRN_SPITyp, TRN_TRNTyp, TRN_TrnNumer, Trn_TRNRok, 
+									TRN_TrnSeria, TrN_TrnMiesiac)+'] '
+					 , Twr_Nazwa, Trs_Ilosc,
+					Twr_JM , Poziom+1, 7  , 1, Proces, Czynnosc, Realizuje, 0, Trs_GidNumer, Czynnosc, 0 Koszt,
+					Trs_Ilosc Zrealizowano, 0 TerminRozpoczecia , 0 TerminZakonczenia ,0,
+					left(left(Identyfikator,50+22*Poziom)+ '200' + Twr_Kod,7808),left(left(Identyfikator,50+22*Poziom)+ '200' + Twr_Kod,7808),
+					TrS_Ilosc ZrealizowanoPotw,0 Uruchomiona,'' ZamiennikDo,0,0,'','',0
+			    FROM @Procesy
+					inner join CDN.ProdCzynnosci C on C.Pcz_Id = Czynnosc and C.Pcz_Realizuje = 0
+					inner join Cdn.TrasElem on Trs_ZlcNumer = C.Pcz_ID and Trs_ZlcTyp = 14345
+					inner join Cdn.TraNag ON TrN_GIDTyp=TrS_GIDTyp AND TrN_GIDNumer=TrS_GIDNumer and Trn_Stan in (3,5)
+					inner join Cdn.TraElem ON TrE_GIDTyp=TrS_GIDTyp AND TrE_GIDNumer=TrS_GIDNumer AND TrE_GIDLp=TrS_GIDLp
+					inner join CDN.TwrKarty on Twr_GIDNumer=   Tre_TwrNumer
+			    WHERE Typ=6 and (isnull(@Surowce,0) &lt;&gt;0 or Trs_GidTyp &lt;&gt;1616)
+			    
+		IF ((isnull(@Rezerwacje,0)&lt;&gt;0) and (isnull(@Surowce,0)&lt;&gt;0 or isnull(@Produkty,0)&lt;&gt;0) or isnull(@Uboczne,0)&lt;&gt;0) AND  @Zaplanowane = 1
+            INSERT INTO @Procesy
+				SELECT 0, isnull(Twr.Twr_Kod,PTZO.PTZ_Kod) , isnull(Twr.Twr_Nazwa,PTZO.PTZ_Nazwa ), R.Ilosc ,
+                    Twr.Twr_JM , Poziom+1, case when REz_GidTyp = 2576 then  8 else case when isnull(PTZO.ptz_TypZasobu,0) = 0 THEN 9 ELSE 12 END end  , 1, Proces, Czynnosc, Realizuje,
+					0, Rez_GidNumer, Czynnosc, 0 Koszt,
+                    case  when Rez_DstNumer &gt; 0 then R.Ilosc else 0 end    Zrealizowano, 
+					0 TerminRozpoczecia , 0 TerminZakonczenia ,case when isnull(PTZO.PTZ_Zamiennik,0)&gt; 0 then 1 else  0 end,
+                    left(left(Identyfikator,50+22*Poziom)+ case when REz_GidTyp = 2576 then '300' else CASE WHEN isnull(PTZO.ptz_TypZasobu,0) = 0 THEN '400' ELSE '410' END end+
+					isnull(Twr.Twr_Kod,PTZO.PTZ_Kod),7808),
+                    CASE WHEN PTZO.PTZ_Lp IS NULL THEN 
+						left(left(Identyfikator,50+22*Poziom)+ case when REz_GidTyp = 2576 then '300' else CASE WHEN isnull(PTZO.ptz_TypZasobu,0) = 0 THEN '400' ELSE '410' END end+
+                            isnull(Twr.Twr_Kod,PTZO.PTZ_Kod),7808)
+					ELSE						
+						left(left(Identyfikator,50+22*Poziom)+ case when REz_GidTyp = 2576 then '300' else CASE WHEN isnull(PTZO.ptz_TypZasobu,0) = 0 THEN '400' ELSE '410' END end+
+							CDN.ProdPobierzSciezkeZamiennikaZasobu(PTZO.PTZ_Id),7808)
+                    END, 0 ZrealizowanoPotw,0 Uruchomiona,case when isnull(PTZO.PTZ_Zamiennik,0)&gt; 0 then 
+						ISNULL(TWRZ.Twr_Kod,PTZZ.PTZ_Kod)+', '+ISNULL(TwrZ.Twr_Nazwa,PTZZ.PTZ_Nazwa) ELSE '' END ZamiennikDo,0,0,'','',0
+                FROM @Procesy
+                    inner join CDN.ProdCzynnosci C on C.Pcz_Id = Czynnosc and C.Pcz_Realizuje = 0
+                    --inner join CDN.Rezerwacje on Rez_ZrdNumer = C.Pcz_ID and Rez_ZrdTyp = 14345
+                    inner join 
+                    (
+						select max(Rez_GidNumer) as Rez_GidNumer, Rez_Zrdnumer , Rez_ZrdTyp, Rez_TwrNumer,Rez_GidTyp,Rez_PtzId,Rez_DstNumer, sum(Rez_Ilosc) Ilosc 
+						from CDN.Rezerwacje 
+						group by Rez_Zrdnumer , Rez_ZrdTyp,Rez_TwrNumer,Rez_GidTyp,Rez_PtzId,Rez_DstNumer
+                    ) R on R.Rez_ZrdNumer = C.Pcz_ID and R.Rez_ZrdTyp = 14345
+                    inner join CDN.TwrKarty Twr on Twr_GIDNumer=   Rez_TwrNumer
+                    left outer join Cdn.ProdTechnologiaZasoby PTZO on  PTZO.PTZ_Id = Rez_PtzId and PTZO.Ptz_TechnologiaCzynnosc = Pcz_TechnologiaCzynnosc
+					left outer join cdn.ProdTechnologiaZasoby PTZZ ON PTZZ.PTZ_Id = PTZO.PTZ_Zamiennik
+					left join CDN.TwrKarty TwrZ ON TwrZ.Twr_GIDNumer = PTZZ.PTZ_TwrNumer AND PTZZ.PTZ_TwrTyp &gt; 0
+                WHERE Typ=6 and (isnull(@Surowce,0) &lt;&gt;0 or Rez_GidTyp &lt;&gt;2576)and 
+					((isnull(@Produkty,0) &lt;&gt;0 and isnull(PTZO.PTZ_TypZasobu,0) = 0 AND Rez_GIDTyp = 2592) 
+						or (isnull(@Uboczne,0) &lt;&gt; 0  and isnull(PTZO.PTZ_TypZasobu,0) = 4  AND Rez_GIDTyp = 2592) or Rez_GidTyp &lt;&gt;2592)
+
+		IF isnull(@Zabiegi,0)&lt;&gt;0 
+				INSERT INTO @Procesy
+					SELECT 0, PZZ_Kod ,PZZ_Nazwa,PZZ_Ilosc,
+                    '' , Poziom+1, 14 , 1, Proces, Czynnosc, Realizuje,
+					PZZ_Wykonano, PZZ_Id, Czynnosc, 0 Koszt,
+                    PZZ_Wykonano, 
+					0 TerminRozpoczecia , 0 TerminZakonczenia ,0,
+                    left(left(Identyfikator,50+22*Poziom)+ '5' +right(space(10)+convert(varchar,PZZ_Lp),10),7808),                    					
+					left(left(Identyfikator,50+22*Poziom)+'5'+right(space(10)+convert(varchar,PZZ_Lp),10),7808)
+                    , 0 ZrealizowanoPotw,0 Uruchomiona,'' ZamiennikDo,0,0,'','',0
+				FROM @Procesy
+				JOIN CDN.ProdZleceniaZabiegi ON PZZ_PczId = Czynnosc
+				WHERE ((@Zabiegi&amp;1 = 1 AND Realizuje = 0 AND Typ = 6) OR (@Zabiegi&amp;2 = 2 AND Realizuje &lt;&gt; 0 AND Typ in(5,15)) )
+                
+	DELETE FROM @Procesy WHERE Czynnosc = @Czynnosc AND Typ = 6
+
+RETURN
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do funkcji CDN.ProdOperacjaDrzewo"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do funkcji CDN.ProdOperacjaDrzewo */</I><BR>
+GRANT SELECT ON CDN.ProdOperacjaDrzewo TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

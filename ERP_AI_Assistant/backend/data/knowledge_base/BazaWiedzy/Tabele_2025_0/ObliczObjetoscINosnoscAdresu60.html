@@ -1,0 +1,120 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="ObliczObjetoscINosnoscAdresu"></A><PRE>
+          <FONT SIZE="2"><I>/* ObliczObjetoscINosnoscAdresu */</I><BR>
+create function CDN.ObliczObjetoscINosnoscAdresu(@p_mga integer)
+
+
+
+returns  varchar(255)
+
+as
+
+begin
+
+
+  declare @retval varchar(255);
+
+
+  declare @typ_pm integer;
+  declare @typ_wm integer;
+  declare @typ_mp integer;
+  declare @typ_awd integer;
+  declare @typ_zwm integer;
+  declare @zatwierdzony integer;
+
+
+  declare @objetosc decimal(28,4); -- objętość zadeklarowana w parametrach adresów (MagParAdr)
+  declare @nosnosc decimal(28,4); -- nośność zadeklarowana w parametrach adresów (MagParAdr)
+  declare @objetoscz decimal(28,4); -- objętość wykorzystana w zasobach (TwrZasobyMag)
+  declare @nosnoscz decimal(28,4); -- nośność wykorzystana w zasobach (TwrZasobyMag)
+  declare @objetoscd decimal(28,4); -- objętość wykorzystana w dokumentach (MagPElem)
+  declare @nosnoscd decimal(28,4); -- nośność wykorzystana w dokumentach (MagPElem)
+
+
+  set @typ_pm = 1089
+  set @typ_wm = 1089
+  set @typ_mp = 1602
+  set @typ_awd = 1093
+  set @typ_zwm = 1605
+  set @zatwierdzony = 3
+
+
+  select @objetosc=mpa_dlugosc*mpa_szerokosc*mpa_wysokosc,@nosnosc=mpa_nosnosc from cdn.magadresy
+  join cdn.magparadr on mpa_id=mga_mpaid
+  where mga_id=@p_mga
+
+  set @objetosc=isnull(@objetosc,0)
+  set @nosnosc=isnull(@nosnosc,0)
+
+
+  select @objetoscz=sum(case when upper(twr_wymjm)='MM' then (tzm_ilosc*(twr_objetoscl/twr_objetoscm))/1000000000
+  when upper(twr_wymjm)='CM' then (tzm_ilosc*(twr_objetoscl/twr_objetoscm))/1000000
+  when upper(twr_wymjm)='DM' then (tzm_ilosc*(twr_objetoscl/twr_objetoscm))/1000
+  else tzm_ilosc*(twr_objetoscl/twr_objetoscm) end),
+  @nosnoscz=sum(case when upper(twr_wjm)='GRAM' then ((tzm_ilosc*twr_wagabrutto)/1000)+isnull(slw_wartoscn4,0)
+  when upper(twr_wjm)='DKG' then ((tzm_ilosc*twr_wagabrutto)/100)+isnull(slw_wartoscn4,0)
+  when upper(twr_wjm)='TONA' then ((tzm_ilosc*twr_wagabrutto)/.001)+isnull(slw_wartoscn4,0)
+  else (tzm_ilosc*twr_wagabrutto)+isnull(slw_wartoscn4,0) end)
+  from cdn.twrzasobymag
+  join cdn.twrpartie on tpa_id=tzm_tpaid
+  join cdn.twrkarty on twr_gidnumer=tpa_twrnumer
+  left outer join cdn.slowniki on slw_id=tzm_jednostkalog
+  where tzm_mgaid=@p_mga
+
+  set @objetoscz=isnull(@objetoscz,0)
+  set @nosnoscz=isnull(@nosnoscz,0)
+
+
+  select @objetoscd=sum(case when upper(twr_wymjm)='MM' then (abs(map_ilosc)*(twr_objetoscl/twr_objetoscm))/1000000000
+  when upper(twr_wymjm)='CM' then (abs(map_ilosc)*(twr_objetoscl/twr_objetoscm))/1000000
+  when upper(twr_wymjm)='DM' then (abs(map_ilosc)*(twr_objetoscl/twr_objetoscm))/1000
+  else abs(map_ilosc)*(twr_objetoscl/twr_objetoscm) end),
+  @nosnoscd=sum(case when upper(twr_wjm)='GRAM' then ((abs(map_ilosc)*twr_wagabrutto)/1000)+isnull(slw_wartoscn4,0)
+  when upper(twr_wjm)='DKG' then ((abs(map_ilosc)*twr_wagabrutto)/100)+isnull(slw_wartoscn4,0)
+  when upper(twr_wjm)='TONA' then ((abs(map_ilosc)*twr_wagabrutto)/.001)+isnull(slw_wartoscn4,0)
+  else (abs(map_ilosc)*twr_wagabrutto)+isnull(slw_wartoscn4,0) end)
+  from cdn.magpelem
+  join cdn.magelem on mae_gidnumer=map_gidnumer and mae_gidlp=map_gidlp
+  join cdn.magnag on man_gidnumer=mae_gidnumer
+  join cdn.twrkarty on twr_gidnumer=mae_twrnumer
+  left outer join cdn.slowniki on slw_id=map_jednostkalog
+  where map_gidtyp in(@typ_pm,@typ_mp,@typ_wm,@typ_awd,@typ_zwm) and map_mgaid=@p_mga and man_stan&lt;@zatwierdzony  
+
+  set @objetoscd=isnull(@objetoscd,0)
+  set @nosnoscd=isnull(@nosnoscd,0)
+
+
+  set @objetosc = @objetosc-(@objetoscz+@objetoscd)
+  set @nosnosc = @nosnosc-(@nosnoscz+@nosnoscd)
+
+  if @objetosc &lt; 0
+    begin
+      set @objetosc = 0
+    end
+
+  if @nosnosc &lt; 0
+    begin
+      set @nosnosc = 0
+    end
+
+  set @retval=cast(@objetosc as varchar(28))+':'+cast(@nosnosc as varchar(28))
+
+  return @retval
+
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

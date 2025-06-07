@@ -1,0 +1,185 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="PrmOtworz"></A><PRE>
+          <FONT SIZE="2"><I>/* PrmOtworz */</I><BR>
+CREATE PROCEDURE CDN.PrmOtworz
+	@ID		int, --ID promocji, gdy podano to otwarcie, gdy nie to dodanie nowej promocji
+	@SesjaID	int, --ID bieżącej sesji
+	@Tryb		smallint, --Tryb pracy wewnętrzny(0), zewnętrzny(1) - tworzony wpis w ObiektyObce
+	@TStamp		int, --Timestamp Otwarcia
+	@PRMAkronim	varchar(200),
+	@PRMTyp		int = 5,
+	@PRMDataOd	int = 0,
+	@PRMDataDo	int = 2147483647,
+	@PRMPriorytet	int = 100,
+	@PRMSStos	smallint = 1,
+	@PRMPominPoz	smallint = 0,
+	@PRMUwagi	varchar(512) = '',
+	@PRMDokument	smallint = 0,
+	@PRMPriorytetLp int = 1,
+	@PRMCykliczna	int = 0,
+	@PRMAktywna	int = 0,
+	@OpeUtwNumer INT = null, --numer operatora tworzacego
+	@OpeUtwKod VARCHAR(8)=null --kod operatora tworzacego, gdy nie znajdzie po numerze
+AS
+DECLARE @Zapytanie varchar(2049)
+DECLARE @IDObiektu int
+DECLARE @Error int
+DECLARE @CheckStan int
+DECLARE @FirmaID int
+DECLARE	@NowaPromocja	smallint
+
+SET NOCOUNT ON
+
+SET @Zapytanie = NULL
+SET @Error = 0
+SET @FirmaID = CDN.GIDFirma()
+
+BEGIN TRAN
+IF @ID &gt; 0 --Otwarcie promocji
+BEGIN
+	SET @NowaPromocja = 0
+	SET @PRMAktywna = NULL
+	SET @PRMTyp = NULL
+	SELECT @ID = PRM_ID,@PRMAkronim = PRM_Akronim,@PRMAktywna = PRM_Aktywna,@PRMTyp = PRM_Typ, @PRMDataOd = PRM_DataOd, @PRMDataDo = PRM_DataDo, @PRMPriorytet = PRM_Priorytet, @PRMSStos = PRM_SposobStosowania, @PRMPominPoz = PRM_PominPozostale, @PRMUwagi = PRM_Uwagi, @PRMDokument = PRM_Dokument, @PRMPriorytetLp = PRM_PriorytetLp, @PRMCykliczna = PRM_Cykliczna,@CheckStan = PRM_Stan FROM CDN.PrmKarty WHERE PRM_ID = @ID
+	IF @CheckStan &gt; 1
+	BEGIN
+		ROLLBACK TRAN
+		SELECT 11 AS ERROR
+		RETURN 11
+	END
+	IF @PRMTyp IS NULL
+	BEGIN
+		ROLLBACK TRAN
+		SELECT 1 AS ERROR
+		RETURN 1
+	END
+	--Czy promocja otwarta na innym stanowisku
+	IF @PRMAktywna &lt;&gt; 0 AND @PRMAktywna &lt;&gt; @SesjaID
+	BEGIN
+		ROLLBACK TRAN
+		SELECT 3 AS ERROR
+		RETURN 3
+	END
+	
+	IF @PRMAktywna &lt;&gt; @SesjaID
+		UPDATE CDN.PRMKarty SET PRM_Aktywna = @SesjaID WHERE PRM_ID = @ID
+
+END
+ELSE --Dodanie promocji
+BEGIN
+	SET @NowaPromocja = 1
+	IF EXISTS(SELECT SES_SesjaID FROM CDN.Sesje WHERE SES_SesjaID = @SesjaID AND SES_Aktywna = 0)
+	BEGIN	
+		IF EXISTS(SELECT PRM_ID FROM CDN.PrmKarty WHERE PRM_Akronim = @PRMAkronim)
+		BEGIN
+			SELECT 48 AS ERROR
+			ROLLBACK TRAN
+			RETURN
+		END
+		SET @PRMAktywna = @SesjaID
+		IF @PRMPriorytetLp &gt; 0 AND EXISTS(SELECT PRM_ID FROM CDN.PrmKarty WHERE PRM_Priorytet = @PRMPriorytet AND PRM_PriorytetLP = @PRMPriorytetLP)
+		BEGIN
+			SELECT 11 AS ERROR
+			ROLLBACK TRAN
+			RETURN
+		END
+		--Operator modyfikujący
+		SET @OpeUtwNumer = COALESCE((SELECT Ope_GIDNumer FROM CDN.OpeKarty WHERE Ope_GIDNumer=@OpeUtwNumer),(SELECT Ope_GIDNumer FROM CDN.OpeKarty WHERE Ope_Ident=@OpeUtwKod),@OpeUtwNumer)
+		
+		IF @OpeUtwNumer IS NULL
+		BEGIN
+			SELECT 49 AS ERROR
+			ROLLBACK TRAN
+			RETURN
+		END	
+		
+		INSERT INTO CDN.PrmKarty (	PRM_Akronim,PRM_DataOd,PRM_DataDo,PRM_Typ,PRM_Priorytet,PRM_Stan,PRM_Aktywna,PRM_SposobStosowania,PRM_PominPozostale,PRM_Uwagi,PRM_Dokument,
+									PRM_LastMod,PRM_PriorytetLp,PRM_Cykliczna, PRM_BlokadaCeny, PRM_OpeTypM, PRM_OpeFirmaM, PRM_OpeNumerM, PRM_OpeLpM,
+									PRM_Pakietowa, PRM_RodzajPakietu, PRM_NajwyzszyProg, PRM_OpeTypU, PRM_OpeNumerU, PRM_OpeTypP, PRM_OpeNumerP, PRM_OpeTypZ, PRM_OpeNumerZ,
+									PRM_DataUtworzenia, PRM_DataPotwierdzenia, PRM_DataZamkniecia, PRM_Kolor, PRM_KolorBG,
+									PRM_CyklRodzaj, PRM_CyklWystepowanie, PRM_CyklDniOd, PRM_CyklCzestotliwosc, PRM_CyklDniDo, PRM_ZamknietaLista, PRM_LimitTyp, PRM_LimitWartosc, PRM_GrupaTwrWazniejsza) 
+									VALUES 
+								 (	@PRMAkronim,@PRMDataOd,@PRMDataDo,@PRMTyp,@PRMPriorytet,0,@PRMAktywna,@PRMSStos,@PRMPominPoz,@PRMUwagi,@PRMDokument,
+									@TStamp,@PRMPriorytetLp,@PRMCykliczna, 0,128,@FirmaID ,@OpeUtwNumer,0,
+									0,0,0,128,@OpeUtwNumer,0,0,0,0,
+									@TStamp,0,0,0,0,
+									0,0,0,0,0,0,0,0,0)
+		IF @@ERROR &lt;&gt; 0
+		BEGIN
+			ROLLBACK TRAN
+			RAISERROR('Błąd dodawania do CDN.PrmKarty',16,1)
+			RETURN 5
+		END
+		SELECT @ID = ISNULL(MAX(PRM_Id),1) FROM CDN.PrmKarty WITH (NOLOCK)
+		UPDATE CDN.PrmKarty SET PRM_PriorytetLp = PRM_Id WHERE PrM_ID = @ID
+		IF @@ERROR &lt;&gt; 0
+		BEGIN
+			ROLLBACK TRAN
+			RAISERROR('Błąd aktualizacji CDN.PrmKarty',16,1)
+			RETURN 6
+		END
+		INSERT INTO CDN.PltPromocje(PPr_PrmID,PPr_PltID,PPr_Wartosc,PPr_TerminMaks,PPr_Typ,PPr_DataOd,PPr_DataDo) VALUES(@ID,-1,0,-1,1,DATEDIFF(d,'18001228',GETDATE()),DATEDIFF(d,'18001228',GETDATE()))		
+		IF @@ERROR &lt;&gt; 0
+		BEGIN
+			ROLLBACK TRAN
+			RAISERROR('Błąd dodawania do CDN.PltPromocje',16,1)
+			RETURN 7
+		END
+		INSERT INTO CDN.SpDPromocje(SPD_PrmId,SPD_SpDTyp,SPD_SpDLp) VALUES(@ID,976,-1)-- 976   #obiekty:976,Sposob_dostawy,Sposób dostawy		
+		IF @@ERROR &lt;&gt; 0
+		BEGIN
+			ROLLBACK TRAN
+			RAISERROR('Błąd dodawania do CDN.SpDPromocje',16,1)
+			RETURN 8
+		END
+		INSERT INTO CDN.MagPromocje(MPR_PrmId,MPR_MagTyp,MPR_MagNumer) VALUES(@ID,208,-1)-- 208   #obiekty:208,Mag,Magazyn		
+		IF @@ERROR &lt;&gt; 0
+		BEGIN
+			ROLLBACK TRAN
+			RAISERROR('Błąd dodawania do CDN.MagPromocje',16,1)
+			RETURN 9
+		END
+	END
+	ELSE
+	BEGIN
+		ROLLBACK TRAN
+		RAISERROR('Sesja nieaktywna',16,1)
+		RETURN 3
+	END
+END
+IF @Tryb = 1
+BEGIN
+	INSERT INTO CDN.ObiektyObce (OBO_IDSesji,OBO_GIDTyp,OBO_GIDFirma,OBO_GIDNumer,OBO_GIDLp,OBO_TSOtwarty,OBO_IdAPI) VALUES(@SesjaID,'5104',@FirmaID,@ID,0,@TStamp,
+								CASE WHEN @NowaPromocja = 1 THEN 143 ELSE 142 END)
+	IF @@ERROR &lt;&gt; 0
+	BEGIN
+		ROLLBACK TRAN
+		RAISERROR('Błąd dodawania do CDN.ObiektyObce',16,1)
+		RETURN 4
+	END
+	SET @IDObiektu = SCOPE_IDENTITY();
+END
+COMMIT TRAN
+SELECT @ID AS PRM_ID,@PRMAkronim AS PRM_Akronim,@PRMTyp AS PRM_Typ,@PRMDataOd AS PRM_DataOd,@PRMDataDo AS PRM_DataDo,@PRMPriorytet AS PRM_Priorytet,@PRMSStos AS PRM_SposobStosowania,
+	@PRMPominPoz AS PRM_PominPozostale,@PRMUwagi AS PRM_Uwagi,@PRMDokument AS PRM_Dokument,@PRMPriorytetLp AS PRM_PriorytetLp,@PRMCykliczna AS PRM_Cykliczna,@PRMAktywna AS PRM_Aktywna,
+	0 PRM_BlokadaCeny, 128 PRM_OpeTypM, @FirmaID PRM_OpeFirmaM, @OpeUtwNumer PRM_OpeNumerM, 0 PRM_OpeLpM,
+	0 PRM_Pakietowa, 0 PRM_RodzajPakietu, 0 PRM_NajwyzszyProg, 128 PRM_OpeTypU, @OpeUtwNumer PRM_OpeNumerU, 0 PRM_OpeTypP, 0 PRM_OpeNumerP, 0 PRM_OpeTypZ, 0 PRM_OpeNumerZ,
+	@TStamp PRM_DataUtworzenia, 0 PRM_DataPotwierdzenia, 0 PRM_DataZamkniecia, 0 PRM_Kolor, 0 PRM_KolorBG,
+	ISNULL(@IDObiektu,0) AS OBO_IDObiektu
+SET NOCOUNT OFF
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

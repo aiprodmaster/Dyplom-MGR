@@ -1,0 +1,317 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="GrupowanieVATUEK_Wydruk"></A><PRE>
+          <FONT SIZE="2"><I>/* GrupowanieVATUEK_Wydruk */</I><BR>
+CREATE   PROCEDURE CDN.GrupowanieVATUEK_Wydruk(@GIDNumer int, @paramRodzaj tinyint)
+AS
+BEGIN
+	set nocount on
+	set QUOTED_IDENTIFIER OFF
+
+	declare @zakresDostawyPocz int = 1000
+		, @zakresDostawyKon int = 5999
+		, @zakresNabyciaPocz int = 6000
+		, @zakresNabyciaKon int = 10999
+		, @zakresUslugiPocz int = 11000
+		, @zakresUslugiKon int = 15999
+		, @zakresPocz int = 0
+		, @zakresKon int = 0
+		
+	declare @RodzajDostawy tinyint = 1,
+		@RodzajNabycia tinyint = 2,
+		@RodzajUslugi tinyint = 3
+
+
+	if (@paramRodzaj = @RodzajDostawy)
+		select @zakresPocz = @zakresDostawyPocz, @zakresKon = @zakresDostawyKon
+	else if  (@paramRodzaj = @RodzajNabycia)
+		select @zakresPocz = @zakresNabyciaPocz, @zakresKon = @zakresNabyciaKon
+	else
+		select @zakresPocz = @zakresUslugiPocz, @zakresKon = @zakresUslugiKon
+	
+	declare @nieZaokraglajJ tinyint = 0, @nieZaokraglajB tinyint = 0
+	--select @nieZaokraglaj = Kon_Wartosc from cdn.konfig where Kon_Numer=20135
+	
+	select @nieZaokraglajJ = case when POE_GIDLp = 171 then POE_KwotaL else @nieZaokraglajJ end,
+		 @nieZaokraglajB = case when POE_GIDLp = 172 then POE_KwotaL else @nieZaokraglajB end
+	from cdn.PodElem where POE_GIDNumer = @GIDNumer and POE_GIDLp in (171,172)
+	
+	if object_id('tempdb..#tmpPozycje') is not null  Drop table #tmpPozycje
+	if object_id('tempdb..#tmpWyn') is not null  Drop table #tmpWyn	                 
+	    
+	create table #tmpWyn
+	(
+		Rodzaj				tinyint,
+		
+		KrajB               varchar(20),
+		NIPB                varchar(20),
+		WartoscB            decimal(15,2),
+		TrojstronneB        smallint,
+		StatusWierszaB		smallint,
+
+		KrajJ               varchar(20),
+		NIPJ                varchar(20),
+		WartoscJ            decimal(15,2),
+		TrojstronneJ        smallint,
+		StatusWierszaJ		smallint
+	)
+	                 
+	create table #tmpPozycje
+	(
+		Rodzaj				tinyint,		-- 1 - dostawy, 2 - nabycia, 3 - usługi
+		Kraj                varchar(20),
+		NIP                 varchar(20),
+		Wartosc             decimal(15,2),
+		Trojstronne         smallint,
+		KntNumer            int,
+		Jest                smallint,
+		CzyscKNT            smallint,
+		KnaPierwotny		int,
+		KnaNumer            int,
+		GIDLp				smallint,
+		rowNumber	smallint		
+	)
+
+	-- pobierz pozycje zapisane na deklaracji ------
+	insert into #tmpPozycje
+	select case when POE_GIDLp &gt; 999 and POE_GIDLp &lt; 6000 then @RodzajDostawy else case when POE_GIDLp &gt; 6000 and POE_GIDLp &lt; 11000 then @RodzajNabycia else @RodzajUslugi end end Rodzaj
+		, POE_Nazwa, POE_Opis, POE_KwotaL, POE_KwotaM, POE_KNTNumer, POE_BylKNT, 1, POE_KNAIdGrupy, POE_KNAId, POE_GIDLp
+		, ROW_NUMBER() over (order by POE_GIDLp) rn
+	from cdn.podelem 
+	where POE_GIDNumer = @GIDNumer and POE_GIDLp &gt; @zakresPocz and POE_GIDLp &lt; @zakresKon
+	order by POE_GIDLp
+
+	declare	@Rodzaj	  tinyint,		-- 1 - dostawy, 2 - nabycia, 3 - usługi
+		@Kraj         varchar(20),
+		@NIP          varchar(20),
+		@Wartosc      decimal(15,2),
+		@Trojstronne  smallint,
+		@KntNumer     int,
+		@Jest         smallint,
+		@CzyscKNT     smallint,
+		@KnaPierwotny int,
+		@KnaNumer     int,
+		@GIDLp			smallint
+		
+	declare	@RodzajB	  tinyint,		-- 1 - dostawy, 2 - nabycia, 3 - usługi
+		@KrajB         varchar(20),
+		@NIPB          varchar(20),
+		@WartoscB      decimal(15,2),
+		@TrojstronneB  smallint,
+		@KntNumerB     int,
+		@JestB         smallint,
+		@CzyscKNTB     smallint,
+		@KnaPierwotnyB int,
+		@KnaNumerB     int,
+		@GIDLpB			smallint
+	
+	
+	declare @liczbaRekordow int, @i int = 0
+	
+	select @liczbaRekordow = COUNT(1) from #tmpPozycje
+	
+	while @i &lt; @liczbaRekordow
+	begin
+		set @i = @i + 1
+		
+		select @Rodzaj = Rodzaj
+			, @Kraj = Kraj
+			, @NIP = NIP
+			, @Wartosc = Wartosc 
+			, @Trojstronne = Trojstronne
+			, @KntNumer = KntNumer
+			, @Jest = Jest
+			, @CzyscKNT = CzyscKNT
+			, @KnaPierwotny = KnaPierwotny
+			, @KnaNumer = KnaNumer
+			, @GIDLp = GIDLp
+		from #tmpPozycje where rowNumber = @i
+		
+		-- szukaj w pierwszej kolejności par gdzie NIP, KRAJ BYŁO i JEST są takie same	-------------------------------------------------------------------        		
+		IF (@GIDLp % 2) = 1		-- nieparzyste - wiersze BYŁO			
+		begin
+			select @RodzajB = @Rodzaj, @KrajB = @Kraj, @NIPB= @NIP, @WartoscB = @Wartosc, @TrojstronneB = @Trojstronne, @KntNumerB = @KntNumer
+				, @JestB = @Jest, @CzyscKNTB = @CzyscKNT, @KnaPierwotnyB = @KnaPierwotny, @KnaNumerB = @KnaNumer, @GIDLpB = @GIDLp
+		end	
+		ELSE					-- parzyste - wiersze JEST
+		BEGIN	
+			--select @GIDLpB GIDLpB, @GIDLp GIDLp, @NIPB NIPB, @NIP NIP, @KrajB KrajB, @Kraj Kraj, @TrojstronneB TrojstronneB, @Trojstronne Trojstronne
+			IF @NIPB = @NIP AND @KrajB = @Kraj AND @TrojstronneB = @Trojstronne		-- para taki sam NIP był i JEST
+			BEGIN
+				--select 1
+				if not exists(select 1 from #tmpWyn where NIPB = @NIPB and KrajB = @KrajB and TrojstronneB = @TrojstronneB and  NIPJ = @NIP and KrajJ = @Kraj and TrojstronneJ = @Trojstronne)
+				begin
+					--select 2
+					insert into #tmpWyn
+					select @paramRodzaj, @KrajB, @NIPB, @WartoscB, @TrojstronneB, @CzyscKNTB,  @Kraj, @NIP, @Wartosc, @Trojstronne, @CzyscKNT 
+				end
+				else
+				begin
+					--select 3
+					update #tmpWyn set WartoscB = WartoscB + @WartoscB, WartoscJ = WartoscJ + @Wartosc
+					where NIPB = @NIPB and KrajB = @KrajB and TrojstronneB = @TrojstronneB and  NIPJ = @NIP and KrajJ = @Kraj and TrojstronneJ = @Trojstronne
+				end
+			END
+		END
+		
+    end
+
+
+	--------------------------------------------------------------------------------------------------------------------------------------------
+	---- szukaj par BYŁO JEST gdzie BYŁO jest różne od JEST ---------------------
+	------- jeśli zostanie znaleziony w JEST taki NIP, który już został znaleziony w poprzednim kroku
+	------- wtedy dodaj znalezioną wartość do pary z poprzedniego kroku i dodaj nową parę BYŁO (wypełnione) JEST(PUSTE)
+	------- następnie dodaj parę ze wszystkimi wartościami do kolejki szczegółów
+    
+    set @i=0;
+    
+	while @i &lt; @liczbaRekordow
+	begin
+		set @i = @i + 1
+		
+		select @Rodzaj = Rodzaj
+			, @Kraj = Kraj
+			, @NIP = NIP
+			, @Wartosc = Wartosc 
+			, @Trojstronne = Trojstronne
+			, @KntNumer = KntNumer
+			, @Jest = Jest
+			, @CzyscKNT = CzyscKNT
+			, @KnaPierwotny = KnaPierwotny
+			, @KnaNumer = KnaNumer
+			, @GIDLp = GIDLp
+		from #tmpPozycje where rowNumber = @i
+	
+		IF (@GIDLp % 2) = 1		-- nieparzyste - wiersze BYŁO			
+		begin
+			select @RodzajB = @Rodzaj, @KrajB = @Kraj, @NIPB= @NIP, @WartoscB = @Wartosc, @TrojstronneB = @Trojstronne, @KntNumerB = @KntNumer
+				, @JestB = @Jest, @CzyscKNTB = @CzyscKNT, @KnaPierwotnyB = @KnaPierwotny, @KnaNumerB = @KnaNumer, @GIDLpB = @GIDLp
+		end	
+		ELSE					-- parzyste - wiersze JEST
+		BEGIN	
+
+			IF NOT (@NIPB = @NIP AND @KrajB = @Kraj AND @TrojstronneB = @Trojstronne)		-- para taki sam NIP był i JEST
+			begin
+				if exists(select 1 from #tmpWyn where NIPJ = @NIP and KrajJ = @Kraj and TrojstronneJ = @Trojstronne  and  NIPB = @NIPB and KrajB = @KrajB and TrojstronneB = @TrojstronneB)	-- czy jest już taka para JEST-BYŁO
+				begin
+					update #tmpWyn set WartoscB = @WartoscB + WartoscB, WartoscJ = @Wartosc + WartoscJ, KrajB = @KrajB, NIPB = @NIPB, TrojstronneB = @TrojstronneB, @CzyscKNTB = @CzyscKNTB
+					where NIPJ = @NIP and KrajJ = @Kraj and TrojstronneJ = @Trojstronne  and  NIPB = @NIPB and KrajB = @KrajB and TrojstronneB = @TrojstronneB
+				end
+				else
+				begin
+					if not exists(select 1 from #tmpWyn where NIPJ = @NIP and KrajJ = @Kraj and TrojstronneJ = @Trojstronne)	--  czy są już takie JEST
+					begin
+						if not exists(select 1 from #tmpWyn where NIPB = @NIPB and KrajB = @KrajB and TrojstronneB = @TrojstronneB)		-- czy są już takie BYŁO
+						begin
+							if @Kraj = '' and @NIP = ''	
+							begin
+								if not exists(select 1 from #tmpWyn where NIPJ = @NIPB and KrajJ = @KrajB and TrojstronneJ = @TrojstronneB and NIPB = '' and KrajB = '')	-- czy jest takie JEST jak obecne BYŁO
+								begin
+									insert into #tmpWyn
+									select @paramRodzaj, @KrajB, @NIPB, @WartoscB, @TrojstronneB, @CzyscKNTB,  @Kraj, @NIP, @Wartosc, @Trojstronne, @CzyscKNT 
+								end
+								else
+								begin
+									update #tmpWyn set WartoscB = WartoscB + @WartoscB, WartoscJ = WartoscJ + @Wartosc, KrajB = @KrajB, NIPB = @NIPB, TrojstronneB = @TrojstronneB, @CzyscKNTB = @CzyscKNTB
+									where NIPJ = @NIPB and KrajJ = @KrajB and TrojstronneJ = @TrojstronneB and NIPB = '' and KrajB = ''
+								end
+							end
+							else
+							begin	-- JEST nie jest puste
+								insert into #tmpWyn
+								select @paramRodzaj, @KrajB, @NIPB, @WartoscB, @TrojstronneB, @CzyscKNTB,  @Kraj, @NIP, @Wartosc, @Trojstronne, @CzyscKNT 
+							end
+						end
+						else
+						begin	-- jest już takie BYŁO, z innym JEST
+							if @KrajB &lt;&gt; '' and @NIPB &lt;&gt; ''		-- jeśli BYŁO nie jest puste to zaktualizuj wartość BYŁO znalezionej grupy
+							begin
+								update #tmpWyn set WartoscB = @WartoscB + WartoscB
+								where NIPB = @NIPB and KrajB = @KrajB and TrojstronneB = @TrojstronneB
+							end
+							
+							-- dodaj nową grupę z pustym BYŁO
+							insert into #tmpWyn
+							select @paramRodzaj, '', '', 0.00, 0, 0,  @Kraj, @NIP, @Wartosc, @Trojstronne, @CzyscKNT 
+						end						
+					end
+					else	-- jest już takie JEST
+					begin
+						if @KrajB = '' and @NIPB = ''		-- nie było takiego kontrahenta; nowy kontrahent o NIPie który już był wcześniej
+						begin								-- dodaj do istniejątej grypy JEST
+						
+							update #tmpWyn set WartoscJ = @Wartosc + WartoscJ
+							where NIPJ = @NIP and KrajJ = @Kraj and TrojstronneJ = @Trojstronne
+						end
+						else
+						begin
+							if @Kraj &lt;&gt; '' and @NIP &lt;&gt; ''		-- jeśli BYŁO nie jest puste to zaktualizuj wartość BYŁO znalezionej grupy
+							begin
+								update #tmpWyn set WartoscJ = WartoscJ + @Wartosc
+								where NIPJ = @NIP and KrajJ = @Kraj and TrojstronneJ = @Trojstronne	
+							end
+							
+							
+							if not exists(select 1 from #tmpWyn where NIPB = @NIPB and KrajB = @KrajB and TrojstronneB = @TrojstronneB)		-- czy są już takie BYŁO
+							begin
+								if @Kraj = '' and @NIP = ''	
+								begin
+									if not exists(select 1 from #tmpWyn where NIPJ = @NIPB and KrajJ = @KrajB and TrojstronneJ = @TrojstronneB and NIPB = '' and KrajB = '')	-- czy jest takie JEST jak obecne BYŁO
+									begin
+										insert into #tmpWyn
+										select @paramRodzaj, @KrajB, @NIPB, @WartoscB, @TrojstronneB, @CzyscKNTB,  @Kraj, @NIP, @Wartosc, @Trojstronne, @CzyscKNT 
+									end
+									else
+									begin
+										update #tmpWyn set WartoscB = @WartoscB + WartoscB, WartoscJ = @Wartosc + WartoscJ, KrajB = @KrajB, NIPB = @NIPB, TrojstronneB = @TrojstronneB, @CzyscKNTB = @CzyscKNTB
+										where NIPJ = @NIPB and KrajJ = @KrajB and TrojstronneJ = @TrojstronneB and NIPB = '' and KrajB = ''
+									end
+								end
+								else
+								begin	-- JEST nie jest puste
+									insert into #tmpWyn
+									select @paramRodzaj, @KrajB, @NIPB, @WartoscB, @TrojstronneB, @CzyscKNTB, '', '', 0.00, 0, 0	-- @Kraj, @NIP, @Wartosc, @Trojstronne, @CzyscKNT 
+								end
+							end
+							else
+							begin
+								update #tmpWyn set WartoscB = @WartoscB + WartoscB
+								where NIPB = @NIPB and KrajB = @KrajB and TrojstronneB = @TrojstronneB
+							end								
+							
+						end
+					end
+				end
+			end			
+		END		
+    END
+	
+	update #tmpWyn 
+		set WartoscB = case when @nieZaokraglajB &gt; 0 then WartoscB else ROUND(WartoscB, 0) end,
+			WartoscJ = case when @nieZaokraglajJ &gt; 0 then WartoscJ else ROUND(WartoscJ, 0) end
+	
+	delete from #tmpWyn where WartoscB = WartoscJ and NIPB = NIPJ and KrajB = KrajJ and TrojstronneB = TrojstronneJ	
+	
+	select * from #tmpWyn
+
+	if object_id('tempdb..#tmpPozycje') is not null  Drop table #tmpPozycje
+	if object_id('tempdb..#tmpWyn') is not null  Drop table #tmpWyn
+
+	set QUOTED_IDENTIFIER ON
+	set nocount off
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,107 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[AktualizujPicoWaluty]"></A><PRE>
+          <FONT SIZE="2"><I>/* [AktualizujPicoWaluty] */</I><BR>
+CREATE PROCEDURE [CDN].[AktualizujPicoWaluty]
+@ID INT
+AS
+BEGIN
+	DECLARE @TS					INT
+			,@Typ_Wal			SMALLINT
+			,@WalutaSklepu		VARCHAR(3)
+			,@WalutaSystemowa	VARCHAR(3)
+	
+	IF (SELECT PcK_KursRecznie FROM CDN.PicoKonfig WHERE PcK_PicoID = @ID) = 1 
+		RETURN
+		
+	SELECT	@TS = DATEDIFF(ss,CONVERT(DATETIME,'1990-01-01',120),CONVERT(DATETIME,GETDATE(),120))
+			,@Typ_Wal = 96
+	SELECT	@WalutaSklepu = PcK_Waluta FROM CDN.PicoKonfig WHERE PcK_PicoID = @ID
+	SELECT	@WalutaSystemowa = RTRIM(LTRIM(Kon_Wartosc)) FROM CDN.Konfig WHERE Kon_Numer = 211
+		
+	SELECT B.PwL_ID, A.WaE_Symbol, A.WaE_Lp, A.WaE_KursTS, CASE WHEN ISNULL(PcL_ID,0) &gt; 0 THEN 1 ELSE 0 END [DodajNowe]
+	INTO #WalutyDoAktualizacji
+	FROM 
+	(
+		SELECT WaE_Symbol, WaE_Lp,  MAX(WaE_KursTS) [WaE_KursTS]
+		FROM CDN.WalElem
+		GROUP BY WaE_Symbol, WaE_Lp
+	)A
+	INNER JOIN CDN.PicoWaluty B ON A.WaE_Symbol = CASE WHEN @WalutaSklepu = @WalutaSystemowa THEN B.PwL_SymbolM  ELSE B.PwL_SymbolL END
+		AND A.WaE_Lp = B.PwL_Lp
+	LEFT OUTER JOIN CDN.PicoLog C ON C.PcL_PcKID = @ID AND C.PcL_ObiNumer = B.PwL_ID AND C.PcL_ObiTyp = @Typ_Wal
+	WHERE B.PwL_PckId = @ID AND B.PwL_TSArchiwizacji = 0 AND A.WaE_KursTS &gt; B.PwL_KursTS
+	
+	-- Aktualizujemy te, które nie zostały wysłane do oddziału
+	UPDATE CDN.PicoWaluty
+	SET PwL_KursM = C.WaE_KursM
+		,PwL_KursL = CASE WHEN @WalutaSklepu = @WalutaSystemowa 
+			THEN C.WaE_KursL
+			ELSE (C.WaE_KursM/C.WaE_KursL)*C.WaE_KursM
+			END
+		,PwL_KursTS = C.WaE_KursTS
+		,PwL_OpeMNumer = 0
+	FROM CDN.PicoWaluty A
+		INNER JOIN #WalutyDoAktualizacji B ON A.PwL_ID = B.PwL_ID
+		INNER JOIN CDN.WalElem C ON B.WaE_Symbol = C.WaE_Symbol AND B.WaE_Lp = C.WaE_Lp AND B.WaE_KursTS = C.WaE_KursTS
+	WHERE B.DodajNowe = 0
+	
+	-- Archiwizujemy poprzednie
+	UPDATE CDN.PicoWaluty
+	SET PwL_TSArchiwizacji = @TS
+	FROM CDN.PicoWaluty A
+		INNER JOIN #WalutyDoAktualizacji B ON A.PwL_ID = B.PwL_ID
+	WHERE B.DodajNowe = 1
+	
+	-- Dodajemy nowe
+	INSERT INTO CDN.PicoWaluty
+	(
+		PwL_PckId
+		,PwL_SymbolM
+		,PwL_SymbolL
+		,PwL_Lp
+		,PwL_KursTS
+		,PwL_KursM
+		,PwL_KursL
+		,PwL_TSArchiwizacji
+		,PwL_OpeMTyp
+		,PwL_OpeMNumer
+	)
+	SELECT 
+		@ID
+		,CASE WHEN @WalutaSklepu = @WalutaSystemowa 
+			THEN B.WaE_Symbol
+			ELSE @WalutaSystemowa
+		 END
+		,@WalutaSklepu
+		,B.WaE_Lp
+		,B.WaE_KursTS
+		,B.WaE_KursM
+		,CASE WHEN @WalutaSklepu = @WalutaSystemowa 
+			THEN B.WaE_KursL
+			ELSE (B.WaE_KursM/B.WaE_KursL)*B.WaE_KursM
+		 END
+		,0
+		,128
+		,0
+	FROM #WalutyDoAktualizacji A
+		INNER JOIN CDN.WalElem B ON A.WaE_Symbol = B.WaE_Symbol AND A.WaE_Lp = B.WaE_Lp AND A.WaE_KursTS = B.WaE_KursTS
+	WHERE A.DodajNowe = 1	
+
+	DROP TABLE #WalutyDoAktualizacji
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

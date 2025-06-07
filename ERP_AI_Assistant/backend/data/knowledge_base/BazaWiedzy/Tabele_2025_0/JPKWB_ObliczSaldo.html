@@ -1,0 +1,71 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[JPKWB_ObliczSaldo]"></A><PRE>
+          <FONT SIZE="2"><I>/* [JPKWB_ObliczSaldo] */</I><BR>
+CREATE FUNCTION [CDN].[JPKWB_ObliczSaldo] (@DataPocz int, @NrRejestru int) 
+returns decimal(18,2)
+
+AS
+BEGIN
+	--zmienne procedury
+	DECLARE @SaldoZwracane decimal(18,2);
+	DECLARE @PoprzedniRaport int;
+	DECLARE @SaldoPoprzRaportu decimal(18,2);
+	DECLARE @SumaDoDodania decimal(18,2);
+	
+	--wyciąganie GIDNumeru poprzedniego raportu do zadanej daty
+	SET @PoprzedniRaport = (select top 1 Krp_gidnumer 
+		from cdn.Raporty JOIN CDN.Rejestry on KRP_Seria=KAR_Seria
+		where KRP_DataOtwarcia &lt;= @DataPocz AND KAR_GIDNumer=@NrRejestru
+		order by KRP_DataOtwarcia desc);
+
+		
+	-- w przypadku gdy pierwszy raport jest dopiero w zakładanym okresie pobieramy jego saldo
+	IF (@PoprzedniRaport is NULL)
+		SET @PoprzedniRaport = (select top 1 Krp_gidnumer 
+		from cdn.Raporty JOIN CDN.Rejestry on KRP_Seria=KAR_Seria
+		where KRP_DataOtwarcia &gt; @DataPocz AND KAR_GIDNumer=@NrRejestru
+		order by KRP_DataOtwarcia asc);
+		
+	
+	-- sprawdzam czy przypadkiem nie było więcej raportów tego nieszczęsnego pierwszego dnia i biorę pierwszy
+	Declare @DataOtwarcia int;
+	SET @DataOtwarcia = (select KRP_DataOtwarcia from CDN.Raporty where KRP_GIDNumer=@PoprzedniRaport)
+	SET @PoprzedniRaport = (select top 1 Krp_gidnumer 
+		from cdn.Raporty JOIN CDN.Rejestry on KRP_Seria=KAR_Seria
+		where KRP_DataOtwarcia = @DataOtwarcia AND KAR_GIDNumer=@NrRejestru
+		order by KRP_GIDNumer asc);
+		
+		
+	--wyciągam saldo poprzedniego raportu
+	SET @SaldoPoprzRaportu = (select KRP_StanPoczWal from cdn.Raporty where KRP_GIDNumer=@PoprzedniRaport);
+	SET @SaldoPoprzRaportu = ISNULL(@SaldoPoprzRaportu,0.00);
+
+
+	--obliczam sumę wszystkich zapisów na poprzednim raporcie do zadanej daty
+	SET @SumaDoDodania = ( select SUM(Case when KAZ_RP=2 then KAZ_Kwota else -Kaz_Kwota end) 
+		from cdn.Zapisy join cdn.Raporty on KRP_GIDNumer=KAZ_KRPNumer 
+		where KRP_GIDNumer=@PoprzedniRaport and KAZ_DataZapisu &lt; @DataPocz );
+		
+
+	--obliczam saldo początkowe do zrocenia (poprzednie saldo + obroty)
+	SET @SaldoZwracane = @SaldoPoprzRaportu + ISNULL(@SumaDoDodania,0.00);
+	RETURN @SaldoZwracane;
+
+END
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

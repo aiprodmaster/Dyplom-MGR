@@ -1,0 +1,315 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Zapisy_AktualizujStany"></A><PRE>
+          <FONT SIZE="2"><I>/* Zapisy_AktualizujStany */</I><BR>
+CREATE trigger CDN.Zapisy_AktualizujStany
+on CDN.Zapisy 
+for insert,update,delete
+as 
+begin 
+
+
+	if (trigger_nestlevel( object_ID('cdn.Zapisy_AktualizujStany'))&gt;1 or not (update(kaz_kwota) or update(kaz_kwotaSys) or update(kaz_WycenaRKStan) or update(kaz_rok) or update(kaz_Rp) or update(kaz_KrpNumer)))
+	and not exists(select * from deleted d left join inserted i on d.kaz_gidnumer = i.kaz_gidnumer where i.kaz_gidnumer is null)
+		return
+
+
+	declare @PrzyrostWal decimal(15,2)	
+	declare @PrzyrostSys decimal(15,2)
+	declare @PrzyrostSredWal decimal(15,2)	
+	declare @PrzyrostSredSys decimal(15,2)
+	declare @PrzyrostRK decimal(15,2)	
+	declare @PrzyrostSredRK decimal(15,2)
+	declare @PrzyrostUjemnRK decimal(15,2)	
+	declare @PrzyrostUjemnSredRK decimal(15,2)
+
+
+
+	update z set KAZ_Znak=case 
+						when (i.KAZ_RP=1 AND i.KAZ_Kwota&gt;=0) OR (i.KAZ_RP=2 AND i.KAZ_Kwota&lt;0) then 1 
+						when (i.KAZ_RP=2 AND i.KAZ_Kwota&gt;=0) OR (i.KAZ_RP=1 AND i.KAZ_Kwota&lt;0) then 2 
+						else 0 
+						end 
+    from cdn.zapisy z 
+		join inserted i
+			on z.kaz_gidnumer=i.kaz_gidnumer
+		left join deleted d
+			on i.kaz_gidnumer = d.kaz_gidnumer
+	where sign(i.KAZ_Kwota) &lt;&gt; sign(isnull(d.KAZ_Kwota,0)) or i.KAZ_RP &lt;&gt; isnull(d.KAZ_RP,0)
+
+
+	if @@Error &lt;&gt; 0
+	begin
+		rollback tran
+		Raiserror('Błąd modyfikacji tabeli zapisy. Pole KAZ_Znak',16,1)
+		return
+	end
+
+
+	
+
+
+
+
+
+	if not exists(select *
+			from inserted i1
+					left join inserted i2
+						on i1.kaz_seria = i2.kaz_seria and i2.Kaz_KrpTyp = 800 
+							and not (i1.kaz_krpnumer = i2.kaz_krpnumer and i1.kaz_rp = i2.kaz_rp)
+					left join deleted d
+						on i1.kaz_seria = d.kaz_seria and d.Kaz_KrpTyp = 800
+							and not (i1.kaz_krpnumer = d.kaz_krpnumer and i1.kaz_rp = d.kaz_rp)
+			where not i2.kaz_gidnumer is null or not d.kaz_gidnumer is null 
+				and i1.Kaz_KrpTyp = 800 
+			)
+	and
+	not exists(select *
+			from deleted d1
+					left join deleted d2
+						on d1.kaz_seria = d2.kaz_seria and d2.Kaz_KrpTyp = 800 
+							and not (d1.kaz_krpnumer = d2.kaz_krpnumer and d1.kaz_rp = d2.kaz_rp)
+					left join inserted i
+						on d1.kaz_seria = i.kaz_seria and i.Kaz_KrpTyp = 800
+							and not (d1.kaz_krpnumer = i.kaz_krpnumer and d1.kaz_rp = i.kaz_rp)
+			where not d2.kaz_gidnumer is null or not i.kaz_gidnumer is null
+				and d1.Kaz_KrpTyp = 800 
+			)	
+	begin
+		update r set
+			KRP_Rozchody = isnull(KRP_Rozchody,0) + case when z.kaz_rp=1 then PrzyrostSys else 0 end, 
+			KRP_RozchodyWal = isnull(KRP_RozchodyWal,0) + case when z.kaz_rp=1 then PrzyrostWal else 0 end,
+			KRP_RozchodyWP = isnull(KRP_RozchodyWP,0) + case when z.kaz_rp=1 then PrzyrostSredSys else 0 end, 
+			KRP_RozchodyWPWal = isnull(KRP_RozchodyWPWal,0) + case when z.kaz_rp=1 then PrzyrostSredWal else 0 end,
+			KRP_RozchodyRK = isnull(KRP_RozchodyRK,0) + case when PrzyrostRK &lt; 0 then abs(PrzyrostRK) else 0 end - case when PrzyrostUjemnRK &gt; 0 then abs(PrzyrostUjemnRK) else 0 end, 
+			KRP_RozchodyWPRK = isnull(KRP_RozchodyWPRK,0) + case when PrzyrostSredRK &lt; 0 then abs(PrzyrostSredRK) else 0 end - case when PrzyrostUjemnSredRK &gt; 0 then abs(PrzyrostUjemnSredRK) else 0 end, 
+
+			KRP_Przychody = isnull(KRP_Przychody,0) + case when z.kaz_rp=2 then PrzyrostSys else 0 end, 
+			KRP_PrzychodyWal = isnull(KRP_PrzychodyWal,0) + case when z.kaz_rp=2 then PrzyrostWal else 0 end,
+			KRP_PrzychodyWP = isnull(KRP_PrzychodyWP,0) + case when z.kaz_rp=2 then PrzyrostSredSys else 0 end, 
+			KRP_PrzychodyWPWal = isnull(KRP_PrzychodyWPWal,0) + case when z.kaz_rp=2 then PrzyrostSredWal else 0 end,
+			KRP_PrzychodyRK = isnull(KRP_PrzychodyRK,0) + case when PrzyrostRK &gt; 0 then abs(PrzyrostRK) else 0 end - case when PrzyrostUjemnRK &lt; 0 then abs(PrzyrostUjemnRK) else 0 end, 
+			KRP_PrzychodyWPRK = isnull(KRP_PrzychodyWPRK,0) + case when PrzyrostSredRK &gt; 0 then abs(PrzyrostSredRK) else 0 end - case when PrzyrostUjemnSredRK &lt; 0 then abs(PrzyrostUjemnSredRK) else 0 end
+
+		from cdn.raporty r
+					join 
+					(select a.kaz_krpnumer, a.kaz_rp, sum(a.kaz_kwota) as PrzyrostWal, sum(a.kaz_kwotasys) as PrzyrostSys, sum(case when o.KAO_WplywaNaSrednia &lt;&gt; 0 then a.kaz_kwota else 0 end) as PrzyrostSredWal, sum(case when o.KAO_WplywaNaSrednia &lt;&gt; 0 then a.kaz_kwotasys else 0 end) as PrzyrostSredSys, sum(case when a.Dodawane = 1 then a.kaz_wycenaRKStan else 0 end) as PrzyrostRK, sum(case when o.KAO_WplywaNaSrednia &lt;&gt; 0 and a.Dodawane = 1 then a.kaz_WycenaRKStan else 0 end) as PrzyrostSredRK, sum(case when a.Dodawane = 0 then a.kaz_wycenaRKStan else 0 end) as PrzyrostUjemnRK, sum(case when o.KAO_WplywaNaSrednia &lt;&gt; 0 and a.Dodawane = 0 then a.kaz_WycenaRKStan else 0 end) as PrzyrostUjemnSredRK
+					from 
+							(select 1 as Dodawane, i.Kaz_KAONumer as kaz_kaonumer, i.Kaz_KrpNumer as kaz_krpnumer, i.Kaz_Rp as kaz_rp, i.Kaz_Kwota as kaz_kwota, i.Kaz_kwotaSys as Kaz_kwotaSys, i.Kaz_WycenaRKStan as Kaz_WycenaRKStan
+							from inserted i
+							where i.Kaz_KrpTyp = 800	
+							union all					
+							select 0 as Dodawane, d.Kaz_KAONumer as kaz_kaonumer, d.Kaz_KrpNumer as kaz_krpnumer,  d.Kaz_Rp as kaz_rp, d.Kaz_Kwota*(-1) as kaz_kwota, d.Kaz_kwotaSys*(-1) as Kaz_kwotaSys , d.Kaz_WycenaRKStan*(-1) as Kaz_WycenaRKStan
+							from deleted d
+							where d.Kaz_KrpTyp = 800
+							) a
+							join cdn.Operacje o 
+								on a.Kaz_KAONumer = o.KAO_GIDNumer
+					group by a.kaz_krpnumer, a.kaz_rp
+					) z	
+						on r.krp_gidnumer = z.Kaz_KrpNumer 							
+		
+					
+
+
+
+		if @@Error &lt;&gt; 0
+		begin
+			rollback tran
+			Raiserror('Błąd modyfikacji stanów raportu (1)',16,1)
+			return
+		end
+
+
+
+		update r set
+			r.KRP_StanPocz = isnull(r.KRP_StanPocz,0) + case when z.kaz_rp=1 then -1 else 1 end * PrzyrostSys , 
+			r.KRP_StanPoczWal = isnull(r.KRP_StanPoczWal,0) + case when z.kaz_rp=1 then -1 else 1 end * PrzyrostWal,
+			r.KRP_StanPoczWP = isnull(r.KRP_StanPoczWP,0) + case when z.kaz_rp=1 then -1 else 1 end * PrzyrostSredSys, 
+			r.KRP_StanPoczWPWal = isnull(r.KRP_StanPoczWPWal,0) + case when z.kaz_rp=1 then -1 else 1 end * PrzyrostSredWal	
+		from cdn.raporty r				
+				join
+				(select a.kaz_seria, a.kaz_rok, a.kaz_krpnumer, a.kaz_rp, sum(a.kaz_kwota) as PrzyrostWal, sum(a.kaz_kwotasys+a.Kaz_WycenaRKStan) as PrzyrostSys, sum(case when o.KAO_WplywaNaSrednia &lt;&gt; 0 then a.kaz_kwota else 0 end) as PrzyrostSredWal, sum(case when o.KAO_WplywaNaSrednia &lt;&gt; 0 then a.kaz_kwotasys+a.kaz_wycenaRKStan else 0 end) as PrzyrostSredSys
+				from 
+						(select i.kaz_seria as kaz_seria, i.kaz_rok as kaz_rok, i.Kaz_KAONumer as kaz_kaonumer, i.Kaz_KrpNumer as kaz_krpnumer, i.Kaz_Rp as kaz_rp, i.Kaz_Kwota as kaz_kwota, i.Kaz_kwotaSys as Kaz_kwotaSys, i.Kaz_WycenaRKStan as Kaz_WycenaRKStan
+						from inserted i	
+						where i.Kaz_KrpTyp = 800
+						union all					
+						select d.kaz_seria as kaz_seria, d.kaz_rok as kaz_rok, d.Kaz_KAONumer as kaz_kaonumer, d.Kaz_KrpNumer as kaz_krpnumer,  d.Kaz_Rp as kaz_rp, d.Kaz_Kwota*(-1) as kaz_kwota, d.Kaz_kwotaSys*(-1) as Kaz_kwotaSys, d.Kaz_WycenaRKStan*(-1) as Kaz_WycenaRKStan
+						from deleted d
+						where d.Kaz_KrpTyp = 800
+						) a
+						join cdn.Operacje o 
+							on a.Kaz_KAONumer = o.KAO_GIDNumer
+				group by a.kaz_seria, a.kaz_rok, a.kaz_krpnumer, a.kaz_rp
+				) z	 				
+					on r.krp_seria = z.Kaz_seria 
+				join cdn.raporty rb
+					on z.kaz_krpnumer = rb.krp_gidnumer
+		where (rb.krp_raportBO=1 and ((r.krp_raportBO = 1 and r.krp_czasotwarcia &gt; rb.krp_czasotwarcia )
+									or (r.krp_raportBO = 0))
+				) or
+				(rb.krp_raportBO=0 and r.krp_raportBO = 0 and (r.krp_rok = rb.krp_rok and r.krp_numer &gt; rb.krp_numer or r.krp_rok &gt; rb.krp_rok)									
+				)
+
+
+		if @@Error &lt;&gt; 0
+		begin
+			rollback tran
+			Raiserror('Błąd modyfikacji stanów raportu (2)',16,1)
+			return
+		end
+	end
+	else --zapisy modyfikujące rozne raporty z danego rejestru
+	begin
+
+		declare @KAZ_Seria varchar(10)
+		declare @KAZ_KrpNumer int
+		declare @KAZ_Rok smallint
+		declare @KAZ_RP tinyint
+		declare @KAO_WplywaNaSrednia tinyint
+		declare @krp_numer int
+		declare @krp_rok smallint
+		declare @krp_czasotwarcia int
+		declare @krp_RaportBO tinyint
+
+
+		declare raportyCurs cursor local fast_forward for
+		select kaz_seria, kaz_krpnumer, kaz_rok, krp_numer, krp_Rok, krp_czasotwarcia, krp_raportBO, kaz_rp, kao_WplywaNaSrednia, sum(a.kaz_kwota) as PrzyrostWal, sum(a.kaz_kwotasys) as PrzyrostSys, sum(case when o.KAO_WplywaNaSrednia &lt;&gt; 0 then a.kaz_kwota else 0 end) as PrzyrostSredWal, sum(case when o.KAO_WplywaNaSrednia &lt;&gt; 0 then a.kaz_kwotasys else 0 end) as PrzyrostSredSys, sum(case when a.Dodawane = 1 then a.kaz_wycenaRKStan end) as PrzyrostRK, sum(case when o.KAO_WplywaNaSrednia &lt;&gt; 0 and a.Dodawane = 1 then a.kaz_WycenaRKStan else 0 end) as PrzyrostSredRK, sum(case when a.Dodawane = 0 then a.kaz_wycenaRKStan end) as PrzyrostUjemnRK, sum(case when o.KAO_WplywaNaSrednia &lt;&gt; 0 and a.Dodawane = 0 then a.kaz_WycenaRKStan else 0 end) as PrzyrostUjemnSredRK
+		from (
+			select 1 as Dodawane, kaz_seria as kaz_seria, kaz_krpnumer as kaz_krpnumer, kaz_rok as kaz_rok, kaz_kaonumer as kaz_kaonumer, kaz_rp as kaz_rp, kaz_kwota as kaz_kwota, kaz_kwotasys as kaz_kwotasys, kaz_wycenaRkStan as kaz_wycenaRKStan
+			from inserted i
+			where i.Kaz_KrpTyp = 800
+			union all
+			select 0 as Dodawane, kaz_seria as kaz_seria, kaz_krpnumer as kaz_krpnumer, kaz_rok as kaz_rok, kaz_kaonumer as kaz_kaonumer, kaz_rp as kaz_rp, kaz_kwota*(-1) as kaz_kwota, kaz_kwotasys*(-1) as kaz_kwotasys, kaz_wycenaRkStan*(-1) as kaz_wycenaRkStan
+			from deleted d
+			where d.Kaz_KrpTyp = 800
+			) a
+			join cdn.Operacje o
+				on kaz_kaonumer = kao_gidnumer
+			join cdn.Raporty
+				on kaz_krpNumer = krp_gidnumer
+		group by kaz_seria, kaz_krpnumer, kaz_rok, krp_numer, krp_rok, krp_czasotwarcia, krp_raportBO, kaz_rp, kao_WplywaNaSrednia
+
+	
+
+     	open raportyCurs
+
+        
+		fetch next from raportyCurs into @Kaz_Seria, @Kaz_KrpNumer, @KAZ_Rok, @Krp_Numer, @Krp_Rok, @Krp_CzasOtwarcia, @Krp_RaportBO, @KAZ_RP, @KAO_WplywaNaSrednia, @PrzyrostWal, @PrzyrostSys, @PrzyrostSredWal, @PrzyrostSredSys, @PrzyrostRK, @PrzyrostSredRK, @PrzyrostUjemnRK, @PrzyrostUjemnSredRK
+
+
+	    while @@FETCH_STATUS = 0
+        begin
+
+
+			update r set
+				KRP_Rozchody = isnull(KRP_Rozchody,0) + case when @kaz_rp=1 then @PrzyrostSys else 0 end, 
+				KRP_RozchodyWal = isnull(KRP_RozchodyWal,0) + case when @kaz_rp=1 then @PrzyrostWal else 0 end,
+				KRP_RozchodyWP = isnull(KRP_RozchodyWP,0) + case when @kaz_rp=1 then @PrzyrostSredSys else 0 end, 
+				KRP_RozchodyWPWal = isnull(KRP_RozchodyWPWal,0) + case when @kaz_rp=1 then @PrzyrostSredWal else 0 end,
+				KRP_RozchodyRK = isnull(KRP_RozchodyRK,0) + case when @PrzyrostRK &lt; 0 then abs(@PrzyrostRK) else 0 end - case when @PrzyrostUjemnRK &gt; 0 then abs(@PrzyrostUjemnRK) else 0 end, 
+				KRP_RozchodyWPRK = isnull(KRP_RozchodyWPRK,0) + case when @PrzyrostSredRK &lt; 0 then abs(@PrzyrostSredRK) else 0 end - case when @PrzyrostUjemnSredRK &gt; 0 then abs(@PrzyrostUjemnSredRK) else 0 end, 
+ 
+				KRP_Przychody = isnull(KRP_Przychody,0) + case when @kaz_rp=2 then @PrzyrostSys else 0 end, 
+				KRP_PrzychodyWal = isnull(KRP_PrzychodyWal,0) + case when @kaz_rp=2 then @PrzyrostWal else 0 end,
+				KRP_PrzychodyWP = isnull(KRP_PrzychodyWP,0) + case when @kaz_rp=2 then @PrzyrostSredSys else 0 end, 
+				KRP_PrzychodyWPWal = isnull(KRP_PrzychodyWPWal,0) + case when @kaz_rp=2 then @PrzyrostSredWal else 0 end,
+				KRP_PrzychodyRK = isnull(KRP_PrzychodyRK,0) + case when @PrzyrostRK &gt; 0 then abs(@PrzyrostRK) else 0 end - case when @PrzyrostUjemnRK &lt; 0 then abs(@PrzyrostUjemnRK) else 0 end, 
+				KRP_PrzychodyWPRK = isnull(KRP_PrzychodyWPRK,0) + case when @PrzyrostSredRK &gt; 0 then abs(@PrzyrostSredRK) else 0 end - case when @PrzyrostUjemnSredRK &lt; 0 then abs(@PrzyrostUjemnSredRK) else 0 end
+
+			from cdn.raporty r						
+			where r.Krp_GIDNumer = @KAZ_KrpNumer
+
+
+			if @@Error &lt;&gt; 0
+			begin			
+				Raiserror('Błąd modyfikacji stanów raportu (1)',16,1)
+				
+				close raportyCurs
+				deallocate raportyCurs
+				return
+			end
+
+
+			if @Krp_RaportBO = 1
+			begin
+				update r set
+					KRP_StanPocz = isnull(KRP_StanPocz,0) + case when @KAZ_RP=1 then -1 else 1 end * @PrzyrostSys + @PrzyrostRK - @PrzyrostUjemnRK , 
+					KRP_StanPoczWal = isnull(KRP_StanPoczWal,0) + case when @KAZ_RP=1 then -1 else 1 end * @PrzyrostWal,
+					KRP_StanPoczWP = isnull(KRP_StanPoczWP,0) + case when @KAZ_RP=1 then -1 else 1 end * @PrzyrostSredSys + @PrzyrostSredRK - @PrzyrostUjemnSredRK, 
+					KRP_StanPoczWPWal = isnull(KRP_StanPoczWPWal,0) + case when @KAZ_RP=1 then -1 else 1 end * @PrzyrostSredWal	
+				from cdn.raporty r
+				where r.Krp_Seria = @Kaz_Seria and (r.krp_raportBO = 1 and r.krp_czasotwarcia &gt; @krp_czasotwarcia ) or (r.krp_raportBO = 0)					
+			end
+			else
+			begin
+				update r set
+					KRP_StanPocz = isnull(KRP_StanPocz,0) + case when @KAZ_RP=1 then -1 else 1 end * @PrzyrostSys + @PrzyrostRK - @PrzyrostUjemnRK  , 
+					KRP_StanPoczWal = isnull(KRP_StanPoczWal,0) + case when @KAZ_RP=1 then -1 else 1 end * @PrzyrostWal,
+					KRP_StanPoczWP = isnull(KRP_StanPoczWP,0) + case when @KAZ_RP=1 then -1 else 1 end * @PrzyrostSredSys + @PrzyrostSredRK - @PrzyrostUjemnSredRK, 
+					KRP_StanPoczWPWal = isnull(KRP_StanPoczWPWal,0) + case when @KAZ_RP=1 then -1 else 1 end * @PrzyrostSredWal	
+				from cdn.raporty r
+				where r.Krp_Seria = @Kaz_Seria and (r.krp_raportBO = 0 and (r.krp_rok = @krp_rok and r.krp_numer &gt; @krp_numer or r.krp_rok &gt; @krp_rok))
+			end
+
+
+			if @@Error &lt;&gt; 0
+			begin
+				rollback tran
+				Raiserror('Błąd modyfikacji stanów raportu (3)',16,1)
+
+				close raportyCurs
+				deallocate raportyCurs
+				return
+			end
+
+			fetch next from raportyCurs into @Kaz_Seria, @Kaz_KrpNumer, @KAZ_Rok, @Krp_Numer, @Krp_Rok, @Krp_CzasOtwarcia, @Krp_RaportBO, @KAZ_RP, @KAO_WplywaNaSrednia, @PrzyrostWal, @PrzyrostSys, @PrzyrostSredWal, @PrzyrostSredSys, @PrzyrostRK, @PrzyrostSredRK, @PrzyrostUjemnRK, @PrzyrostUjemnSredRK
+		end
+
+		close raportyCurs
+		deallocate raportyCurs
+
+	end
+end; 
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Zapisy_DataRozliczenia"></A><PRE>
+          <FONT SIZE="2"><I>/* Zapisy_DataRozliczenia */</I><BR>
+create trigger CDN.Zapisy_DataRozliczenia
+on CDN.Zapisy
+for insert, update
+as
+	if update(KAZ_DataRozliczenia)
+		and exists(select 1 from inserted where KAZ_DataRozliczenia=0)
+    begin
+		UPDATE kaz SET KAZ_DataRozliczenia=999999 
+		FROM inserted i, cdn.Zapisy kaz
+		WHERE kaz.KAZ_GIDNumer=i.KAZ_GIDNumer AND i.KAZ_DataRozliczenia=0
+
+		if @@ERROR&lt;&gt;0
+		begin
+			rollback tran
+			raiserror('#CDN_BLAD/##CDN_1=Błąd aktualizacji KAZ_DataRozliczenia/#',16,1)
+			return
+		END
+	end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

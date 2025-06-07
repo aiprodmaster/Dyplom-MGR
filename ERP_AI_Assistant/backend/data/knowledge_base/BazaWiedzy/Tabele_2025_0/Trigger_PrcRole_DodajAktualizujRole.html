@@ -1,0 +1,95 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="PrcRole_DodajAktualizujRole"></A><PRE>
+          <FONT SIZE="2"><I>/* PrcRole_DodajAktualizujRole */</I><BR>
+create trigger CDN.PrcRole_DodajAktualizujRole
+ON CDN.PrcRole
+For insert,update
+As
+SET NOCOUNT ON
+
+	if exists(select * 
+			from inserted i
+			inner join cdn.Role r on i.PrR_RolId = r.Rol_Id 
+			where r.Rol_OptimaKierownik not in (1,2)
+				and (select count(*) 
+					from cdn.PrcRole prr 
+					where i.PrR_PrcNumer = prr.PrR_PrcNumer and i.PrR_PrcLp = prr.PrR_PrcLp and i.PrR_PrcTyp = prr.PrR_PrcTyp 
+						and i.PrR_FrSId = prr.PrR_FrSId and i.PrR_RolId = prr.PrR_RolId) &gt; 1)
+
+	begin 
+		-- dla ról innych niż kierownik O! jeśli któryś z wstawianych rekordów miałby spowodować duplikację roli prc w centrum
+		raiserror('#CDN_BLAD/##CDN_1=Dla pracownika/osoby i centrum istnieje już wybrana rola./# [PrcRole_DodajAktualizujRole]', 16, 1)
+		rollback tran
+		set nocount off
+		return
+	end
+
+	if exists(select * 
+			from inserted i
+			inner join cdn.Role r on i.PrR_RolId = r.Rol_Id
+			where r.Rol_OptimaKierownik = 1
+				and exists(select * 
+							from cdn.PrcRole prr
+							where ((i.PrR_DataOd &lt;&gt; 0 and i.PrR_DataDo &lt;&gt; 0 ) or (i.PrR_DataOd &lt;&gt; 0 and i.PrR_DataDo = 0) or (i.PrR_DataOd = 0 and i.PrR_DataDo &lt;&gt; 0))
+								and	( (i.PrR_DataOd between prr.PrR_DataOd and (case prr.PrR_DataDo when 0 then DATEDIFF(d,'18001228','29991231') else prr.PrR_DataDo end))
+									or ((case i.PrR_DataDo when 0 then DATEDIFF(d,'18001228','29991231') else i.PrR_DataDo end) 
+										between prr.PrR_DataOd and (case prr.PrR_DataDo when 0 then DATEDIFF(d,'18001228','29991231') else prr.PrR_DataDo end))
+									or (i.PrR_DataOd &lt;= prr.PrR_DataOd 
+										and (case i.PrR_DataDo when 0 then DATEDIFF(d,'18001228','29991231') else i.PrR_DataDo end) 
+											&gt;= (case prr.PrR_DataDo when 0 then DATEDIFF(d,'18001228','29991231') else prr.PrR_DataDo end)) )
+								and prr.PrR_RolId = i.PrR_RolId 
+								and prr.PrR_FrSId = i.PrR_FrSId
+								and prr.PrR_Id &lt;&gt; i.PrR_Id )  
+			)
+	begin
+		raiserror('#CDN_BLAD/##CDN_1=W wybranym okresie dla tego centrum podległościowego został już wybrany Kierownik synchronizowany z Comarch ERP XL HR. Zmień zakres dat./# [PrcRole_DodajAktualizujRole]', 16, 1)
+		rollback tran
+		set nocount off
+		return
+	end
+
+	if exists(select * 
+			from inserted i
+			inner join cdn.Role ir on i.PrR_RolId = ir.Rol_Id
+			where Rol_OptimaKierownik in (1,2)
+				and exists(select * 
+							from cdn.PrcRole prr
+							inner join cdn.Role r on prr.PrR_RolId = r.Rol_Id
+							where ((i.PrR_DataOd &lt;&gt; 0 and i.PrR_DataDo &lt;&gt; 0 ) or (i.PrR_DataOd &lt;&gt; 0 and i.PrR_DataDo = 0) or (i.PrR_DataOd = 0 and i.PrR_DataDo &lt;&gt; 0))
+								and	( (i.PrR_DataOd between prr.PrR_DataOd and (case prr.PrR_DataDo when 0 then DATEDIFF(d,'18001228','29991231') else prr.PrR_DataDo end))
+									or ((case i.PrR_DataDo when 0 then DATEDIFF(d,'18001228','29991231') else i.PrR_DataDo end) 
+										between prr.PrR_DataOd and (case prr.PrR_DataDo when 0 then DATEDIFF(d,'18001228','29991231') else prr.PrR_DataDo end))
+									or (i.PrR_DataOd &lt;= prr.PrR_DataOd 
+										and (case i.PrR_DataDo when 0 then DATEDIFF(d,'18001228','29991231') else i.PrR_DataDo end) 
+											&gt;= (case prr.PrR_DataDo when 0 then DATEDIFF(d,'18001228','29991231') else prr.PrR_DataDo end)) )
+								and prr.PrR_PrcTyp = i.PrR_PrcTyp
+								and prr.PrR_PrcNumer = i.PrR_PrcNumer
+								and prr.PrR_PrcLp = i.PrR_PrcLp
+								and prr.PrR_FrSId = i.PrR_FrSId
+								and prr.PrR_Id &lt;&gt; i.PrR_Id
+								and Rol_OptimaKierownik in (1,2) ) 
+		)
+	begin
+		raiserror('#CDN_BLAD/##CDN_1=Wybrany pracownik jest już Kierownikiem/Zastępcą kierownika Comarch ERP XL HR w tym okresie w danym centrum podległościowym./# [PrcRole_DodajAktualizujRole]', 16, 1)
+		rollback tran
+		set nocount off
+		return
+	end
+
+SET NOCOUNT OFF 
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

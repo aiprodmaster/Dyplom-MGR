@@ -122,23 +122,25 @@ def check_architecture():
     return True
 
 def run_server():
-    """Uruchomienie serwera Claude API + RAG"""
-    print("\n🌐 Uruchamianie serwera Claude AI + RAG...")
+    """Uruchomienie zunifikowanego serwera API"""
+    print("\n🌐 Uruchamianie Unified API Backend v1.0...")
     print("📍 URL: http://localhost:5000")
-    print("📊 Panel zdrowia: http://localhost:5000/api/health")
-    print("🔧 Status modeli: http://localhost:5000/api/models/status")
-    print("📈 Dashboard CRM: http://localhost:5000/api/crm/dashboard")
+    print("🔧 Health check: http://localhost:5000/api/health")
+    print("🧠 Unified API: http://localhost:5000/api/unified")
+    print("📊 System metrics: http://localhost:5000/api/metrics")
+    print("🎯 Services status: http://localhost:5000/api/services/status")
     print("\n⚡ Aby zatrzymać serwer, użyj Ctrl+C")
     print("=" * 60)
     
     try:
-        # Uruchomienie głównej aplikacji
-        subprocess.run([sys.executable, "app.py"], check=True)
+        # Uruchomienie zunifikowanego backendu
+        subprocess.run([sys.executable, "unified_api_backend.py"], check=True)
     except KeyboardInterrupt:
-        print("\n\n🛑 Serwer zatrzymany przez użytkownika")
+        print("\n\n🛑 Unified API Backend zatrzymany przez użytkownika")
     except Exception as e:
         print(f"\n❌ Błąd serwera: {e}")
         print("💡 Sprawdź czy klucz ANTHROPIC_API_KEY jest poprawny")
+        print("💡 Sprawdź czy wszystkie dependencje są zainstalowane")
 
 def main():
     """Główna funkcja"""
@@ -167,9 +169,9 @@ def main():
             # Pobieranie modelu embeddings
             download_embedding_model()
     
-    # Sprawdzenie czy app.py istnieje
-    if not os.path.exists("app.py"):
-        print("❌ Nie znaleziono app.py!")
+    # Sprawdzenie czy unified_api_backend.py istnieje
+    if not os.path.exists("unified_api_backend.py"):
+        print("❌ Nie znaleziono unified_api_backend.py!")
         print("💡 Upewnij się, że jesteś w katalogu backend/")
         sys.exit(1)
     

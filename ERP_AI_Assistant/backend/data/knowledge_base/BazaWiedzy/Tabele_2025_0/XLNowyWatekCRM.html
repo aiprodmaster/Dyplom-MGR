@@ -1,0 +1,359 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[XLNowyWatekCRM]"></A><PRE>
+          <FONT SIZE="2"><I>/* [XLNowyWatekCRM] */</I><BR>
+CREATE PROCEDURE [CDN].[XLNowyWatekCRM]
+
+
+        @Streszczenie           varchar(80),
+        @KntNumer                       int,
+        @CekId                          int,
+        @OpeStartNumer          int,
+
+
+
+        @OpeNumer                       int = NULL,
+        @OsobaLp                        smallint = NULL,
+        @AkwOsobaLp                     smallint = NULL,
+        @Rodzaj                         int = NULL, --słownikowa klasyfikacja kontaktu
+        @Oplata                         tinyint = NULL,
+        @TStampDataStart        int = NULL,
+        @Priorytet                      tinyint = NULL,
+        @TwXTyp                         smallint = NULL,
+        @TwXNumer                       int = NULL,
+        @TrnNumer                       int = NULL,
+        --@Wsk smallint = NULL, --wykorzystywane przez API, do obsłużenia
+        @Opis                           varchar(1024) = NULL,
+        @OpeStartIdent          varchar(8) = NULL,
+        @IgnorujBledy           tinyint = NULL, --by nie robiło raiserror przy błędzie
+        @IgnorujSelecty         tinyint = NULL, --by nie robiło selecta na koniec
+        @IgnorujTransakcje      tinyint = NULL --by nie zakładało transakcji
+
+
+AS
+
+
+declare @GIDFirma               int
+declare @GIDNumer               int
+declare @AkwTyp                 smallint
+declare @AkwFirma               int
+declare @AkwNumer               int
+declare @AkwLp                  smallint
+declare @RokMiesiac             int
+declare @KntLp                  smallint
+declare @OpeTyp                 smallint
+declare @OpeLp                  smallint
+declare @TrnTyp                 smallint
+declare @OsobaZCek              smallint
+declare @AkwOsobaZCek   smallint
+
+
+
+if @KntNumer is null
+        set @KntNumer = -1
+if @Streszczenie is null
+        set @Streszczenie = ''
+if @CekId is null
+        set @CekId = 0
+if @OpeStartNumer is null
+        set @OpeStartNumer = 0
+
+
+SET NOCOUNT ON
+
+
+select @GIDFirma = frs_GIDFirma from cdn.frmstruktura where frs_id = 1
+
+if @TStampDataStart is null or @TStampDataStart = 0 select @TStampDataStart = DATEDIFF(s,'19900101',GETDATE())
+
+select @RokMiesiac = YEAR(DATEADD( ss, @TStampDataStart,CONVERT(DATETIME,'19900101',11)))*100 +
+                                                MONTH(DATEADD( ss, @TStampDataStart,CONVERT(DATETIME,'19900101',11)))
+
+if @IgnorujTransakcje is null or @IgnorujTransakcje = 0
+BEGIN TRAN
+
+
+if not exists(select * from cdn.KntKarty where Knt_GIDNumer = @KntNumer)
+        if exists(select * from cdn.CrmKntEtapy where CEK_Id = @CekId and CEK_Status in (0,1))
+                select  @KntNumer = CEK_KntNumer, @KntLp = CEK_KntLp,
+                                @OsobaZCek = isnull(CEK_KntOsobaLp,0), @AkwTyp = CEK_AkwTyp, @AkwFirma = CEK_AkwFirma,
+                                @AkwNumer = CEK_AkwNumer, @AkwLp = CEK_AkwLp, @AkwOsobaZCek = isnull(CEK_AkwOsobaLp,0)
+                from cdn.CRMKntEtapy where CEK_Id = @CekId
+        else
+                begin
+						if @IgnorujTransakcje is null or @IgnorujTransakcje = 0
+								rollback tran
+						if @IgnorujBledy is null
+								raiserror('Nie znaleziono kontrahenta - (-1)',16,1)
+						return -1
+                end
+else
+        select @CekId = 0
+
+
+
+        if not exists(select * from cdn.KntOsoby where KnS_KntNumer = @KntNumer and KnS_KntLp = @OsobaLp and KnS_KntTyp = 32)
+                select @OsobaLp = @OsobaZCek
+
+        if not exists(select * from cdn.KntOsoby where KnS_KntNumer = @AkwNumer and KnS_KntLp = @AkwOsobaLp and KnS_KntTyp = 32)
+                select @AkwOsobaLp = @AkwOsobaZCek
+
+
+
+if @Streszczenie is null or @Streszczenie = ''
+        begin
+				if @IgnorujTransakcje is null or @IgnorujTransakcje = 0
+						rollback tran
+                if @IgnorujBledy is null
+                        raiserror('Nie podano tytułu wątku konwersacji - (-2)',16,1)
+                return -2
+        end
+
+
+
+if not exists(select * from cdn.opekarty where Ope_GIDNumer = @OpeStartNumer and Ope_Zablokowane &lt;&gt; 1)
+        begin
+                if @OpeStartIdent is not null and exists(select * from cdn.opekarty where Ope_Ident = @OpeStartIdent and Ope_Zablokowane &lt;&gt; 1)
+                        select @OpeStartNumer = Ope_GIDNumer from cdn.opekarty where Ope_Ident = @OpeStartIdent
+                else
+                        begin
+								if @IgnorujTransakcje is null or @IgnorujTransakcje = 0
+										rollback tran
+                                if @IgnorujBledy is null
+                                        raiserror('Nie znaleziono operatora - (-3)',16,1)
+                                return -3
+                        end
+        end
+
+
+
+if not exists (select * from cdn.opekarty where Ope_GIDNumer = @OpeNumer and Ope_Zablokowane &lt;&gt; 1)
+        select  @OpeNumer = @OpeStartNumer
+
+
+
+if @Rodzaj is null
+        set @Rodzaj = 0
+else
+        --if not exists(select *  from CDN.Slowniki where SLW_ID = @Rodzaj and SLW_Kategoria = 'Klasyfikacja kontaktu')
+        if not exists(select * from CDN.SlownikiStruktura join CDN.Slowniki on SLW_SLSId = SLS_Id where SLW_ID = @Rodzaj
+                                 and SLS_Predefiniowany = 80)
+                set @Rodzaj = 0
+
+
+
+if @Oplata is null
+        set @Oplata = 1 --nierozliczona
+else
+        if @Oplata = 4
+                if exists(select * from cdn.TraNag where TrN_GIDNumer = @TrnNumer)
+                        select @TrnTyp = TrN_GIDTyp from cdn.TraNag where TrN_GIDNumer = @TrnNumer
+                else
+                        select @Oplata = 1, @TrnTyp = 0, @TrnNumer = 0
+
+
+
+if @Oplata &lt;&gt; 4
+        select @TrnTyp = 0, @TrnNumer = 0
+
+
+
+if @TwXTyp is null
+        select @TwXTyp = 0, @TwXNumer = 0
+else
+        if @TwXTyp = 16
+                begin
+                        if not exists(select * from cdn.TwrKarty where Twr_GIDNumer = @TwXNumer )
+                                select @TwXTyp = 0, @TwXNumer = 0
+                end
+        else
+                if @TwXNumer &lt;&gt; 0 and @TwXTyp = 0
+                        begin
+                                if not exists(select *  from cdn.SlownikiStruknuta join CDN.Slowniki on
+                                SLS_Id = SLW_SLSId where SLW_ID = @TwXNumer and SLS_Predefiniowany = 11)
+                                        select @TwXTyp = 0, @TwXNumer = 0
+                        end
+                else --zostały przekazane złe warości (nie towar i nie kategoria)
+                        select @TwXTyp = 0, @TwXNumer = 0
+
+
+
+if @Priorytet is null or @Priorytet &lt; 0 or @Priorytet &gt; 255
+        set @Priorytet = 0
+
+
+
+if @Opis is null
+        set @Opis = ''
+
+
+
+insert into cdn.SrsNag(
+SsN_GIDTyp,
+SsN_GIDFirma,
+SsN_GIDLp,
+SsN_Streszczenie,
+SsN_KntTyp,
+SsN_KntFirma,
+SsN_KntNumer,
+SsN_KntLp,
+SsN_OpeTyp,
+SsN_OpeFirma,
+SsN_OpeNumer,
+SsN_OpeLp,
+SsN_OpeStartTyp,
+SsN_OpeStartFirma,
+SsN_OpeStartNumer,
+SsN_OpeStartLp,
+SsN_OsobaLp,
+SsN_AkwOsobaLp,
+SsN_Rodzaj,
+SsN_Oplata,
+SsN_TStampDataStart,
+SsN_Priorytet,
+SsN_TwXTyp,
+SsN_TwXFirma,
+SsN_TwXNumer,
+SsN_TwXLp,
+SsN_TrnTyp,
+SsN_TrnFirma,
+SsN_TrnNumer,
+SsN_TrnLp,
+SsN_Opis,
+SsN_AkwTyp,
+SsN_AkwFirma,
+SsN_AkwNumer,
+SsN_AkwLp,
+SsN_RokMiesiac,
+SsN_TStampDataStop,
+SsN_OpeStopTyp,
+SsN_OpeStopFirma,
+SsN_OpeStopNumer,
+SsN_OpeStopLp,
+SsN_ArtTyp,
+SsN_ArtFirma,
+SsN_ArtNumer,
+SsN_ArtLp,
+SsN_Wersja,
+SsN_Atrybut1,
+SsN_Format1,
+SsN_Wartosc1,
+SsN_Atrybut2,
+SsN_Format2,
+SsN_Wartosc2,
+SsN_Atrybut3,
+SsN_Format3,
+SsN_Wartosc3
+)values(
+339, --SsN_GIDTyp = Typ_Konwersacja
+@GIDFirma,
+0, --SsN_GIDLp
+@Streszczenie,
+32,--@KntTyp,
+@GIDFirma,--@KntFirma,
+@KntNumer,
+isnull(@KntLp,0),
+128,--@OpeTyp,
+@GIDFirma,--@OpeFirma,
+@OpeNumer,
+0,--@OpeLp,
+128,--@OpeStartTyp,
+@GIDFirma,--@OpeStartFirma,
+@OpeStartNumer,
+0,--@OpeStartLp,
+isnull(@OsobaLp,0),
+isnull(@AkwOsobaLp,0),
+@Rodzaj,
+@Oplata,
+@TStampDataStart,
+@Priorytet,
+@TwXTyp,
+case when @TwXTyp = 16 then @GIDFirma else 0 end,
+@TwXNumer,
+0,--@TwXLp,
+@TrnTyp,
+case when @TrnTyp &lt;&gt; 0 then @GIDFirma else 0 end,
+@TrnNumer,
+0,--@TrnLp,
+@Opis,
+isnull(@AkwTyp,0),
+isnull(@AkwFirma,0),
+isnull(@AkwNumer,0),
+isnull(@AkwLp,0),
+isnull(@RokMiesiac,0),
+0, --@TStampDataStop, --zakończenie wątku będzie możliwe tylko w XLZakonczWatekCRM.sql
+0, --@OpeStopTyp, --zakończenie wątku będzie możliwe tylko w XLZakonczWatekCRM.sql
+0, --@OpeStopFirma, --zakończenie wątku będzie możliwe tylko w XLZakonczWatekCRM.sql
+0, --@OpeStopNumer, --zakończenie wątku będzie możliwe tylko w XLZakonczWatekCRM.sql
+0, --@OpeStopLp, --zakończenie wątku będzie możliwe tylko w XLZakonczWatekCRM.sql
+0, --isnull(@ArtTyp,0),
+0, --isnull(@ArtFirma,0),
+0, --isnull(@ArtNumer,0),
+0, --isnull(@ArtLp,0),
+'', --isnull(@Wersja,''),
+'', --isnull(@Atrybut1,''),
+0, --isnull(@Format1,0),
+'', --isnull(@Wartosc1,''),
+'', --isnull(@Atrybut2,''),
+0, --isnull(@Format2,0),
+'', --isnull(@Wartosc2,''),
+'', --isnull(@Atrybut3,''),
+0, --isnull(@Format3,0),
+'' --isnull(@Wartosc3,'')
+)
+if @@error &lt;&gt; 0
+        begin
+				if @IgnorujTransakcje is null or @IgnorujTransakcje = 0
+						rollback tran
+                if @IgnorujBledy is null
+                        RAISERROR ('Błąd podczas dodawania wątku konwersacji - (-33)', 16, 1)
+                return -33
+        end
+
+select @GIDNumer = SCOPE_IDENTITY()
+if @@error &lt;&gt; 0
+        begin
+				if @IgnorujTransakcje is null or @IgnorujTransakcje = 0
+						rollback tran
+                if @IgnorujBledy is null
+                        RAISERROR ('Błąd podczas pobierania numeru wątku konwersacji - (-45)',16,1)
+                return -45
+        end
+
+
+
+if @CekId is not null and @CekId &lt;&gt; 0
+        insert into cdn.CRMKontrahenciWatki     (CKW_SsNNumer, CKW_CekID) values (@GIDNumer, @CekId)
+
+if @@error &lt;&gt; 0
+        begin
+				if @IgnorujTransakcje is null or @IgnorujTransakcje = 0
+						rollback tran
+                if @IgnorujBledy is null
+                        RAISERROR ('Błąd podczas wiązania wątku konwersacji z kontrahentem w etapie - (-34)', 16, 1)
+                return -34
+        end
+
+if @IgnorujTransakcje is null or @IgnorujTransakcje = 0
+	COMMIT TRAN
+
+if @IgnorujSelecty is null
+	select GIDNumer = @GIDNumer, GIDLp = 0, GIDTyp = 339, GIDFirma = @GIDFirma
+
+SET NOCOUNT OFF
+RETURN @GIDNumer
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

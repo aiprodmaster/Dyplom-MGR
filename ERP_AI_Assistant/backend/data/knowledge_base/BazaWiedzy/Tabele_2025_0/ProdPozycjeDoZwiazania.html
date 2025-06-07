@@ -1,0 +1,117 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[ProdPozycjeDoZwiazania]"></A><PRE>
+          <FONT SIZE="2"><I>/* [ProdPozycjeDoZwiazania] */</I><BR>
+CREATE FUNCTION [CDN].[ProdPozycjeDoZwiazania] (@ObiTyp smallint, @ObiNumer int)
+RETURNS @Pozycje TABLE (
+  ObiTyp smallint,
+  ObiNumer int ,
+  Zwiazana DECIMAL(15,4) ,
+  Ilosc decimal(11,4),
+  Numer INT,
+  ZwiazaneZRez SMALLINT,
+  Priorytet INT,
+  PlanowacOd INT,
+  ZgodnoscCech SMALLINT,
+  PPCPartia INT,
+  PCZPartia INT
+)
+AS
+BEGIN
+DECLARE @Technologia INT
+DECLARE @TwrNumer INT
+DECLARE @Zlecenie INT
+DECLARE @KlasaCechy INT
+DECLARE @Cecha VARCHAR(255)
+DECLARE @PPCPartia INT
+DECLARE @PCZPartia INT
+DECLARE @MagNumer INT
+
+IF @ObiTyp = 14348 
+BEGIN
+
+	SELECT @TwrNumer = PZE_TwrNumer,@Technologia = PZE_Technologia, @Zlecenie = PZE_Zlecenie, @KlasaCechy = PZE_KlasaCechy,@Cecha = LTRIM(RTRIM(PZE_Cecha)),
+	@MagNumer = CASE WHEN PZE_WyborMagazynuNaPozycji = 0 THEN -1 ELSE PZE_MagNumer END 
+	FROM CDN.ProdZlecElem WHERE PZE_Id = @ObiNumer
+	
+	INSERT INTO @Pozycje
+		SELECT ObiTyp,ObiNumer,Zwiazana,Ilosc,Numer,0,Priorytet,0,ZgodnoscCech, PPC_PZEPartia, PCZ_PZEPartia FROM 
+		(SELECT 14346 ObiTyp,PZA_Id ObiNumer,ISNULL(SUM(ISNULL(PLK_Ilosc,0)),0) Zwiazana,PZA_Ilosc Ilosc,PZA_Id Numer, 0 Priorytet,
+		CASE WHEN PZA_KlasaCechy = @KlasaCechy THEN CASE WHEN LTRIM(RTRIM(PZA_Cecha)) = @Cecha THEN 2 ELSE 1 END ELSE 0 END ZgodnoscCech, PPC_PZEPartia, PCZ_PZEPartia
+		FROM CDN.ProdZasoby PZ
+		LEFT JOIN CDN.ProdTechnologiaZasoby ON PTZ_ID = PZA_TechnologiaZasob
+		JOIN CDN.ProdCzynnosci ON PCZ_Id = PZA_Czynnosc
+		JOIN CDN.ProdProcesy ON PPC_Id = PCZ_Proces
+		JOIN CDN.ProdZlecenia ON PZL_Id = PPC_Zlecenie
+		LEFT JOIN CDN.ProdLinki ON PLK_ObiTyp = 14346 AND PLK_ObiNumer = PZA_Id
+		LEFT JOIN CDN.ProdOperacjeMagazyny WITH(NOLOCK) ON POM_PCZId = PCZ_Id AND POM_MagNumer = @MagNumer AND POM_PTZId = PTZ_Id
+		WHERE PZL_Id = @Zlecenie AND ISNULL(PTZ_TypZasobu, PZA_TypZasobu) = 0 AND PPC_Technologia = @Technologia AND PZA_TwrTyp = 16 AND PZA_TwrNumer = @TwrNumer
+			AND NOT EXISTS(SELECT * FROM CDN.ProdZasoby PZ2 WHERE PZ2.PZA_Zasob = PZ.PZA_Id) AND ISNULL(POM_MagNumer,-1) = @MagNumer
+		GROUP BY PZA_Id,PZA_Ilosc,PZA_Cecha,PZA_KlasaCechy, PPC_PZEPartia,PCZ_PZEPartia
+		UNION ALL
+		SELECT Rez_GIDTyp,Rez_GIDNumer,ISNULL(SUM(ISNULL(PLK_Ilosc,0)),0) Zwiazana,Rez_Ilosc Ilosc,Rez_GIDNumer,Rez_Priorytet,
+		CASE WHEN Rez_CCHNumer = @KlasaCechy THEN CASE WHEN LTRIM(RTRIM(Rez_Cecha)) = @Cecha THEN 2 ELSE 1 END ELSE 0 END, PPC_PZEPartia, PCZ_PZEPartia
+		FROM CDN.Rezerwacje
+		JOIN CDN.ProdCzynnosci ON Rez_ZrdTyp = 14345 AND Rez_ZrdNumer = PCZ_Id
+		JOIN CDN.ProdProcesy ON PPC_Id = PCZ_Proces
+		LEFT JOIN CDN.ProdLinki ON PLK_ObiTyp = Rez_GIDTyp AND PLK_ObiNumer = Rez_GIDNumer
+		LEFT JOIN CDN.ProdOperacjeMagazyny WITH(NOLOCK) ON POM_PCZId = PCZ_Id AND POM_MagNumer = @MagNumer AND POM_PTZId = Rez_PTZID
+		WHERE Rez_GIDTyp = 2592 AND PPC_Technologia = @Technologia AND PCZ_PZLId = @Zlecenie AND Rez_TwrNumer = @TwrNumer AND ISNULL(POM_MagNumer,-1) = @MagNumer
+		GROUP BY Rez_GIDNumer,Rez_GIDTyp,Rez_Priorytet,Rez_Ilosc ,Rez_CCHNumer,Rez_Cecha, PPC_PZEPartia, PCZ_PZEPartia
+		) DoZwiazania WHERE Ilosc - Zwiazana &gt; 0 ORDER BY ObiTyp DESC,Priorytet,Numer
+END
+ELSE
+BEGIN
+	IF @ObiTyp = 14346
+	BEGIN
+		SELECT @Zlecenie = PCZ_PZLId,@Technologia = PTC_Technologia,@TwrNumer = PZA_TwrNumer, @KlasaCechy = PZA_KlasaCechy,@Cecha = LTRIM(RTRIM(PZA_Cecha)),@PPCPartia= PPC_PZEPartia, 
+		@PCZPartia = PCZ_PZEPartia, @MagNumer = COALESCE(POM_MagNumer,-1)
+		FROM CDN.ProdZasoby
+		JOIN CDN.ProdCzynnosci ON PZA_Czynnosc = PCZ_Id
+		JOIN CDN.ProdTechnologiaCzynnosci ON PCZ_TechnologiaCzynnosc = PTC_Id 
+		JOIN CDN.ProdProcesy ON PPC_Id = PCZ_Proces
+		LEFT JOIN CDN.ProdOperacjeMagazyny WITH(NOLOCK) ON POM_PCZId IN(PCZ_Id,PCZ_Realizuje) AND POM_PTZId = PZA_TechnologiaZasob
+		WHERE PZA_Id = @ObiNumer		
+	END
+	ELSE
+	BEGIN
+		SELECT @TwrNumer = Rez_TwrNumer,@Zlecenie = PCZ_PZLId,@Technologia = PTC_Technologia, @KlasaCechy = Rez_CCHNumer,@Cecha = LTRIM(RTRIM(Rez_Cecha)),@PPCPartia= PPC_PZEPartia,
+		@PCZPartia = PCZ_PZEPartia , @MagNumer = COALESCE(POM_MagNumer,-1)
+		FROM CDN.Rezerwacje
+		JOIN CDN.ProdCzynnosci ON Rez_ZrdTyp = 14345 AND Rez_ZrdNumer = PCZ_Id
+		JOIN CDN.ProdTechnologiaCzynnosci ON PCZ_TechnologiaCzynnosc = PTC_Id
+		JOIN CDN.ProdProcesy ON PPC_Id = PCZ_Proces 
+		LEFT JOIN CDN.ProdOperacjeMagazyny WITH(NOLOCK) ON POM_PCZId IN(PCZ_Id,PCZ_Realizuje) AND POM_PTZId = Rez_PTZID
+		WHERE Rez_GIDTyp = @ObiTyp AND Rez_GIDNumer = @ObiNumer
+	END
+	
+	INSERT INTO @Pozycje
+		SELECT 14348,ID,Zwiazana,Ilosc,PZE_Lp,ZwiazanaZRez,Priorytet,PZE_PlanowacOd,ZgodnoscCech, @PPCPartia, @PCZPartia
+		FROM 
+		(SELECT PZE_Id Id,SUM(ISNULL(PLK_Ilosc,0)) Zwiazana,PZE_Ilosc Ilosc,PZE_Priorytet Priorytet,PZE_Lp,PZE_PlanowacOd,
+		CASE WHEN PZE_KlasaCechy = @KlasaCechy THEN CASE WHEN LTRIM(RTRIM(PZE_Cecha)) = @Cecha THEN 2 ELSE 1 END ELSE 0 END ZgodnoscCech,CASE WHEN ISNULL(MIN(PLK_ObiTyp),14346) = 14346 THEN 0 ELSE 1 END ZwiazanaZRez		
+		FROM CDN.ProdZlecElem
+		LEFT JOIN CDN.ProdLinki ON PLK_PZEId = PZE_Id
+		WHERE PZE_Technologia  = @Technologia AND PZE_Zlecenie = @Zlecenie AND PZE_TwrNumer = @TwrNumer and (PZE_MagNumer = @MagNumer OR (@MagNumer = -1 AND PZE_WyborMagazynuNaPozycji = 0))
+		GROUP BY PZE_Id,PZE_Priorytet,PZE_Lp,PZE_Ilosc,PZE_PlanowacOd,PZE_KlasaCechy,PZE_Cecha) DoZwiazania
+		WHERE Ilosc - Zwiazana &gt; 0 OR ZwiazanaZRez = 1
+		ORDER BY Priorytet, PZE_Lp
+END
+
+RETURN 
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

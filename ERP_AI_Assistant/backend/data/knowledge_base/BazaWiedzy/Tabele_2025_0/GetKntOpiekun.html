@@ -1,0 +1,71 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[GetKntOpiekun]"></A><PRE>
+          <FONT SIZE="2"><I>/* [GetKntOpiekun] */</I><BR>
+CREATE FUNCTION [CDN].[GetKntOpiekun]
+(
+        @KntNumer               int, --numer kontrahenta dla którego pobrać opiekuna
+        @Data                   int --gdy przekazano to sprawdzany jest okres od-do danego kontrahenta, można przekazać tu date "długą" i "krótka" z zastrzeżeniem, że daty o numerze mniejszym od 93890 (e_Data_Wazn_Max), będą traktowane jak krótkie, czyli minimalna "długa" data to 1990-01-02 02:04:51.000. Jak null lub 0 to pomijane jest sprawdzenie na okres od-do.
+)
+RETURNS INT --0 brak opiekuna, 0+ Prc:GIdNumer danego opiekuna
+AS
+BEGIN
+
+DECLARE @PrcNumer                       INT
+DECLARE @RejId                          INT
+DECLARE @IdR							INT
+
+        SELECT @PrcNumer=KtO_PrcNumer from CDN.KntOpiekun where KtO_KntNumer=@KntNumer and KtO_KntTyp=32 and KtO_PrcNumer&gt;0 and (isnull(@Data,0) = 0 or case when @Data is not null and @Data &gt; 93890 then 69035+@Data/86400 else @Data end between KtO_DataOd and KtO_DataDo)
+
+        IF (@PrcNumer is null or @PrcNumer = 0)
+        BEGIN
+			SELECT @RejId=Knt_RegionCRM, @PrcNumer=0 from CDN.KntKarty where Knt_GIDNumer=@KntNumer
+            SET @PrcNumer = CDN.GetRejonOpiekun(@RejId,@Data)         
+            
+        END
+	    IF @PrcNumer = 0 
+	    BEGIN
+			DECLARE ev CURSOR FOR                                         
+                SELECT KnR_Rejon FROM CDN.KntRejony WHERE KnR_KntNumer = @KntNumer AND KnR_Rejon != @RejId ORDER BY KnR_CzasPrzypisania    -- rejon główny nie będzie już ponownie sprawdzany     
+                
+			OPEN ev
+
+			FETCH NEXT FROM ev INTO @IdR 
+
+			WHILE @@FETCH_STATUS = 0 AND @PrcNumer = 0
+			BEGIN
+	                      
+				SET @PrcNumer = CDN.GetRejonOpiekun(@IdR,@Data) 
+
+				FETCH NEXT FROM ev INTO @IdR
+
+			END
+			CLOSE ev
+			DEALLOCATE ev
+	    END
+	    IF @PrcNumer = 0
+	    BEGIN
+			WHILE @PrcNumer=0 and @RejId&gt;0
+            BEGIN				
+                SELECT @RejId=isnull((SELECT Rej_OjciecId from CDN.Rejony where Rej_Id=@RejId),0) --pobranie rejonu nadrzędnego do obecnego
+                IF @RejId=0 BREAK
+                SET @PrcNumer = CDN.GetRejonOpiekun(@RejId,@Data) -- pobranie opiekuna rejonu nadrzędnego                
+            END	
+	    END
+        RETURN @PrcNumer
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

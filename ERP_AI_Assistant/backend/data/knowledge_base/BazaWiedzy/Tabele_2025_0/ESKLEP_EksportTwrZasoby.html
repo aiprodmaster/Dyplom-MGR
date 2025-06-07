@@ -1,0 +1,156 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[ESKLEP_EksportTwrZasoby]"></A><PRE>
+          <FONT SIZE="2"><I>/* [ESKLEP_EksportTwrZasoby] */</I><BR>
+CREATE PROCEDURE [CDN].[ESKLEP_EksportTwrZasoby]
+  @ID INT      -- ID e-sklepu
+ ,@TypExp INT  -- Typ eksportu stanów towaru (0 - różnicowy, 1 - pełny)
+AS
+
+DECLARE  @TypIlosci AS SMALLINT	-- Typ zwracanej ilości: 0 - ilość do sprzedaży, 1 - ilość magazynowa, 2 - ilość dostępna do sprzedaży, 3 - ilość dostępna magazynowa
+		,@UwzgledniajRezerwacje AS SMALLINT 
+		,@PcK_CentrumID INT
+		,@PcK_TwGNumer INT
+		,@PcK_TSSynchrPtw INT
+
+SELECT  @PcK_CentrumID = PcK_CentrumID, @PcK_TwGNumer = TWG_GIDNumer, @PcK_TSSynchrPtw = PcK_TSSynchrPtw,@UwzgledniajRezerwacje = PcK_ExpUwzgledniajRezerwacje FROM CDN.PicoKonfig JOIN CDN.TwrGrupy ON TwG_GIDTyp = -16 AND TwG_SyncID = PCK_TwgNumer WHERE PcK_PicoID = @ID
+SELECT  @TypIlosci = 0
+
+CREATE TABLE #tmpRecordSet(twrid int, CChNumer int, CechaLp int, Cecha int, ilosc decimal(15,4), dstgidnumer int, magnumer int)
+
+
+SELECT DISTINCT
+row_number() OVER(ORDER BY TrS_GIDNumer DESC) AS [ID]
+, TrS_CChNumer AS [CechaID]
+, TrS_Cecha AS [Wartosc]
+, TrS_CChLp AS [TrS_CechaLp]--TrS_CChNumer*100+case when TrS_CChLp=0 then TrS_GIDLp else TrS_CChLp end
+into #WartosciCech
+from ( 
+	select min(coalesce(TrS_GIDNumer,CCh_GIDLp)) as [TrS_GIDNumer]
+			, min(TrS_CChNumer) as TrS_CChNumer
+			, TrS_Cecha
+			, min(TrS_CChLp) as TrS_CChLp
+	FROM CDN.TwrKarty
+	INNER JOIN CDN.TwrZasoby ON Twr_GIDNumer=TwZ_TwrNumer
+	INNER JOIN CDN.Dostawy ON TwZ_DstTyp=Dst_GIDTyp AND TwZ_DstNumer=Dst_GIDNumer AND TwZ_DstLp=Dst_GIDLp
+	LEFT OUTER JOIN CDN.TraSElem ON Dst_TrnTyp=TrS_GIDTyp AND Dst_TrnNumer=TrS_GIDNumer AND Dst_TrnLp=TrS_GIDLp AND Dst_SubTrnLp=TrS_SubGIDLp
+	JOIN CDN.CechyKlasy ON TrS_CChNumer=CCK_GIDNumer
+	JOIN cdn.Cechy on CCK_GIDNumer=CCh_GIDNumer AND TrS_Cecha = CCh_Cecha
+	WHERE Twr_GIDNumer &gt; 0 AND Twr_eSklep = 1 AND Twr_Archiwalny = 0 and CCh_iSklep = 1 AND TrS_CChLp &lt;&gt; 0 AND Twr_LastModC &lt;&gt; 0
+			  AND EXISTS(SELECT TwL_GrONumer FROM CDN.TwrLinki WHERE Twr_GIDTyp = TwL_GIDTyp AND Twr_GIDNumer = TwL_GIDNumer AND TwL_GrONumer = @PcK_TwGNumer )
+			  AND (@TypExp = 1 OR EXISTS(SELECT TrE_TwrNumer FROM CDN.TraElem JOIN CDN.TraSElem ON TrE_GIDNumer = TrS_GIDNumer AND TrE_GIDLp = TrS_GIDLp WHERE TrE_TwrNumer = Twr_GIDNumer AND TrE_TrNTStamp &gt; @PcK_TSSynchrPtw)
+											   OR EXISTS(SELECT ReZ_TwrNumer FROM CDN.Rezerwacje WHERE ReZ_TwrNumer = Twr_GIDNumer AND ReZ_TStamp &gt; @PcK_TSSynchrPtw)
+											   OR EXISTS(SELECT MaE_GIDNumer FROM CDN.MagElem JOIN CDN.MagSElem ON MaE_GIDNumer = MaS_GIDNumer AND MaE_GIDLp = MaS_GIDLp WHERE MaE_TwrNumer = Twr_GIDNumer AND MaS_TrNTStamp &gt; @PcK_TSSynchrPtw)
+					   )
+	group by TrS_Cecha
+) as Wyniki
+ORDER BY ID
+
+insert into #tmpRecordSet
+SELECT Twr_GIDNumer, TrS_CChNumer, #WartosciCech.TrS_CechaLp , #WartosciCech.ID --TrS_CChNumer*100+TrS_CChLp
+,CDN.ESKLEP_WyliczIloscBezRezerwacji(CDN.DokSumaStanowTowaru(Twr_GidTyp,Twr_GidFirma,Twr_GidNumer,Twr_Typ,0,1,1,TwZ_MagFirma,TwZ_MagNumer,0,0,TwZ_DstNumer,DATEDIFF(DAY,CONVERT(DATETIME,'28-12-1800',105),GETDATE()),0,3,-1,0,0,0,0,0,0,-1),@UwzgledniajRezerwacje), dst_gidnumer, TwZ_MagNumer
+FROM CDN.TwrKarty
+INNER JOIN CDN.TwrZasoby ON Twr_GIDNumer=TwZ_TwrNumer
+INNER JOIN CDN.Dostawy ON TwZ_DstTyp=Dst_GIDTyp	AND TwZ_DstNumer=Dst_GIDNumer AND TwZ_DstLp=Dst_GIDLp
+LEFT OUTER JOIN CDN.TraSElem ON Dst_TrnTyp=TrS_GIDTyp AND Dst_TrnNumer=TrS_GIDNumer AND Dst_TrnLp=TrS_GIDLp AND Dst_SubTrnLp=TrS_SubGIDLp
+LEFT OUTER JOIN CDN.TraNag ON TrS_GIDTyp=TrN_GIDTyp	AND TrS_GIDNumer=TrN_GIDNumer
+JOIN #WartosciCech ON TrS_CChNumer = #WartosciCech.CechaID AND TrS_Cecha = #WartosciCech.Wartosc  AND TrS_CChLp &lt;&gt; 0
+WHERE Twr_GIDNumer &gt; 0 AND Twr_eSklep = 1 AND Twr_Archiwalny = 0 AND TrS_CChLp&gt;0 AND Twr_Typ IN (1,2,5) AND Twr_LastModC &lt;&gt; 0
+	  AND TwZ_MagNumer in (select mag_gidnumer from cdn.DokDostepneMagazyny(@PcK_CentrumID,@PcK_CentrumID,0,0,0,0,0))
+	  AND EXISTS(SELECT TwL_GrONumer FROM CDN.TwrLinki WHERE Twr_GIDTyp = TwL_GIDTyp AND Twr_GIDNumer = TwL_GIDNumer AND TwL_GrONumer = @PcK_TwGNumer )
+	  AND (@TypExp = 1 OR EXISTS(SELECT TrE_TwrNumer FROM CDN.TraElem JOIN CDN.TraSElem ON TrE_GIDNumer = TrS_GIDNumer AND TrE_GIDLp = TrS_GIDLp WHERE TrE_TwrNumer = Twr_GIDNumer AND TrE_TrNTStamp &gt; @PcK_TSSynchrPtw)	
+					   OR EXISTS(SELECT ReZ_TwrNumer FROM CDN.Rezerwacje WHERE ReZ_TwrNumer = Twr_GIDNumer AND ReZ_TStamp &gt; @PcK_TSSynchrPtw)
+					   OR EXISTS(SELECT MaE_GIDNumer FROM CDN.MagElem JOIN CDN.MagSElem ON MaE_GIDNumer = MaS_GIDNumer AND MaE_GIDLp = MaS_GIDLp WHERE MaE_TwrNumer = Twr_GIDNumer AND MaS_TrNTStamp &gt; @PcK_TSSynchrPtw)
+		   )
+		AND (TrS_Cecha &lt;&gt; '' OR TrS_CChNumer = 0)
+
+insert into #tmpRecordSet
+SELECT Twr_GIDNumer, NULL, NULL, NULL
+, case when ISNULL(TwZ_MagNumer,0) not in (select mag_gidnumer from cdn.DokDostepneMagazyny(@PcK_CentrumID,@PcK_CentrumID,0,0,0,0,0)) then 0 else CDN.ESKLEP_WyliczIloscBezRezerwacji(CDN.DokSumaStanowTowaru(Twr_GidTyp,Twr_GidFirma,Twr_GidNumer,Twr_Typ,0,1,1,TwZ_MagFirma,TwZ_MagNumer,0,0,0,DATEDIFF(DAY,CONVERT(DATETIME,'28-12-1800',105),GETDATE()),0,3,-1,0,0,0,0,0,0,-1),@UwzgledniajRezerwacje) end
+, NULL, NULL
+FROM CDN.TwrKarty
+LEFT JOIN #tmpRecordSet ON #tmpRecordSet.TwrID = Twr_GIDNumer
+LEFT JOIN CDN.TwrZasoby ON Twr_GIDNumer=TwZ_TwrNumer
+WHERE #tmpRecordSet.TwrID IS NULL AND Twr_GIDNumer &gt; 0 AND Twr_eSklep = 1 AND Twr_Archiwalny = 0 AND Twr_Typ IN (1,2,5) AND Twr_LastModC &lt;&gt; 0
+	 AND (TwZ_MagNumer in (select mag_gidnumer from cdn.DokDostepneMagazyny(@PcK_CentrumID,@PcK_CentrumID,0,0,0,0,0)) OR coalesce(TwZ_MagNumer,0) = 0
+		-- Obługa przypadku kiedy sa zasoby ale na magazynach nie zwiazanych z centrum eSklep
+		OR (TwZ_MagNumer not in (select mag_gidnumer from cdn.DokDostepneMagazyny(@PcK_CentrumID,@PcK_CentrumID,0,0,0,0,0))))      
+	  AND EXISTS(SELECT TwL_GrONumer FROM CDN.TwrLinki WHERE Twr_GIDTyp = TwL_GIDTyp AND Twr_GIDNumer = TwL_GIDNumer AND TwL_GrONumer = @PcK_TwGNumer )
+	  AND (@TypExp = 1 OR EXISTS(SELECT TrE_TwrNumer FROM CDN.TraElem JOIN CDN.TraSElem ON TrE_GIDNumer = TrS_GIDNumer AND TrE_GIDLp = TrS_GIDLp WHERE TrE_TwrNumer = Twr_GIDNumer AND TrE_TrNTStamp &gt; @PcK_TSSynchrPtw)	
+					   OR EXISTS(SELECT ReZ_TwrNumer FROM CDN.Rezerwacje WHERE ReZ_TwrNumer = Twr_GIDNumer AND ReZ_TStamp &gt; @PcK_TSSynchrPtw)
+					   OR EXISTS(SELECT MaE_GIDNumer FROM CDN.MagElem JOIN CDN.MagSElem ON MaE_GIDNumer = MaS_GIDNumer AND MaE_GIDLp = MaS_GIDLp WHERE MaE_TwrNumer = Twr_GIDNumer AND MaS_TrNTStamp &gt; @PcK_TSSynchrPtw)
+		   )
+ GROUP BY Twr_GidTyp,Twr_GidFirma,Twr_GidNumer,Twr_Typ,TwZ_MagNumer,TwZ_MagFirma
+
+SELECT DISTINCT  1 AS Tag, NULL AS Parent  /*  &lt;ZSB&gt; */
+			,twrid AS [ZSB!1!TwrID], sum(ilosc) AS [ZSB!1!Ilosc]--, magnumer AS [ZSB!1!MagID]
+	, NULL AS [ZSBC!2]
+			, NULL AS [ZSC!3!TwrID], NULL AS [ZSC!3!DostawaID]
+			, NULL AS [ZSC!3!C1ID], NULL AS [ZSC!3!C1Wartosc]
+			, NULL AS [ZSC!3!C2ID], NULL AS [ZSC!3!C2Wartosc]
+			, NULL AS [ZSC!3!C3ID], NULL AS [ZSC!3!C3Wartosc]
+			, NULL AS [ZSC!3!C4ID], NULL AS [ZSC!3!C4Wartosc]
+			, NULL AS [ZSC!3!C5ID], NULL AS [ZSC!3!C5Wartosc]
+			, NULL AS [ZSC!3!C6ID], NULL AS [ZSC!3!C6Wartosc]
+			, NULL AS [ZSC!3!C7ID], NULL AS [ZSC!3!C7Wartosc]
+			, NULL AS [ZSC!3!C8ID], NULL AS [ZSC!3!C8Wartosc]
+			, NULL AS [ZSC!3!C9ID], NULL AS [ZSC!3!C9Wartosc]
+			, NULL AS [ZSC!3!C10ID], NULL AS [ZSC!3!C10Wartosc], NULL AS [ZSC!3!Ilosc]
+FROM #tmpRecordSet
+GROUP BY twrid
+
+UNION ALL
+SELECT DISTINCT  2 AS Tag, 1 AS Parent  /*  &lt;ZSBC&gt; */
+			,twrid, NULL--, magnumer
+	, NULL
+			, NULL , NULL
+			, NULL, NULL
+			, NULL, NULL
+			, NULL, NULL
+			, NULL, NULL
+			, NULL, NULL
+			, NULL, NULL
+			, NULL, NULL
+			, NULL, NULL
+			, NULL, NULL
+			, NULL, NULL, NULL
+FROM #tmpRecordSet
+WHERE CChNumer &gt; 0
+
+UNION ALL
+SELECT DISTINCT  3 AS Tag, 2 AS Parent  /*  &lt;ZSC&gt; */
+			,twrid, NULL--, magnumer
+	, NULL
+			, twrid, dstgidnumer
+			, CChNumer, CChNumer*100 + CechaLp
+			, 0, 0
+			, 0, 0
+			, 0, 0
+			, 0, 0
+			, 0, 0
+			, 0, 0
+			, 0, 0
+			, 0, 0
+			, 0, 0, ilosc
+FROM #tmpRecordSet
+WHERE CChNumer &gt; 0
+ORDER BY [ZSB!1!TwrID], Parent
+FOR XML EXPLICIT, ROOT('ZSBI')
+
+DROP TABLE #tmpRecordSet
+DROP TABLE #WartosciCech
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

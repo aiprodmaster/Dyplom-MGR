@@ -1,0 +1,282 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="WFL_WykonajZadanie"></A><PRE>
+          <FONT SIZE="2"><I>/* WFL_WykonajZadanie */</I><BR>
+Create Procedure CDN.WFL_WykonajZadanie
+ @p_WFZID integer , 	-- identyfikator zadania, jeśli -1 to zadanie ze statusu START
+ @p_WDZID integer,	-- identyfikator definicji zadania
+ @p_WFPID integer = 0, -- identyfikator procesu
+ @p_WDSID integer = 0, -- identyfikator definciji statusu
+ @p_OpisZadaniaWykonanego varchar(1024)='',
+ @p_OpisZadaniaNowego varchar(1024)='',
+
+ @p_DataWykonania integer=0, -- data wykonania zadania
+
+ @p_OBITyp   smallint,  -- typ obiektu
+ @p_OBINumer integer,  -- identyfikator obiektu
+ @p_PRCTyp   smallint, -- typ pracownika
+ @p_PRCNumer integer,  -- identyfikator pracownika
+ @p_OPENumer integer,  -- identyfikator operatora
+ @p_ZwrotWyniku	smallint=0, --  czy zwracać wyynik selectem
+ @p_LastWFZID integer = 0 OUTPUT,	--ID ostatniego dodanego zadania (do pozycjonowania listy zadań)
+ @ret_status integer =0 OUTPUT,
+ @p_FrSId integer = 0	-- identyfikator centrum operatora TFS 233768
+as 
+begin
+
+DECLARE @wyniksql integer
+DECLARE @lStatus integer
+DECLARE @cWarunekWej varchar(2048)
+DECLARE @IleDodanych integer
+DECLARE @StanDefinicjiProcesu smallint
+DECLARE  @lWDPID integer
+
+declare @lPrawo integer
+
+DECLARE @lWDAID integer  -- identyfikator akcji
+DECLARE @p_DataRealizacji integer
+
+
+SET @ret_status = 0
+if(@p_DataWykonania=0)
+	Set @p_DataWykonania = CDN.WFL_PobierzDate(GETDATE())
+
+
+if (@p_WFPID=0)
+	Select @p_WFPID = WFZ_WFPID
+	From CDN.WF_Zadania
+	Where WFZ_ID=@p_WFZID
+
+if (@p_WDSID=0)
+	Select @p_WDSID = WFZ_WDSID from CDN.WF_Zadania where WFZ_ID = @p_WFZID
+
+if (@p_OBITyp=0)
+	Select @p_OBITyp = WFP_ObiTyp, @p_OBINumer = WFP_ObiNumer from CDN.WF_Procesy where WFP_ID=@p_WFPID
+	
+BEGIN TRANSACTION
+
+Select @lWDPID = WFP_WDPID From CDN.WF_Procesy with (UPDLOCK) Where WFP_ID = @p_WFPID 
+set @lWDPID = isnull(@lWDPID,0)
+
+if (@p_WDZID=0)
+	Select @p_WDZID = CDN.WFL_ZnajdzZadanie(@lWDPID, @p_WDSID, @p_PRCTyp , @p_PRCNumer , @p_DataWykonania, @p_FrSId) -- TFS 233768
+
+if exists (select * from cdn.wf_zadania where wfz_id = @p_WFZID and wfz_datazamkniecia &gt; 0)
+BEGIN
+	RAISERROR('Zadanie jest już wykonane, nie można go wykonać ponownie.',16,1)
+	set @ret_status = 1
+	GOTO KONIEC
+END
+	
+
+
+select @lWDAID = WDZ_WDAID
+from CDN.WF_DEFZadania (NOLOCK) 
+where WDZ_ID = @p_WDZID
+
+if (SELECT Kon_Wartosc FROM CDN.Konfig where Kon_Numer = 2135)=0
+	select @lPrawo = CDN.WFL_PrawoDoWykonania(@p_OBITyp,0,0,@p_WFZID,@lWDAID,0,'',0,@p_PRCTyp,@p_PRCNumer,@p_DataWykonania)
+else 
+	select @lPrawo = CDN.WFL_PrawoDoWykonaniaEx(@p_OBITyp,0,0,@p_WFZID,@lWDAID,0,'',0,@p_PRCTyp,@p_PRCNumer,@p_DataWykonania,@p_FrSId)
+
+if @lPrawo = 0 --TFS 233768
+begin
+	RAISERROR('Brak praw do wykonania zadania.',16,1)
+	set @ret_status = 1
+	GOTO KONIEC
+end
+
+
+
+ CREATE TABLE #tbl_statusykoncowe(tsk_status integer,tsk_lp smallint)
+
+ select @StanDefinicjiProcesu = WDP_Stan from cdn.WF_DefProcesy where WDP_ID = @lWDPID
+
+
+if (@StanDefinicjiProcesu=1)  -- aktywny
+Begin
+	EXEC CDN.WFL_SzukajStatusKoncowy 
+		@p_WDZID = @p_WDZID, 
+		@p_OBITyp = @p_OBITyp,
+		@p_OBINumer = @p_OBINumer,
+		@p_PRCTyp = @p_PRCTyp,
+		@p_PRCNumer = @p_PRCNumer,
+		@p_OPENumer = @p_OPENumer,
+		@p_DataUtworzenia = @p_DataWykonania,
+		@lStatus = @lStatus OUTPUT,
+		@ret_status = @ret_status OUTPUT
+	if @ret_status&lt;&gt;0
+		GOTO KONIEC
+ End	
+ 
+ if (@p_WFZID &lt;&gt; -1) -- nie jest to start
+  BEGIN
+  EXEC CDN.WFL_ZakonczZadanie
+	 @p_WFZID = @p_WFZID,
+	 @p_WDZID = @p_WDZID,
+	 @p_WDSID = @p_WDSID,
+	 @p_WFPID = @p_WFPID,
+	 @p_PrcTyp = @p_PrcTyp,
+	 @p_PrcNumer = @p_PrcNumer, 
+	 @p_OpeNumer = @p_OPENumer,
+	 @p_Opis = @p_OpisZadaniaWykonanego,
+	 @p_DataZamkniecia = @p_DataWykonania,
+	 @ret_status = @ret_status OUTPUT
+  if @ret_status&lt;&gt;0
+	GOTO KONIEC
+  END
+
+	set @IleDodanych = 0
+
+
+	declare cur_statusykoncowe cursor for 
+	select tsk_status from #tbl_statusykoncowe order by tsk_lp
+
+	open cur_statusykoncowe
+	fetch next from cur_statusykoncowe into @lStatus
+
+	while @@FETCH_STATUS =0
+	begin
+
+
+	
+		select @cWarunekWej = WDS_WarunekWej
+		from CDN.WF_Defstatusy  (NOLOCK) 
+		where WDS_ID = @lStatus
+
+
+		if (len(@cWarunekWej)=0)
+		begin
+			set @wyniksql = 1
+		end
+		else
+		begin
+			EXEC CDN.WFL_WykonajZapytanie 
+				@p_sqlZapytanie = @cWarunekWej,
+				@p_OBITyp = @p_OBITyp, 
+				@p_OBINumer = @p_OBINumer,
+				@p_PRCTyp = @p_PRCTyp,
+				@p_PRCNumer = @p_PRCNumer,
+				@p_OPENumer = @p_OPENumer,
+				@p_WFPID = @p_WFPID,
+				@p_WDSID = @lStatus,
+			 	@p_DataUtworzenia = @p_DataWykonania,
+                @p_DataRealizacji = @p_DataWykonania,			 	
+				@wyniksql = @wyniksql OUTPUT,
+				@ret_status = @ret_status OUTPUT
+			if @ret_status&lt;&gt;0
+				break
+
+		end	
+		if (@wyniksql = 1)
+		Begin			
+			if (@lStatus&gt;0)
+			BEGIN
+				EXEC CDN.WFL_DodajZadanie 
+					@p_WFPID = @p_WFPID,
+					@p_WDSID = @lStatus,	-- identyfikator nowego statusu
+					@p_Opis  = @p_OpisZadaniaNowego,
+					@p_OBITyp = @p_OBITyp,  -- typ obiektu
+					@p_OBINumer = @p_OBINumer,  -- identyfikator obiektu
+					@p_PRCTyp   = @p_PRCTyp,  -- typ pracownika
+					@p_PRCNumer = @p_PRCNumer,  -- identyfikator pracownika
+					@p_OPENumer = @p_OPENumer,  -- identyfikator operatora
+			 		@p_DataUtworzenia = @p_DataWykonania,
+					@ret_status = @ret_status OUTPUT
+				if @ret_status&lt;&gt;0
+					break
+
+				if (@lStatus &lt;&gt; -2) -- koniec
+					set @IleDodanych = @IleDodanych +1
+			END
+			if (@lStatus&gt;0 or (@lStatus=-2 and @lWDAID = 129))
+			EXEC CDN.WFL_ZakonczZadanie	
+				 @p_WFZID = 0,
+				 @p_WFPID = @p_WFPID,
+				 @p_WDSID =@lStatus,
+			 	 @p_WDZID = @p_WDZID,  -- ??
+				 @p_PrcTyp = @p_PrcTyp,
+				 @p_PrcNumer = @p_PrcNumer, 
+				 @p_OpeNumer = @p_OPENumer,
+				 @p_Opis = @p_OpisZadaniaWykonanego,
+ 			 	 @p_DataZamkniecia = @p_DataWykonania,
+				 @ret_status = @ret_status OUTPUT
+			if @ret_status&lt;&gt;0
+				break
+
+		End
+		if (@lStatus = -2)
+		Begin
+		-- skoro obsłużyliśmy status koniec to nie ma sensu dalsza analiza zadań, proces został zamknięty
+			break					
+		End
+		fetch next from cur_statusykoncowe into @lStatus
+	
+
+	end
+
+	close cur_statusykoncowe
+	deallocate cur_statusykoncowe
+
+	if @ret_status&lt;&gt;0
+		GOTO KONIEC			
+
+	if(@IleDodanych &gt; 0)
+		set @p_LastWFZID = isnull((select top 1 WFZ_ID from CDN.WF_Zadania where WFZ_WFPID = @p_WFPID and WFZ_DataUtworzenia&lt;0),0)
+	
+	update CDN.WF_Zadania
+	set WFZ_DataUtworzenia = -WFZ_DataUtworzenia
+	Where WFZ_WFPID = @p_WFPID and WFZ_DataUtworzenia&lt;0
+	set @ret_status = @@ERROR
+	if @ret_status&lt;&gt;0
+	BEGIN
+		RAISERROR('Błąd aktualizacji nowych zadań.[%d]',16,1, @ret_status)
+		GOTO KONIEC
+	END		
+
+	if (@IleDodanych =0)
+	BEGIN
+		if ( not exists(Select * from cdn.WF_ZADANIA where WFZ_WFPID = @p_WFPID and WFZ_DataZamkniecia = 0) )
+			EXEC CDN.WFL_ZakonczProces 
+			@p_WFPID = @p_WFPID, 
+			@p_DataZamkniecia = @p_DataWykonania,
+			@ret_status = @ret_status OUTPUT
+			if @ret_status&lt;&gt;0
+				GOTO KONIEC			
+	END
+
+	if @ret_status&lt;&gt;0
+		GOTO KONIEC
+
+
+KONIEC: 
+ if object_id('tempdb..#tbl_statusykoncowe') is not null
+	DROP TABLE #tbl_statusykoncowe
+
+ if (@ret_status&lt;&gt;0)
+	  begin
+		if (@@trancount&gt;0)
+			ROLLBACK TRANSACTION
+	  end
+	  else
+		COMMIT TRANSACTION
+
+	if (@p_ZwrotWyniku&lt;&gt;0 and @ret_status=0)
+		select cast(@ret_status as varchar(10))+':'+cast(@p_LastWFZID as varchar(10)) as T_KODBLEDU
+
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

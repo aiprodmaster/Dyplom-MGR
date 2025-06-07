@@ -1,0 +1,219 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="XLDodajRealizacjeReklamacji"></A><PRE>
+          <FONT SIZE="2"><I>/* XLDodajRealizacjeReklamacji */</I><BR>
+CREATE PROCEDURE CDN.XLDodajRealizacjeReklamacji
+@RleId				INT,				-- Identyfikator elementu reklamacji
+@RodId				INT,				-- rodzaj operacji
+@Opis				VARCHAR(1999),		-- informacje dodatkowe
+@KntNumer			INT,
+@OpeNumer			INT,
+@RlrId				INT OUT,
+@DataWykonania		INT = NULL,		    -- data wykonania operacji
+@GUID				VARCHAR(36) = NULL,
+@CzasModyfikacji	INT = NULL
+AS
+IF NOT EXISTS(SELECT * FROM CDN.ReklElem WHERE RLE_Id=@RleId) 
+BEGIN	
+	RAISERROR ('XLDodajRealizacjeReklamacji: Nie znaleziono elementu reklamacji o podanym identyfikatorze.', 16, 1)
+	RETURN 9
+END
+
+IF EXISTS(SELECT * FROM CDN.ReklRealizacja WHERE RLR_RLEId = @RleId AND RLR_RODId = -1 and @RodId = -1) 
+BEGIN	
+	RAISERROR ('XLDodajRealizacjeReklamacji: operacja "dodanie elementu" została już dodana do wskazanego elementu', 16, 1)
+	RETURN 10
+END
+
+BEGIN TRAN
+
+INSERT INTO CDN.ReklRealizacja(
+	RLR_RLEId, 
+	RLR_RODId,
+	RLR_Nazwa,
+	RLR_Opis,
+	RLR_StanPo,
+	RLR_DokTyp,
+	RLR_DokNumer,
+	RLR_DokLp,
+	RLR_DataWykonania,
+	RLR_OpeTyp,
+	RLR_OpeNumer,
+	RLR_Opublikowana,
+	RLR_Status,
+	RLR_MagNumer,
+	RLR_RODKluczowa,
+	RLR_GUID,
+	RLR_CzasModyfikacji
+)
+SELECT DISTINCT
+	@RleID,
+	ROD_Id,
+	ROD_Nazwa,
+	'Informacje dodatkowe: ' + ISNULL(@Opis, ''),
+	ROD_StanPo,
+	0,
+	0,
+	0,
+	ISNULL(@DataWykonania, DATEDIFF(d,'18001228',GETDATE())),
+	Ope_GIDTyp,
+	Ope_GIDNumer,
+	ROD_Opublikowana,
+	ROD_Status,
+	0,
+	ROD_Id,
+	ISNULL(@GUID, NEWID()),
+	ISNULL(@CzasModyfikacji, datediff(s, '19900101', getdate()))
+FROM   CDN.ReklOperacjeDef
+LEFT OUTER JOIN CDN.KntAplikacje ON KAp_KntNumer = @KntNumer AND KAp_KntTyp = 32
+INNER JOIN CDN.OpeKarty ON Ope_GIDNumer=@OpeNumer OR (Ope_GIDNumer=KAp_OpeNumer AND @OpeNumer IS NULL)
+WHERE  ROD_Id = @RodId
+
+IF @@ROWCOUNT=0 BEGIN						
+	RAISERROR ('XLDodajRealizacjeReklamacji: Nie powiodło się dodawanie wpisu do tabeli CDN.ReklRealizacja.', 16, 1)
+	ROLLBACK TRAN
+	RETURN 6
+END
+
+SET @RlrId = SCOPE_IDENTITY()
+
+DECLARE @RLNId	INT
+DECLARE @Status TINYINT
+DECLARE @StanPo TINYINT
+DECLARE @Stan SMALLINT
+
+SELECT @Status = RLR_Status, @StanPo = RLR_StanPo from CDN.ReklRealizacja where RLR_Id = @RlrId
+
+IF @Status &lt;&gt; 3 
+begin
+	UPDATE CDN.ReklElem set RLE_Status = @Status, RLE_Rozpatrzenie = @Opis where RLE_Id = @RleID
+end
+
+SELECT @RLNId = RLN_Id, @Stan = RLN_Stan FROM CDN.ReklNag 
+LEFT JOIN CDN.ReklElem ON RLN_Id = RLE_RLNId
+WHERE RLE_Id = @RleId
+
+IF @Stan &gt;= 10 AND @Stan &lt; 40  -- 10 - potwierdzona, 40 - zamknięta
+begin
+	IF @StanPo = 20 -- w realizacji
+		update cdn.ReklNag 
+		set RLN_Stan = 20
+		,RLN_CzasModyfikacji = datediff(s, '19900101', getdate())
+		WHERE RLN_Id = @RLNId
+	IF @StanPo = 30 -- rozpatrzona
+		update cdn.ReklNag 
+		set RLN_Stan = 30
+		,RLN_DataRozp = CDN.DateToClarion(GETDATE())
+		,RLN_OpeNumerR = @OpeNumer
+		,RLN_OpeTypR = 128
+		,RLN_CzasModyfikacji = datediff(s, '19900101', getdate())
+		WHERE RLN_Id = @RLNId
+
+	 -- ** zamknięcie reklamacji **
+	IF @StanPo = 40 AND @Stan IN (10, 20, 30)
+	BEGIN
+		DECLARE @RLEIdTemp int = 0
+		WHILE (1 = 1)
+		BEGIN
+			SELECT @RLEIdTemp = MIN(RLE_Id)
+			FROM cdn.ReklElem
+			WHERE RLE_RLNId = @RLNId AND RLE_Id &lt;&gt; @RleId AND RLE_Id &gt; @RLEIdTemp
+			
+			IF @RLEIdTemp is null break
+
+			INSERT INTO CDN.ReklRealizacja(
+				RLR_RLEId, 
+				RLR_RODId,
+				RLR_Nazwa,
+				RLR_Opis,
+				RLR_StanPo,
+				RLR_DokTyp,
+				RLR_DokNumer,
+				RLR_DokLp,
+				RLR_DataWykonania,
+				RLR_OpeTyp,
+				RLR_OpeNumer,
+				RLR_Opublikowana,
+				RLR_Status,
+				RLR_MagNumer,
+				RLR_RODKluczowa,
+				RLR_GUID,
+				RLR_CzasModyfikacji
+			)
+			SELECT DISTINCT
+				@RLEIdTemp,
+				ROD_Id,
+				ROD_Nazwa,
+				'',
+				ROD_StanPo,
+				0,
+				0,
+				0,
+				ISNULL(@DataWykonania, DATEDIFF(d,'18001228',GETDATE())),
+				Ope_GIDTyp,
+				Ope_GIDNumer,
+				ROD_Opublikowana,
+				ROD_Status,
+				0,
+				ROD_Id,
+				NEWID(),
+				datediff(s, '19900101', GETDATE())
+			FROM   CDN.ReklOperacjeDef
+			LEFT OUTER JOIN CDN.KntAplikacje ON KAp_KntNumer = @KntNumer AND KAp_KntTyp = 32
+			INNER JOIN CDN.OpeKarty ON Ope_GIDNumer=@OpeNumer OR (Ope_GIDNumer=KAp_OpeNumer AND @OpeNumer IS NULL)
+			WHERE  ROD_Id = -18
+
+			IF @@ROWCOUNT=0 BEGIN						
+				RAISERROR ('XLDodajRealizacjeReklamacji: Błąd dodania operacji zamknięcia do dokumentu reklamacji.', 16, 1)
+				ROLLBACK TRAN
+				RETURN 11
+			END
+		END
+
+		-- Zmiana statusu elementów reklamacji dla których reklamacja nie została ani odrzucona ani uznana
+		UPDATE CDN.ReklElem 
+		SET RLE_Status = 4 -- zrealizowana
+		WHERE RLE_RLNId = @RLNId AND RLE_Status &lt;&gt; 1 -- uznana
+		AND NOT EXISTS( SELECT * FROM CDN.ReklRealizacja WHERE RLR_RLEId = RLE_Id AND RLR_Status IN(1,2)) -- 1 - uznana, 2 - odrzucona
+
+		-- Zmiana stanu i statusu dokumentu reklamacji
+		update cdn.ReklNag 
+		set RLN_Stan = 40
+		,RLN_DataZamkniecia = CDN.DateToClarion(GETDATE())
+		,RLN_OpeNumerZ = @OpeNumer
+		,RLN_OpeTypZ = 128
+		,RLN_Status = (SELECT CASE COUNT( DISTINCT RLE_Status ) WHEN 1 THEN MAX(RLE_Status) ELSE 4 END status
+						FROM CDN.ReklElem
+						WHERE RlE_RlNID = @RLNId)
+		,RLN_CzasModyfikacji = datediff(s, '19900101', getdate())
+		WHERE RLN_Id = @RLNId
+	END
+	-- ** zamknięcie reklamacji **
+end
+
+SELECT @Stan = RLN_Stan FROM CDN.ReklNag 
+WHERE RLN_Id = @RLNId
+
+IF @Stan &lt; 40 -- zamknięta
+	update cdn.ReklNag 
+	set RLN_Status = (SELECT ISNULL(MIN(RLE_Status),0) FROM CDN.ReklElem WHERE RlE_RlnId = @RLNId) --(0) e_RLN_nStatusRozpatrywana
+	,RLN_CzasModyfikacji = datediff(s, '19900101', getdate())
+	WHERE RLN_Id = @RLNId
+
+COMMIT TRAN
+RETURN 0
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

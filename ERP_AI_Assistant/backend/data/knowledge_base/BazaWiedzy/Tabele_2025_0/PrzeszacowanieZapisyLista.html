@@ -1,0 +1,145 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="PrzeszacowanieZapisyLista"></A><PRE>
+          <FONT SIZE="2"><I>/* PrzeszacowanieZapisyLista */</I><BR>
+CREATE PROCEDURE CDN.PrzeszacowanieZapisyLista
+@DataC int,
+@OkresKonto int,
+@Bufor smallint,
+@Waluta varchar(3)
+AS
+
+declare @Data datetime
+
+if isnull(@DataC,0) = 0 or isnull(@Waluta, '') = ''
+	return
+
+set @Data = dateadd(dd, @DataC, convert(datetime, '18001228'))
+
+
+set @Bufor = isnull(@Bufor, 0)
+
+if not exists(select 1 from #tmpKonta)
+	insert into #tmpKonta
+	select KKS_Konto, KKS_GIDNumer
+	from cdn.Konta
+	where KKS_OkresID = @OkresKonto and KKS_Rozrachunkowe = 1 and KKS_Analityka = 1
+	
+
+
+select Del_GIDNumer GIDNumer, Del_GIDLp GIDLp, Del_DokumentZrodlowy DokumentZrodlowy, DZK_Rok Rok, Dzk_Miesiac Miesiac, DZK_Dzien Dzien,
+	d.RozrachunkoweDT, d.RozrachunkoweCT,
+	d.PrzeszKKSNumer, d.PrzeszKKSKonto,
+	d.KontoSysDT, d.KontoSysCT, d.KontoWalDT, d.KontoWalCT, d.DoPrzeszacDT, d.DoPrzeszacCT,
+	d.WalutaDT, d.WalutaCT,
+    d.KursLDT, d.KursMDT, d.KursLCT, d.KursMCT,
+	d.KwotaSysDT, d.KwotaSysCT, d.KwotaWalDT, d.KwotaWalCT,
+	d.KwotaSysDT - sign(d.KwotaSysDT) * d.RozlSysDT as PozostajeSysDT,
+	d.KwotaSysCT - sign(d.KwotaSysCT) * d.RozlSysCT as PozostajeSysCT,
+	d.KwotaWalDT - sign(d.KwotaWalDT) * d.RozlWalDT as PozostajeWalDT,
+	d.KwotaWalCT - sign(d.KwotaWalCT) * d.RozlWalCT as PozostajeWalCT,
+        cdn.NumerDekretu(DZK_Bufor, DZK_Dziennik, DZK_Rok, DZK_Miesiac, DZK_RMNumer, DEL_Pozycja, 0, DZK_OkrSymbol) as Numer
+from cdn.DziennikElem 
+	join (
+		select c.DT_GIDNumer, c.DT_GIDLp,	 
+			max(case when c.dt_WalutaObca = 0 and c.dt_dc = 1 and (c.dt_rozliczony = 1 or c.dt_nierozliczony = 1) then 1 else 0 end) RozrachunkoweDT, 
+			max(case when c.dt_WalutaObca = 0 and c.dt_dc = 2 and (c.dt_rozliczony = 1 or c.dt_nierozliczony = 1) then 1 else 0 end) RozrachunkoweCT, 
+			max(case when c.dt_WalutaObca = 0 and c.dt_dc = 1 then c.dt_Konto else '' end) KontoSysDT, 
+			max(case when c.dt_WalutaObca = 0 and c.dt_dc = 2 then c.dt_Konto else '' end) KontoSysCT, 
+			max(case when c.dt_WalutaObca = 1 and c.dt_dc = 1 then c.dt_Konto else '' end) KontoWalDT, 
+			max(case when c.dt_WalutaObca = 1 and c.dt_dc = 2 then c.dt_Konto else '' end) KontoWalCT, 
+			max(case when c.dt_WalutaObca = 1 and c.dt_dc = 1 and b.dt_dc = 1 then 1 else 0 end) DoPrzeszacDT, 
+			max(case when c.dt_WalutaObca = 1 and c.dt_dc = 2 and b.dt_dc = 2 then 1 else 0 end) DoPrzeszacCT, 
+			max(case when c.dt_WalutaObca = 1 and c.dt_dc = 1 then c.dt_Waluta else '' end) WalutaDT, 
+			max(case when c.dt_WalutaObca = 1 and c.dt_dc = 2 then c.dt_Waluta else '' end) WalutaCT, 
+			sum(case when c.dt_WalutaObca = 0 and c.dt_dc = 1 then c.dt_KursKwota else 0 end) KursLDT, 
+			sum(case when c.dt_WalutaObca = 1 and c.dt_dc = 1 then c.dt_KursKwota else 0 end) KursMDT, 
+			sum(case when c.dt_WalutaObca = 0 and c.dt_dc = 2 then c.dt_KursKwota else 0 end) KursLCT, 
+			sum(case when c.dt_WalutaObca = 1 and c.dt_dc = 2 then c.dt_KursKwota else 0 end) KursMCT, 
+			max(c.dt_WalutaObca) WalutaObca,
+			sum(case when c.dt_WalutaObca = 0 and c.dt_dc = 1 then c.dt_Kwota else 0 end) KwotaSysDT,
+			sum(case when c.dt_WalutaObca = 0 and c.dt_dc = 2 then c.dt_Kwota else 0 end) KwotaSysCT,
+			sum(case when c.dt_WalutaObca = 1 and c.dt_dc = 1 then c.dt_Kwota else 0 end) KwotaWalDT,
+			sum(case when c.dt_WalutaObca = 1 and c.dt_dc = 2 then c.dt_Kwota else 0 end) KwotaWalCT,
+			max(case when c.dt_WalutaObca = 0 and c.dt_dc = 1 then b.SumaSys else 0 end) RozlSysDT,
+			max(case when c.dt_WalutaObca = 0 and c.dt_dc = 2 then b.SumaSys else 0 end) RozlSysCT,
+			max(case when c.dt_WalutaObca = 1 and c.dt_dc = 1 then b.SumaWal else 0 end) RozlWalDT,
+			max(case when c.dt_WalutaObca = 1 and c.dt_dc = 2 then b.SumaWal else 0 end) RozlWalCT,
+			b.PrzeszKKSNumer PrzeszKKSNumer, 
+			b.PrzeszKKSKonto PrzeszKKSKonto
+	
+		from	
+			(
+				select a.DT_GIDNumer, a.DT_GIDLp, a.DT_DC, a.KKS_GIDNumer PrzeszKKSNumer, a.KKS_Konto PrzeszKKSKonto, sum(a.sumaWal) sumaWal, sum(a.sumaSys) sumaSys
+				from 
+					( 
+						select DT_GIDNumer, DT_GIDLp, DT_DC, DT_Kwota, KKS_GIDNumer, KKS_Konto, sum(isnull(R2_KwotaWal1,0)) sumaWal, sum(isnull(R2_KwotaSys,0)) sumaSys
+						from #tmpKonta					
+							join cdn.KontaNastLinki
+								on KKS_GIDNumer = KLI_NastNumer
+							join cdn.Dekrety
+								on KLI_PoprzNumer = DT_KKSNumer
+							left join cdn.PrzeszacElem a
+								on DT_GIDNumer = a.PSE_DZKNumer and DT_GIDLp = a.PSE_DZKLp and a.PSE_Okres = @DataC and DT_Konto = a.PSE_KontoZrd
+							left join cdn.Rozliczenia 
+								on DT_GIDNumer = R2_Dekret1Numer and DT_GIDLp = R2_Dekret1Lp and DT_DC = R2_Dekret1DC and DT_Waluta = R2_Waluta1 and R2_DataRozrachunku &lt;= @DataC
+						where a.PSE_GIDTyp is null and DT_WalutaObca = 1 AND DT_Waluta = @Waluta and DT_DataDekr &lt;= @DataC
+							and (DT_Nierozliczony = 1 or DT_Rozliczony = 1)
+							and (@Bufor = 1 or @Bufor = 0 and DT_Bufor = '') 														
+						group by DT_GIDNumer, DT_GIDLp, DT_DC, DT_Kwota, KKS_GIDNumer, KKS_Konto
+						union all 
+						select  DT_GIDNumer, DT_GIDLp, DT_DC, DT_Kwota, KKS_GIDNumer, KKS_Konto, sum(isnull(R2_KwotaWal2,0)) sumaWal, sum(isnull(R2_KwotaSys,0)) sumaSys
+						from #tmpKonta					
+							join cdn.KontaNastLinki
+								on KKS_GIDNumer = KLI_NastNumer
+							join cdn.Dekrety
+								on KLI_PoprzNumer = DT_KKSNumer
+							left join cdn.PrzeszacElem a
+								on DT_GIDNumer = a.PSE_DZKNumer and DT_GIDLp = a.PSE_DZKLp and a.PSE_Okres = @DataC and DT_Konto = a.PSE_KontoZrd
+							left join cdn.Rozliczenia 
+								on DT_GIDNumer = R2_Dekret2Numer and DT_GIDLp = R2_Dekret2Lp and DT_DC = R2_Dekret2DC and DT_Waluta = R2_Waluta2 and R2_DataRozrachunku &lt;= @DataC
+						where a.PSE_GIDTyp is null and DT_WalutaObca = 1 AND DT_Waluta = @Waluta and DT_DataDekr &lt;= @DataC
+							and (DT_Nierozliczony = 1 or DT_Rozliczony = 1)
+							and (@Bufor = 1 or @Bufor = 0 and DT_Bufor = '') 														
+						group by DT_GIDNumer, DT_GIDLp, DT_DC, DT_Kwota, KKS_GIDNumer, KKS_Konto
+					) a
+				where not KKS_GIDNumer in (
+					select KLI_PoprzNumer
+					from cdn.PrzeszacElem b	
+						join cdn.Okresy
+							on b.PSE_Okres between Okr_Poczatek and Okr_Koniec
+						join cdn.Konta 
+							on b.PSE_KontoZrd = KKS_Konto and KKS_OkresID = Okr_ID
+						join cdn.KontaNastLinki
+							on KLI_NastNumer = KKS_GIDNumer		
+					where b.PSE_Okres = @DataC and b.PSE_DZKNumer = 0
+					)
+
+				group by a.DT_GIDNumer, a.DT_GIDLp, a.DT_DC, a.DT_Kwota, a.KKS_GIDNumer, a.KKS_Konto 
+				having a.DT_Kwota - sum(a.sumaWal) * sign(a.DT_Kwota) &lt;&gt; 0 
+			) b
+			join cdn.Dekrety c 
+				on b.DT_GIDNumer = c.DT_GIDNumer and b.DT_GIDLp = c.DT_GIDLp
+		group by c.DT_GIDNumer, c.DT_GIDLp, b.PrzeszKKSNumer, b.PrzeszKKSKonto
+	) d 
+		on Del_GIDNumer = d.DT_GIDNumer and Del_GIDlp = d.DT_GIDLp 
+	join cdn.Dziennik 
+		on Del_GIDNumer = Dzk_GIDNumer
+order by PrzeszKKSKonto, Rok, Miesiac, Dzien		
+
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

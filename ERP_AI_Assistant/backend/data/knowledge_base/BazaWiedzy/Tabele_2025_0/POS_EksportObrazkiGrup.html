@@ -1,0 +1,73 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[POS_EksportObrazkiGrup]"></A><PRE>
+          <FONT SIZE="2"><I>/* [POS_EksportObrazkiGrup] */</I><BR>
+CREATE PROCEDURE [CDN].[POS_EksportObrazkiGrup] 
+	@rowVersion BIGINT,
+	@PointOfSaleId INT
+AS
+BEGIN
+SET NOCOUNT ON;	
+	DECLARE @TypId INT = (SELECT slw_id FROM cdn.slowniki WHERE slw_kategoria = 'Typy załączników' and SLW_WartoscS='Obraz')
+	DECLARE @PckId INT 
+	DECLARE @Zdjecia TABLE([@ProductGroupId] INT,[@PictureId] INT)
+	DECLARE @Grupy TABLE(GIDNR INT)
+
+	DECLARE @oddzialy TABLE(PicoID int)
+	INSERT INTO @oddzialy select PcKPicoID from cdn.POS_OddzialyDoEksportu(@PointOfSaleId,@rowVersion)
+	
+
+	INSERT INTO @Grupy
+	SELECT  Twl_GidNumer FROM cdn.PicoSzybkaSprzedaz
+		JOIN CDN.TwrGrupy ON TwG_SyncID = PSS_TwgSyncID
+		JOIN CDN.TwrLinki ON TwL_GrONumer = TwG_GIDNumer AND TwL_GrOTyp = TwG_GIDTyp AND TwL_GrOTyp = -16 AND TwL_GIDTyp = -16
+		WHERE PSS_PicoID IN (select PicoID from @oddzialy)
+		UNION 
+		SELECT  TwG_GIDNumer FROM cdn.PicoSzybkaSprzedaz
+		JOIN CDN.TwrGrupy ON TwG_SyncID = PSS_TwgSyncID
+		WHERE PSS_PicoID IN (select PicoID from @oddzialy)
+
+	 
+	BEGIN
+	INSERT INTO @Zdjecia
+		SELECT TOP 1 WITH TIES
+			TwG_SyncId AS [@ProductGroupId],
+			DAO_DabID AS [@PictureId]	
+		FROM @Grupy
+		JOIN CDN.TwrGrupy ON GIDNR = TwG_GIDNumer
+		JOIN (
+			SELECT DAO_ObiNumer,DAO_DabID, ROW_NUMBER() OVER(PARTITION BY DAO_ObiNumer ORDER BY DAO_ObiNumer,DAO_Pozycja ASC) AS R
+			FROM CDN.DaneObiekty 
+			JOIN CDN.DaneBinarne ON DAB_ID=DAO_DABId AND DAB_TypId = @TypId
+			WHERE DAO_ObiTyp = -16 AND DAO_Retail = 1 AND DAB_Retail = 1
+			GROUP BY DAO_ObiNumer,DAO_DABId,DAO_Pozycja
+		) A ON DAO_ObiNumer = TwG_GIDNumer
+		WHERE TwG_GIDTyp = -16
+		ORDER BY A.R
+	END
+
+
+
+	SELECT
+		(SELECT 0) AS [@RowVersion], 
+		(		
+	SELECT distinct [@ProductGroupId],[@PictureId] FROM @Zdjecia
+	FOR XML PATH('ProductGroupPicture'), TYPE)
+	FOR XML PATH('ProductGroupPictures')
+	SET NOCOUNT OFF;	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

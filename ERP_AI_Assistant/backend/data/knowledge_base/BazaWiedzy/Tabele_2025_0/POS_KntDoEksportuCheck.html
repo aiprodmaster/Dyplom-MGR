@@ -1,0 +1,119 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="POS_KntDoEksportuCheck"></A><PRE>
+          <FONT SIZE="2"><I>/* POS_KntDoEksportuCheck */</I><BR>
+CREATE FUNCTION CDN.POS_KntDoEksportuCheck (@PointOfSaleId int,@rowVersion int, @KntNumer int = null)
+RETURNS @knt TABLE (
+	KntGidNumer				int,
+	KntLp					int,
+	KntLastMod				int,
+	KntKraj					nvarchar(3),
+	kntGUID					nvarchar(41),
+	KntWaNCzasModyfikacji	int,
+	juzNieWysylany			int,
+	KntLimitTermin			int,
+	KntAkwNumer				int
+)
+AS  
+BEGIN
+	declare @formy Table(Lp int, FormaWaNCzasModyfikacji int)	
+	insert into @formy select distinct kon_lp, case when PFP_CzasModyfikacji &gt; KarWaNCzasModyfikacji THEN PFP_CzasModyfikacji else KarWaNCzasModyfikacji end
+	from cdn.PicoStanowiska
+	join cdn.PicoKonfig on PSa_PcKID = PcK_PicoID
+	join cdn.FrmObiekty on FRO_FRMID = pck_CentrumId and Fro_GIDTyp=736
+	join cdn.konfig on KON_Numer=FRO_GIDTyp AND KON_Lp=FRO_GIDNumer 		
+	join cdn.picostanowiskaformypl on kon_lp = PFP_FormaNr and PFP_PSaID = psa_id
+	join cdn.pos_KarDoEksportu(@pointOfSaleId,0) on PFP_KARNumer = KarNumer
+	where Psa_ID = @pointOfSaleId
+
+	DECLARE @PckID INT = 0
+	SELECT TOP 1 @PckID = PSa_PcKID FROM CDN.PicoStanowiska WHERE PSa_ID = @pointOfSaleId
+	DECLARE @DrzewoGrup TABLE (PcK_PicoID INT,AktuGidNumer INT,pck_TSZmianyGrupyEksportuKnt INT,PcK_NrCenyDomyslnej INT,KntGIDNumer INT,PSaLastSync INT, KntLimitTermin INT, KntAkwNumer INT)
+
+	IF @KntNumer IS NULL 
+	BEGIN
+		INSERT INTO @DrzewoGrup SELECT @PckID,AktuGidNumer,pck_TSZmianyGrupyEksportuKnt,PcK_NrCenyDomyslnej,Knt_GIDNumer,PSa_LastSync, Knt_LimitTerminowy, Knt_AkwNumer FROM CDN.PicoKonfig 
+		OUTER APPLY cdn.PobierzDrzewoGrupKontrahentow(PcK_KnGENumer,default)
+		join cdn.PicoStanowiska on pck_picoid = psa_pckid
+		join cdn.KntGrupy on KnG_GIDNumer = AktuGidNumer and KnG_GIDTyp = -32
+		join cdn.Kntlinki on Knl_GroNumer = kng_gidnumer and knl_grotyp = kng_gidtyp and KnL_Lisc = 1 and knl_gidtyp = 32
+		join cdn.Kntkarty on (KnL_GIDNumer = Knt_GIDNumer and Knt_GIDTyp = Knl_Gidtyp)
+		WHERE PcK_PicoID = @PckID AND psa_id = @PointOfSaleId AND KnL_Lisc = 1 AND KnL_LiczbaPowtorzen=1
+	END
+	ELSE
+	BEGIN
+		INSERT INTO @DrzewoGrup SELECT @PckID,AktuGidNumer,pck_TSZmianyGrupyEksportuKnt,PcK_NrCenyDomyslnej,Knt_GIDNumer,PSa_LastSync,Knt_LimitTerminowy,Knt_AkwNumer FROM CDN.PicoKonfig 
+		OUTER APPLY cdn.PobierzDrzewoGrupKontrahentow(PcK_KnGENumer,default)
+		join cdn.PicoStanowiska on pck_picoid = psa_pckid
+		join cdn.KntGrupy on KnG_GIDNumer = AktuGidNumer and KnG_GIDTyp = -32
+		join cdn.Kntlinki on Knl_GroNumer = kng_gidnumer and knl_grotyp = kng_gidtyp and KnL_Lisc = 1 and knl_gidtyp = 32
+		join cdn.Kntkarty on (KnL_GIDNumer = Knt_GIDNumer and Knt_GIDTyp = Knl_Gidtyp) AND Knt_GIDNumer = @KntNumer
+		WHERE PcK_PicoID = @PckID AND psa_id = @PointOfSaleId AND KnL_Lisc = 1 AND KnL_LiczbaPowtorzen=1
+	END
+	
+	insert into @knt  		    
+	select distinct Knt_GIDNumer as Id, row_number() over (order by Knt_GIDNumer) as row,Knt_LastModL,knt_kraj,knt_GUID,FormaWaNCzasModyfikacji,0,Knt_LimitTerminowy,Knt_AkwNumer from
+		(
+		select distinct Knt_GIDNumer,case when isnull(KnO_CzasModyfikacji,0) &gt; Knt_LastModL then KnO_CzasModyfikacji ELSE (SELECT MAX(rw) FROM (VALUES (FormaWaNCzasModyfikacji),(PSaLastSync),(KnO_CzasModyfikacji),(Knt_LastModL),(pck_TSZmianyGrupyEksportuKnt)) AS AllPrices(rw)) END as Knt_LastModL,knt_kraj,knt_GUID,FormaWaNCzasModyfikacji, Knt_LimitTerminowy,Knt_AkwNumer
+		from @DrzewoGrup
+		join cdn.Kntkarty on Knt_GIDNumer = KntGIDNumer
+		join cdn.POS_TCNDoEksportu(@PointOfSaleId) on CenaLP = Knt_Cena OR Knt_Cena = 0
+		JOIN CDN.KrajeCelne ON Knt_Kraj = KPC_Kod
+		JOIN @formy ON Lp = Knt_FormaPl --knt musi mieć przypisaną formę dodaną na stanowisku
+		LEFT JOIN CDN.KntOpisy ON KnO_KntNumer = Knt_GIDNumer
+		LEFT JOIN CDN.KntAdresy ON KnA_KntNumer = Knt_GIDNumer
+		where 
+		(
+				Knt_GUID is not null and Knt_GUID &lt;&gt; '' AND Knt_GUIDdane is not null and Knt_GUIDdane &lt;&gt; '' AND KnA_GUID is not null and KnA_GUID &lt;&gt; '' and KnA_GUIDdane is not null and KnA_GUIDdane &lt;&gt; ''  and 				 
+				(Knt_Cena &lt;&gt; 0 OR PcK_NrCenyDomyslnej &lt;&gt; 0) AND --jeśli knt nie ma ceny domyślnej to brać z oddziału					        
+				(
+					(SELECT MAX(rw) FROM (VALUES (FormaWaNCzasModyfikacji),(PSaLastSync),(KnO_CzasModyfikacji),(Knt_LastModL),(pck_TSZmianyGrupyEksportuKnt)) AS AllPrices(rw)) &gt; @rowVersion OR @rowVersion=0
+				)
+				AND	knt_gidnumer &lt;&gt; 0
+				AND case when Knt_Cena = 0 then PcK_NrCenyDomyslnej else Knt_Cena end in (select cenalp from CDN.POS_TCNDoEksportu(@pointOfSaleId))
+				AND Knt_KnATyp &lt;&gt; 0
+		)
+	) as y
+		
+	insert into @knt
+	select distinct Knt_GIDNumer as Id, isnull((select max(KntLp)+1 from @knt),1),Knt_LastModL,knt_kraj,knt_GUID,FormaWaNCzasModyfikacji,0,Knt_LimitTerminowy,Knt_AkwNumer from cdn.KntKarty
+        LEFT JOIN @knt A ON A.KntGIDNumer = Knt_GIDNumer
+	JOIN @formy ON Lp = Knt_FormaPl
+	WHERE knt_gidnumer = 0 AND A.KntGIDNumer IS NULL AND case when Knt_Cena = 0 then (select top 1 PcK_NrCenyDomyslnej from cdn.picokonfig join cdn.picostanowiska on PSa_PcKID = PcK_PicoID where psa_id=@PointOfSaleId) else Knt_Cena end in (select cenalp from CDN.POS_TCNDoEksportu(@pointOfSaleId))
+	
+	DECLARE @MaxLp int = (select max(KntLp) from @knt)
+	
+	IF @rowVersion = 0
+	BEGIN
+		insert into @knt
+		select distinct PcL_ObiNumer, @MaxLp + row_number() over (order by PcL_ObiNumer) as row,0,'PL',PcL_ObiektGUID,0,1,1,0
+		from cdn.PicoLog
+		left join @knt on PcL_ObiNumer = KntGidNumer and PcL_ObiTyp = 32
+		where KntGidNumer is null AND PcL_PcKID = @pckid AND PcL_ObiTyp = 32 and PcL_ObiektGUID &lt;&gt; '' and PcL_ObiektGUID IS NOT NULL
+	END
+	ELSE
+	BEGIN
+		insert into @knt
+		select distinct PcL_ObiNumer, @MaxLp + row_number() over (order by PcL_ObiNumer) as row,0,'PL',PcL_ObiektGUID,0,1,1,0
+		from cdn.PicoLog
+		left join cdn.POS_KntDoEksportuCheck(@PointOfSaleId,0,@KntNumer) on PcL_ObiNumer = KntGidNumer and PcL_ObiTyp = 32 and juzNieWysylany = 0
+		where KntGidNumer is null AND PcL_PcKID = @pckid AND PcL_ObiTyp = 32 and PcL_ObiektGUID &lt;&gt; '' and PcL_ObiektGUID IS NOT NULL
+	END
+
+	RETURN
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

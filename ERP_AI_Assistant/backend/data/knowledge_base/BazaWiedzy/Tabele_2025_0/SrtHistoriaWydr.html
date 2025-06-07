@@ -1,0 +1,232 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Usuwanie procedury CDN.SrtHistoriaWydr"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Usuwanie procedury CDN.SrtHistoriaWydr */</I><BR>
+if exists(select name from sysobjects where name='SrtHistoriaWydr' and type='P')
+	drop procedure CDN.SrtHistoriaWydr
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury CDN.SrtHistoriaWydr"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury CDN.SrtHistoriaWydr */</I><BR>
+CREATE   PROCEDURE CDN.SrtHistoriaWydr(@SrtGIDNumer int,
+			@WybranyTorLp tinyint = 0,
+			@SRTWaluta nvarchar(6) = 'PLN',
+			@WartoscWWalucie varchar(6) = 0,
+			@DataOd int,
+			@DataDo int,
+			@sHistoriaFiltr nvarchar(max) ='')
+AS
+BEGIN
+	set nocount on
+	set QUOTED_IDENTIFIER OFF
+
+		/*select @sHistoriaFiltr,
+			@SrtGIDNumer,
+			@WybranyTorLp,
+			@SRTWaluta,
+			@WartoscWWalucie,
+			@DataOd,
+			@DataDo
+			--		*/
+			
+		declare @SrtGIDNumer_Str nvarchar(20) = '0', @DataOd_Str nvarchar(20) = '', @DataDo_Str nvarchar(20) = ''
+
+		declare @e_Srt_TorBilansowy_Lp tinyint = 1 ,  
+			@e_Srt_TorPodatkowy_Lp tinyint = 2 ,  
+			@e_Srt_Tor3_Lp tinyint = 3 ,  
+			@e_Srt_Tor4_Lp tinyint = 4 ,  
+			@e_Srt_Tor5_Lp tinyint = 5,
+
+			@e_srt_GIDTypDokumentu_ZMT nvarchar(5) = '2548',
+			@WalutaSystemowa nvarchar(6) = 'PLN',
+			@kwotaSys nvarchar(3) = '',
+			@WybranyTorLpSrt nvarchar(max) = convert(nvarchar(3), @WybranyTorLp),
+			@filtrTorNag nvarchar(max) = '' ,
+			@filtrTorElem nvarchar(max) = '' 
+
+		
+		 
+
+		select @WalutaSystemowa = Kon_Wartosc from cdn.Konfig where Kon_Numer = 211		-- waluta systemowa
+
+		select @kwotaSys = case when (@SRTWaluta = @WalutaSystemowa OR @WartoscWWalucie &lt;&gt; @WalutaSystemowa) then '' else 'Sys' end
+			, @DataOd_Str = case when isnull(@DataOd, 0) = 0 then 'null' else convert(nvarchar(20), @DataOd) end
+			, @DataDo_Str = case when isnull(@DataDo,0) = 0 then 'null' else convert(nvarchar(20), @DataDo) end
+			, @SrtGidNumer_Str = convert(nvarchar(20), @SrtGidNumer)
+        
+
+		IF @WybranyTorLp &gt; 0
+		BEGIN
+            set @filtrTorElem = ' AND n.NAZ_GIDLp= ' + @WybranyTorLpSrt + ' '
+            IF @WybranyTorLp = @e_Srt_TorBilansowy_Lp
+                set @filtrTorNag = ' AND SHE_TorUm_Lp= ' + @WybranyTorLpSrt + ' '
+            ELSE IF @WybranyTorLp = @e_Srt_TorPodatkowy_Lp
+                set @filtrTorNag = ' AND SHE_TorAm_Lp= ' + @WybranyTorLpSrt + ' '
+            ELSE IF @WybranyTorLp = @e_Srt_Tor3_Lp
+                set @filtrTorNag = ' AND SHE_Tor3_Lp= ' + @WybranyTorLpSrt + ' '
+            ELSE IF @WybranyTorLp = @e_Srt_Tor4_Lp
+                set @filtrTorNag = ' AND SHE_Tor4_Lp= ' + @WybranyTorLpSrt + ' '
+            ELSE IF @WybranyTorLp = @e_Srt_Tor5_Lp
+                set @filtrTorNag = ' AND SHE_Tor5_Lp= ' + @WybranyTorLpSrt + ' '
+		END
+
+		
+        declare @zapytanieSQL nvarchar(max) = 'SELECT cdn.SrtPrefiksDokumentu(she_gidtyp) pref,SHE_GIDTyp, SHE_GIDNumer, SHE_GIDLp, SHE_Data, SHE_DataZap, SHE_Opis ' + 
+                ', SHN_PoprzedniSymbDok, SHN_Aktywny, SHN_Seria, SHN_Data, SHN_Nr, SHN_Zaksiegowano, SHN_RokO ' + 
+                ', SHE_SRTNumer, SHE_SrtLp, Srt_KRST, Srt_Ksiega, Srt_Nazwa, Srt_NrEwid, Srt_NrInw, Srt_Rodzaj, Srt_Akronim ' + 
+                ', PodstawaAm, KwotaAmortyzacji, WspAm, WspAmDegr, Stawka, Metoda, Miejsce, Osoba, NazwaToru, TorLp ' + 
+            'from ' + 
+            '( ' + 
+                'SELECT SHN_GIDTyp SHE_GIDTyp, SHN_GIDNumer SHE_GIDNumer, SHE_GIDLp SHE_GIDLp, SHE_Data SHE_Data, SHE_DataZap SHE_DataZap, '''' SHE_Opis ' + 
+                    ', SHN_PoprzedniSymbDok, SHN_Aktywny, SHN_Seria, SHN_Data, SHN_Nr, SHN_Zaksiegowano, SHN_RokO ' + 
+                    ', SHE_SRTNumer, SHE_SrtLp '+
+					--', '''' Srt_KRST, '''' Srt_Ksiega, '''' Srt_Nazwa, '''' Srt_NrEwid, 0 Srt_NrInw, 0 Srt_Rodzaj, '''' Srt_Akronim ' + 
+					', Srt_KRST, Srt_Ksiega, Srt_Nazwa, Srt_NrEwid, Srt_NrInw, Srt_Rodzaj, Srt_Akronim ' + 
+                    ', 0 PodstawaAm, 0 KwotaAmortyzacji ' + 
+					', 0 WspAm, 0 WspAmDegr, 0 Stawka, 0 Metoda' + 
+					', SHE_MiejsceUzyw Miejsce, isnull(PRC_Akronim,'''') Osoba' +
+                    ', '''' NazwaToru, 0 TorLp ' + 
+                'FROM CDN.SrtHistElem e  ' + 
+                'JOIN CDN.SrtHistNag n on e.SHE_GIDTyp = n.SHN_GIDTyp and e.SHE_GIDNumer = n.SHN_GIDNumer ' + 
+				'left join cdn.PrcKarty on e.SHE_PrcNumer = Prc_GIDNumer '+
+				'join cdn.srtkarty k on e.SHE_SrtNumer = k.Srt_GIDNumer ' +
+                'WHERE '  +  rtrim(ltrim(@sHistoriaFiltr))  +  ' AND SHE_SrtNumer= ' + @SrtGIDNumer_Str + ' ' + rtrim(ltrim(@filtrTorNag)) + ' ' + 
+                'union all ' + 
+                'SELECT SHE_GIDTyp, SHE_GIDNumer, SHE_GIDLp, SHE_Data, SHE_DataZap, SHE_Opis , SHN_PoprzedniSymbDok, SHN_Aktywny, SHN_Seria, SHN_Data, SHN_Nr, SHN_Zaksiegowano, SHN_RokO  ' + 
+                    ', Srt_GIDNumer, SHE_SrtLp, Srt_KRST, Srt_Ksiega, Srt_Nazwa, Srt_NrEwid, Srt_NrInw, Srt_Rodzaj, Srt_Akronim, PodstawaAm, KwotaAmortyzacji, WspAm, WspAmDegr, Stawka, Metoda, '''' Miejsce, '''' Osoba, NazwaToru, TorGIDLp TorLp  ' + 
+                'from  ' + 
+                '( ' + 
+                    'SELECT SHE_GIDTyp, SHE_GIDNumer, SHE_GIDLp, SHE_Data, SHE_DataZap, SHE_Opis , SHN_PoprzedniSymbDok, SHN_Aktywny, SHN_Seria, SHN_Data, SHN_Nr, SHN_Zaksiegowano, SHN_RokO, SrtDok.Srt_GIDNumer, SHE_SrtLp, Srt_KRST ' +
+						', Srt_Ksiega, Srt_Nazwa, Srt_NrEwid, Srt_NrInw, Srt_Rodzaj, Srt_Akronim ' + 
+                        ', case   ' + 
+                            'when TorGIDLp = 1 then SHE_KwotaInw' + rtrim(ltrim(@kwotaSys)) + ' ' + 
+                            'when TorGIDLp = 2 then SHE_PodstawaAm' + rtrim(ltrim(@kwotaSys)) + ' ' + 
+                            'when TorGIDLp = 3 then SHE_PodstawaAmTor3' + rtrim(ltrim(@kwotaSys)) + '  ' + 
+                            'when TorGIDLp = 4 then SHE_PodstawaAmTor4' + rtrim(ltrim(@kwotaSys)) + ' ' + 
+                            'when TorGIDLp = 5 then SHE_PodstawaAmTor5' + rtrim(ltrim(@kwotaSys)) + ' ' + 
+                            'else 0 end PodstawaAm  ' + 
+                        ', case  ' + 
+                            'when TorGIDLp = 1 then SHE_KwotaUm' + rtrim(ltrim(@kwotaSys)) + ' ' + 
+                            'when TorGIDLp = 2 then SHE_KwotaAm' + rtrim(ltrim(@kwotaSys)) + '  ' + 
+                            'when TorGIDLp = 3 then SHE_KwotaAmTor3' + rtrim(ltrim(@kwotaSys)) + '  ' + 
+                            'when TorGIDLp = 4 then SHE_KwotaAmTor4' + rtrim(ltrim(@kwotaSys)) + '  ' + 
+                            'when TorGIDLp = 5 then SHE_KwotaAmTor5' + rtrim(ltrim(@kwotaSys)) + ' ' + 
+                            'else 0 end KwotaAmortyzacji  ' + 
+						', case  ' + 
+                            'when TorGIDLp = 1 then SHE_WspUmAm ' + 
+                            'when TorGIDLp = 2 then SHE_WspAm ' + 
+                            'when TorGIDLp = 3 then SHE_WspAmTor3 ' + 
+                            'when TorGIDLp = 4 then SHE_WspAmTor4 ' + 
+                            'when TorGIDLp = 5 then SHE_WspAmTor5 ' + 
+                            'else 0 end WspAm  ' + 
+						', case  ' + 
+                            'when TorGIDLp = 1 then SHE_WspDegr ' + 
+                            'when TorGIDLp = 2 then SHE_WspDegrAm ' + 
+                            'when TorGIDLp = 3 then SHE_WspDegrTor3 ' + 
+                            'when TorGIDLp = 4 then SHE_WspDegrTor4 ' + 
+                            'when TorGIDLp = 5 then SHE_WspDegrTor5 ' + 
+                            'else 0 end WspAmDegr  ' + 
+						', case  ' + 
+                            'when TorGIDLp = 1 then SHE_Stawka ' + 
+                            'when TorGIDLp = 2 then SHE_StawkaAm ' + 
+                            'when TorGIDLp = 3 then SHE_StawkaAmTor3 ' + 
+                            'when TorGIDLp = 4 then SHE_StawkaAmTor4 ' + 
+                            'when TorGIDLp = 5 then SHE_StawkaAmTor5 ' + 
+                            'else 0 end Stawka  ' +
+						', case  ' + 
+                            'when TorGIDLp = 1 then SHE_MetodaUm ' + 
+                            'when TorGIDLp = 2 then SHE_MetodaAm ' + 
+                            'when TorGIDLp = 3 then SHE_MetodaAmTor3 ' + 
+                            'when TorGIDLp = 4 then SHE_MetodaAmTor4 ' + 
+                            'when TorGIDLp = 5 then SHE_MetodaAmTor5 ' + 
+                            'else 0 end Metoda  ' +
+                        ', n.Naz_Nazwa NazwaToru, SrtToryLp.TorGIDLp , SHE_Tor , SrtToryLp.tory, SrtToryLp.MaskaToru ' + 
+                        ', TT ' + 
+                        ', she_tor  +  MaskaToru tor ' + 
+                    'from ('  + 
+                        'SELECT SHE_GIDTyp, SHE_GIDNumer, SHE_GIDLp, SHE_SrtNumer, SHE_Data, SHE_DataZap, SHE_Opis , SHN_PoprzedniSymbDok, SHN_Aktywny, SHN_Seria, SHN_Data, SHN_Nr, SHN_Zaksiegowano, SHN_RokO, k.Srt_GIDNumer, SHE_SrtLp, Srt_KRST ' + 
+							', Srt_Ksiega, Srt_Nazwa, Srt_NrEwid, Srt_NrInw, Srt_Rodzaj, Srt_Akronim ' +
+							',SHE_KwotaInw' + rtrim(ltrim(@kwotaSys)) + ' ' + 
+							',SHE_PodstawaAm' + rtrim(ltrim(@kwotaSys)) + ' ' + 
+							',SHE_PodstawaAmTor3' + rtrim(ltrim(@kwotaSys)) + ' ' + 
+							',SHE_PodstawaAmTor4' + rtrim(ltrim(@kwotaSys)) + ' ' + 
+							',SHE_PodstawaAmTor5' + rtrim(ltrim(@kwotaSys)) + ' ' + 
+							',SHE_KwotaUm' + rtrim(ltrim(@kwotaSys)) + ' ' + 
+							',SHE_KwotaAm' + rtrim(ltrim(@kwotaSys)) + ' ' + 
+							',SHE_KwotaAmTor3' + rtrim(ltrim(@kwotaSys)) + ' ' + 
+							',SHE_KwotaAmTor4' + rtrim(ltrim(@kwotaSys)) + ' ' + 
+							',SHE_KwotaAmTor5' + rtrim(ltrim(@kwotaSys)) + ' ' + 
+																				
+							',SHE_WspUmAm ,SHE_WspAm ,SHE_WspAmTor3 ,SHE_WspAmTor4 ,SHE_WspAmTor5 ' + 
+
+							',SHE_WspDegr ,SHE_WspDegrAm ,SHE_WspDegrTor3 ,SHE_WspDegrTor4 ,SHE_WspDegrTor5 ' + 
+										
+							',SHE_Stawka ,SHE_StawkaAm ,SHE_StawkaAmTor3 ,SHE_StawkaAmTor4 ,SHE_StawkaAmTor5 ' + 
+										
+							',SHE_MetodaUm ,SHE_MetodaAm ,SHE_MetodaAmTor3 ,SHE_MetodaAmTor4 ,SHE_MetodaAmTor5 ' + 
+
+                            ', SHE_Tor ' + 
+                            ',(case when SHE_TorUm_Lp &gt; 0 then 1 else 0 end + case when SHE_TorAm_Lp &gt; 0 then 2 else 0 end + case when SHE_Tor3_Lp &gt; 0 then 4 else 0 end + ' + 
+                                ' case when SHE_Tor4_Lp &gt; 0 then 8 else 0 end + case when SHE_Tor5_Lp &gt; 0 then 16 else 0 end ) TT ' + 
+                            ', SHE_TorUm_Lp, SHE_TorAm_Lp, SHE_Tor3_Lp, SHE_Tor4_Lp, SHE_Tor5_Lp ' + 
+                        'FROM CDN.SrtHistElem e ' + 
+                        'JOIN CDN.SrtHistNag nag on e.SHE_GIDTyp = nag.SHN_GIDTyp and e.SHE_GIDNumer = nag.SHN_GIDNumer ' + 
+                        'join cdn.srtkarty k on e.SHE_SrtNumer = k.Srt_GIDNumer ' + 
+                        'where k.Srt_GIDNumer= ' + @SrtGIDNumer_Str + ' AND '  +  rtrim(ltrim(@sHistoriaFiltr))  +  
+                    ') SrtDok ' + 
+                    'join ( ' + 
+                        'SELECT a.SRT_GIDNumer, a.Tor, a.TorMaska MaskaToru, a.tory ' + 
+                            ', case when a.TorMaska = 1 then 1 ' + 
+                                'when a.TorMaska = 2 then 2 ' + 
+                                'when a.TorMaska = 4 then 3 ' + 
+                                'when a.TorMaska = 8 then 4 ' + 
+                                'when a.TorMaska = 16 then 5 ' + 
+                                'else 0 end TorGIDLp ' + 
+                        'from ' + 
+                        '( ' + 
+                            'select ' + @SrtGIDNumer_Str + ' SRT_GIDNumer, tory &amp; 1 Srt_T1_Maska, tory &amp; 2 Srt_T2_Maska, tory &amp; 4 Srt_T3_Maska, tory &amp; 8 Srt_T4_Maska, tory &amp; 16 Srt_T5_Maska, w.tory ' + 
+                            'from (select CDN.SrtStanWielotorowosc (' + @SrtGIDNumer_Str + ', ' + @DataDo_Str + ', null) tory) w ' + 
+                        ') b ' + 
+                        'UNPIVOT (TorMaska FOR Tor IN ([SRT_T1_Maska], [SRT_T2_Maska], [SRT_T3_Maska], [SRT_T4_Maska], [SRT_T5_Maska])) as a ' + 
+                    ') SrtToryLp on SrtToryLp.Srt_GIDNumer = SrtDok.SHE_SrtNumer and MaskaToru &amp; TT &gt; 0 ' + 
+                    'join cdn.nazwy n on n.NAZ_GIDLp = SrtToryLp.TorGIDLp and n.Naz_GIDTyp = 656 ' + 
+                    'where SHE_SrtNumer= ' + @SrtGIDNumer_Str + ' ' + rtrim(ltrim(@filtrTorElem)) + '  and (SHE_GIDTyp = ' + @e_srt_GIDTypDokumentu_ZMT + ' and MaskaToru &amp; SHE_Tor &gt; 0 OR SHE_GIDTyp &lt;&gt; ' + @e_srt_GIDTypDokumentu_ZMT + ')' +  
+                ') t ' + 
+            ')a ' + 
+  
+	'ORDER BY SHE_Data, SHE_SrtLp, SHE_DataZap, SHE_GIDNumer, TorLp'
+		
+	EXECUTE sp_executesql @zapytanieSQL
+
+set QUOTED_IDENTIFIER ON
+
+set nocount off
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury SrtHistoriaWydr"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury SrtHistoriaWydr */</I><BR>
+GRANT EXECUTE ON CDN.SrtHistoriaWydr TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

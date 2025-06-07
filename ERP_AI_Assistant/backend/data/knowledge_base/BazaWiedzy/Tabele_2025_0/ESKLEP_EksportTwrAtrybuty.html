@@ -1,0 +1,76 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="ESKLEP_EksportTwrAtrybuty"></A><PRE>
+          <FONT SIZE="2"><I>/* ESKLEP_EksportTwrAtrybuty */</I><BR>
+CREATE PROCEDURE CDN.ESKLEP_EksportTwrAtrybuty
+  @ID INT      -- ID e-sklepu
+ ,@TypExp INT  -- Typ eksportu (0 - różnicowy, 1 - pełny)
+AS
+
+SET NOCOUNT ON
+DECLARE @Typ_AtrybutKlasa SMALLINT = 14416
+DECLARE @Typ_AtrybutWartosc SMALLINT = 14417
+DECLARE @AtrLp INT = 0
+DECLARE @PcKTwGNumer INT
+DECLARE @Typ_GrT SMALLINT = -16
+DECLARE @Typ_Twr SMALLINT = 16
+DECLARE @PcKTSSynchrTwrPtw INT
+
+
+SELECT @PcKTSSynchrTwrPtw = PcK_TSSynchrTwrPtw,@PcKTwGNumer = PcK_TwGNumer from cdn.PicoKonfig where PcK_PicoID = @ID
+
+CREATE TABLE #tmpRecordSet(TwrNumer INT,AtKID INT,AtkTyp TINYINT,AtrLp INT,AtrWartosc VARCHAR(513),AtWID INT,Grupujacy TINYINT,AtrPozycja INT, CzyLista TINYINT,CzyWieloWart TINYINT)
+
+INSERT INTO #tmpRecordSet 
+SELECT Twr_GIDNumer,AtK_ID,AtK_Typ,-1,ISNULL(AtH_Wartosc,Atr_Wartosc),CASE WHEN AtH_ID IS NULL AND AtK_Wielowart = 1 THEN -1 WHEN AtW_ID IS NULL THEN 0 ELSE AtW_ID END,Atr_Grupujacy AS Grupujacy,Atr_Pozycja AS AtrPozycja,CASE WHEN AtK_Typ = 4 THEN 1 ELSE 0 END,AtK_Wielowart AS CzyWieloWart
+FROM CDN.Atrybuty
+JOIN CDN.AtrybutyKlasy ON AtK_ID = Atr_AtkID AND Atr_ObiTyp = @Typ_Twr AND Atr_ObiLp = 0 AND Atr_OBISubLp = 0
+JOIN CDN.TwrKarty ON Twr_GIDNumer = Atr_ObiNumer
+JOIN CDN.TwrGrupy PCKTWG ON PCKTWG.TwG_SyncId = @PcKTwGNumer AND PCKTWG.TwG_GIDTyp = @Typ_GrT
+JOIN CDN.TwrGrupyDom on Twr_GIDTyp = TGD_GIDTyp and Twr_GIDNumer = TGD_GIDNumer
+LEFT OUTER JOIN CDN.TwrAplikacje ON Twr_GIDNumer = TAP_ObiNumer and Twr_GIDTyp = TAP_ObiTyp
+LEFT OUTER JOIN CDN.PicoLog ON PcL_ObiNumer = Twr_GIDNumer AND PcL_ObiTyp = Twr_GIDTyp AND PcL_PcKID = @ID
+LEFT OUTER JOIN CDN.AtrybutyHist ON AtH_Id = Atr_Id
+LEFT OUTER JOIN CDN.AtrybutyWartosci ON AtW_AtKId = AtK_ID AND AtW_Wartosc = (CASE WHEN AtK_Wielowart=1 THEN AtH_Wartosc ELSE Atr_Wartosc END)
+WHERE Twr_eSklep = 1 AND Twr_Archiwalny = 0 AND AtK_eSklep = 1
+ 	AND (TAP_CzasModyfikacji &gt; CASE WHEN @TypExp=0 THEN @PcKTSSynchrTwrPtw ELSE 0 END OR ISNULL(PcL_TStamp,@PcKTSSynchrTwrPtw + 1) &gt; @PcKTSSynchrTwrPtw OR AtK_CzasModyfikacji &gt;= CASE WHEN @TypExp = 0 THEN @PcKTSSynchrTwrPtw ELSE 0 END)
+ 	AND EXISTS(SELECT * FROM CDN.TwrLinki WHERE Twr_GIDTyp = TwL_GIDTyp AND Twr_GIDNumer = TwL_GIDNumer AND TwL_GrONumer = PCKTWG.TwG_GIDNumer )
+	AND (AtK_Wielowart = 0 OR AtK_Typ = 4 )
+ORDER BY Atr_ObiTyp,Atr_ObiNumer,Atr_Pozycja
+
+
+UPDATE #tmpRecordSet SET AtrLp = @AtrLp,@AtrLp = @AtrLp + 1 WHERE AtrLp =-1
+
+SELECT DISTINCT 1 AS Tag, NULL AS Parent,TwrNumer AS [TWRATR!1!GIDNumer],AtKID AS [TWRATR!1!AtrDefID],AtrPozycja AS [TWRATR!1!Lp], CASE WHEN CzyLista=1 AND AtrWartosc = '' AND CzyWieloWart = 0 THEN -1 ELSE AtWID END AS [TWRATR!1!WartoscID], Grupujacy AS [TWRATR!1!Grupujacy],NULL AS [TWRATRWJI!2]
+,NULL AS [TWRATRWJ!3!JezykID],NULL AS [TWRATRWJ!3!Wartosc],AtWID [TWRATR!1!AtWID!Hide]
+FROM #tmpRecordSet
+UNION ALL
+SELECT DISTINCT 2 AS Tag, 1 AS Parent,TwrNumer AS GIDNumer,AtKID AS AtrDefID, AtrPozycja AS Lp,CASE WHEN CzyLista=1 AND AtrWartosc = '' THEN -1 ELSE AtWID END AS WartoscID,NULL AS [TWRATR!1!Grupujacy]
+,NULL AS [TWRATRWJI!2],NULL AS [TWRATRWJ!3!JezykID],NULL AS [TWRATRWJ!3!Wartosc],AtWID
+FROM #tmpRecordSet WHERE AtWID = 0 AND NOT (CzyLista=1 AND AtrWartosc = '')
+UNION ALL
+SELECT DISTINCT 3 AS Tag, 2 AS Parent,TwrNumer AS GIDNumer,AtKID AS AtrDefID, AtrPozycja AS Lp,CASE WHEN CzyLista=1 AND AtrWartosc = '' THEN -1 ELSE AtWID END AS WartoscID,NULL AS [TWRATR!1!Grupujacy]
+,NULL AS [TWRATRWJI!2],1 AS [TWRATRWJ!3!JezykID],AtrWartosc AS [TWRATRWJ!3!Wartosc],AtWID
+FROM #tmpRecordSet WHERE AtWID = 0 AND NOT (CzyLista=1 AND AtrWartosc = '')
+
+ORDER BY [TWRATR!1!GIDNumer],AtrPozycja,[TWRATR!1!AtrDefID],AtwID,tag,[TWRATRWJ!3!JezykID]
+FOR XML EXPLICIT
+
+DROP TABLE #tmpRecordSet
+SET NOCOUNT OFF
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

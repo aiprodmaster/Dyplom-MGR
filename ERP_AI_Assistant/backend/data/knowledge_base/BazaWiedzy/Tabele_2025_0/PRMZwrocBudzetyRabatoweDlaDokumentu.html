@@ -1,0 +1,170 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="PRMZwrocBudzetyRabatoweDlaDokumentu"></A><PRE>
+          <FONT SIZE="2"><I>/* PRMZwrocBudzetyRabatoweDlaDokumentu */</I><BR>
+CREATE PROCEDURE CDN.PRMZwrocBudzetyRabatoweDlaDokumentu
+(
+        @p_DokTyp                       SMALLINT,               -- gidTyp dokumentu
+        @p_DokNumer                     INTEGER,                -- gidNumer dokumentu
+        @p_OpeNumer                     INTEGER,                -- identyfiaktor zalogowanego operatora
+        @p_KntTyp                       SMALLINT,               -- gidTyp kontrahenta dla którego sprawdzać budżety rabatowe
+        @p_KntNumer                     INTEGER,                -- gidNumer kontrahenta dla którego sprawdzać budżety rabatowe
+        @p_Data                         INTEGER,                -- data na dzień, który sprawdzamy budżety (najczęściej data wystawienia dokumentu
+        @p_FormaNr                      INTEGER,                -- numer formy płatności
+        @p_FormaTermin          INTEGER,                -- termin formy płatności
+		@p_FormaData			INTEGER, -- data płatności (PLT) w formacie clarionowym (5 cyfr)
+        @p_SposobDostawy        INTEGER,                -- sposób dostawy
+    @p_Magazyn                  INTEGER,                -- numer magazynu
+        @p_FrsId                        VARCHAR(max)    -- oddzielone przecinkami miejsca w strukturze firmy
+
+)
+AS
+BEGIN
+        create table #tabTPRPrmId
+        (
+        Id Int,
+        );
+		/*
+		IF @p_DokTyp=960
+			Insert into #tabTPRPrmId
+			SELECT DISTINCT TPR_PrmId FROM CDN.ZamElem
+			JOIN (
+				SELECT TwG_GIDTyp,TwG_GIDNumer,TPR_PrmId FROM CDN.TwrPromocje 
+				JOIN CDN.TwrGrupy ON (TPR_TwrTyp=16 AND TwG_GIDTyp=TPR_TwrTyp and TwG_GIDNumer=TPR_TwrNumer ) 
+					OR (TPR_TwrTyp=-16 and TwG_GIDTyp=16 AND TwG_GrOTyp=-16 and TwG_GrONumer in (SELECT GIDNumer FROM CDN.PobierzDrzewoGrupTowarowychKuLisciom(TPR_TwrNumer,default,null,null,null)))
+			) A on A.TwG_GIDTyp=ZaE_TwrTyp and A.TwG_GIDNumer=ZaE_TwrNumer and ZaE_GIDTyp=@p_DokTyp AND ZaE_GIDNumer=@p_DokNumer 
+		ELSE
+			Insert into #tabTPRPrmId
+			SELECT DISTINCT TPR_PrmId from CDN.TraElem
+			JOIN (
+				SELECT TwG_GIDTyp,TwG_GIDNumer,TPR_PrmId FROM CDN.TwrPromocje 
+				JOIN CDN.TwrGrupy ON (TPR_TwrTyp=16 AND TwG_GIDTyp=TPR_TwrTyp and TwG_GIDNumer=TPR_TwrNumer ) 
+					OR (TPR_TwrTyp=-16 and TwG_GIDTyp=16 AND TwG_GrOTyp=-16 and TwG_GrONumer in (SELECT GIDNumer FROM CDN.PobierzDrzewoGrupTowarowychKuLisciom(TPR_TwrNumer,default,null,null,null)))
+			) A on A.TwG_GIDTyp=TrE_TwrTyp and A.TwG_GIDNumer=TrE_TwrNumer and TrE_GIDTyp=@p_DokTyp AND TrE_GIDNumer=@p_DokNumer 
+		*/
+		IF @p_DokTyp=960
+			Insert into #tabTPRPrmId
+			select DISTINCT TPr_PrmId
+            from (
+                        select TwL_GROTyp TwrTyp, TwL_GRONumer TwrNumer
+                        from CDN.TwrLinki
+                        JOIN CDN.ZamElem ON TwL_GIDTyp=ZaE_TwrTyp and TwL_GIDNumer=ZaE_TwrNumer
+                        where ZaE_GIDTyp=@p_DokTyp AND ZaE_GIDNumer=@p_DokNumer 
+                        UNION ALL
+                        select  ZaE_TwrTyp, ZaE_TwrNumer FROM CDN.ZamElem 
+                        where ZaE_GIDTyp=@p_DokTyp AND ZaE_GIDNumer=@p_DokNumer 
+            ) Twr
+            inner join CDN.TwrPromocje on TPr_TwrTyp=TwrTyp and TPr_TwrNumer=TwrNumer 
+		ELSE
+			Insert into #tabTPRPrmId
+			select DISTINCT TPr_PrmId
+            from (
+                        select TwL_GROTyp TwrTyp, TwL_GRONumer TwrNumer
+                        from CDN.TwrLinki
+                        JOIN CDN.TraElem ON TwL_GIDTyp=TrE_TwrTyp and TwL_GIDNumer=TrE_TwrNumer
+                        where TrE_GIDTyp=@p_DokTyp AND TrE_GIDNumer=@p_DokNumer 
+                        UNION ALL
+                        select  TrE_TwrTyp, TrE_TwrNumer FROM CDN.TraElem 
+                        where TrE_GIDTyp=@p_DokTyp AND TrE_GIDNumer=@p_DokNumer 
+            ) Twr
+            inner join CDN.TwrPromocje on TPr_TwrTyp=TwrTyp and TPr_TwrNumer=TwrNumer 
+
+        -- Wykorzystane budżety ope
+        SELECT PRM_Akronim as Nazwa, 'BUDŻET OPE' as TypS, Ope_Ident as Akronim, OPm_Wartosc as Wartosc, CDN.PRMZwrocWykorzystanyBudzet(Prm_Id,OPm_Id,@p_DokTyp,@p_DokNumer,NULL) as Wykorzystana,
+                IsNull((SELECT SUM(PrH_RabatKwotaDokl) FROM CDN.PrmHistoria WHERE PrH_GIDTyp=@p_DokTyp AND PrH_GIDNumer=@p_DokNumer AND PrH_IDPrm=Prm_Id AND PrH_BudzetId=OPm_Id),0) as NaliczonaSys, PRM_Typ as TypId, OPm_Id as Id, PRM_Id as PrmId, PRM_PriorytetLp as PriorytetLp, PRM_PominPozostale as PominPozostale, Ope_GidNumer as ObiNumer
+        FROM CDN.PrmHistoria
+        JOIN CDN.PrmKarty ON PRM_Id=PrH_IDPrm
+        JOIN CDN.OpePromocje ON OPm_Id=PrH_BudzetId
+        JOIN CDN.OpeKarty ON Ope_GidNumer=OPm_OpeNumer
+        WHERE PrH_GIDTyp=@p_DokTyp AND PrH_GIDNumer=@p_DokNumer AND PRM_Typ=9
+
+        UNION 
+
+        -- Wykorzystane budżety knt
+        SELECT  PRM_Akronim as Nazwa, 'BUDŻET KNT' as TypS, Knt_Akronim as Akronim, KPR_Wartosc as Wartosc, CDN.PRMZwrocWykorzystanyBudzet(Prm_Id,KPR_Id,@p_DokTyp,@p_DokNumer,NULL) as Wykorzystana,
+                IsNull((SELECT SUM(PrH_RabatKwotaDokl) FROM CDN.PrmHistoria WHERE PrH_GIDTyp=@p_DokTyp AND PrH_GIDNumer=@p_DokNumer AND PrH_IDPrm=Prm_Id AND PrH_BudzetId=KPR_Id),0) as NaliczonaSys, PRM_Typ as TypId, KPR_Id as Id, PRM_Id as PrmId, PRM_PriorytetLp as PriorytetLp, PRM_PominPozostale as PominPozostale, KPR_KntNumer as ObiNumer
+        FROM CDN.PrmHistoria
+        JOIN CDN.PrmKarty ON PRM_Id=PrH_IDPrm
+        JOIN CDN.KntPromocje ON KPR_Id=PrH_BudzetId
+        JOIN CDN.KntKarty ON Knt_GIDTyp=KPR_KntTyp and Knt_GIDNumer=KPR_KntNumer
+        WHERE PrH_GIDTyp=@p_DokTyp AND PrH_GIDNumer=@p_DokNumer AND PRM_Typ=10
+
+        UNION 
+
+        -- Nie naliczone budżety ope, ale dostępne dla dokumentu
+        SELECT PRM_Akronim as Nazwa, 'BUDŻET OPE' as TypS, Ope_Ident as Akronim, OPm_Wartosc as Wartosc, CDN.PRMZwrocWykorzystanyBudzet(Prm_Id,OPm_Id,@p_DokTyp,@p_DokNumer,NULL) as Wykorzystana,
+                IsNull((SELECT SUM(PrH_RabatKwotaDokl) FROM CDN.PrmHistoria WHERE PrH_GIDTyp=@p_DokTyp AND PrH_GIDNumer=@p_DokNumer AND PrH_IDPrm=Prm_Id AND PrH_BudzetId=OPm_Id),0) as NaliczonaSys, PRM_Typ as TypId, OPm_Id as Id, PRM_Id as PrmId, PRM_PriorytetLp as PriorytetLp, PRM_PominPozostale as PominPozostale, @p_OpeNumer as ObiNumer
+        FROM CDN.PrmKarty
+        JOIN CDN.PltPromocje ON PPr_PrmID=Prm_ID
+        JOIN CDN.SpDPromocje ON SpD_PrmID=Prm_ID
+        JOIN CDN.MagPromocje ON MPR_PrmID=Prm_ID
+        JOIN CDN.FrsPromocje ON FPR_PrmID=PRM_ID
+        JOIN CDN.OpePromocje ON OPm_PrmId=Prm_Id and OPm_OpeNumer=@p_OpeNumer
+        JOIN CDN.OpeKarty ON Ope_GidNumer=OPm_OpeNumer
+        join #tabTPRPrmId on #tabTPRPrmId.Id = PRM_Id
+        WHERE PRM_Typ=9 AND NOT EXISTS(SELECT * FROM CDN.PrmHistoria WHERE PrH_GIDTyp=@p_DokTyp AND PrH_GIDNumer=@p_DokNumer AND PrH_ID=Prm_Id and PrH_BudzetId=OPm_Id)
+                -- tylko potwierdzone
+                AND PRM_Stan=1
+                -- tylko obowiązujące
+                AND CDN.CzyPromocjaObowiazuje(PRM_DataOd,PRM_DataDo,PRM_Cykliczna,@p_Data,PRM_CyklRodzaj,PRM_CyklCzestotliwosc,PRM_CyklWystepowanie,PRM_CyklDniOd,PRM_CyklDniDo)=1
+                -- zgodność formy płatności
+                AND PPr_PltID in (@p_FormaNr,-1) and ((PPr_Typ = 1 and (PPr_TerminMaks&gt;@p_FormaTermin or PPr_TerminMaks in (@p_FormaTermin,-1))) or (PPr_Typ = 2 and (@p_FormaData &gt; 0 and (@p_FormaData+@p_FormaTermin) BETWEEN PPr_DataOd AND PPr_DataDo)))
+                -- zgodność sposobu dostawy
+                AND SpD_SpDLp in (@p_SposobDostawy,-1)
+                -- zgodność magazynu
+                AND MPR_MagNumer in (@p_Magazyn,-1)
+                -- zgodność właściciela
+                AND (CASE WHEN EXISTS(SELECT * FROM Cdn.FrsPromocje WHERE FPR_PrmId = Prm_Id AND CharIndex(','+LTRIM(CAST(Fpr_FrsId AS VARCHAR(5)))+',', ','+LTRIM(@p_FrsId)+',',1)&gt;0) THEN 1 ELSE 0 END)=1
+                -- zgodność kontrahenta
+                AND (CASE WHEN EXISTS(SELECT * FROM CDN.KntPromocje
+                                                                JOIN CDN.KntGrupy ON (KPR_KntTyp=32 AND KnG_GIDTyp=KPR_KntTyp and KnG_GIDNumer=KPR_KntNumer)
+                                                                        OR (KPR_KntTyp=-32 and KnG_GIDTyp=32 AND KnG_GrOTyp=-32 and KnG_GrONumer in (select AktuGIDNumer from CDN.PobierzDrzewoGrupKontrahentow(KPR_KntNumer,null)))
+                                                                WHERE KnG_GIDTyp=@p_KntTyp AND KnG_GIDNumer=@p_KntNumer and KPR_PrmId=Prm_ID
+                                                                )
+                                THEN 1 ELSE 0 END)=1
+
+        UNION 
+
+        -- Nie naliczone budżety knt, ale dostępne dla dokumentu
+        SELECT PRM_Akronim as Nazwa, 'BUDŻET KNT' as TypS, Knt_Akronim as Akronim, KPR_Wartosc as Wartosc, CDN.PRMZwrocWykorzystanyBudzet(Prm_Id,KPR_Id,@p_DokTyp,@p_DokNumer,NULL) as Wykorzystana,
+                IsNull((SELECT SUM(PrH_RabatKwotaDokl) FROM CDN.PrmHistoria WHERE PrH_GIDTyp=@p_DokTyp AND PrH_GIDNumer=@p_DokNumer AND PrH_IDPrm=Prm_Id AND PrH_BudzetId=KPR_Id),0) as NaliczonaSys, PRM_Typ as TypId, KPR_Id as Id, PRM_Id as PrmId, PRM_PriorytetLp as PriorytetLp, PRM_PominPozostale as PominPozostale, @p_KntNumer as ObiNumer
+        FROM CDN.PrmKarty
+        JOIN CDN.PltPromocje ON PPr_PrmID=Prm_ID
+        JOIN CDN.SpDPromocje ON SpD_PrmID=Prm_ID
+        JOIN CDN.MagPromocje ON MPR_PrmID=Prm_ID
+        JOIN CDN.FrsPromocje ON FPR_PrmID=PRM_ID
+        JOIN CDN.KntPromocje ON KPR_PrmId=Prm_Id and KPR_KntNumer=@p_KntNumer and KPR_KntTyp=@p_KntTyp
+        JOIN CDN.KntKarty ON KPR_KntTyp=Knt_GIDTyp and KPR_KntNumer=Knt_GIDNumer        
+        join #tabTPRPrmId on #tabTPRPrmId.Id = PRM_Id
+        WHERE PRM_Typ=10 AND NOT EXISTS(SELECT * FROM CDN.PrmHistoria WHERE PrH_GIDTyp=@p_DokTyp AND PrH_GIDNumer=@p_DokNumer AND PrH_ID=Prm_Id and PrH_BudzetId=KPR_Id)
+                -- tylko potwierdzone
+                AND PRM_Stan=1
+                -- tylko obowiązujące
+                AND CDN.CzyPromocjaObowiazuje(PRM_DataOd,PRM_DataDo,PRM_Cykliczna,@p_Data,PRM_CyklRodzaj,PRM_CyklCzestotliwosc,PRM_CyklWystepowanie,PRM_CyklDniOd,PRM_CyklDniDo)=1
+                -- zgodność formy płatności
+                AND PPr_PltID in (@p_FormaNr,-1) and ((PPr_Typ = 1 and (PPr_TerminMaks&gt;@p_FormaTermin or PPr_TerminMaks in (@p_FormaTermin,-1))) or (PPr_Typ = 2 and (@p_FormaData &gt; 0 and (@p_FormaData+@p_FormaTermin) BETWEEN PPr_DataOd AND PPr_DataDo)))
+                -- zgodność sposobu dostawy
+                AND SpD_SpDLp in (@p_SposobDostawy,-1)
+                -- zgodność magazynu
+                AND MPR_MagNumer in (@p_Magazyn,-1)
+                -- zgodność właściciela
+                AND (CASE WHEN EXISTS(SELECT * FROM Cdn.FrsPromocje WHERE FPR_PrmId = Prm_Id AND CharIndex(','+LTRIM(CAST(Fpr_FrsId AS VARCHAR(5)))+',', ','+LTRIM(@p_FrsId)+',',1)&gt;0) THEN 1 ELSE 0 END)=1
+
+		drop table #tabTPRPrmId
+END
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

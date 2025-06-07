@@ -1,0 +1,544 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="KsiRozrachunekAuto_Lista"></A><PRE>
+          <FONT SIZE="2"><I>/* KsiRozrachunekAuto_Lista */</I><BR>
+CREATE PROCEDURE cdn.KsiRozrachunekAuto_Lista (@p_Kryterium smallint, @p_DTGIDNumer int, @p_DTGIDLp smallint, @p_DTDC smallint, @p_DTWalutaObca smallint, @p_DTZnak smallint, @p_Waluta varchar(5),
+					@p_KKSNumer int, @p_DataOd int, @p_DataDo int, @p_NumerDokumentu varchar(40), @p_Kwota decimal(15,2), @p_Filtr varchar(4000), @p_Opis varchar(80), @p_OpisOperator tinyint ) as
+begin
+set nocount on
+
+
+
+declare @sql1 varchar(2000)
+
+set @Sql1 = '' +
+'select ' +
+'1, DT_GIDNumer, DT_GIDLp, DT_DC, DT_WalutaObca, DT_Znak, DT_Pozostaje, DT_Pozostaje, DT_Pozostaje, 0, DT_KKSNumer, cdn.NumerDekretu(DT_Bufor, DT_Dziennik, DT_Rok, DT_Miesiac, DZK_RMNumer, DEL_Pozycja, DZK_Prosty, DZK_OkrSymbol), DEL_DokumentZrodlowy, DT_Termin, ' +
+'DT_GIDNumer, DT_GIDLp, DT_DC, DT_WalutaObca, DT_Termin as DT_ParTermin, DEL_Opis, 0, 0 '+
+'from cdn.dekrety ' +
+'	join cdn.DziennikElem ' +
+'		on DT_GIDNumer = Del_GIDNumer and DT_GIDLp = Del_GIDLp ' +
+'	join cdn.Dziennik ' +
+'		on DEL_GIDNumer = DZK_GIDNumer ' +
+'where DT_Nierozliczony=1 ' +
+'      '
+
+
+
+if @p_Filtr &lt;&gt; ''
+	set @sql1 = @sql1 + ' and ' + @p_Filtr
+
+
+
+if @p_KKSNumer &lt;&gt; 0
+	set @sql1 = @sql1 +
+	'	and DT_KKSNumer in ( ' + 
+	'                select KLI_PoprzNumer ' + 
+	'                from cdn.KontaNastLinki ' + 
+	'                where KLI_NastNumer = '+convert(varchar,@p_KKSNumer) +
+	'                union all ' + 
+	'                select KLI_NastNumer ' +
+	'                from cdn.KontaNastLinki ' +
+	'                where KLI_PoprzNumer = '+convert(varchar,@p_KKSNumer)+')'
+
+
+if @p_Waluta &lt;&gt; ''
+	set @sql1 = @sql1 + ' and DT_Waluta = ''' + @p_Waluta + ''''
+
+
+
+if @p_DTGIDNumer &lt;&gt; 0
+	set @sql1 = @sql1 + 
+		' and not (DT_GIDNumer='+convert(varchar,@p_DTGIDNumer)+' and DT_GIDLp = '+convert(varchar,@p_DTGIDLp)+' and DT_WalutaObca = '+convert(varchar,@p_DTWalutaObca)+' and DT_DC = '+convert(varchar,@p_DTDC)+') ' +
+			' and (DT_Znak = 3-'+convert(varchar,@p_DTZnak)+') '
+
+
+if @p_DataDo &lt;&gt; 0
+	set @sql1 = @sql1 +
+		' and DT_DataDekr between '+convert(varchar,@p_DataOd)+' and '+convert(varchar,@p_DataDo)
+
+
+if @p_NumerDokumentu &lt;&gt; '' and @p_Kryterium = 1
+	set @sql1 = @sql1 +
+		' and DEL_DokumentZrodlowy = '''+@p_NumerDokumentu+''''
+
+
+if @p_Kwota &lt;&gt; 0 and @p_Kryterium = 2
+	set @sql1 = @sql1 +
+		' and (DT_Pozostaje = '+convert(varchar,@p_Kwota)+' or DT_Pozostaje = -1*'+convert(varchar,@p_Kwota)+')'
+
+
+
+if @p_Kryterium = 3
+begin	
+	if @p_DTGIDNumer &lt;&gt; 0
+	begin
+		if @p_OpisOperator=1
+			set @sql1 = @sql1 +
+			' and rtrim(DEL_Opis) = ''' + REPLACE(@p_Opis,'''','''''') + ''''
+		else
+			set @sql1 = @sql1 +
+			' and rtrim(DEL_Opis) like ''%' + REPLACE(@p_Opis,'''','''''') + '%'''	
+	end
+	else		
+	begin
+		if @p_Opis &lt;&gt; ''
+		begin
+			if @p_OpisOperator=1
+				set @sql1 = @sql1 +
+				' and rtrim(DEL_Opis) = ''' + REPLACE(@p_Opis,'''','''''') + ''''
+			else
+				set @sql1 = @sql1 +
+				' and rtrim(DEL_Opis) like ''%' + REPLACE(@p_Opis,'''','''''') + '%'''	
+		end
+	end	
+end
+	
+
+		
+
+if @p_DTGIDNumer &lt;&gt; 0
+	set @sql1 = @sql1 + ' order by case when ' + case when @p_Kryterium = 1 then ' DT_Pozostaje = ' + convert(varchar,@p_Kwota)
+						when @p_Kryterium = 2 then ' DEL_DokumentZrodlowy = '''+@p_NumerDokumentu+''''
+						when @p_Kryterium = 3 then ' DEL_DokumentZrodlowy = '''+@p_NumerDokumentu+''''
+						else ' DT_GIDNumer = DT_GIDNumer '
+						end + ' then 0 else 1 end, DT_Termin'
+
+
+
+
+create table #tmpZapisy (
+	Poziom smallint,
+	DTGIDNumer int,
+	DTGIDLp smallint,
+	DTDC smallint,
+	DTWalutaObca smallint,
+	DTZnak smallint,
+	DTPozostaje decimal(15,2),
+	DTDoRozliczeniaPrzed decimal(15,2),
+	DTDoRozliczenia decimal(15,2),
+	DTKwotaRozl decimal(15,2),	
+	DTKKSNumer int,
+	DTNumerDekretu varchar(50) COLLATE Polish_CI_AS,
+	DTNumerDokumentu varchar(40) COLLATE Polish_CI_AS,
+	DTTermin int,
+	DTParGIDNumer int,
+	DTParGIDLp smallint,
+	DTParDC smallint,
+	DTParWalutaObca smallint,
+	DTParTermin int,
+	DTOpis varchar(80) COLLATE Polish_CI_AS,
+	ParLp int,
+	Lp int,	
+	PRIMARY KEY (DTGIDNumer,DTGIDLp, DTDC, DTWalutaObca, Poziom )
+	)
+
+
+
+insert into #tmpZapisy
+exec(@sql1)
+
+
+
+
+if @p_DTGIDNumer = 0 --bez podanego dekretu
+begin
+
+
+	declare @DTGIDNumer int
+	declare @DTGIDLp smallint
+	declare @DTDC smallint
+	declare @DTWalutaObca smallint
+	declare @DTZnak smallint
+	declare @DTPozostaje decimal(15,2)
+	declare @DTDoRozliczenia decimal(15,2)
+	declare @DTKKSNumer int
+	declare @DTNumerDekretu varchar(50)
+	declare @DTNumerDokumentu varchar(40)
+	declare @DTTermin int
+	declare @DTOpis varchar(80)
+	declare @Poziom smallint
+	
+	
+	declare @OldDTDoRozliczenia decimal(15,2)
+
+
+
+	declare @_DTGIDNumer int
+	declare @_DTGIDLp smallint
+	declare @_DTDC smallint
+	declare @_DTWalutaObca smallint
+	declare @_DTZnak smallint
+	declare @_DTPozostaje decimal(15,2)
+	declare @_DTDoRozliczenia decimal(15,2)
+	declare @_DTKKSNumer int
+	declare @_DTNumerDekretu varchar(50)
+	declare @_DTNumerDokumentu varchar(40)
+	declare @_DTTermin int
+	declare @_DTOpis varchar(80)
+	declare @_Poziom smallint
+
+	declare @_DTKwotaRozl decimal(15,2)
+	declare @Lp int
+	declare @ParLp int
+	set @ParLp = 0
+
+
+	DECLARE	cursZapisy CURSOR DYNAMIC 
+	FOR SELECT 
+		Poziom,
+		DTGIDNumer,
+		DTGIDLp,
+		DTDC,
+		DTWalutaObca,
+		DTZnak,
+		DTPozostaje,
+		DTDoRozliczenia,
+		DTKKSNumer,
+		DTNumerDekretu,
+		DTNumerDokumentu,
+		DTTermin,
+		DTOpis
+	FROM #tmpZapisy
+	WHERE Poziom = 1 and DTDoRozliczenia &lt;&gt; 0
+	ORDER BY DTTermin, DTParGIDNumer, DTParGIDLp, DTParDC, DTParWalutaObca
+
+
+	
+	OPEN cursZapisy
+
+
+	FETCH NEXT FROM cursZapisy INTO
+		@Poziom,
+	    @DTGIDNumer,
+		@DTGIDLp,
+		@DTDC,
+		@DTWalutaObca,
+		@DTZnak,
+		@DTPozostaje,
+		@DTDoRozliczenia,
+		@DTKKSNumer,
+		@DTNumerDekretu,
+		@DTNumerDokumentu,
+		@DTTermin,
+		@DTOpis
+
+
+	
+	WHILE (@@fetch_status &lt;&gt; -1)
+	BEGIN
+		IF (@@fetch_status &lt;&gt; -2)
+		BEGIN
+
+	
+			set @ParLp = @ParLp + 1
+
+
+lDodany:
+
+			set @OldDTDoRozliczenia = @DTDoRozliczenia			
+
+
+			if @DTDoRozliczenia = 0 --or @DTDoRozliczenia &lt;&gt; @DTPozostaje
+				goto lNastepny
+
+
+
+			DECLARE	cursZapisyKonta CURSOR FAST_FORWARD
+			FOR SELECT 
+				Poziom,
+				DTGIDNumer,
+				DTGIDLp,
+				DTDC,
+				DTWalutaObca,
+				DTZnak,
+				DTPozostaje,
+				DTDoRozliczenia,
+				DTKKSNumer,
+				DTNumerDekretu,
+				DTNumerDokumentu,
+				DTTermin,
+				DTOpis
+			FROM #tmpZapisy			
+			WHERE DTKKSNumer in (
+		                select KLI_PoprzNumer
+		                from cdn.KontaNastLinki
+		                where KLI_NastNumer = @DTKKSNumer
+		                union all 
+		                select KLI_NastNumer 
+		                from cdn.KontaNastLinki 
+		                where KLI_PoprzNumer = @DTKKSNumer
+					)
+				and not (DTGIDNumer = @DTGIDNumer and DTGIDLp = @DTGIDLp and DTDC = @DTDC and DTWalutaObca = @DTWalutaObca)
+				and DTZnak &lt;&gt; @DTZnak
+				and DTDoRozliczenia &lt;&gt; 0				
+				and Poziom = 1
+				and (@p_Kryterium = 1 and DTNumerDokumentu = @DTNumerDokumentu
+					or @p_Kryterium = 2 and abs(DTDoRozliczenia) = abs(@DTDoRozliczenia)
+					or @p_Kryterium = 3 and 
+						((rtrim(@p_Opis)='' and (@p_OpisOperator=1 and DTOpis = @DTOpis or @p_OpisOperator=2 and (DTOpis like '%'+@DTOpis+'%' or @DTOpis like '%'+DTOpis+'%')))
+						or (rtrim(@p_Opis)&lt;&gt;'' and (@p_OpisOperator=1 and DTOpis = @p_Opis or @p_OpisOperator=2 and DTOpis like '%'+@p_Opis+'%')))
+					or @p_Kryterium = 4)
+			order by 
+					case when @p_Kryterium = 1 and DTDoRozliczenia = @DTDoRozliczenia then 0
+					when @p_Kryterium = 2 and @DTNumerDokumentu &lt;&gt; '' and DTNumerDokumentu = @DTNumerDokumentu then 0
+					when @p_Kryterium = 3 and @DTNumerDokumentu &lt;&gt; '' and DTNumerDokumentu = @DTNumerDokumentu then 0
+					else 1
+					end, 
+					case when @p_Kryterium = 3 and DTDoRozliczenia = @DTDoRozliczenia then 0					
+					else 1
+					end, 
+					DTTermin
+
+			
+			set @lp = 0
+			
+			
+			OPEN cursZapisyKonta
+			FETCH NEXT FROM cursZapisyKonta INTO
+				@_Poziom,
+			   	@_DTGIDNumer,
+				@_DTGIDLp,
+				@_DTDC,
+				@_DTWalutaObca,
+				@_DTZnak,
+				@_DTPozostaje,
+				@_DTDoRozliczenia,
+				@_DTKKSNumer,
+				@_DTNumerDekretu,
+				@_DTNumerDokumentu,
+				@_DTTermin,
+				@_DTOpis
+			
+			WHILE (@@fetch_status &lt;&gt; -1)
+			BEGIN
+				IF (@@fetch_status &lt;&gt; -2)
+				BEGIN
+					if abs(@DTDoRozliczenia) &gt;= abs(@_DTDoRozliczenia)
+					begin
+						set @DTDoRozliczenia = sign(@DTDoRozliczenia)*(abs(@DTDoRozliczenia)-abs(@_DTDoRozliczenia))
+						set @_DTKwotaRozl = @_DTDoRozliczenia
+						set @_DTDoRozliczenia = 0						
+					end
+					else
+					begin
+						set @_DTDoRozliczenia = sign(@_DTDoRozliczenia)*(abs(@_DTDoRozliczenia)-abs(@DTDoRozliczenia))
+						set @_DTKwotaRozl = @DTDoRozliczenia
+						set @DTDoRozliczenia = 0
+					end
+		
+
+					set @lp = @lp + 1
+				
+
+					update #tmpZapisy set
+						DTDoRozliczenia = @_DTDoRozliczenia,
+						DTKwotaRozl = @_DTKwotaRozl,
+						Poziom = 2,
+						DTParGIDNumer = @DTGIDNumer,
+						DTParGIDLp = @DTGIDLp,
+						DTParDC = @DTDC,
+						DTParWalutaObca = @DTWalutaObca,
+						DTParTermin = @DTTermin,
+						ParLp = @ParLp,
+						lp = @Lp
+						
+					where DTGIDNumer = @_DTGIDNumer and DTGIDLp = @_DTGIDLp and DTDC = @_DTDC and DTWalutaObca = @_DTWalutaObca
+						and Poziom = 1
+
+		
+				END
+
+
+
+				if @DTDoRozliczenia &lt;&gt; 0
+				begin
+					FETCH NEXT FROM cursZapisyKonta INTO
+						@_Poziom,
+					   	@_DTGIDNumer,
+						@_DTGIDLp,
+						@_DTDC,
+						@_DTWalutaObca,
+						@_DTZnak,
+						@_DTPozostaje,
+						@_DTDoRozliczenia,
+						@_DTKKSNumer,
+						@_DTNumerDekretu,
+						@_DTNumerDokumentu,
+						@_DTTermin,
+						@_DTOpis
+				end
+				else
+				begin --naglowek jest juz rozliczony
+
+					if @_DTDoRozliczenia &lt;&gt; 0
+					begin
+						--zaktualizuj naglowek
+						if @OldDTDoRozliczenia &lt;&gt; @DTDoRozliczenia
+						begin
+							update #tmpZapisy set
+								DTDoRozliczenia = @DTDoRozliczenia,
+								ParLp = @ParLp,
+								Lp = 0
+							where DTGIDNumer = @DTGIDNumer and DTGIDLp = @DTGIDLp and DTDC = @DTDC and DTWalutaObca = @DTWalutaObca 
+								and Poziom = 1
+						end
+
+												
+						set @ParLp = @ParLp + 1
+
+
+						--dodaj jako naglowek 
+						insert into #tmpZapisy
+						select 1,
+						    @_DTGIDNumer,
+							@_DTGIDLp,
+							@_DTDC,
+							@_DTWalutaObca,
+							@_DTZnak,
+							@_DTPozostaje,
+							@_DTDoRozliczenia,
+							@_DTDoRozliczenia,
+							0,
+							@_DTKKSNumer,
+							@_DTNumerDekretu,
+							@_DTNumerDokumentu,
+							@_DTTermin,
+							@_DTGIDNumer,
+							@_DTGIDLp,
+							@_DTDC,
+							@_DTWalutaObca,
+							@_DTTermin,
+							@_DTOpis,
+							@ParLp,
+							0
+
+
+						--przepisz dane dane jako naglowek
+						set @Poziom = 1
+					    set @DTGIDNumer = @_DTGIDNumer
+						set @DTGIDLp = @_DTGIDLp
+						set @DTDC = @_DTDC
+						set @DTWalutaObca = @_DTWalutaObca
+						set @DTZnak = @_DTZnak
+						set @DTPozostaje = @_DTPozostaje
+						set @DTDoRozliczenia = @_DTDoRozliczenia
+						set @DTKKSNumer = @_DTKKSNumer
+						set @DTNumerDekretu = @_DTNumerDekretu
+						set @DTNumerDokumentu = @_DTNumerDokumentu
+						set @DTTermin = @_DTTermin
+						set @DTOpis = @_DTOpis
+
+
+						CLOSE cursZapisyKonta
+						DEALLOCATE cursZapisyKonta
+
+						goto lDodany
+					end
+					else
+					begin --dzieciak tez jest juz rozliczony
+						goto lNastepnyNaglowek
+					end
+				end
+			END
+
+
+
+lNastepnyNaglowek:
+
+			if @OldDTDoRozliczenia &lt;&gt; @DTDoRozliczenia
+			begin
+				update #tmpZapisy set
+					DTDoRozliczenia = @DTDoRozliczenia,
+					ParLp = @ParLp,
+					Lp = 0
+				where DTGIDNumer = @DTGIDNumer and DTGIDLp = @DTGIDLp and DTDC = @DTDC and DTWalutaObca = @DTWalutaObca 
+					and Poziom = 1
+			end
+					
+	
+			CLOSE cursZapisyKonta
+			DEALLOCATE cursZapisyKonta
+			
+		END	
+lNastepny:
+		FETCH NEXT FROM cursZapisy INTO
+			@Poziom,
+		    @DTGIDNumer,
+			@DTGIDLp,
+			@DTDC,
+			@DTWalutaObca,
+			@DTZnak,
+			@DTPozostaje,
+			@DTDoRozliczenia,
+			@DTKKSNumer,
+			@DTNumerDekretu,
+			@DTNumerDokumentu,
+			@DTTermin,
+			@DTOpis
+	END
+
+	
+	CLOSE cursZapisy
+	DEALLOCATE cursZapisy
+
+
+
+	select a.*, 
+		b.DT_Bufor DTBufor, 
+		b.DT_DataDekr DTDataDekr, 
+		b.DT_Kwota DTKwota, 
+		b.DT_Konto DTKonto		
+	from #tmpZapisy a
+		join cdn.Dekrety b
+			on DTGIDNumer = DT_GIDNumer and DTGIDLp = DT_GIDLp and DTWalutaObca = DT_WalutaObca and DTDC = DT_DC
+		join cdn.DziennikElem c
+			on DTGIDNumer = DEL_GIDNumer and DTGIDLp = DEL_GIDLp
+	where DTDoRozliczeniaPrzed &lt;&gt; DTDoRozliczenia	
+	order by 
+		DTParTermin,
+		DTParGIDNumer, 
+		DTParGIDLp, 
+		DTParDC,
+		DTParWalutaObca, 
+		Poziom, 
+		Lp
+			
+end
+else
+begin
+	select a.*, 
+		b.DT_Bufor DTBufor, 
+		b.DT_DataDekr DTDataDekr, 
+		b.DT_Kwota DTKwota, 
+		b.DT_Konto DTKonto		
+	from #tmpZapisy a
+		join cdn.Dekrety b
+			on DTGIDNumer = DT_GIDNumer and DTGIDLp = DT_GIDLp and DTWalutaObca = DT_WalutaObca and DTDC = DT_DC
+		join cdn.DziennikElem c
+			on DTGIDNumer = DEL_GIDNumer and DTGIDLp = DEL_GIDLp	
+end
+
+
+
+drop table #tmpZapisy
+
+
+
+set nocount off
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

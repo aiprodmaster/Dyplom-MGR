@@ -1,0 +1,184 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="DokStanTowaruNieZerowy"></A><PRE>
+          <FONT SIZE="2"><I>/* DokStanTowaruNieZerowy */</I><BR>
+CREATE  function CDN.DokStanTowaruNieZerowy(
+@p_gt integer,
+@p_gn integer,
+@p_typ smallint,
+@p_TypIlosci smallint,
+@p_MagFirma integer,
+@p_MagNumer integer,
+@p_IloscDostepna integer,
+@p_FrsId integer  ,
+@p_FrsIdW integer = 0,
+@p_TypDok smallint = 0,
+@p_ZrdTyp smallint,
+@p_ZrdNumer integer,
+@p_FrsIDZrd integer,
+@p_TypDokZrd smallint
+)
+
+Returns  decimal(28,4)
+AS
+BEGIN
+  declare @retval varchar(128);
+  declare @opuscic integer;
+  declare @iloscSpr Decimal(28,4);
+  declare @iloscMag Decimal(28,4);
+  declare @iloscRez Decimal(28,4);
+  declare @Cena   varchar(20);
+  declare @Waluta varchar(3);
+  declare @ZnakZero varchar(1);
+  declare @statusUsluga integer;
+
+  declare @lTypRez smallint;
+  declare @lRezWsz smallint;
+  declare @lFlagaBN smallint;  -- 0 - netto, 1-brutto
+  Declare @sGrupaVat char(1)
+  Declare @lStawkaVat decimal(9,2)
+  Declare @lCEna decimal(19,4)
+
+  declare @iloscSprW Decimal(28,4);
+  declare @iloscMagW Decimal(28,4);
+  declare @iloscRezW Decimal(28,4);
+
+  set @lTypRez = 1
+  set @lRezWsz = 0  -- v.3.2
+
+  if (@p_IloscDostepna &gt; 1)
+        begin
+                set @lRezWsz = 1
+                set @p_IloscDostepna = @p_IloscDostepna - 2
+        end
+
+
+  if (@p_MagNumer &lt;&gt; 0)
+    begin
+        set @p_ZrdTyp = 0
+        set @p_ZrdNumer = 0
+        set @p_FrsIDZrd = 0
+        set @p_TypDokZrd = 0
+    end
+
+
+  -- rozroznienie obiektow, ktore nie maja stanow
+  if (@p_typ=0 or @p_typ=3 or @p_typ=4 or @p_typ=6 or @p_typ is null) 
+    begin
+      set @ZnakZero='-'
+      set @statusUsluga=1
+    end
+  else
+    -- obiekty stanowe
+    begin
+      set @ZnakZero='0'
+      set @statusUsluga=0
+    end
+  -- Koniec rozrozniania obiektow
+
+
+
+  if(@statusUsluga=0 )        -- jest to towar dla ktorego stany mają sens
+                       -- pobranie ilosci
+      if(@p_MagNumer&gt;0)      --                  z konkretnego magazynu
+          select @IloscSpr=CASE @p_IloscDostepna
+                           WHEN 1 THEN sum(CASE
+                                       WHEN TwZ_IlSpr &lt; TWZ_Ilosc THEN TwZ_IlSpr
+                                       ELSE TwZ_Ilosc END)
+                           ELSE sum(TwZ_IlSpr)
+                           END,
+                 @iloscMag=CASE @p_IloscDostepna
+                           WHEN 1 THEN sum(CASE
+                                       WHEN TwZ_IlMag &lt; TWZ_Ilosc THEN TwZ_IlMag
+                                       ELSE TwZ_Ilosc END)
+                           ELSE sum(TwZ_IlMag)
+                           END
+
+          from cdn.TwrZasoby
+          where
+            TwZ_TwrNumer=@p_gn
+            and TwZ_MagNumer=@p_MagNumer;
+      else
+        --
+        --
+        if(@p_MagNumer=0)  --                    ze wszystkich magazynow
+          select @IloscSpr=CASE @p_IloscDostepna
+                           WHEN 1 THEN sum(CASE
+                                       WHEN TwZ_IlSpr &lt; TWZ_Ilosc THEN TwZ_IlSpr
+                                       ELSE TwZ_Ilosc END)
+                           ELSE sum(TwZ_IlSpr)
+                           END,
+                 @iloscMag=CASE @p_IloscDostepna
+                           WHEN 1 THEN sum(CASE
+                                       WHEN TwZ_IlMag &lt; TWZ_Ilosc THEN TwZ_IlMag
+                                       ELSE TwZ_Ilosc END)
+                           ELSE sum(TwZ_IlMag)
+                           END
+
+            from cdn.TwrZasoby
+            where
+              TwZ_TwrNumer=@p_gn
+              and  Cdn.DokSprawdzDostepnyMagazyn(@p_FrSID,@p_FrSIDW,@p_typDok, @p_ZrdTyp, @p_ZrdNumer, @p_FrsIDZrd, @p_TypDokZrd, TwZ_MagTyp, TwZ_MAgNumer,0)&gt;0;
+
+        --
+        -- Koniec ze wszystkich magazynów
+        --
+        else --                Informacja o magazynach w tabeli pomocniczej
+          --
+          --
+          select @IloscSpr=CASE @p_IloscDostepna
+                           WHEN 1 THEN sum(CASE
+                                       WHEN TwZ_IlSpr &lt; TWZ_Ilosc THEN TwZ_IlSpr
+                                       ELSE TwZ_Ilosc END)
+                           ELSE sum(TwZ_IlSpr)
+                           END,
+                 @iloscMag=CASE @p_IloscDostepna
+                           WHEN 1 THEN sum(CASE
+                                       WHEN TwZ_IlMag &lt; TWZ_Ilosc THEN TwZ_IlMag
+                                       ELSE TwZ_Ilosc END)
+                           ELSE sum(TwZ_IlMag)
+                           END
+
+            from cdn.TwrZasoby, cdn.MagWybor
+            where
+              TwZ_TwrNumer=@p_gn
+              and TwZ_MagNumer=MgW_MagNumer
+              and MgW_SesjaID=-@p_MagFirma and MgW_Watek=-@p_MagNumer;
+        --
+        --
+        -- Koniec z wybranych magazynów
+        --
+    set @iloscSpr=IsNull(@iloscSpr,0)
+    set @iloscMag=IsNull(@iloscMag,0)
+
+    --
+    --
+
+    If (@statusUsluga=1)
+	return 1;
+    Else	
+    begin
+	If (@p_TypIlosci=0)
+	   return (@iloscSpr);
+	else if (@p_TypIlosci=1)
+	   return @iloscMag;
+	Else if (@iloscMag&gt;0 or @iloscSpr&gt;0)
+	   return 1;
+    End
+	return 0
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

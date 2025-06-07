@@ -1,0 +1,1306 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="OFFLXLSrv_ImportCWN"></A><PRE>
+          <FONT SIZE="2"><I>/* OFFLXLSrv_ImportCWN */</I><BR>
+CREATE PROCEDURE CDN.OFFLXLSrv_ImportCWN
+ @ID	INT		  -- ID oddziału	
+,@xml	TEXT
+,@LogID	INT = -1  -- ID loga synchronizacji 
+
+AS
+	RAISERROR('Procedura OFFLXLSrv_ImportCWN nie jest obługiwana na MSSQL 2000',16,1)
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="OFFLXLSrv_ImportCWN"></A><PRE>
+          <FONT SIZE="2"><I>/* OFFLXLSrv_ImportCWN */</I><BR>
+CREATE PROCEDURE CDN.OFFLXLSrv_ImportCWN
+ @ID INT          -- ID oddziału
+,@xml XML
+,@LogID INT = -1  -- ID loga synchronizacji
+
+AS
+SET NOCOUNT ON
+
+DECLARE	@xml_CWN XML,
+	@xml_CWE XML,
+	@xml_SAP XML,
+	@xml_ODZ XML,
+	@xml_OSA XML,
+	@xml_ATR XML,
+	@xml_CDL XML,
+	@xml_ZAD XML,
+	@xml_SSN XML,
+	@xml_SSE XML,
+	@xml_CWRT XML,
+	@xml_DAB XML
+	
+DECLARE	@CWN_Typ		 INT,
+	@CWN_ID          INT,
+    @CWN_OpeNumer    INT,
+    @CWN_Zakonczono  TINYINT,
+    @CWN_DataZakonczenia INT,
+    @CWN_Renumeruj INT,
+	@CWN_Obsluga		INT,
+	@CWN_Nazwa			VARCHAR(255),
+	@CWN_FrsId			INT,
+	@CWN_DataWystawienia INT,
+	@CWN_TerminOd INT,
+	@CWN_TerminDo INT,
+	@CWN_DataZakonczeniaOd INT,
+	@CWN_WzNumer INT,
+	@CWN_TypId INT,
+	@CWN_Seria VARCHAR(5),
+	@CWN_Stan TINYINT,
+	@CWN_KntTyp SMALLINT,
+	@CWN_KntNumer INT,
+	@CWN_KnATyp SMALLINT,
+	@CWN_KnANumer INT,
+	@CWN_KntOsobaLp SMALLINT,
+	@CWN_Opiekun INT,
+	@CWN_Opis VARCHAR(1024),
+	@CWN_URL VARCHAR(255),
+	@CWN_Aktywny INT,
+	@CWN_ZewnetrznyId INT,
+	@CWN_ZewnetrznySys INT,
+	@CWN_Numer INT,
+	@CWN_Jednorazowa TINYINT,
+	@CWN_TsNId   INT,		-- Identyfikator trasy
+	@CWN_CalyDzien TINYINT,
+  	@CWN_NrKursu SMALLINT		-- Numer kursu
+
+DECLARE 
+    @CWE_Error SMALLINT, -- techniczny, dla zapisania błędów podczas dodawania elementu
+	@CWE_GidLp SMALLINT,
+    @CWE_Wykonano TINYINT,
+	@CWE_OpisWykonania VARCHAR(MAX),
+    @CWE_PowodNiewykonaniaId INT,
+    @CWE_PowodNiewykonania VARCHAR(49),
+    @CWE_RodzajId	INT,
+    @CWE_Kod		VARCHAR(20),
+	@CWE_OpeNumer				INT,
+	@CWE_Nazwa					VARCHAR(255),
+	@CWE_Wymagany				TINYINT,
+	@CWE_Opis					VARCHAR(1024),
+	@CWE_DataUtworzenia			INTEGER,
+	@CWE_Archiwalny				TINYINT,
+	@CWE_Url					VARCHAR(255),
+	@CWE_Przypisz				TINYINT,
+	@CWE_PrzypiszPrzed			INTEGER,
+	@CWE_PrzypiszPo				INTEGER,
+	@CWE_Oddzialowy				TINYINT
+    
+DECLARE 
+	@CWRT_CWETyp SMALLINT,
+	@CWRT_CWENumer INT,
+	@CWRT_CWELp SMALLINT,
+	@CWRT_CRDId INT,
+	@CWRT_TwrNumer INT,
+	@CWRT_TwrNumerO INT, -- GIDNumer towaru w oddziale
+	@CWRT_Obecny TINYINT,
+	@CWRT_Ilosc DECIMAL(11,4),
+	@CWRT_Jm VARCHAR(9),
+	@CWRT_Cena DECIMAL(15,2),
+	@CWRT_Ekspozycja INT,
+	@CWRT_Facing SMALLINT,
+	@CWRT_KntTyp SMALLINT,
+	@CWRT_KntNumer INT,
+	@CWRT_CRKWartosc1 VARCHAR(512),
+	@CWRT_CRKWartosc2 VARCHAR(512),
+	@CWRT_CRKWartosc3 VARCHAR(512),
+	@CWRT_CRKWartosc4 VARCHAR(512),
+	@CWRT_CRKWartosc5 VARCHAR(512)
+	
+DECLARE @SAP_CWENumer INT,
+	@SAP_CWELp SMALLINT,
+    @SAP_SamId INT,
+    @SAP_KierTyp INT,
+    @SAP_KierNumer INT,
+	@SAP_LicznikPocz DECIMAL(9,2),
+	@SAP_LicznikKon DECIMAL(9,2),
+	@SAP_DataWyjazdu INT,
+    @SAP_DataPrzyjazdu INT,
+    @SAP_WyjazdZ VARCHAR(100),
+    @SAP_PrzyjazdDo VARCHAR(100),
+    @SAP_RodzajPrzejazdu INT,
+	@SAP_Opis VARCHAR(1025),
+	@SAP_GPSSz DECIMAL(9,6),
+	@SAP_GPSDl DECIMAL(9,6),
+	@SAP_GPSDataPobrania INT,
+	@SAP_GPSGodzinaPobrania INT
+	
+DECLARE @ODZ_PytId INT,
+	@ODZ_CWETyp SMALLINT,
+	@ODZ_CWENumer INT,
+	@ODZ_CWELp SMALLINT,
+    @ODZ_AntId INT,
+	@ODZ_TwrTyp SMALLINT,
+	@ODZ_TwrNumer INT,
+    @ODZ_Tresc VARCHAR(1024),
+    @ODZ_RodpId INT,
+    @ODZ_OdpId INT
+
+DECLARE
+	@OSA_CWETyp SMALLINT,
+	@OSA_CWENumer INT,
+	@OSA_CWELp SMALLINT,
+	@OSA_KntTyp SMALLINT,
+	@OSA_KntNumer INT,
+	@OSA_KntLp SMALLINT,
+	@OSA_KnSNumer INT -- Identyfikator osoby w oddziale
+
+DECLARE @DAB_ID INT,
+	@DAB_ZewnetrznySys INT,
+	@DAB_ZewnetrznyId INT,
+
+	@DAO_DABId INT,
+	@DAO_ObiTyp SMALLINT,
+	@DAO_ObiNumer INT,
+	@DAO_ObiLp SMALLINT,
+	@DAO_ObiSubLp SMALLINT,
+	@DAO_Domyslna TINYINT,
+	@DAO_Blokada TINYINT,
+	@DAO_PPPrawa TINYINT,
+	@DAO_PKPrawa TINYINT,
+	@DAO_eSklep TINYINT,
+	@DAO_iMall TINYINT,
+	@DAO_MobSpr TINYINT,
+	@DAO_Systemowa TINYINT,
+	@DAO_Retail TINYINT,
+	@DAO_Pozycja TINYINT
+
+DECLARE @CDL_ObiTyp				smallint,
+	@CDL_ObiNumer			int,
+	@CDL_ObiLp				smallint,
+	@CDL_DokTyp			smallint,
+	@CDL_DokNumer			int,
+	@CDL_DokZewNumer			int
+	
+DECLARE @ZAD_SsENumer	INT,
+	@ZAD_SsELp		SMALLINT,
+	@ZAD_OpeNumer	INT,
+	@ZAD_CDZId INT,
+	@ZAD_Tytul VARCHAR(80),
+	@ZAD_Opis VARCHAR(5000),
+	@ZAD_Zakonczone TINYINT,
+	@ZAD_SsEGIDNumer INT,
+	@ZAD_SsEGIDLp smallint	
+	
+DECLARE @SSN_GIDNumer			int,
+	@SSN_Streszczenie		varchar(80),
+	@SSN_Opis				varchar(5000),
+	@SSN_TStampDataStop		int,
+	@SSN_ZewnetrznyId       int,
+	@SSN_OpeStartStopNumer	int,
+	@SSN_KntNumer			int,
+	@SSN_CekId				int
+
+DECLARE	@SSE_Tytul			varchar(80),
+    @SSE_ElementTyp			smallint,											
+	@SSE_ElementLp			smallint,
+	@SSE_Opis				varchar(5000)
+
+DECLARE @GIDFirma INT,
+	@PcK_Typ  INT,                   -- Typ oddziału
+	@PcK_CentrumId INT
+
+DECLARE @Lp_tabela int,
+    @TAG_tabela varchar(10)
+
+DECLARE @e_WIZ_nDAORealizacja  SMALLINT
+
+SET @e_WIZ_nDAORealizacja = 2
+SET @Lp_tabela = 1
+
+CREATE TABLE #Tabela (
+	Lp int identity(1,1),
+	TAG	VARCHAR(10) COLLATE Polish_CI_AS,
+    CDL_ObiTyp				smallint,
+	CDL_ObiNumer			int,
+	CDL_ObiLp				smallint,
+	CDL_DokTyp			smallint,
+	CDL_DokNumer			int,
+	CDL_DokZewNumer			int
+    )
+
+DECLARE @index                  INT,
+    @max_index              INT,
+    @ok_index               INT,
+    @buffer_size            INT,
+    @xml_buffer             XML,
+    @xml_tmp                XML,
+    @xml_child              XML,
+        @nindex                  INT,
+    @nmax_index              INT,
+    @nok_index               INT,
+    @nxml_buffer             XML,
+    @nxml_tmp                XML,
+    @nxml_child              XML,
+	    @index1                  INT,
+    @max_index1              INT,
+    @ok_index1               INT,
+    @xml_buffer1             XML,
+    @xml_tmp1                XML,
+    @xml_child1              XML,
+	    @index2                  INT,
+    @max_index2              INT,
+    @ok_index2               INT,
+    @xml_buffer2             XML,
+    @xml_tmp2                XML,
+    @xml_child2              XML,
+	    @index3                  INT,
+    @max_index3              INT,
+    @ok_index3               INT,
+    @xml_buffer3             XML,
+    @xml_tmp3                XML,
+    @xml_child3              XML,
+	    @index4                  INT,
+    @max_index4              INT,
+    @ok_index4               INT,
+    @xml_buffer4             XML,
+    @xml_tmp4                XML,
+    @xml_child4              XML,    
+	    @index5                  INT,
+    @max_index5              INT,
+    @ok_index5               INT,
+    @xml_buffer5             XML,
+    @xml_tmp5                XML,
+    @xml_child5              XML,
+	    @index6                  INT,
+    @max_index6              INT,
+    @ok_index6               INT,
+    @xml_buffer6             XML,
+    @xml_tmp6                XML,
+    @xml_child6              XML,
+	    @index7                  INT,
+    @max_index7              INT,
+    @ok_index7               INT,
+    @xml_buffer7             XML,
+    @xml_tmp7                XML,
+    @xml_child7              XML,
+	    @index8                  INT,
+    @max_index8              INT,
+    @ok_index8               INT,
+    @xml_buffer8             XML,
+    @xml_tmp8                XML,
+    @xml_child8              XML,
+	    @index9                  INT,
+    @max_index9              INT,
+    @ok_index9               INT,
+    @xml_buffer9             XML,
+    @xml_tmp9                XML,
+    @xml_child9              XML
+        
+DECLARE  @Opis                   VARCHAR(512)
+DECLARE  @WHNumerDokumentu		 VARCHAR(50)
+DECLARE  @WHStan smallint
+
+
+DECLARE @CzyZMobile		TINYINT			
+
+
+
+
+SELECT @Opis = 'Wizyty handlowe', @GIDFirma = CDN.GIDFirma()
+
+SELECT @Pck_Typ = PcK_Typ, @PcK_CentrumId = PcK_CentrumId
+	FROM CDN.PicoKonfig WHERE PcK_PicoId = @ID
+
+EXEC CDN.Log_OtworzPoziom @LogID, @Opis, 0
+
+
+
+/******************************* Nagłówek Wizyty handlowej **************************************/
+SET @xml_CWN = @xml.query('/CWNI/CWN')
+
+SELECT  @nindex = 0,
+        @nok_index = 0,
+        @nmax_index = CAST(CAST(@xml_CWN.query ('count(CWN)') AS VARCHAR(20)) AS INT),
+        @buffer_size = 200
+        
+WHILE @nindex &lt; @nmax_index
+        BEGIN
+            SET XACT_ABORT ON;
+                BEGIN TRY
+                        IF @nindex % @buffer_size = 0
+                                SET @nxml_buffer = ( SELECT @xml_CWN.query('CWN[position()&gt; sql:variable("@nindex") and position() &lt;= sql:variable("@nindex") + sql:variable("@buffer_size") ] ')  )
+                        SET @nxml_tmp = ( SELECT @nxml_buffer.query('CWN[position()= (sql:variable("@nindex") mod sql:variable("@buffer_size")) + 1 ] '))
+						
+						SELECT  @CWN_Typ = 4180
+						,@CWN_ID = CWN.Attribute.value('@ID','INT')
+						,@CWN_OpeNumer = CWN.Attribute.value('@OpeNumer','INT')
+						,@CWN_Zakonczono = CWN.Attribute.value('@Zakonczono','TINYINT')
+						,@CWN_DataZakonczenia = CWN.Attribute.value('@DataZakonczenia','INT')
+						,@CWN_Obsluga = CWN.Attribute.value('@Obsluga','INT')
+						,@CWN_Nazwa = CWN.Attribute.value('@Nazwa','VARCHAR(255)')
+						,@CWN_Renumeruj = ISNULL(CWN.Attribute.value('@Renumeruj','INT'), 0)
+						,@CWN_FrsId = CWN.Attribute.value('@FrsId','INT')
+						,@CWN_DataWystawienia  = CWN.Attribute.value('@DataWystawienia','INT')
+						,@CWN_TerminOd  = CWN.Attribute.value('@TerminOd','INT')
+						,@CWN_TerminDo  = CWN.Attribute.value('@TerminDo','INT')
+						,@CWN_DataZakonczeniaOd  = CWN.Attribute.value('@DataZakonczeniaOd','INT')
+						,@CWN_WzNumer  = CWN.Attribute.value('@WzNumer','INT')
+						,@CWN_TypId  = CWN.Attribute.value('@TypId','INT')
+						,@CWN_Seria = CWN.Attribute.value('@Seria','VARCHAR(5)')
+						,@CWN_Stan  = CWN.Attribute.value('@Stan','TINYINT')
+						,@CWN_KntTyp = CWN.Attribute.value('@KntTyp','SMALLINT')
+						,@CWN_KntNumer  = CWN.Attribute.value('@KntNumer','INT')
+						,@CWN_KnATyp = CWN.Attribute.value('@KnATyp','SMALLINT')
+						,@CWN_KnANumer  = CWN.Attribute.value('@KnANumer','INT')
+						,@CWN_KntOsobaLp = CWN.Attribute.value('@KntOsobaLp','SMALLINT')
+						,@CWN_Opiekun  = CWN.Attribute.value('@Opiekun','INT')
+						,@CWN_Opis = CWN.Attribute.value('@Opis','VARCHAR(1024)')
+						,@CWN_URL = CWN.Attribute.value('@URL','VARCHAR(255)')
+						,@CWN_Aktywny  = CWN.Attribute.value('@Aktywny','INT')
+						,@CWN_ZewnetrznyId  = CWN.Attribute.value('@ZewnetrznyId','INT')
+						,@CWN_ZewnetrznySys  = CWN.Attribute.value('@ZewnetrznySys','INT')
+						,@CWN_Numer = CWN.Attribute.value('@Numer','INT')
+						,@CWN_Jednorazowa = CWN.Attribute.value('@Jednorazowa','TINYINT')
+						,@CzyZMobile= CWN.Attribute.value('@CzyZMobile','TINYINT')
+						,@CWN_TsNId = CWN.Attribute.value('@TsNId','INT')
+						,@CWN_NrKursu = CWN.Attribute.value('@NrKursu','SMALLINT')
+						,@CWN_CalyDzien = CWN.Attribute.value('@CalyDzien','TINYINT')
+						FROM @nxml_tmp.nodes('CWN') AS CWN(Attribute)
+
+						IF isnull(@CWN_ID,0) = 0 -- Z jakiegos powodu nie podano CWN_ID, trzeba sprawdzic czy nie ma go jednak w bazie.
+						BEGIN
+							SELECT @CWN_ID = CWN_ID FROM CDN.CRMWizytyNag where CWN_Seria = @CWN_Seria AND CWN_ZewnetrznyId = @CWN_ZewnetrznyId AND CWN_ZewnetrznySys = @CWN_ZewnetrznySys
+						END
+						
+						IF @CWN_ID &lt;&gt; 0
+						BEGIN
+							DECLARE @CWN_ZakonczonoAkt INT, @CWN_OpisAkt VARCHAR(1024),  @CWN_StanAkt INT
+							Select @CWN_ZakonczonoAkt = CWN_Zakonczono, @CWN_StanAkt = CWN_Stan,@CWN_OpisAkt =  CWN_Opis  
+							FROM CDN.CRMWizytyNag where CWN_Id = @CWN_ID
+							IF @CWN_ZakonczonoAkt = 3  select @CWN_Opis = @CWN_OpisAkt, @CWN_Stan = @CWN_StanAkt
+						END
+						
+						UPDATE CDN.CRMWizytyNag SET CWN_ZewnetrznySys = @CWN_ZewnetrznySys, CWN_ZewnetrznyId = @CWN_ZewnetrznyId, CWN_TerminOd = @CWN_TerminOd, CWN_TerminDo =  @CWN_TerminDo, CWN_CzasModyfikacji = DATEDIFF(s,'19900101',GETDATE()), CWN_Stan = @CWN_Stan
+						WHERE CWN_ID = @CWN_ID
+						
+						UPDATE CDN.Zadania SET Zad_TerminOd = @CWN_TerminOd, Zad_TerminDo = @CWN_TerminDo, Zad_CalyDzien = @CWN_CalyDzien
+						WHERE Zad_ZrdNumer = @CWN_ID AND Zad_ZrdTyp = 4180
+
+						IF isnull(@CWN_ID,0) = 0 -- Nowa wizyta przyslana z mobile, nie istnieje jeszcze w XL-u
+						BEGIN
+								BEGIN TRY						
+									EXEC @CWN_ID = CDN.XLNowaWizyta @OpeNumer = @CWN_OpeNumer
+									,@Obsluga = @CWN_Obsluga
+									,@Nazwa = @CWN_Nazwa
+									,@FrsId = @CWN_FrsId
+									,@DataWystawienia = @CWN_DataWystawienia
+									,@TerminOd = @CWN_TerminOd
+									,@TerminDo = @CWN_TerminDo
+									,@Zakonczono = @CWN_Zakonczono
+									,@DataZakonczenia = @CWN_DataZakonczenia
+									,@DataZakonczeniaOd = @CWN_DataZakonczeniaOd
+									,@WzNumer = @CWN_WzNumer
+									,@TypId = @CWN_TypId
+									,@Seria = @CWN_Seria
+									,@Stan = @CWN_Stan
+									,@KntTyp = @CWN_KntTyp
+									,@KntNumer = @CWN_KntNumer
+									,@KnATyp = @CWN_KnATyp
+									,@KnANumer = @CWN_KnANumer
+									,@KntOsobaLp = @CWN_KntOsobaLp
+									,@Opiekun = @CWN_Opiekun
+									,@Opis = @CWN_Opis
+									,@URL = @CWN_URL
+									,@Aktywny = @CWN_Aktywny
+									,@ZewnetrznyId = @CWN_ZewnetrznyId
+									,@ZewnetrznySys = @CWN_ZewnetrznySys
+									,@Numer = @CWN_Numer
+									,@Jednorazowa = @CWN_Jednorazowa
+								    ,@TsNId =@CWN_TsNId
+									,@NrKursu = @CWN_NrKursu
+									,@CalyDzien = @CWN_CalyDzien 
+								END TRY
+								BEGIN CATCH	
+										SELECT @Opis = 'Błąd zwrócony przez CDN.XLNowaWizyta numer: ' + cast(@CWN_ID as varchar(2)) + ', ' + ERROR_MESSAGE();
+										EXEC CDN.Log_Dopisz @LogID, @Opis, 2
+										SET @nindex = @nindex + 1
+										CONTINUE
+								END CATCH
+						END
+						ELSE
+						BEGIN
+							IF @CWN_ZewnetrznyId &lt;&gt; 0 OR @CzyZMobile = 1			
+							update CDN.CRMWizytyNag set CWN_WzNumer =@CWN_WzNumer , CWN_CzasModyfikacji = DATEDIFF(s,'19900101',GETDATE()) where CWN_ID = @CWN_ID   		
+							
+							IF @CWN_NrKursu IS NOT NULL BEGIN
+								update CDN.CRMWizytyNag set CWN_NrKursu = @CWN_NrKursu  where CWN_ID = @CWN_ID   		
+							END		
+							IF @CWN_CalyDzien IS NOT NULL BEGIN
+								update CDN.CRMWizytyNag set CWN_CalyDzien = @CWN_CalyDzien  where CWN_ID = @CWN_ID   		
+							END	
+						END
+												
+						select @WHStan=CWN_Stan , @WHNumerDokumentu=CDN.NumerDokumentu(4180,0,0,CWN_Numer,CWN_Rok,CWN_Seria,CWN_Miesiac) from CDN.CRMWizytyNag where CWN_ID = @CWN_ID
+						IF @WHStan = 4 
+						BEGIN
+						    update CDN.CRMWizytyNag set CWN_CzasModyfikacji = DATEDIFF(s,'19900101',GETDATE()) where CWN_ID = @CWN_ID   
+							SET @nindex = @nindex + 1
+							CONTINUE
+						END
+						
+						EXEC CDN.Log_Dopisz @LogID, @WHNumerDokumentu, 0
+
+					/******* Import atrybutów towaru ********/
+						IF @xml_CWN.exist('CWN/ATRI') = 1
+						BEGIN
+							SET @xml_ATR = @xml_CWN.query('/ATRI')
+							EXEC CDN.OFFLXLSrv_ImportAtr @CWN_Typ, @CWN_ID, @xml_ATR, @LogID
+						END
+					/*END**************************************************************/
+
+					/*********************************** Elementy wizyt ********************************************/
+					SET @xml_CWE = @nxml_tmp.query('CWN/CWE')
+
+					SELECT  @index = 0,
+							@ok_index = 0,
+							@max_index = CAST(CAST(@xml_CWE.query ('count(CWE)') AS VARCHAR(20)) AS INT)
+					        
+					WHILE @index &lt; @max_index
+							BEGIN
+								SET XACT_ABORT ON;
+									BEGIN TRY
+											BEGIN TRANSACTION;
+
+											IF @index % @buffer_size = 0
+													SET @xml_buffer = ( SELECT @xml_CWE.query('CWE[position()&gt; sql:variable("@index") and position() &lt;= sql:variable("@index") + sql:variable("@buffer_size") ] ')  )
+											SET @xml_tmp = ( SELECT @xml_buffer.query('CWE[position()= (sql:variable("@index") mod sql:variable("@buffer_size")) + 1 ] ')  )
+																	SELECT   @CWE_GidLp = CWE.Attribute.value('@GIDLp','SMALLINT')
+																			 ,@CWE_Wykonano = CWE.Attribute.value('@Wykonano','TINYINT')
+																			 ,@CWE_OpisWykonania = CWE.Attribute.value('@OpisWykonania','VARCHAR(MAX)')
+																			 ,@CWE_PowodNiewykonaniaId = CWE.Attribute.value('@PowodNiewykonaniaId','INT')
+																			 ,@CWE_PowodNiewykonania = CWE.Attribute.value('@PowodNiewykonania','VARCHAR(49)')
+																			 ,@CWE_RodzajId = CWE.Attribute.value('@RodzajId','INT')
+																			 ,@CWE_Kod = CWE.Attribute.value('@Kod','VARCHAR(20)')
+																			 ,@CWE_OpeNumer = CWE.Attribute.value('@OpeNumer','INT')
+																			 ,@CWE_Nazwa = CWE.Attribute.value('@Nazwa','VARCHAR(255)')
+																			 ,@CWE_Wymagany = CWE.Attribute.value('@Wymagany','TINYINT')
+																			 ,@CWE_Opis = CWE.Attribute.value('@Opis','VARCHAR(1024)')
+																			 ,@CWE_DataUtworzenia = CWE.Attribute.value('@DataUtworzenia','INT')
+																			 ,@CWE_Archiwalny = CWE.Attribute.value('@Archiwalny','TINYINT')
+																			 ,@CWE_Url = CWE.Attribute.value('@Url','VARCHAR(255)')
+																			 ,@CWE_Przypisz = CWE.Attribute.value('@Przypisz','TINYINT')
+																			 ,@CWE_PrzypiszPrzed	= CWE.Attribute.value('@PrzypiszPrzed','INT')
+																			 ,@CWE_PrzypiszPo = CWE.Attribute.value('@PrzypiszPo','INT')
+																			 ,@CWE_Oddzialowy = CWE.Attribute.value('@Oddzialowy','TINYINT')
+																	FROM @xml_tmp.nodes('CWE') AS CWE(Attribute)
+
+																	IF ISNULL(@CWE_RodzajId,0) &gt; 0
+																	BEGIN
+																		select @CWE_RodzajId = SLW_ID from CDN.Slowniki where SLW_Predefiniowany = @CWE_RodzajId
+																	END	
+																	
+
+																	DECLARE @CzyElementJuzDodany TINYINT
+																	IF EXISTS( select * from CDN.CRMWizytyElem where CWE_GidNumer = @CWN_ID AND CWE_GidLp =@CWE_GidLp AND CWE_GIDTyp = 4180)
+																		set @CzyElementJuzDodany = 1
+																	ELSE
+																		set @CzyElementJuzDodany = 0
+																		
+
+																	IF @CzyElementJuzDodany = 0 -- Nowa wizyta przyslana z mobile, nie istnieje jeszcze w XL-u
+																	BEGIN
+																		IF @CWN_Renumeruj = 1 
+																		BEGIN
+																			EXEC @CWE_Error = CDN.XLDodajElementWizyty 
+																				 @CWN_ID = @CWN_ID
+																				,@CWE_GIDLp = @CWE_GidLp
+																				,@OpeNumer = @CWN_OpeNumer
+																				,@RodzajId = @CWE_RodzajId
+																				,@Kod = @CWE_Kod
+																			    ,@Nazwa = @CWE_Nazwa
+																				,@Wymagany = @CWE_Wymagany
+																				,@Opis = @CWE_Opis
+																				,@OpisWykonania = @CWE_OpisWykonania
+																				,@DataUtworzenia = @CWE_DataUtworzenia
+																				,@Archiwalny = @CWE_Archiwalny
+																				,@Url = @CWE_Url
+																				,@Przypisz = @CWE_Przypisz
+																				,@PrzypiszPrzed = @CWE_PrzypiszPrzed
+																				,@PrzypiszPo = @CWE_PrzypiszPo
+																				,@Oddzialowy = @CWE_Oddzialowy
+																		END
+																		ELSE
+																		BEGIN
+																			EXEC @CWE_Error = CDN.XLDodajElementWizyty 
+																				 @CWN_ID = @CWN_ID
+																				,@OpeNumer = @CWN_OpeNumer
+																				,@RodzajId = @CWE_RodzajId
+																				,@Kod = @CWE_Kod
+																				,@Nazwa = @CWE_Nazwa
+																				,@Wymagany = @CWE_Wymagany
+																				,@Opis = @CWE_Opis
+																				,@OpisWykonania = @CWE_OpisWykonania
+																				,@DataUtworzenia = @CWE_DataUtworzenia
+																				,@Archiwalny = @CWE_Archiwalny
+																				,@Url = @CWE_Url
+																				,@Przypisz = @CWE_Przypisz
+																				,@PrzypiszPrzed = @CWE_PrzypiszPrzed
+																				,@PrzypiszPo = @CWE_PrzypiszPo
+																				,@Oddzialowy = @CWE_Oddzialowy
+																		END
+
+																		IF @CWE_Error &lt; 0 -- był błąd
+																		BEGIN
+																			SELECT @Opis = 'Błąd zwrócony przez CDN.XLDodajElementWizyty numer: ' + cast(@CWE_Error as varchar(2));
+																			EXEC CDN.Log_Dopisz @LogID, @Opis, 2
+																			CONTINUE
+																		END
+																	END
+
+																   --Sprawdzenie czy wizyta handlowa istnieje
+																	IF EXISTS(select * from CDN.CRMWizytyNag WHERE CWN_ID = @CWN_ID)
+																			BEGIN																					
+																					IF (@CWE_Wykonano &lt;&gt; 0 OR @CWE_PowodNiewykonaniaId IS NOT NULL OR @CWE_PowodNiewykonania IS NOT NULL)
+																						BEGIN
+																							EXEC CDN.XLWykonajElemWH @GidTyp = @CWN_Typ,
+																											@GidNumer = @CWN_ID,
+																											@GidLp = @CWE_GidLp,
+																											@OpeNumer = @CWN_OpeNumer,
+																											@Wykonano = @CWE_Wykonano,
+																											@OpisWykonania = @CWE_OpisWykonania,
+																											@PowodNiewykonaniaId = @CWE_PowodNiewykonaniaId,
+																											@PowodNiewykonania = @CWE_PowodNiewykonania																
+																						END				
+																			END
+																	ELSE
+																			BEGIN
+																					SELECT @Opis = 'Wizyta handlowa ' + @WHNumerDokumentu + ' została już dodana'
+																					EXEC CDN.Log_Dopisz @LogID, @Opis, 1
+																			END
+
+											COMMIT TRANSACTION;
+											SET @ok_index = @ok_index + 1
+									END TRY
+
+									BEGIN CATCH
+											IF XACT_STATE() &lt;&gt; 0
+													ROLLBACK TRANSACTION;
+
+											SELECT @Opis = 'Błąd podczas importu wizyty handlowej: ' + CDN.Log_SzczegolyBledu(ERROR_NUMBER(),ERROR_PROCEDURE(),ERROR_LINE(),ERROR_MESSAGE())
+											EXEC CDN.Log_Dopisz @LogID, @Opis, 2
+
+									END CATCH
+									
+									/*********************************** Odpowiedzi do ankiet ************************************/
+										SET @xml_ODZ = @xml_tmp.query('CWE/CWOI/ODZ')
+
+										SELECT  @index1 = 0,
+												@ok_index1 = 0,
+												@max_index1 = CAST(CAST(@xml_ODZ.query ('count(ODZ)') AS VARCHAR(20)) AS INT)
+										        
+										WHILE @index1 &lt; @max_index1
+												BEGIN
+													SET XACT_ABORT ON;
+														BEGIN TRY
+																BEGIN TRANSACTION;
+
+																IF @index1 % @buffer_size = 0
+																		SET @xml_buffer1 = ( SELECT @xml_ODZ.query('ODZ[position()&gt; sql:variable("@index1") and position() &lt;= sql:variable("@index1") + sql:variable("@buffer_size") ] ')  )
+																SET @xml_tmp1 = ( SELECT @xml_buffer1.query('ODZ[position()= (sql:variable("@index1") mod sql:variable("@buffer_size")) + 1 ] ')  )
+
+																		SELECT @ODZ_PytId = ODZ.Attribute.value('@PytId','INT')
+																			,@ODZ_CWETyp = @CWN_Typ
+																			,@ODZ_CWENumer = @CWN_ID
+																			,@ODZ_CWELp = @CWE_GidLp
+																			,@ODZ_AntId = ODZ.Attribute.value('@AntId','INT')
+																			,@ODZ_TwrTyp = case when ODZ.Attribute.value('@TwrNumer','INT') is null then 0 else 16 end
+																			,@ODZ_TwrNumer = isnull(ODZ.Attribute.value('@TwrNumer','INT'),0)
+																			,@ODZ_RodpId = ODZ.Attribute.value('@RodpId','INT')
+																			,@ODZ_OdpId = ODZ.Attribute.value('@OdpId','INT')
+																			,@ODZ_Tresc = ODZ.Attribute.value('@Tresc','VARCHAR(1024)')        
+																		FROM @xml_tmp1.nodes('ODZ') AS ODZ(Attribute)
+																		
+																		DECLARE @ListaOdpowiedz CDN.tTablicaOdpowiedzi
+																		delete @ListaOdpowiedz
+																		
+																																			
+																		IF @ODZ_RodpId IS NULL AND @ODZ_OdpId IS NULL OR -- odpowiedz otwarta
+																		   @ODZ_RodpId IS NOT NULL AND @ODZ_OdpId IS NOT NULL -- odpowiedz zamknieta
+																					 Insert into @ListaOdpowiedz select @ODZ_OdpId As 'OdpId', @ODZ_Tresc AS 'Tresc' 
+                          
+                                                                                                                                                                   
+																		Insert into @ListaOdpowiedz 
+																		select
+																			 ATR.Attribute.value('@OdpId','INT'),
+																			 ATR.Attribute.value('@Tresc','VARCHAR(255)')
+																		FROM @xml_tmp1.nodes('ODZ/ODP') AS ATR(Attribute)
+																		
+
+																		EXEC CDN.XLUdzielOdpWH 
+																			@PytId = @ODZ_PytId
+																			,@CWETyp = @ODZ_CWETyp
+																			,@CWENumer = @ODZ_CWENumer
+																			,@CWELp = @ODZ_CWELp
+																			,@AntId = @ODZ_AntId
+																			,@TwrTyp = @ODZ_TwrTyp
+																			,@TwrNumer = @ODZ_TwrNumer
+																			,@RodpId = @ODZ_RodpId
+																		  	,@ListaOdp = @ListaOdpowiedz
+
+																COMMIT TRANSACTION;
+																SET @ok_index1 = @ok_index1 + 1
+														END TRY
+
+														BEGIN CATCH
+																IF XACT_STATE() &lt;&gt; 0
+																		ROLLBACK TRANSACTION;
+
+																SELECT @Opis = 'Błąd podczas importu odpowiedzi ankiety ' + CDN.Log_SzczegolyBledu(ERROR_NUMBER(),ERROR_PROCEDURE(),ERROR_LINE(),ERROR_MESSAGE())
+																EXEC CDN.Log_Dopisz @LogID, @Opis, 2
+
+														END CATCH
+
+														SET @index1 = @index1 + 1
+												END
+												IF @ok_index1 &gt; 0
+												BEGIN
+													SELECT @Opis = 'Ilość zaimportowanych odpowiedzi ankiety: '  + CAST(@ok_index1 AS NVARCHAR(10)) + ' z ' + CAST(@max_index1 AS NVARCHAR(10))
+													EXEC CDN.Log_Dopisz @LogID, @Opis, 0
+												END
+									/*END**************************************************************/
+
+									/*********************************** Osoby ankietowane ************************************/
+									SET @xml_OSA = @xml_tmp.query('CWE/CWOI/OSA')
+
+									SELECT	@index9 = 0,
+											@ok_index9 = 0,
+											@max_index9 = CAST(CAST(@xml_OSA.query('count(OSA)') AS VARCHAR(20)) AS INT)
+										        
+									WHILE @index9 &lt; @max_index9
+									BEGIN
+										SET XACT_ABORT ON;
+
+										BEGIN TRY
+											BEGIN TRANSACTION;
+
+											IF @index9 % @buffer_size = 0
+												SET @xml_buffer9 = ( SELECT @xml_OSA.query('OSA[position()&gt; sql:variable("@index9") and position() &lt;= sql:variable("@index9") + sql:variable("@buffer_size") ] ')  )
+											SET @xml_tmp9 = ( SELECT @xml_buffer9.query('OSA[position()= (sql:variable("@index9") mod sql:variable("@buffer_size")) + 1 ] ')  )
+
+											SELECT
+												@OSA_KntTyp = CWN_KntTyp,
+												@OSA_KntNumer = CWN_KntNumer
+											FROM CDN.CRMWizytyNag
+											WHERE CWN_ID = @CWN_ID
+
+											SELECT
+												@OSA_CWETyp = @CWN_Typ,
+												@OSA_CWENumer = @CWN_ID,
+												@OSA_CWELp = @CWE_GidLp,
+												@OSA_KntLp = OSA.Attribute.value('@KntLp','SMALLINT'),
+												@OSA_KnSNumer = OSA.Attribute.value('@KnSNumer','INT')
+											FROM @xml_tmp9.nodes('OSA') AS OSA(Attribute)
+
+											-- Jeżeli nie został przesłany KntLp to identyfikacja osoby po identyfikatorze w oddziale
+											IF ISNULL(@OSA_KntLp,0) = 0 AND ISNULL(@OSA_KntTyp,0) = 32
+												SELECT @OSA_KntLp = (-1 * PcL_ObiTyp) FROM CDN.PicoLog WHERE PcL_PcKID = @ID AND PcL_ObiNumer = @OSA_KntNumer AND PcL_ObiektTyp = 8211 AND PcL_ObiektID = @OSA_KnSNumer
+
+											-- Dodanie osoby ankietowanej
+											IF ISNULL(@OSA_KntLp,0) &lt;&gt; 0 AND ISNULL(@OSA_KntTyp,0) = 32
+												IF NOT EXISTS(SELECT * FROM CDN.CRMWizytyElemObiekty WHERE CWO_CWETyp = @OSA_CWETyp AND CWO_CWENumer = @OSA_CWENumer AND CWO_CWELp = @OSA_CWELp AND CWO_ObiTyp = @OSA_KntTyp AND CWO_ObiNumer = @OSA_KntNumer AND CWO_ObiLp = @OSA_KntLp)
+													INSERT INTO CDN.CRMWizytyElemObiekty (CWO_CWETyp, CWO_CWENumer, CWO_CWELp, CWO_ObiTyp, CWO_ObiNumer, CWO_ObiLp)
+													VALUES (@OSA_CWETyp, @OSA_CWENumer, @OSA_CWELp, @OSA_KntTyp, @OSA_KntNumer, @OSA_KntLp)
+
+											COMMIT TRANSACTION;
+
+											SET @ok_index9 = @ok_index9 + 1
+
+										END TRY
+										BEGIN CATCH
+											IF XACT_STATE() &lt;&gt; 0
+												ROLLBACK TRANSACTION;
+
+											SELECT @Opis = 'Błąd podczas importu osoby ankietowanej ' + CDN.Log_SzczegolyBledu(ERROR_NUMBER(),ERROR_PROCEDURE(),ERROR_LINE(),ERROR_MESSAGE())
+											EXEC CDN.Log_Dopisz @LogID, @Opis, 2
+										END CATCH
+
+										SET @index9 = @index9 + 1
+									END
+									IF @ok_index9 &gt; 0
+									BEGIN
+										SELECT @Opis = 'Ilość zaimportowanych osób ankietowanych: '  + CAST(@ok_index9 AS NVARCHAR(10)) + ' z ' + CAST(@max_index9 AS NVARCHAR(10))
+										EXEC CDN.Log_Dopisz @LogID, @Opis, 0
+									END
+									/*END**************************************************************/
+									
+										/******************** Przejazd do wizyty handlowej - tylko do potwierdzonej wizyty **************************************/
+										SET @xml_SAP = @xml_tmp.query('CWE/CWOI/SAP')
+										IF @xml_SAP.exist('SAP') = 1
+										BEGIN
+												SELECT	@SAP_CWENumer = @CWN_ID
+													,@SAP_CWELp = @CWE_GidLp
+													,@SAP_SamId = SAP.Attribute.value('@SamId','INT')
+													,@SAP_KierTyp = SAP.Attribute.value('@KierTyp','INT')
+													,@SAP_KierNumer = SAP.Attribute.value('@KierNumer','INT')
+													,@SAP_LicznikPocz = SAP.Attribute.value('@LicznikPocz','DECIMAL(9,2)')
+													,@SAP_LicznikKon = SAP.Attribute.value('@LicznikKon','DECIMAL(9,2)')
+													,@SAP_DataWyjazdu = SAP.Attribute.value('@DataWyjazdu','INT')
+													,@SAP_DataPrzyjazdu = SAP.Attribute.value('@DataPrzyjazdu','INT')
+													,@SAP_WyjazdZ = SAP.Attribute.value('@WyjazdZ','VARCHAR(100)')
+													,@SAP_PrzyjazdDo = SAP.Attribute.value('@PrzyjazdDo','VARCHAR(100)')
+													,@SAP_RodzajPrzejazdu = SAP.Attribute.value('@RodzajPrzejazdu','INT')
+													,@SAP_Opis = SAP.Attribute.value('@Opis','VARCHAR(1025)') 
+													,@SAP_GPSSz = SAP.Attribute.value('@GPSSz','DECIMAL(9,6)') 
+													,@SAP_GPSDl = SAP.Attribute.value('@GPSDl','DECIMAL(9,6)') 
+													,@SAP_GPSDataPobrania = SAP.Attribute.value('@GPSDataPobrania','INT')
+													,@SAP_GPSGodzinaPobrania = SAP.Attribute.value('@GPSGodzinaPobrania','INT')
+												FROM @xml_SAP.nodes('SAP') AS SAP(Attribute)
+
+												EXEC CDN.XLDodajPrzejazdWH
+												@CWENumer = @SAP_CWENumer
+												,@CWELp = @SAP_CWELp
+												,@OpeNumer = @CWN_OpeNumer
+												,@SamId = @SAP_SamId
+												,@KierTyp = @SAP_KierTyp
+												,@KierNumer = @SAP_KierNumer
+												,@LicznikPocz = @SAP_LicznikPocz
+												,@LicznikKon = @SAP_LicznikKon
+												,@DataWyjazdu = @SAP_DataWyjazdu
+												,@DataPrzyjazdu = @SAP_DataPrzyjazdu
+												,@WyjazdZ = @SAP_WyjazdZ
+												,@PrzyjazdDo = @SAP_PrzyjazdDo
+												,@RodzajPrzejazdu = @SAP_RodzajPrzejazdu
+												,@Opis = @SAP_Opis
+												,@GPSSz = @SAP_GPSSz
+												,@GPSDl = @SAP_GPSDl
+												,@GPSDataPobrania = @SAP_GPSDataPobrania
+												,@GPSGodzinaPobrania = @SAP_GPSGodzinaPobrania	
+
+												EXEC CDN.Log_Dopisz @LogID, 'Dodano przejazd do wizyty handlowej', 0
+										END									
+										/*END**************************************************************/
+										
+										
+										/******************** Merchandising *******************************/
+										SET @xml_DAB = @xml_tmp.query('CWE/CWOI/DAB')
+
+										SELECT  @index8 = 0,
+												@ok_index8 = 0,
+												@max_index8 = CAST(CAST(@xml_DAB.query ('count(DAB)') AS VARCHAR(20)) AS INT)
+										        
+										WHILE @index8 &lt; @max_index8
+												BEGIN
+													SET XACT_ABORT ON;
+														BEGIN TRY
+																BEGIN TRANSACTION;
+
+																IF @index8 % @buffer_size = 0
+																		SET @xml_buffer8 = ( SELECT @xml_DAB.query('DAB[position()&gt; sql:variable("@index8") and position() &lt;= sql:variable("@index8") + sql:variable("@buffer_size") ] ')  )
+																SET @xml_tmp8 = ( SELECT @xml_buffer8.query('DAB[position()= (sql:variable("@index8") mod sql:variable("@buffer_size")) + 1 ] ')  )
+
+                                SELECT @DAB_ZewnetrznyId = DAB.Attribute.value('@ZewnetrznyId','INT'),
+                                       @DAB_ZewnetrznySys = DAB.Attribute.value('@ZewnetrznySys','INT'),
+                                       @DAB_ID = DAB.Attribute.value('@DAB_Id','INT')
+                                FROM @xml_tmp8.nodes('DAB') AS DAB(Attribute)
+
+                                IF @DAB_ID = -1
+                                BEGIN
+									select @DAB_ID = dab_id from cdn.DaneBinarne where DAB_ZewnetrznySys = @CWN_ZewnetrznySys and DAB_ZewnetrznyId = @DAB_ZewnetrznyId
+                                END
+																																
+																SELECT @DAO_DABId = @DAB_ID
+																,@DAO_ObiTyp = 4180
+																,@DAO_ObiNumer = @CWN_ID
+																,@DAO_ObiLp = @CWE_GidLp
+																,@DAO_Domyslna = 0
+																,@DAO_Blokada = 0
+																,@DAO_PPPrawa = 0
+																,@DAO_PKPrawa = 0
+																,@DAO_eSklep = 0
+																,@DAO_iMall = 0
+																,@DAO_MobSpr = 1
+																,@DAO_Systemowa = 0
+																,@DAO_Retail = 1
+																
+																select @DAO_Pozycja = max(isNull(DAO_Pozycja,0))+1 from CDN.DaneObiekty where DAO_ObiTyp = 4180 and DAO_ObiNumer = @CWN_ID
+																
+																INSERT INTO cdn.DaneObiekty(DAO_DABId,DAO_ObiTyp,DAO_ObiNumer,DAO_ObiLp,DAO_ObiSubLp,DAO_Domyslna
+																							,DAO_Blokada,DAO_PPPrawa,DAO_PKPrawa,DAO_eSklep,DAO_iMall,DAO_MobSpr
+																							,DAO_Systemowa,DAO_Retail, DAO_Pozycja)
+																					VALUES(@DAO_DABId,@DAO_ObiTyp,@DAO_ObiNumer,@DAO_ObiLp,@e_WIZ_nDAORealizacja,@DAO_Domyslna
+																							,@DAO_Blokada,@DAO_PPPrawa,@DAO_PKPrawa,@DAO_eSklep,@DAO_iMall,@DAO_MobSpr
+																							,@DAO_Systemowa,@DAO_Retail,@DAO_Pozycja)
+																							
+																COMMIT TRANSACTION;
+																SET @ok_index8 = @ok_index8 + 1
+															END TRY
+
+															BEGIN CATCH
+																IF XACT_STATE() &lt;&gt; 0
+																	  ROLLBACK TRANSACTION;
+																SELECT @Opis = 'Błąd podczas importu realizacji dla elementu wizyty handlowej ' + CDN.Log_SzczegolyBledu(ERROR_NUMBER(),ERROR_PROCEDURE(),ERROR_LINE(),ERROR_MESSAGE())
+																EXEC CDN.Log_Dopisz @LogID, @Opis, 2
+															END CATCH
+
+															SET @index8 = @index8 + 1
+													END
+													IF @ok_index8 &gt; 0
+													BEGIN
+														SELECT @Opis = 'Ilość zaimportowanych realizacji dla elementu wizyty handlowej: '  + CAST(@ok_index8 AS NVARCHAR(10)) + ' z ' + CAST(@max_index8 AS NVARCHAR(10))
+														EXEC CDN.Log_Dopisz @LogID, @Opis, 0
+													END
+										/*END**************************************************************/
+										
+									
+									
+										/*********************************** Dodawanie dokumentów związanych z WH ************************************/
+										SET @xml_CDL = @xml_tmp.query('CWE/CWOI/CDL')
+
+										SELECT  @index2 = 0,
+												@ok_index2 = 0,
+												@max_index2 = CAST(CAST(@xml_CDL.query ('count(CDL)') AS VARCHAR(20)) AS INT)
+										        
+										WHILE @index2 &lt; @max_index2
+												BEGIN
+													SET XACT_ABORT ON;
+														BEGIN TRY
+																IF @index2 % @buffer_size = 0
+																		SET @xml_buffer2 = ( SELECT @xml_CDL.query('CDL[position()&gt; sql:variable("@index2") and position() &lt;= sql:variable("@index2") + sql:variable("@buffer_size") ] ')  )
+																SET @xml_tmp2 = ( SELECT @xml_buffer2.query('CDL[position()= (sql:variable("@index2") mod sql:variable("@buffer_size")) + 1 ] ')  )
+
+																		SELECT @CDL_ObiTyp = @CWN_Typ
+																			,@CDL_ObiNumer = @CWN_ID
+																			,@CDL_ObiLp = @CWE_GidLp
+																			,@CDL_DokTyp = CDL.Attribute.value('@DokTyp','smallint')
+																			,@CDL_DokNumer = CDL.Attribute.value('@DokNumer','INT')
+																			,@CDL_DokZewNumer = ISNULL(CDL.Attribute.value('@DokZewNumer','INT'), -1)
+																		FROM @xml_tmp2.nodes('CDL') AS CDL(Attribute)
+																		WHERE CDL.Attribute.value('@DokTyp','smallint')
+																			+CDL.Attribute.value('@DokNumer','INT') is not null
+																		IF @@rowcount=0 BREAK
+
+																		INSERT INTO #Tabela (TAG,CDL_ObiTyp,CDL_ObiNumer,CDL_ObiLp,CDL_DokTyp,CDL_DokNumer, CDL_DokZewNumer) 
+																		       VALUES('CDL',@CDL_ObiTyp,@CDL_ObiNumer,@CDL_ObiLp,@CDL_DokTyp,@CDL_DokNumer, @CDL_DokZewNumer)
+
+																SET @ok_index2 = @ok_index2 + 1
+														END TRY
+
+														BEGIN CATCH
+																IF XACT_STATE() &lt;&gt; 0
+																		ROLLBACK TRANSACTION;
+
+																SELECT @Opis = 'Błąd podczas importu dokumentów do WH ' + CDN.Log_SzczegolyBledu(ERROR_NUMBER(),ERROR_PROCEDURE(),ERROR_LINE(),ERROR_MESSAGE())
+																EXEC CDN.Log_Dopisz @LogID, @Opis, 2
+
+														END CATCH
+
+														SET @index2 = @index2 + 1
+												END
+									
+										/*END**************************************************************/									
+
+										/*********************************** Zamknięcie zadań związanych z WH ************************************/
+										SET @xml_ZAD = @xml_tmp.query('CWE/CWOI/ZAD')
+
+										SELECT  @index4 = 0,
+												@ok_index4 = 0,
+												@max_index4 = CAST(CAST(@xml_ZAD.query ('count(ZAD)') AS VARCHAR(20)) AS INT)
+										        
+										WHILE @index4 &lt; @max_index4
+												BEGIN
+													SET XACT_ABORT ON;
+														BEGIN TRY
+																IF @index4 % @buffer_size = 0
+																		SET @xml_buffer4 = ( SELECT @xml_ZAD.query('ZAD[position()&gt; sql:variable("@index4") and position() &lt;= sql:variable("@index4") + sql:variable("@buffer_size") ] ')  )
+																SET @xml_tmp4 = ( SELECT @xml_buffer4.query('ZAD[position()= (sql:variable("@index4") mod sql:variable("@buffer_size")) + 1 ] ')  )
+
+																		SELECT @ZAD_SsENumer = ZAD.Attribute.value('@GIDNumer','INT')
+																			   ,@ZAD_CDZId = ZAD.Attribute.value('@CDZId', 'INT')
+																			   ,@ZAD_Tytul = ZAD.Attribute.value('@Tytul', 'VARCHAR(80)')
+																			   ,@ZAD_Opis = ZAD.Attribute.value('@Opis', 'VARCHAR(5000)')
+																			   ,@ZAD_Zakonczone = ZAD.Attribute.value('@Zakonczone', 'TINYINT')
+																			   ,@ZAD_SsELp = 1
+																			   ,@ZAD_OpeNumer = @CWN_OpeNumer
+																		FROM @xml_tmp4.nodes('ZAD') AS ZAD(Attribute)
+																																																						
+																		SELECT TOP 1 @ZAD_SsEGIDNumer=SsE_GIDNumer, @ZAD_SsEGIDLp=SsE_GIDLp FROM CDN.CRMWizytyElemObiekty 
+																			JOIN CDN.SrsElem ON SsE_GIDTyp=CWO_ObiTyp AND SsE_GIDNumer=CWO_ObiNumer AND SsE_GIDLp=CWO_ObiLp
+																			JOIN CDN.CRMDefZadania ON CDZ_Id=SsE_CdzID 
+																			WHERE CWO_CWETyp=4180 AND CWO_CWENumer=@CWN_ID AND CWO_CWELp=@CWE_GidLp AND CDZ_CdzID=@ZAD_CDZId
+
+																		IF (COALESCE(@ZAD_SsEGIDNumer,0) &lt;&gt; 0 AND COALESCE(@ZAD_SsEGIDLp,0) &lt;&gt; 0)
+																		BEGIN
+																			IF @ZAD_Zakonczone = 1
+																				EXEC CDN.XLWykonajZadanieCRM 
+																					  @SsENumer = @ZAD_SsEGIDNumer
+																					  ,@SsELp = @ZAD_SsEGIDLp
+																					  ,@OpeNumer = @ZAD_OpeNumer
+																					  ,@Tytul = @ZAD_Tytul
+																					  ,@Opis = @ZAD_Opis
+
+																			ELSE
+																			BEGIN
+																				UPDATE CDN.SrsElem 
+																				SET SsE_TStampDataChange = DATEDIFF(s,'19900101',GETDATE()),
+																					SsE_OpeChangeTyp = 128,
+																					SsE_OpeChangeNumer = @ZAD_OpeNumer, 
+																					SsE_Tytul = IsNull(@ZAD_Tytul,SsE_Tytul),
+																					SsE_Opis = IsNull(@ZAD_Opis,SsE_Opis)
+																					WHERE SsE_GIDNumer=@ZAD_SsEGIDNumer AND SsE_GIDLp=@ZAD_SsEGIDLp
+																			END
+																		END
+																		
+																		EXEC CDN.Log_Dopisz @LogID, 'Wykonano zadanie związane z wizytą', 0
+
+																SET @ok_index4 = @ok_index4 + 1
+														END TRY
+
+														BEGIN CATCH
+																IF XACT_STATE() &lt;&gt; 0
+																		ROLLBACK TRANSACTION;
+
+																SELECT @Opis = 'Błąd podczas wykonania zadania dla elementu WH ' + CDN.Log_SzczegolyBledu(ERROR_NUMBER(),ERROR_PROCEDURE(),ERROR_LINE(),ERROR_MESSAGE())
+																EXEC CDN.Log_Dopisz @LogID, @Opis, 2
+
+														END CATCH
+
+														SET @index4 = @index4 + 1
+												END
+									
+										/*END**************************************************************/
+
+									/*********************************** Watki ************************************/
+										SET @xml_SSN = @xml_tmp.query('CWE/CWOI/SSN')
+
+										SELECT  @index5 = 0,
+												@ok_index5 = 0,
+												@max_index5 = CAST(CAST(@xml_SSN.query ('count(SSN)') AS VARCHAR(20)) AS INT)
+										        
+										WHILE @index5 &lt; @max_index5
+												BEGIN
+													SET XACT_ABORT ON;
+														BEGIN TRY
+																IF @index5 % @buffer_size = 0
+																		SET @xml_buffer5 = ( SELECT @xml_SSN.query('SSN[position()&gt; sql:variable("@index5") and position() &lt;= sql:variable("@index5") + sql:variable("@buffer_size") ] ')  )
+																SET @xml_tmp5 = ( SELECT @xml_buffer5.query('SSN[position()= (sql:variable("@index5") mod sql:variable("@buffer_size")) + 1 ] ')  )
+
+																		SELECT @SSN_KntNumer = CWN_KntNumer from CDN.CRMWizytyNag where CWN_ID = @CWN_ID
+																		SELECT @SSN_GIDNumer = SSN.Attribute.value('@GIDNumer','int')
+																		    ,@SSN_Streszczenie = SSN.Attribute.value('@Streszczenie','varchar(80)')
+																			,@SSN_CekId = NULL --SSN.Attribute.value('@PytId','INT')
+																			,@SSN_OpeStartStopNumer = @CWN_OpeNumer
+																			,@SSN_Opis = SSN.Attribute.value('@Opis','varchar(5000)')
+																			,@SSN_TStampDataStop = SSN.Attribute.value('@TStampDataStop','int')
+																			,@SSN_ZewnetrznyId = SSN.Attribute.value('@ZewnetrznyId','int')
+																			FROM @xml_tmp5.nodes('SSN') AS SSN(Attribute)
+
+																		IF @SSN_GIDNumer is null
+																		BEGIN
+																			EXEC @SSN_GIDNumer=CDN.XLNowyWatekCRM 
+																				@Streszczenie = @SSN_Streszczenie
+																				,@KntNumer = @SSN_KntNumer
+																				,@CekId = @SSN_CekId
+																				,@OpeStartNumer = @SSN_OpeStartStopNumer
+																				,@Opis = @SSN_Opis
+																			-- Powiązanie nowo dodanego wątku z elementem wizyty
+																			insert into CDN.CRMWizytyElemObiekty(CWO_CWETyp, CWO_CWENumer, CWO_CWELp, CWO_ObiTyp, CWO_ObiNumer, CWO_ObiLp) 
+																					VALUES(@CWN_Typ,@CWN_ID,@CWE_GidLp,339,@SSN_GIDNumer,0)																				
+																		END
+																		
+																				/*********************************** Elementy wątków ************************************/
+																				SET @xml_SSE = @xml_tmp5.query('SSN/SSE')
+
+																				SELECT  @index6 = 0,
+																						@ok_index6 = 0,
+																						@max_index6 = CAST(CAST(@xml_SSE.query ('count(SSE)') AS VARCHAR(20)) AS INT)
+																				        
+																				WHILE @index6 &lt; @max_index6
+																						BEGIN
+																							SET XACT_ABORT ON;
+																								BEGIN TRY
+
+																										IF @index6 % @buffer_size = 0
+																												SET @xml_buffer6 = ( SELECT @xml_SSE.query('SSE[position()&gt; sql:variable("@index6") and position() &lt;= sql:variable("@index6") + sql:variable("@buffer_size") ] ')  )
+																										SET @xml_tmp6 = ( SELECT @xml_buffer6.query('SSE[position()= (sql:variable("@index6") mod sql:variable("@buffer_size")) + 1 ] ')  )
+
+
+																												SELECT @SSE_Tytul = SSE.Attribute.value('@Tytul','varchar(80)')
+																													,@SSE_ElementTyp = SSE.Attribute.value('@ElementTyp','smallint')
+																													,@SSE_ElementLp = SSE.Attribute.value('@ElementLp','smallint')
+																													,@SSE_Opis = SSE.Attribute.value('@Opis','varchar(5000)')
+																													FROM @xml_tmp6.nodes('SSE') AS SSE(Attribute)
+
+																													EXEC @SSE_ElementLp = CDN.XLDodajElementDoWatkuCRM
+																														@SsNNumer = @SSN_GIDNumer
+																														,@Tytul = @SSE_Tytul
+																														,@ElementTyp = @SSE_ElementTyp
+																														,@OpeStartNumer = @SSN_OpeStartStopNumer
+																														,@KntNumer = NULL
+																														,@KntLp = NULL
+																														,@KntOsobaLp = NULL
+																														,@CkeNumer = NULL
+																														,@CkeLp = NULL
+																														,@CdzID = NULL
+																														,@OpePTyp = 0
+																														,@OpePNumer = 0
+																														,@Opis = @SSE_Opis
+																			             
+																										SET @ok_index6 = @ok_index6 + 1
+																								END TRY
+
+																								BEGIN CATCH
+																										IF XACT_STATE() &lt;&gt; 0
+																												ROLLBACK TRANSACTION;
+
+																										SELECT @Opis = 'Błąd podczas importu wątku ' + CDN.Log_SzczegolyBledu(ERROR_NUMBER(),ERROR_PROCEDURE(),ERROR_LINE(),ERROR_MESSAGE())
+																										EXEC CDN.Log_Dopisz @LogID, @Opis, 2
+
+																								END CATCH
+
+																								SET @index6 = @index6 + 1
+																						END
+																						IF @ok_index6 &gt; 0
+																						BEGIN
+																							SELECT @Opis = 'Ilość zaimportowanych elementów wątków: '  + CAST(@ok_index6 AS NVARCHAR(10)) + ' z ' + CAST(@max_index6 AS NVARCHAR(10))
+																							EXEC CDN.Log_Dopisz @LogID, @Opis, 0
+																						END
+																				/*END**************************************************************/
+																		
+																		IF not @SSN_TStampDataStop is null
+																		BEGIN
+																			EXEC CDN.XLZakonczWatekCRM
+																				@SsNNumer = @SSN_GIDNumer
+																				,@OpeStopNumer = @SSN_OpeStartStopNumer
+																				,@TStampDataStop = @SSN_TStampDataStop
+																				,@IgnorujBledy = 1
+																		END																		
+																SET @ok_index5 = @ok_index5 + 1
+														END TRY
+
+														BEGIN CATCH
+																IF XACT_STATE() &lt;&gt; 0
+																		ROLLBACK TRANSACTION;
+
+																SELECT @Opis = 'Błąd podczas importu wątku ' + CDN.Log_SzczegolyBledu(ERROR_NUMBER(),ERROR_PROCEDURE(),ERROR_LINE(),ERROR_MESSAGE())
+																EXEC CDN.Log_Dopisz @LogID, @Opis, 2
+
+														END CATCH
+
+														SET @index5 = @index5 + 1
+												END
+												IF @ok_index5 &gt; 0
+												BEGIN
+													SELECT @Opis = 'Ilość zaimportowanych wątków: '  + CAST(@ok_index5 AS NVARCHAR(10)) + ' z ' + CAST(@max_index5 AS NVARCHAR(10))
+													EXEC CDN.Log_Dopisz @LogID, @Opis, 0
+												END
+										/*END**************************************************************/
+
+										/*********************************** Zamknięcie raportów związanych z WH ************************************/
+										SET @xml_CWRT = @xml_tmp.query('CWE/CWOI/CWRT')
+
+										SELECT  @index7 = 0,
+												@ok_index7 = 0,
+												@max_index7 = CAST(CAST(@xml_CWRT.query ('count(CWRT)') AS VARCHAR(20)) AS INT)
+										        
+										WHILE @index7 &lt; @max_index7
+												BEGIN
+													SET XACT_ABORT ON;
+														BEGIN TRY
+																IF @index7 % @buffer_size = 0
+																		SET @xml_buffer7 = ( SELECT @xml_CWRT.query('CWRT[position()&gt; sql:variable("@index7") and position() &lt;= sql:variable("@index7") + sql:variable("@buffer_size") ] ')  )
+																SET @xml_tmp7 = ( SELECT @xml_buffer7.query('CWRT[position()= (sql:variable("@index7") mod sql:variable("@buffer_size")) + 1 ] ')  )
+
+																SELECT 	@CWRT_CWETyp = @CWN_Typ,
+																		@CWRT_CWENumer = @CWN_ID,
+																		@CWRT_CWELp = @CWE_GidLp,
+																		@CWRT_CRDId = CWRT.Attribute.value('@CRDId','INT'),
+																		@CWRT_TwrNumer = CWRT.Attribute.value('@TwrNumer','INT'),
+																		@CWRT_TwrNumerO = CWRT.Attribute.value('@TwrNumerO','INT'),
+																		@CWRT_Obecny = CWRT.Attribute.value('@Obecny','TINYINT'),
+																		@CWRT_Ilosc = CWRT.Attribute.value('@Ilosc','DECIMAL(11,4)'),
+																		@CWRT_Jm = CWRT.Attribute.value('@Jm','VARCHAR(9)'),
+																		@CWRT_Cena = CWRT.Attribute.value('@Cena','DECIMAL(15,2)'),
+																		@CWRT_Ekspozycja = CWRT.Attribute.value('@Ekspozycja','INT'),
+																		@CWRT_Facing = CWRT.Attribute.value('@Facing','SMALLINT'),
+																		@CWRT_KntTyp = CWRT.Attribute.value('@KntTyp','SMALLINT'),
+																		@CWRT_KntNumer = CWRT.Attribute.value('@KntNumer','SMALLINT'),
+																		@CWRT_CRKWartosc1 = CWRT.Attribute.value('@CRKWartosc1','VARCHAR(512)'),
+																		@CWRT_CRKWartosc2 = CWRT.Attribute.value('@CRKWartosc2','VARCHAR(512)'),
+																		@CWRT_CRKWartosc3 = CWRT.Attribute.value('@CRKWartosc3','VARCHAR(512)'),
+																		@CWRT_CRKWartosc4 = CWRT.Attribute.value('@CRKWartosc4','VARCHAR(512)'),
+																		@CWRT_CRKWartosc5 = CWRT.Attribute.value('@CRKWartosc5','VARCHAR(512)')
+																FROM @xml_tmp7.nodes('CWRT') AS CWRT(Attribute)
+
+																-- Jeżeli nie został przesłany TwrNumer to identyfikacja towaru po identyfikatorze w oddziale (TwrNumerO)
+																IF ISNULL(@CWRT_TwrNumer,0) = 0
+																	SELECT @CWRT_TwrNumer = PcL_ObiNumer FROM CDN.PicoLog WHERE PcL_PcKID = @ID AND PcL_ObiTyp = 16 AND PcL_ObiektID = @CWRT_TwrNumerO
+
+																IF EXISTS(SELECT * FROM CDN.CRMWizytyRptTwr WHERE CWT_CWETyp = @CWRT_CWETyp AND CWT_CWENumer = @CWRT_CWENumer AND CWT_CWELp = @CWRT_CWELp AND CWT_CRDId = @CWRT_CRDId AND CWT_TwrNumer = @CWRT_TwrNumer)
+																	UPDATE CDN.CRMWizytyRptTwr
+																	SET
+																		CWT_Obecny = ISNULL(@CWRT_Obecny,CWT_Obecny), 
+																		CWT_Ilosc = ISNULL(@CWRT_Ilosc,CWT_Ilosc),
+																		CWT_Jm = ISNULL(@CWRT_Jm,CWT_Jm),
+																		CWT_Cena = ISNULL(@CWRT_Cena,CWT_Cena),
+																		CWT_Ekspozycja = ISNULL(@CWRT_Ekspozycja,CWT_Ekspozycja),
+																		CWT_Facing = ISNULL(@CWRT_Facing,CWT_Facing),
+																		CWT_KntTyp = ISNULL(@CWRT_KntTyp,CWT_KntTyp),
+																		CWT_KntNumer = ISNULL(@CWRT_KntNumer,CWT_KntNumer),
+																		CWT_CRKWartosc1 = ISNULL(@CWRT_CRKWartosc1,CWT_CRKWartosc1),
+																		CWT_CRKWartosc2 = ISNULL(@CWRT_CRKWartosc2,CWT_CRKWartosc2),
+																		CWT_CRKWartosc3 = ISNULL(@CWRT_CRKWartosc3,CWT_CRKWartosc3),
+																		CWT_CRKWartosc4 = ISNULL(@CWRT_CRKWartosc4,CWT_CRKWartosc4),
+																		CWT_CRKWartosc5 = ISNULL(@CWRT_CRKWartosc5,CWT_CRKWartosc5)
+																	WHERE CWT_CWETyp = @CWRT_CWETyp and CWT_CWENumer = @CWRT_CWENumer and CWT_CWELp = @CWRT_CWELp and CWT_CRDId = @CWRT_CRDId and CWT_TwrNumer = @CWRT_TwrNumer
+																ELSE
+																	INSERT INTO CDN.CRMWizytyRptTwr (CWT_CWETyp, CWT_CWENumer, CWT_CWELp, CWT_CRDId, CWT_TwrNumer, CWT_Obecny, CWT_Ilosc, CWT_Jm, CWT_Cena, CWT_Ekspozycja, CWT_Facing, CWT_KntTyp, CWT_KntNumer,CWT_CRKWartosc1,CWT_CRKWartosc2,CWT_CRKWartosc3,CWT_CRKWartosc4,CWT_CRKWartosc5)
+																	VALUES (@CWRT_CWETyp, @CWRT_CWENumer, @CWRT_CWELp, @CWRT_CRDId, @CWRT_TwrNumer, @CWRT_Obecny, @CWRT_Ilosc, @CWRT_Jm, @CWRT_Cena, @CWRT_Ekspozycja, @CWRT_Facing, @CWRT_KntTyp, @CWRT_KntNumer,@CWRT_CRKWartosc1,@CWRT_CRKWartosc2,@CWRT_CRKWartosc3,@CWRT_CRKWartosc4,@CWRT_CRKWartosc5)
+																		
+																EXEC CDN.Log_Dopisz @LogID, 'Dodano raport związany z wizytą', 0
+
+																SET @ok_index7 = @ok_index7 + 1
+														END TRY
+
+														BEGIN CATCH
+																IF XACT_STATE() &lt;&gt; 0
+																		ROLLBACK TRANSACTION;
+
+																SELECT @Opis = 'Błąd podczas dodawania raportu dla elementu WH ' + CDN.Log_SzczegolyBledu(ERROR_NUMBER(),ERROR_PROCEDURE(),ERROR_LINE(),ERROR_MESSAGE())
+																EXEC CDN.Log_Dopisz @LogID, @Opis, 2
+
+														END CATCH
+
+														SET @index7 = @index7 + 1
+												END									
+										/*END**************************************************************/										
+										
+
+									SET @index = @index + 1
+							END -- Zakonczenie petli dla wizyt
+
+					SELECT @Opis = 'Ilość zaimportowanych elementów wizyt handlowych: '  + CAST(@ok_index AS NVARCHAR(10)) + ' z ' + CAST(@max_index AS NVARCHAR(10))
+					EXEC CDN.Log_Dopisz @LogID, @Opis, 0
+					/*END**************************************************************/
+
+					/******************************************* Zakonczenie wizyty handlowej **************************************/
+					IF NOT @CWN_Zakonczono IS NULL
+					BEGIN
+					EXEC CDN.XLZakonczWH	
+						@CWNId = @CWN_ID
+						,@OpeNumer = @CWN_OpeNumer
+						,@Zakonczono = @CWN_Zakonczono
+						,@DataZak = @CWN_DataZakonczenia
+						,@DataZakOd = @CWN_DataZakonczeniaOd
+						,@Opis = @CWN_Opis
+						--,@NrKursu = @CWN_NrKursu 
+
+					EXEC CDN.Log_Dopisz @LogID, 'Zakonczono wizyte handlową', 0
+					END
+					/*END**************************************************************/
+
+					/************* Dodawanie dokumentow po zakonczeniu wizyty *****************/
+					WHILE (1=1)
+					BEGIN
+						select @TAG_tabela=TAG from #Tabela where Lp=@Lp_tabela
+						IF @@rowcount=0 BREAK
+						
+						IF @TAG_tabela='CDL'
+						BEGIN
+							select @CDL_ObiTyp=CDL_ObiTyp, @CDL_ObiNumer=CDL_ObiNumer, @CDL_ObiLp=CDL_ObiLp,
+							       @CDL_DokTyp=CDL_DokTyp, @CDL_DokNumer=CDL_DokNumer, @CDL_DokZewNumer = CDL_DokZewNumer from #Tabela where Lp=@Lp_tabela
+							
+							IF @CDL_DokZewNumer &gt; 0 AND @CDL_DokNumer = 0
+							BEGIN
+								IF @CDL_DokTyp = 960
+								BEGIN
+									SELECT @CDL_DokNumer = ZaN_GIDNumer FROM CDN.ZamNag WHERE ZaN_PcKID = @ID AND ZaN_OddDokID = @CDL_DokZewNumer
+								END
+								ELSE IF @CDL_DokTyp IN (2033, 2034, 2001)
+								BEGIN
+									SELECT @CDL_DokNumer = TrN_GIDNumer FROM CDN.TraNag WHERE TrN_ZewnetrznySys = @ID AND TrN_OddDokId = @CDL_DokZewNumer
+								END
+								ELSE IF @CDL_DokTyp = 784
+								BEGIN
+									SELECT @CDL_DokNumer = KAZ_GIDNumer FROM CDN.Zapisy JOIN CDN.Raporty ON KRP_GIDNumer=KAZ_KRPNumer AND KRP_ZewnetrznySys = @ID WHERE KAZ_ZewnetrznyId = @CDL_DokZewNumer
+								END
+								ELSE IF @CDL_DokTyp IN (3584, 3585)
+								BEGIN
+									SELECT @CDL_DokNumer = RLN_Id FROM CDN.ReklNag WHERE RLN_ZewnetrznySys = @ID AND RLN_ZewnetrznyId = @CDL_DokZewNumer
+								END
+								ELSE IF @CDL_DokTyp = 1601
+								BEGIN
+									SELECT @CDL_DokNumer = MaN_GIDNumer FROM CDN.MagNag WHERE MaN_ZewnetrznySys = @ID AND MaN_ZewnetrzneId = @CDL_DokZewNumer
+								END
+								ELSE IF @CDL_DokTyp = 4700
+								BEGIN
+									SELECT @CDL_DokNumer = SZN_ID FROM CDN.SrwZlcNag WHERE SZN_ZewnetrznySys = @ID AND SZN_ZewnetrznyId = @CDL_DokZewNumer
+								END
+								ELSE IF @CDL_DokTyp = 4702
+								BEGIN
+									SELECT @CDL_DokNumer = SZC_ID FROM CDN.SrwZlcCzynnosci WHERE SZC_ZewnetrznySys = @ID AND SZC_ZewnetrznyId = @CDL_DokZewNumer
+									IF NOT EXISTS(SELECT * FROM CDN.CRMWizytyElemObiekty WHERE CWO_CWETyp = @CDL_ObiTyp AND CWO_CWENumer = @CDL_ObiNumer AND CWO_CWELp = @CDL_ObiLp AND CWO_ObiTyp = @CDL_DokTyp AND CWO_ObiNumer = @CDL_DokNumer AND CWO_ObiLp = 0)
+										INSERT INTO CDN.CRMWizytyElemObiekty (CWO_CWETyp, CWO_CWENumer, CWO_CWELp, CWO_ObiTyp, CWO_ObiNumer, CWO_ObiLp)	VALUES (@CDL_ObiTyp, @CDL_ObiNumer, @CDL_ObiLp, @CDL_DokTyp, @CDL_DokNumer, 0)
+								END
+							END
+							ELSE IF @CDL_DokNumer &lt;&gt; 0 AND @CDL_DokZewNumer = 0 AND @CDL_DokTyp = 4702 --TFSID:303502
+							BEGIN								
+								IF NOT EXISTS(SELECT * FROM CDN.CRMWizytyElemObiekty WHERE CWO_CWETyp = @CDL_ObiTyp AND CWO_CWENumer = @CDL_ObiNumer AND CWO_CWELp = @CDL_ObiLp AND CWO_ObiTyp = @CDL_DokTyp AND CWO_ObiNumer = @CDL_DokNumer AND CWO_ObiLp = 0)
+									INSERT INTO CDN.CRMWizytyElemObiekty (CWO_CWETyp, CWO_CWENumer, CWO_CWELp, CWO_ObiTyp, CWO_ObiNumer, CWO_ObiLp)	VALUES (@CDL_ObiTyp, @CDL_ObiNumer, @CDL_ObiLp, @CDL_DokTyp, @CDL_DokNumer, 0)
+							END
+							EXEC CDN.XLDolaczDokDoObiektuCRM
+								@ObiTyp = @CDL_ObiTyp
+								,@ObiNumer = @CDL_ObiNumer
+								,@ObiLp = @CDL_ObiLp
+								,@DokTyp = @CDL_DokTyp
+								,@DokNumer = @CDL_DokNumer
+								,@OpeNumer = @CWN_OpeNumer
+								,@IgnorujBledy = 1
+						END
+
+						set @Lp_tabela = @Lp_tabela + 1;
+					END
+
+					TRUNCATE TABLE #Tabela -- czyszczenie tabeli, zerowanie Lp
+
+					set @Lp_tabela = 1;
+
+					IF @ok_index2 &gt; 0
+					BEGIN
+						SELECT @Opis = 'Ilość zaimportowanych dokumentów do WH: '  + CAST(@ok_index2 AS NVARCHAR(10)) + ' z ' + CAST(@max_index2 AS NVARCHAR(10))
+						EXEC CDN.Log_Dopisz @LogID, @Opis, 0
+					END
+
+					/*END**************************************************************/
+                     SET @nok_index = @nok_index + 1
+                END TRY
+
+                BEGIN CATCH
+                     IF XACT_STATE() &lt;&gt; 0
+                          ROLLBACK TRANSACTION;
+
+                      SELECT @Opis = 'Błąd podczas importu dokumentów do WH ' + CDN.Log_SzczegolyBledu(ERROR_NUMBER(),ERROR_PROCEDURE(),ERROR_LINE(),ERROR_MESSAGE())
+                      EXEC CDN.Log_Dopisz @LogID, @Opis, 2
+
+                END CATCH
+
+                SET @nindex = @nindex + 1
+        END -- koniec głównej pętli dodawania Wizyty handlowej
+		/*END**************************************************************/
+
+
+EXEC CDN.Log_Dopisz @LogID, @Opis, 0
+EXEC CDN.Log_ZamknijPoziom @LogID
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

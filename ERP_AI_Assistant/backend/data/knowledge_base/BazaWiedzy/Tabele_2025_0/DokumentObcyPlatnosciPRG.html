@@ -1,0 +1,78 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[DokumentObcyPlatnosciPRG]"></A><PRE>
+          <FONT SIZE="2"><I>/* [DokumentObcyPlatnosciPRG] */</I><BR>
+CREATE FUNCTION [CDN].[DokumentObcyPlatnosciPRG] (@TrpGidTyp int,@TrpGidNumer int,@TrpGidLp int,@TrPZrdTyp int,@TrPrleLP int)
+RETURNS nvarchar(64)
+AS
+BEGIN
+
+	IF @TrPZrdTyp = 0 and @TrPrleLP = 0
+		RETURN ''
+
+	DECLARE 
+		@e_ksi_Tabela_TraNag INT = 1,
+		@e_ksi_Tabela_ImpNag INT = 11,
+		@e_ksi_Tabela_KBNNag INT = 55,
+		@e_ksi_Tabela_SadNag INT = 10,
+		@e_ksi_Tabela_Prolongaty INT = 58,
+		@e_ksi_Tabela_PodNag INT = 21,
+		@e_ksi_Tabela_UpoNag INT = 15,
+		@e_ksi_Tabela_MeMNag INT = 13,
+		@e_ksi_Tabela_BilansOtwarciaNag INT = 20
+
+	declare @Typ int,@Numer int,@Lp int
+
+	IF @TrPrleLP = 0 AND @TrPZrdTyp = 7942
+		select @Typ=ZrodloProlongaty.Typ, @Numer = ZrodloProlongaty.Numer, @Lp = ZrodloProlongaty.Lp from cdn.TraPlat t1 
+		join cdn.TraPlat t2 on t2.TrP_GIDTyp = t1.TrP_ZrdTyp and t2.TrP_GIDNumer = t1.TrP_ZrdNumer and t2.TrP_GIDLp = t1.TrP_ZrdLp
+		outer apply cdn.ZrodloProlongaty(t2.TrP_GIDNumer,t2.TrP_PrleLP)
+		where t1.trp_gidTyp=@TrpGidTyp and t1.trp_gidnumer=@TrpGidNumer and t1.trp_gidlp=@TrpGidLp
+	ELSE IF @TrPrleLP = 0 AND @TrPZrdTyp &lt;&gt; 0
+		select @Typ=trp_zrdtyp, @Numer = trp_zrdnumer, @Lp = trp_zrdlp from cdn.traplat where trp_gidTyp=@TrpGidTyp and trp_gidnumer=@TrpGidNumer and trp_gidlp=@TrpGidLp
+	ELSE IF @TrPrleLP &lt;&gt; 0 AND @TrPZrdTyp = 0
+		select @Typ=ZrodloProlongaty.Typ, @Numer = ZrodloProlongaty.Numer, @Lp = ZrodloProlongaty.Lp from cdn.ZrodloProlongaty(@TrpGidNumer,@TrPrleLP)
+	ELSE
+		return ''
+
+		DECLARE @TABELA INT = (SELECT CDN.GIDTyp2Tabela(@Typ))
+	DECLARE @WYNIK NVARCHAR(64)
+
+	IF @TABELA = @e_ksi_Tabela_TraNag
+		select @WYNIK = CDN.NumerDokumentu(TrN_GIDTyp,TrN_SpiTyp,TrN_TrNTyp,TrN_TrNNumer,TrN_TrNRok,TrN_TrNSeria,TrN_TrnMiesiac) from cdn.tranag where trn_gidnumer=@Numer and trn_gidtyp = @Typ
+	ELSE IF @TABELA = @e_ksi_Tabela_ImpNag
+		select @WYNIK = CDN.NumerDokumentu(ImN_GIDTyp,0,ImN_ImNTyp,ImN_ImNNumer,ImN_ImNRok,ImN_ImNSeria,ImN_ImNMiesiac) from cdn.impnag where imn_gidnumer=@Numer and imn_gidtyp = @Typ
+	ELSE IF @TABELA = @e_ksi_Tabela_KBNNag
+		select @WYNIK = CDN.NumerDokumentu(4608,0,0,0,KBNN_Rok,KBNN_Seria,KBNN_Miesiac) from cdn.kbnnag where KBNN_Id=@Numer
+	ELSE IF @TABELA = @e_ksi_Tabela_SadNag
+		select @WYNIK = CDN.NumerDokumentu(SaN_GIDTyp,0,SaN_SaNTyp,SaN_SaNNumer,SaN_SaNRok,SaN_SaNSeria,SaN_SaNMiesiac) from cdn.SadNag where san_gidnumer=@Numer and san_gidtyp = @Typ
+    ELSE IF @TABELA = @e_ksi_Tabela_Prolongaty
+		select @WYNIK = (select case when trp_rodzaj &lt;&gt; 0 then 'KF ' else '' end from cdn.traplat where trp_gidnumer=@Numer and TrP_GIDLp=@Lp and TrP_GIDTyp = @Typ)
+			+ CDN.NumerDokumentu(prln_prlntyp,0,0,prln_numer,prln_rok,prln_seria,prln_miesiac) from cdn.ProlongNag where prln_id=@Numer and prln_prlntyp = @Typ
+    ELSE IF @TABELA = @e_ksi_Tabela_PodNag
+		select @WYNIK = CDN.NumerDokumentu(PON_GIDTyp,PON_TypPodatku,0,0,PON_Rok,'',PON_Miesiac) from cdn.PodNag where PoN_gidnumer=@Numer and PoN_gidtyp = @Typ
+    ELSE IF @TABELA = @e_ksi_Tabela_UpoNag
+		select @WYNIK = CDN.NumerDokumentu(UPN_GIDTyp, 0, 0, UPN_Numer, UPN_Rok, Upn_Seria, 0) from cdn.UpoNag where upN_gidnumer=@Numer and upN_gidtyp = @Typ
+    ELSE IF @TABELA = @e_ksi_Tabela_MeMNag
+		select @WYNIK = CDN.NumerDOkumentuK(MEN_GIDTyp,0,0,MeN_Numer,MEN_RokMiesiac/100,MEN_Seria,MEN_RokMiesiac%100, MEN_OkrSymbol,0,0,0,0) from cdn.MeMNag where MEN_gidnumer=@Numer and MEN_gidtyp = @Typ
+    ELSE IF @TABELA = @e_ksi_Tabela_BilansOtwarciaNag
+		select @WYNIK = CDN.NumerDokumentuK(BON_GIDTyp,BOS_GidLp,0,BON_Numer,BON_RokMiesiac/100,'''',BON_RokMiesiac%100,BON_OkrSymbol,0,0,0,0) from cdn.BilansOtwarciaNag join CDN.BilansOtwarciaSElem on BOS_GIDNumer = BON_GIDNumer and BOS_trpLp = @Lp where BON_gidnumer=@Numer and BON_gidtyp = @Typ
+
+       
+	   return @wynik
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

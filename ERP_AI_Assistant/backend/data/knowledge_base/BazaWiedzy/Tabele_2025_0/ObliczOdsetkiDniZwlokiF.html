@@ -1,0 +1,441 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="ObliczOdsetkiDniZwlokiF"></A><PRE>
+          <FONT SIZE="2"><I>/* ObliczOdsetkiDniZwlokiF */</I><BR>
+Create Function CDN.ObliczOdsetkiDniZwlokiF( @TrpTyp int, @TrpNumer int, @TrpLp int, @Typ tinyint, @Dzis int, @TypStawki int = 0, @Stawka decimal(15,2) = 0, @TypOds int = 0 ,@KntTyp int = 0, @KntNumer int = 0, 
+						@OdsetkiKorygujacych int = 0, @OdsetkiTerminMaks bit = 0, @OdsetkiTerminPoProl bit = 0)
+
+Returns	@ODSQueue table(DniZwloki int,KwotaZal decimal(15,2), KwotaOds decimal(15,2), Opoznienie int,Nota tinyint, Procent decimal(5,2), KwotaOdsSys decimal(15,2), 
+          KosztUpSys decimal(15,2), Waluta varchar(3), NrKursu int, KursM decimal(5), KursL decimal(15,10), TypKursu tinyint, RozTyp int, RozFirma int, RozNumer int, RozLp int)
+as 
+begin
+
+	declare @TrpKwota decimal(15,2), @TrpPozostaje decimal(15,2)
+	declare @ID int ,@Data int, @Procent decimal(15,2), @TypOdsetek tinyint, @Kwota decimal(15,2), @Status tinyint, @RozTyp int, @RozNumer int, @RozLp int;
+	declare @ID_2 int,@Data_2 int, @Procent_2 decimal(15,2), @TypOdsetek_2 tinyint, @Kwota_2 decimal(15,2), @Status_2 tinyint, @RozTyp_2 int, @RozNumer_2 int, @RozLp_2 int;
+	declare @ID_3 int, @RozKazTyp_3 int, @RozKazNumer_3 int, @RozTyp_3 int, @RozNumer_3 int, @RozLp_3 int, @RozDataDok_3 int, @RozDataZapisu_3 int, @RozKwota_3 decimal(15,2)  
+	declare @i int,@j int
+	declare @Poprzedni int = 0;
+	declare @TrpTermin int, @TrPMaksymalnyTermin int, @TrPTerminPoProlongacie int, @TrpProlGIDNumer int;
+	declare @Pozycja decimal(15,2)
+	declare @KwotaOdsSys decimal(15,2)
+	declare @KwotaTemp decimal(15,2), @ProcentTemp decimal(15,2), @Data1 int,@Data2 int;
+	declare @Pozostaje decimal(15,2)
+	declare @SposobLiczeniaOdsetek tinyint, @IloscDniWRoku smallint, @DniWolneUstawowoOdPracy bit
+	declare @TrpWaluta varchar(3), @WalutaSystemowa varchar(3),@TrpKursL decimal(15,10), @TrpKursM decimal(5), @TrpNrKursu tinyint
+	declare @FirmaID int
+
+	--declare @ODSQueue table (DniZwloki int,KwotaZal decimal(15,2), KwotaOds decimal(15,2), Opoznienie int,Nota tinyint, Procent decimal(5,2), KwotaOdsSys decimal(15,2), 
+	  --                       KosztUpSys decimal(15,2), Waluta varchar(3), NrKursu int, KursM decimal(5), KursL decimal(7,2), TypKursu tinyint);
+
+	--pobranie danych konfiguracyjnych tylko jesli generowanie z listy
+	if @OdsetkiKorygujacych = 2
+		set @OdsetkiKorygujacych = isnull((select Kon_Wartosc from cdn.konfig where Kon_numer = 2084),0)
+
+	set @SposobLiczeniaOdsetek = (select Kon_Wartosc from cdn.konfig where Kon_numer = 2044)
+	set @IloscDniWRoku = (select Kon_Wartosc from cdn.konfig where Kon_numer = 2046)
+	set @WalutaSystemowa = (select Kon_Wartosc from cdn.konfig where Kon_numer = 211)
+	set @DniWolneUstawowoOdPracy = (select Kon_Wartosc from cdn.konfig where Kon_Numer = 20133)
+	set @FirmaID = (select frm_gidfirma from cdn.firma where frm_gidnumer = 1)
+
+	declare @Odsetki table(ID int,Data int, Procent Decimal(15,2), TypOdsetek tinyint, Kwota Decimal(15,2), Status tinyint, RozTyp int, RozNumer int, RozLp int)
+	declare @OdsetkiCopy table(ID int,Data int, Procent Decimal(15,2), TypOdsetek tinyint, Kwota Decimal(15,2), Status tinyint, RozTyp int, RozNumer int, RozLp int);
+	declare @KwotyDok table(ID int identity(1,1),RozKazTyp int,RozKazNumer int, RozTyp int, RozNumer int, RozLp int, RozDataDok int, RozDataZapisu int, RozKwota decimal(15,2));
+
+	if @TypStawki = 0 --Ogólne          
+	begin	     
+		if @TypOds &gt; 0
+			insert into @Odsetki(ID,Data,Procent,TypOdsetek,Kwota,Status,RozTyp,RozNumer,RozLp)
+			select (ROW_NUMBER() over(order by ODS_DataO-1,ODS_ProcOds)),ODS_DataO-1,ODS_ProcOds,ODS_TypOdsetek,0,0,0,0,0 from cdn.Odsetki 
+			where ODS_TypOdsetek in(@Typ,3) and ODS_SlwTypOdsetek = @TypOds and ODS_GIDTyp &lt;&gt; 32     
+		else
+			insert into @Odsetki(ID,Data,Procent,TypOdsetek,Kwota,Status,RozTyp,RozNumer,RozLp)
+			select (ROW_NUMBER() over(order by ODS_DataO-1,ODS_ProcOds)),ODS_DataO-1,ODS_ProcOds,ODS_TypOdsetek,0,0,0,0,0 from cdn.Odsetki 
+			where ODS_TypOdsetek in(@Typ,3) and ODS_GIDTyp &lt;&gt; 32
+	end    
+	else if @TypStawki = 1 --Karta Knt
+	begin
+		if  @TypOds &gt; 0 
+			insert into @Odsetki(ID,Data,Procent,TypOdsetek,Kwota,Status,RozTyp,RozNumer,RozLp)
+			select (ROW_NUMBER() over(order by ODS_DataO-1,ODS_ProcOds)),ODS_DataO-1,ODS_ProcOds,ODS_TypOdsetek,0,0,0,0,0 
+			from cdn.Odsetki where ODS_TypOdsetek in(@Typ,3) and ODS_GIDTyp = @KntTyp and ODS_GIDNumer = @KntNumer and ODS_SlwTypOdsetek = @TypOds
+		else 
+			insert into @Odsetki(ID,Data,Procent,TypOdsetek,Kwota,Status,RozTyp,RozNumer,RozLp)
+			select (ROW_NUMBER() over(order by ODS_DataO-1,ODS_ProcOds)),ODS_DataO-1,ODS_ProcOds,ODS_TypOdsetek,0,0,0,0,0 
+			from cdn.Odsetki where ODS_TypOdsetek in(@Typ,3) and ODS_GIDTyp = @KntTyp and ODS_GIDNumer = @KntNumer
+
+		if (select count(*) from @Odsetki) = 0 
+		begin
+			--RAISERROR('Nie zdefiniowano tabeli odsetek na karcie kontrahenta. Podstawiono odsetki zdefiniowane w konfiguracji głównej.',16,1)
+			insert into @Odsetki(ID,Data,Procent,TypOdsetek,Kwota,Status,RozTyp,RozNumer,RozLp)
+			select 1,ODS_DataO-1,ODS_ProcOds,ODS_TypOdsetek,0,0,0,0,0 from cdn.Odsetki
+		end
+	end
+	else if @TypStawki  = 2 --Indywidualne
+	begin
+		insert into @Odsetki(ID,Data,Procent,TypOdsetek,Kwota,Status,RozTyp,RozNumer,RozLp) 
+		select 1,1,@Stawka,0,0,0,0,0,0
+	end
+
+	--pobranie kwot z platnosci 
+	select @TrpKwota = trp_kwota, @TrpPozostaje = trp_pozostaje, @TrpWaluta = TrP_Waluta, @TrpKursL =TrP_KursL, @TrpKursM = TrP_KursM, @TrpNrKursu = TrP_NrKursu from cdn.traplat 
+	where TrP_GIDTyp = @TrpTyp and TrP_GIDNumer = @TrpNumer and TrP_GIDLp = @TrpLp
+
+	if @TrpKwota &lt;&gt; @TrpPozostaje    
+	begin
+	    
+		--wyliczenie rozliczeń		
+		insert into @KwotyDok(RozKazTyp,RozKazNumer,RozTyp,RozNumer,RozLp,RozDataDok,RozDataZapisu,RozKwota)
+		select ROZ_KAZTyp, ROZ_KAZNumer, ROZ_GIDTyp, ROZ_GIDNumer, ROZ_GIDLp, B.KAZ_DataDokumentu, B.KAZ_DataZapisu, ROZ_Kwota
+		from 
+		( 
+			SELECT 433 ROZ_GIDTyp, R2_GIDFirma ROZ_GIDFirma, R2_ID ROZ_GIDNumer, 1 ROZ_GIDLp, 
+			CASE WHEN ISNULL(R2_Dok1Numer,0)=0 THEN 0 ELSE R2_Dok1Typ END ROZ_TrpTyp, CASE WHEN ISNULL(R2_Dok1Numer,0)=0 THEN 0 ELSE R2_GIDFirma END ROZ_TrpFirma, 
+			CASE WHEN ISNULL(R2_Dok1Numer,0)=0 THEN 0 ELSE R2_Dok1Numer END ROZ_TrpNumer, CASE WHEN ISNULL(R2_Dok1Numer,0)=0 THEN 0 ELSE R2_Dok1Lp END ROZ_TrpLp, 
+			CASE WHEN ISNULL(R2_Dok2Numer,0)=0 THEN 0 ELSE R2_Dok2Typ END ROZ_KAZTyp, CASE WHEN ISNULL(R2_Dok2Numer,0)=0 THEN 0 ELSE R2_GIDFirma END ROZ_KAZFirma, 
+			CASE WHEN ISNULL(R2_Dok2Numer,0)=0 THEN 0 ELSE R2_Dok2Numer END ROZ_KAZNumer, CASE WHEN ISNULL(R2_Dok2Numer,0)=0 THEN 0 ELSE R2_Dok2Lp END ROZ_KAZLp, 
+			CASE WHEN ISNULL(R2_Dekret1Numer,0)=0 THEN 0 ELSE 432 END ROZ_DtTyp, CASE WHEN ISNULL(R2_Dekret1Numer,0)=0 THEN 0 ELSE R2_GIDFirma END ROZ_DtFirma, 
+			CASE WHEN ISNULL(R2_Dekret1Numer,0)=0 THEN 0 ELSE R2_Dekret1Numer END ROZ_DtNumer, CASE WHEN ISNULL(R2_Dekret1Numer,0)=0 THEN 0 ELSE R2_Dekret1Lp END ROZ_DtLp, 
+			CASE WHEN ISNULL(R2_Dekret2Numer,0)=0 THEN 0 ELSE 432 END ROZ_CtTyp, CASE WHEN ISNULL(R2_Dekret2Numer,0)=0 THEN 0 ELSE R2_GIDFirma END ROZ_CtFirma, 
+			CASE WHEN ISNULL(R2_Dekret2Numer,0)=0 THEN 0 ELSE R2_Dekret2Numer END ROZ_CtNumer, CASE WHEN ISNULL(R2_Dekret2Numer,0)=0 THEN 0 ELSE R2_Dekret2Lp END ROZ_CtLp, 
+			R2_KwotaWal1 ROZ_Kwota, R2_KwotaSys ROZ_KwotaSys, 0 ROZ_DataOddzialu, 0 ROZ_DataCentrali, 
+			R2_Waluta1 ROZ_Waluta, CASE WHEN ISNULL(R2_Dekret1Numer,0)=0 THEN 0 ELSE R2_Dekret1DC END ROZ_DTDC, 
+			CASE WHEN ISNULL(R2_Dekret2Numer,0)=0 THEN 0 ELSE R2_Dekret2DC END ROZ_CTDC, 
+			CASE WHEN ISNULL(R2_OpeNumerRL,0) = 0 THEN 0 ELSE 128 END ROZ_OpeTypRL, CASE WHEN ISNULL(R2_OpeNumerRL,0) = 0 THEN 0 ELSE R2_GIDFirma END ROZ_OpeFirmaRL, 
+			CASE WHEN ISNULL(R2_OpeNumerRL,0) = 0 THEN 0 ELSE R2_OpeNumerRL END ROZ_OpeNumerRL, 0 ROZ_OpeLpRL, 
+			CASE WHEN ISNULL(R2_OpeNumerRZ,0) = 0 THEN 0 ELSE 128 END ROZ_OpeTypRZ, CASE WHEN ISNULL(R2_OpeNumerRZ,0) = 0 THEN 0 ELSE R2_GIDFirma END ROZ_OpeFirmaRZ, 
+			CASE WHEN ISNULL(R2_OpeNumerRZ,0) = 0 THEN 0 ELSE R2_OpeNumerRZ END ROZ_OpeNumerRZ, 0 ROZ_OpeLpRZ,
+			CASE WHEN ISNULL(R2_RK,0)=0 THEN 0 ELSE R2_RK END ROZ_RK, CASE WHEN ISNULL(R2_RKStrona,0)=0 THEN 0 ELSE R2_RKStrona END ROZ_RKStrona, 
+			CASE WHEN ISNULL(R2_DataRozliczenia,0)=0 THEN 0 ELSE R2_DataRozliczenia END ROZ_DataRozliczenia, 
+			CASE WHEN ISNULL(R2_DataRozrachunku,0)=0 THEN 0 ELSE R2_DataRozrachunku END ROZ_DataRozrachunku, 
+			R2_ParID ROZ_ParID, R2_Wycena ROZ_Wycena 
+			FROM CDN.Rozliczenia 
+			WHERE R2_Wycena = 0 AND (  R2_DOK1Typ = @TrpTyp AND  R2_DOK1Numer = @TrpNumer AND  R2_DOK1Lp = @TrpLp ) 
+
+			UNION ALL 
+
+			SELECT 433 ROZ_GIDTyp, R2_GIDFirma ROZ_GIDFirma, R2_ID ROZ_GIDNumer, 2 ROZ_GIDLp, 
+			CASE WHEN ISNULL(R2_Dok2Numer,0)=0 THEN 0 ELSE R2_Dok2Typ END ROZ_TrpTyp, CASE WHEN ISNULL(R2_Dok2Numer,0)=0 THEN 0 ELSE R2_GIDFirma END ROZ_TrpFirma, 
+			CASE WHEN ISNULL(R2_Dok2Numer,0)=0 THEN 0 ELSE R2_Dok2Numer END ROZ_TrpNumer, CASE WHEN ISNULL(R2_Dok2Numer,0)=0 THEN 0 ELSE R2_Dok2Lp END ROZ_TrpLp, 
+			CASE WHEN ISNULL(R2_Dok1Numer,0)=0 THEN 0 ELSE R2_Dok1Typ END ROZ_KAZTyp, CASE WHEN ISNULL(R2_Dok1Numer,0)=0 THEN 0 ELSE R2_GIDFirma END ROZ_KAZFirma, 
+			CASE WHEN ISNULL(R2_Dok1Numer,0)=0 THEN 0 ELSE R2_Dok1Numer END ROZ_KAZNumer, CASE WHEN ISNULL(R2_Dok1Numer,0)=0 THEN 0 ELSE R2_Dok1Lp END ROZ_KAZLp,
+			CASE WHEN ISNULL(R2_Dekret2Numer,0)=0 THEN 0 ELSE 432 END ROZ_DtTyp, CASE WHEN ISNULL(R2_Dekret2Numer,0)=0 THEN 0 ELSE R2_GIDFirma END ROZ_DtFirma, 
+			CASE WHEN ISNULL(R2_Dekret2Numer,0)=0 THEN 0 ELSE R2_Dekret2Numer END ROZ_DtNumer, CASE WHEN ISNULL(R2_Dekret2Numer,0)=0 THEN 0 ELSE R2_Dekret2Lp END ROZ_DtLp, 
+			CASE WHEN ISNULL(R2_Dekret1Numer,0)=0 THEN 0 ELSE 432 END ROZ_CtTyp, CASE WHEN ISNULL(R2_Dekret1Numer,0)=0 THEN 0 ELSE R2_GIDFirma END ROZ_CtFirma, 
+			CASE WHEN ISNULL(R2_Dekret1Numer,0)=0 THEN 0 ELSE R2_Dekret1Numer END ROZ_CtNumer, CASE WHEN ISNULL(R2_Dekret1Numer,0)=0 THEN 0 ELSE R2_Dekret1Lp END ROZ_CtLp, 
+			R2_KwotaWal2 ROZ_Kwota, R2_KwotaSys ROZ_KwotaSys, 0 ROZ_DataOddzialu, 0 ROZ_DataCentrali, 
+			R2_Waluta2 ROZ_Waluta, CASE WHEN ISNULL(R2_Dekret2Numer,0)=0 THEN 0 ELSE R2_Dekret2DC END ROZ_DTDC, 
+			CASE WHEN ISNULL(R2_Dekret1Numer,0)=0 THEN 0 ELSE R2_Dekret1DC END ROZ_CTDC, 
+			CASE WHEN ISNULL(R2_OpeNumerRL,0) = 0 THEN 0 ELSE 128 END ROZ_OpeTypRL, CASE WHEN ISNULL(R2_OpeNumerRL,0) = 0 THEN 0 ELSE R2_GIDFirma END ROZ_OpeFirmaRL, 
+			CASE WHEN ISNULL(R2_OpeNumerRL,0) = 0 THEN 0 ELSE R2_OpeNumerRL END ROZ_OpeNumerRL, 0 ROZ_OpeLpRL, 
+			CASE WHEN ISNULL(R2_OpeNumerRZ,0) = 0 THEN 0 ELSE 128 END ROZ_OpeTypRZ, CASE WHEN ISNULL(R2_OpeNumerRZ,0) = 0 THEN 0 ELSE R2_GIDFirma END ROZ_OpeFirmaRZ, 
+			CASE WHEN ISNULL(R2_OpeNumerRZ,0) = 0 THEN 0 ELSE R2_OpeNumerRZ END ROZ_OpeNumerRZ, 0 ROZ_OpeLpRZ, 
+			CASE WHEN ISNULL(R2_RK,0)=0 THEN 0 ELSE R2_RK END ROZ_RK, CASE WHEN ISNULL(R2_RKStrona,0)=0 THEN 0 ELSE R2_RKStrona END ROZ_RKStrona, 
+			CASE WHEN ISNULL(R2_DataRozliczenia,0)=0 THEN 0 ELSE R2_DataRozliczenia END ROZ_DataRozliczenia, 
+			CASE WHEN ISNULL(R2_DataRozrachunku,0)=0 THEN 0 ELSE R2_DataRozrachunku END ROZ_DataRozrachunku, 
+			R2_ParID ROZ_ParID, R2_Wycena ROZ_Wycena 
+			FROM CDN.Rozliczenia 
+			WHERE R2_Wycena = 0 AND (  R2_DOK2Typ = @TrpTyp AND  R2_DOK2Numer = @TrpNumer AND  R2_DOK2Lp = @TrpLp )
+		)A 
+		LEFT OUTER JOIN CDN.zapisy B ON  A.ROZ_KAZNumer= B.KAZ_GIDNumer 
+		ORDER BY  A.ROZ_TrpTyp,  A.ROZ_TrpNumer,  A.ROZ_TrpLp,  A.ROZ_GIDNumer,  A.ROZ_GIDLp 
+
+		declare @lDataDok int;
+		set @i = 1;
+		declare @recCount2 int = isnull((select count(*) from @KwotyDok),0);
+			 
+		while @i &lt;= @recCount2
+		begin
+			select @ID_3=ID,@RozKazTyp_3=RozKazTyp,@RozKazNumer_3=RozKazNumer,@RozTyp_3=RozTyp,@RozNumer_3=RozNumer,@RozLp_3=RozLp,
+			@RozDataDok_3=RozDataDok,@RozDataZapisu_3=RozDataZapisu,@RozKwota_3=RozKwota from @KwotyDok where ID = @i
+					 
+			if @RozKazTyp_3 = 435 or @RozKazTyp_3 = 2832 
+			begin
+				set @i += 1;
+				continue;
+			end 
+
+			if @RozKazTyp_3 = 784 -- zapis k/b
+				set @lDataDok = @RozDataZapisu_3
+			else if @RozKazTyp_3 = 4144 or @RozKazTyp_3 = 4145 --NM i UNM
+				set @lDataDok = (select men_datadok from cdn.memnag where men_gidtyp = @RozKazTyp_3 and men_gidnumer = @RozKazNumer_3)
+			else if @RozKazTyp_3 = 3344 --ImpNag
+				set @lDataDok = (select imn_datawystawienia from cdn.impnag where imn_gidtyp = @RozKazTyp_3 and imn_gidnumer =@RozKazNumer_3)
+			else if @RozKazTyp_3 = 3376 or @RozKazTyp_3 = 3377 or @RozKazTyp_3 = 3379 or @RozKazTyp_3 = 3387 or @RozKazTyp_3 = 3378 or @RozKazTyp_3 = 3386 --SadNag
+				set @lDataDok = (select san_datawplywu from cdn.sadnag where san_gidtyp =@RozKazTyp_3 and san_gidnumer =@RozKazNumer_3)
+
+			else if @RozKazTyp_3 = 1521 or @RozKazTyp_3 = 1529 or @RozKazTyp_3 = 1489 or @RozKazTyp_3 = 1497 or @RozKazTyp_3 = 1490 or @RozKazTyp_3 = 1498 --TraNag
+				or @RozKazTyp_3 = 2033 or @RozKazTyp_3 = 2041 or @RozKazTyp_3 = 2036 or @RozKazTyp_3 = 2044 or @RozKazTyp_3 = 2001 or @RozKazTyp_3 = 2009    					     
+				or @RozKazTyp_3 = 2034 or @RozKazTyp_3 = 2042 or @RozKazTyp_3 = 2035 or @RozKazTyp_3 = 2043 or @RozKazTyp_3 = 1968 or @RozKazTyp_3 = 2039 
+				or @RozKazTyp_3 = 2047 or @RozKazTyp_3 = 2003 or @RozKazTyp_3 = 2037 or @RozKazTyp_3 = 2045 or @RozKazTyp_3 = 2005 or @RozKazTyp_3 = 2013
+				or @RozKazTyp_3 = 1312 or @RozKazTyp_3 = 2001 or @RozKazTyp_3 = 1824 or @RozKazTyp_3 = 1828 or @RozKazTyp_3 = 1836 or @RozKazTyp_3 = 1616
+				or @RozKazTyp_3 = 1624 or @RozKazTyp_3 = 1617 or @RozKazTyp_3 = 1625 or @RozKazTyp_3 = 1603 or @RozKazTyp_3 = 1604 or @RozKazTyp_3 = 1600  
+				or @RozKazTyp_3 = 1520
+			begin
+				--czy nie odsetki korygujace i dokument korekta
+				if @OdsetkiKorygujacych= 0 and (@RozKazTyp_3 = 1529 or @RozKazTyp_3 = 1497 or @RozKazTyp_3 = 1498 or @RozKazTyp_3 = 2041 or @RozKazTyp_3 = 2044
+												or @RozKaztyp_3 = 2009 or @RozKazTyp_3 = 2042 or @RozKazTyp_3 = 2043 or @RozKazTyp_3 = 2047 or @RozKazTyp_3 = 2003
+												or @RozKazTyp_3 = 2045 or @RozKazTyp_3 = 2013 or @RozKazTyp_3 = 1836 or @RozKazTyp_3 = 1624 or @RozKazTyp_3 = 1625)															 
+				begin  
+					set @i += 1;
+					continue;
+				end
+                                    
+				declare @TrnData2 int, @trnData3 int;
+				select @TrNData2 = TrN_Data2,@TrNData3 = TrN_Data3 from cdn.tranag where TrN_GIDTyp = @RozKazTyp_3 and TrN_GIDNumer = @RozKazNumer_3
+
+				if  @RozKazTyp_3 = 1489 or @RozKazTyp_3 = 1521 or @RozKazTyp_3 = 1490 or @RozKazTyp_3 = 2009 or @RozKazTyp_3 = 2041 or @RozKazTyp_3 = 2044 
+					or @RozKazTyp_3 = 2042 or @RozKazTyp_3 = 1624 or @RozKazTyp_3 = 1312 or @RozKazTyp_3 = 1824 or @RozKazTyp_3 = 1836 or @RozKazTyp_3 = 1617 
+					or @RozKazTyp_3 = 2045 or @RozKazTyp_3 = 2005 or @RozKazTyp_3 = 2047 or @RozKazTyp_3 = 1604 or @RozKazTyp_3 = 1520
+
+					set @lDataDok = @TrNData2;
+				else								 
+					set @lDataDok = @TrNData3;
+			end 
+			else if @RozKazTyp_3 = 6272 or @RozKazTyp_3 = 6400 or @RozKazTyp_3 = 7697 or @RozKazTyp_3 = 7691 or @RozKazTyp_3 = 2768 or @RozKazTyp_3 = 7714 --PodNag					     
+				set @lDataDok = (select DateDiff(d, convert(datetime,'28-12-1800',105), CAST(CONVERT(VARCHAR, PON_Rok) + '-' + CONVERT(VARCHAR, PON_Miesiac) 
+								+ '-' + CONVERT(VARCHAR, 1) AS DATETIME) ) from cdn.podnag where PON_GIDTyp = @RozKazTyp_3 and PON_GIDNumer = @RozKazNumer_3)
+			else if @RozKazTyp_3 = 434  --KompNag
+			begin
+				if @OdsetkiKorygujacych= 0 and (@TrpTyp = 2033 and EXISTS(
+					select 1 from cdn.TraPlat 
+						inner join cdn.KompElemPlatnosci on KMP_KMEID=TrP_GIDNumer AND KMP_NalTRPLp=TrP_GIDLp 
+						inner join cdn.KompElem on KME_KMNID=KMP_KMEID AND KME_KMELp=KMP_KMELp 
+						where TRP_GIDTyp=434 AND TRP_Typ=2 AND 
+							KME_ZobTyp = 2041 AND Kme_NalNumer = @TrpNumer -- Kompensata naleznosci FS rozliczna zobowiazaniem FSK
+					))
+				begin
+					set @i += 1;
+					continue;
+				end
+				set @lDataDok = (select KMN_DataKompensaty from cdn.kompnag where kmn_id = @RozKazNumer_3)							 
+			end
+			else if @RozKazTyp_3 = 2976 --PikNag
+				set @lDataDok = (select pin_datawyst from cdn.piknag where pin_gidtyp = @RozKazTyp_3 and pin_gidnumer = @RozKazNumer_3)
+			else if @RozKazTyp_3 = 800 --Raporty
+				set @lDataDok = (select krp_datazamkniecia from cdn.raporty where krp_gidtyp = @RozKazTyp_3 and krp_gidnumer = @RozKazNumer_3)
+			else if @RozKazTyp_3 = 7680 or @RozKazTyp_3 = 7681 or @RozKazTyp_3 = 7682 or @RozKazTyp_3 = 7683 --BilansOtwarciaNag
+				set @lDataDok = (select BON_DataWprow from cdn.BilansOtwarciaNag where BON_GIDTyp = @RozKazTyp_3 and BON_GIDNumer = @RozKazNumer_3)
+			else  
+				set @lDataDok = 0
+
+			insert into @Odsetki(ID,Data,Procent,TypOdsetek,Kwota,Status,RozTyp,RozNumer,RozLp)
+			values((select max(ID)+1 from @Odsetki),@lDataDok,0,@Typ,@RozKwota_3,1,@RozTyp_3,@RozNumer_3,@RozLp_3)
+				    
+		set @i += 1;
+					 
+		end	  		
+	end	
+		            		
+	if @TrpPozostaje &gt; 0
+	begin			    
+		insert into @Odsetki(ID,Data,Procent,TypOdsetek,Kwota,Status,RozTyp,RozNumer,RozLp)
+		values((select max(ID)+1 from @Odsetki),@Dzis,0,@Typ,@TrpPozostaje,2,0,0,0)																														
+	end
+
+	insert into @OdsetkiCopy(ID,Data,Procent,TypOdsetek,Kwota,Status,RozTyp,RozNumer,RozLp)
+	select ID,Data,Procent,TypOdsetek,Kwota,Status,RozTyp,RozNumer,RozLp 
+	from @Odsetki;
+
+	delete from @Odsetki;
+
+	insert into @Odsetki(ID,Data,Procent,TypOdsetek,Kwota,Status,RozTyp,RozNumer,RozLp)
+	select (ROW_NUMBER() over(order by Data,Procent)),Data,Procent,TypOdsetek,Kwota,Status,RozTyp,RozNumer,RozLp 
+	from @OdsetkiCopy
+	order by Data,Status
+
+	declare @recCount int = isnull((select count(*) from @Odsetki),0);
+	declare @TerminOpoznienia int
+	select @TrpTermin = TrP_Termin, @TrPMaksymalnyTermin = TrP_MaksymalnyTermin, @TrPTerminPoProlongacie = TrP_TerminPoProlongacie, @TrpProlGIDNumer = TrP_ProlZrdNumer, @Pozostaje = TRP_Kwota from cdn.traplat where TrP_GIDTyp = @TrpTyp and TrP_GIDNumer = @TrpNumer and TrP_GIDLp = @TrpLp
+
+	if @OdsetkiTerminPoProl = 1 set @OdsetkiTerminMaks = 0
+
+	--sprawdzenie na jaki dzien wypada termin platnosci
+	if @DniWolneUstawowoOdPracy = 1 
+	begin
+		declare @days int = 0
+		if @OdsetkiTerminPoProl = 1 and @TrpProlGIDNumer &gt; 0 and @TrPTerminPoProlongacie &gt; 0
+		begin						
+			while @days &lt;&gt; 1
+			begin
+				set @days = (select CDN.WyznaczPierwszyDzienZwlokiF(@TrPTerminPoProlongacie))
+				if @days &lt;&gt; 1
+					set @TrPTerminPoProlongacie += 1
+			end
+		end
+		else
+		if @OdsetkiTerminMaks = 0
+		begin						
+			while @days &lt;&gt; 1
+			begin
+				set @days = (select CDN.WyznaczPierwszyDzienZwlokiF(@TrpTermin))
+				if @days &lt;&gt; 1 
+					set @TrpTermin += 1
+			end
+		end
+		else if @TrPMaksymalnyTermin &lt;&gt; 0
+		begin
+			while @days &lt;&gt; 1
+			begin
+				set @days = (select CDN.WyznaczPierwszyDzienZwlokiF(@TrPMaksymalnyTermin))
+				if @days &lt;&gt; 1
+					set @TrPMaksymalnyTermin += 1
+			end
+		end  
+		    
+	end
+
+	set @Pozycja = 0
+	set @KwotaOdsSys = 0
+	declare @SumaOds decimal(15,2)= 0
+	declare @SumaOdsSys decimal(15,2)= 0
+	declare @DniZwloki int = 0
+	declare @Opoznienie int  = 0
+	set @Poprzedni = 0
+
+	set @i = 1
+	while @i &lt;= @recCount 
+	begin
+		select @ID = ID, @Data = Data,@Procent = Procent,@TypOdsetek = TypOdsetek, @Kwota = Kwota, @Status = Status, 
+		@RozTyp = RozTyp, @RozNumer = RozNumer, @RozLp = RozLp from @Odsetki where ID = @i
+     
+		if @Status = 0
+		begin
+			set @i += 1
+			continue
+		end
+ 
+		if @SposobLiczeniaOdsetek = 1 --od zaleglosci
+			set @KwotaTemp = @Pozostaje	 
+		else if @SposobLiczeniaOdsetek = 2 --od zaplaty
+			set @KwotaTemp = @Kwota
+
+		set @ProcentTemp = 0
+
+		if @OdsetkiTerminPoProl = 1 and @TrPTerminPoProlongacie &gt; 0
+		begin
+			set @Data1 = @TrPTerminPoProlongacie
+			set @TrpTermin = @TrPTerminPoProlongacie
+		end	 
+		else if @OdsetkiTerminMaks = 0
+			set @Data1 = @TrpTermin
+		else if @OdsetkiTerminMaks = 1
+		begin
+	  		set @Data1 = @TrpMaksymalnyTermin
+			set @TrpTermin = @TrpMaksymalnyTermin
+		end
+
+		--druga petla obliczania odsetek	   
+		set @j = 1;
+		while @j &lt;= @i
+		begin
+			select @ID_2 = ID, @Data_2 = Data,@Procent_2 = Procent,@TypOdsetek_2 = TypOdsetek, @Kwota_2 = Kwota, @Status_2 = Status, 
+			@RozTyp_2 = RozTyp, @RozNumer_2 = RozNumer, @RozLp_2 = RozLp from @Odsetki where ID = @j
+
+			if @Status_2 &lt;&gt; 0 and @j &lt; @i and @SposobLiczeniaOdsetek = 2
+			begin
+				set @j += 1;
+				Continue
+			end
+
+			if (@Status_2 = 0 or @j = @i)
+			begin
+				set @Data2 = @Data_2
+				if (@j &gt; @Poprzedni or @SposobLiczeniaOdsetek = 2)
+				begin
+					if @Data2 &gt; @Data1 and @ProcentTemp &gt;= 0							    
+					--obliczanie sumy pozycji odsetek							       
+					begin		
+						-- specjalne naliczanie odsetek dla Chemirola ERPXL-1410
+						if @FirmaID = 1098498
+						begin
+							declare @seriaNoty varchar(5) = (select MEN_Seria from cdn.MemNag where MEN_GIDNumer=@TrpNumer AND @TrpTyp=4144);
+							declare @czyNotaMemorialowaZOdsetkami int = (select CASE WHEN @seriaNoty='KON' THEN 1 WHEN @seriaNoty LIKE 'ODS%' THEN 1 ELSE 0 END);
+
+							if @czyNotaMemorialowaZOdsetkami != 0
+							begin
+								set @Pozycja = 0
+								set @SumaOds = 0
+								set @SumaOdsSys = 0
+								set @KwotaOdsSys = 0
+							end
+							else
+							begin
+								set @Pozycja = @KwotaTemp * (@Data2-@Data1) * @ProcentTemp * 0.01 / @IloscDniWRoku									   
+
+								if @TrpWaluta &lt;&gt; @WalutaSystemowa and @TrpKursM &lt;&gt; 0
+									set @KwotaOdsSys = @Pozycja * @TrpKursL / @TrpKursM
+								else
+									set @KwotaOdsSys = @Pozycja 									   
+
+								set @SumaOds += @Pozycja									   
+								set @SumaOdsSys += @KwotaOdsSys		
+							end
+
+							set @DniZwloki = @Data2 - @Data1
+							set @Opoznienie  = @Data2 - @TrpTermin 
+									   
+							--wstawienie rat odsetkowych do tabeli
+							insert into @ODSQueue(DniZwloki,KwotaZal,KwotaOds,Opoznienie,Nota,Procent,KwotaOdsSys,KosztUpSys,Waluta,NrKursu,KursM,KursL,TypKursu,
+							RozTyp,RozFirma,RozNumer,RozLp) 
+							values(@DniZwloki,@KwotaTemp,@Pozycja,@Opoznienie,case when @Status = 1 then 1 else 0 end,@ProcentTemp,@KwotaOdsSys,0,@TrpWaluta,@TrpNrKursu,@TrpKursM,@TrpKursL,0,
+							@RozTyp,case when @RozTyp &gt; 0 then @FirmaID else 0 end,@RozNumer,@RozLp)
+						end
+						else
+						begin
+							set @Pozycja = @KwotaTemp * (@Data2-@Data1) * @ProcentTemp * 0.01 / @IloscDniWRoku									   
+
+							if @TrpWaluta &lt;&gt; @WalutaSystemowa and @TrpKursM &lt;&gt; 0
+								set @KwotaOdsSys = @Pozycja * @TrpKursL / @TrpKursM
+							else     									   
+								set @KwotaOdsSys = @Pozycja 									   
+
+							set @SumaOds += @Pozycja									   
+							set @SumaOdsSys += @KwotaOdsSys									   
+							set @DniZwloki = @Data2 - @Data1
+							set @Opoznienie  = @Data2 - @TrpTermin 
+									   
+							--wstawienie rat odsetkowych do tabeli
+							insert into @ODSQueue(DniZwloki,KwotaZal,KwotaOds,Opoznienie,Nota,Procent,KwotaOdsSys,KosztUpSys,Waluta,NrKursu,KursM,KursL,TypKursu,
+							RozTyp,RozFirma,RozNumer,RozLp) 
+							values(@DniZwloki,@KwotaTemp,@Pozycja,@Opoznienie,case when @Status = 1 then 1 else 0 end,@ProcentTemp,@KwotaOdsSys,0,@TrpWaluta,@TrpNrKursu,@TrpKursM,@TrpKursL,0,
+							@RozTyp,case when @RozTyp &gt; 0 then @FirmaID else 0 end,@RozNumer,@RozLp)
+						end
+					end
+				end
+			end
+
+			if @Data_2 &lt; @Data1
+				set @Data1 = @TrpTermin           
+			else
+				set @Data1 = @Data_2
+
+			if @Status_2 = 0
+			set @ProcentTemp = @Procent_2 
+
+			set @j += 1;
+		end
+		set @Pozostaje -= @Kwota
+		set @Poprzedni = @i
+      
+		set @i +=1 
+	end
+
+	Return;  
+
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

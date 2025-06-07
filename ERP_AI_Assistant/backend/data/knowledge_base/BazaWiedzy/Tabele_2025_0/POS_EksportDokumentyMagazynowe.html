@@ -1,0 +1,157 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[POS_EksportDokumentyMagazynowe]"></A><PRE>
+          <FONT SIZE="2"><I>/* [POS_EksportDokumentyMagazynowe] */</I><BR>
+CREATE PROCEDURE [CDN].[POS_EksportDokumentyMagazynowe] 
+	@RowVersion BIGINT,
+	@PointOfSaleId INT
+AS
+BEGIN
+SET NOCOUNT ON;
+
+	DECLARE /*@StampId int,*/ @NumeratorID int, @PckId int
+	
+	select /*@StampId = Frm_GidNumer,*/@NumeratorID = Dok_Id, @PckId = PcK_PicoId from cdn.PicoStanowiska 
+	join cdn.PicoKonfig on PSa_PcKID = PcK_PicoID
+	join cdn.FrmStruktura on FRS_ID = PcK_CentrumID
+	join cdn.dokdefinicje on dok_frsid = frs_id and dok_gidtyp= 1603 
+	join cdn.Firma on Frm_GidNumer = FRS_FrmNumer
+	where PSa_ID = @PointOfSaleId
+
+	declare @FrsId int = (select pck_centrumid from CDN.PicoKonfig join CDN.PicoStanowiska on PSa_PcKID=PcK_PicoID where PSa_ID = @pointOfSaleId)
+
+
+	declare @twr table(twrgidnumer int)
+	insert into @twr select twrgidnumer from cdn.POS_TwrDoEksportu(@PointOfSaleId,0)
+
+	declare @mag table(magGidNumer int)
+	insert into @mag select mag_gidnumer from cdn.Magazyny join cdn.PicoStanowiska on PSa_PcKID= MAG_PcKId where PSa_ID = @PointOfSaleId
+
+
+	select 
+		0 as [@RowVersion], (
+		select		
+			MMW.TrN_GUID as [@GUID],
+			MMW.TrN_DokumentObcy as [@NumberString],
+			@NumeratorID as [@DocumentTypeId],
+			MMW.TrN_MagZNumer as [@SourceWarehouseId],
+			MMW.TrN_MagDNumer as [@TargetWarehouseId],
+			DateAdd(d,MMW.TrN_data2,convert(datetime,'28-12-1800',105))  as [@DocumentDate],
+			MMW.TrN_NettoR as [@NetValue],
+			1 as [@Status],
+			tno_opis as [@Description],			
+			'' as [@EAN],
+			MMW.TrN_FrmNumer as [@StampId],
+			@NumeratorID as [@NumeratorSchemeId],
+			DateAdd(d,MMW.TrN_Data3,convert(datetime,'28-12-1800',105))  as [@ConfirmationDate],
+			'true' as [@IsInternalMovement],
+			(
+				SELECT TRS_GUID AS [@GUID],[@OrdinalNumber],[@ProductId],[@ProductCode],[@ProductNameVersion],[@ExpectedQuantity],[@Quantity],[@UnitId],[@LotId],[@NetValue],[@Description],
+					(
+					select distinct
+						Atr_GUID as [@GUID],
+						AtK_ID as [@AttributeClassId],
+						19 as [@ObjectTypeId],
+						mmw.TrN_Guid as [@ObjectGUID],
+						case when AtK_Typ &gt; 10 then 0 else null end as [@DirectoryValueId],
+						case when AtK_Typ &lt; 10 AND AtK_Typ=4 AND atk_format like '@s%' then (select atw_id from cdn.atrybutywartosci where AtW_AtKId=atk_id and AtW_Wartosc=Atr_Wartosc) else null end as [@ListValueId],		
+				
+						case when AtK_Typ = 1 AND Atr_Wartosc= 'TAK' then 'true' 
+								when AtK_Typ = 1 and Atr_Wartosc=  'NIE' then 'false'  
+								when atk_format like '@d%' then CONVERT(nvarchar,DateAdd(d,cast(Atr_Wartosc as int),convert(datetime,'28-12-1800',105)),101) when NOT(AtK_Typ &lt; 10 AND AtK_Typ=4 AND atk_format like '@s%') then RTRIM(Atr_Wartosc) else null end as [@Value],
+						DATEADD(second,AtR_LastMod,convert(datetime,'01-01-1990',105)) as [@ModificationDate]
+					from cdn.Atrybuty
+					join cdn.AtrybutyKlasy on AtK_ID = Atr_AtkId
+					where AtK_Wielowart = 0 AND (AtR_LastMod &gt; @RowVersion OR @RowVersion = 0) AND case when Atk_Format like '@d%' then 6 when AtK_Typ=1 then 4 when AtK_Typ=2 then 1 when AtK_Typ=3 then 2 when AtK_Typ=4 then 5 else 3 end not in (3)
+						AND Atr_ObiTyp=mmw.TrN_GIDTyp AND Atr_ObiNumer = mmw.TrN_GIDNumer and Atr_ObiLp = TrE_GIDLp
+					for xml path('Attribute'), root('Attributes'), type
+				)
+			FROM
+				(
+					select  TrE_GIDNumer,TrE_GIDLp,MIN(TRS_SUBGIDLP) AS SUBGIDLP, [@OrdinalNumber],[@ProductId],[@ProductCode],[@ProductNameVersion],SUM([@ExpectedQuantity]) AS [@ExpectedQuantity],SUM([@Quantity]) AS [@Quantity],
+					[@UnitId],[@LotId],SUM([@NetValue]) AS [@NetValue],[@Description]				
+					from(
+						SELECT
+							TrE_GIDNumer,
+							TrE_GIDLp,
+							MIN(TrS_SubGIDLp) as TRS_SUBGIDLP,
+							Tre_Pozycja as [@OrdinalNumber],
+							Tre_TwrNumer as [@ProductId],
+							Tre_TwrKod as [@ProductCode],
+							1 as [@ProductNameVersion],
+							sum(ts1.trs_Ilosc*TrE_PrzeliczM/TrE_PrzeliczL) as [@ExpectedQuantity],
+							isnull(sum(ts1.trs_Ilosc*TrE_PrzeliczM/TrE_PrzeliczL),0) as [@Quantity],
+							Naz_Gidlp as [@UnitId],
+							(
+								SELECT MIN(t1.TPA_ID) 
+								FROM CDN.TwrPartie t1
+								join cdn.TwrPartie t2 on t1.TPa_TwrNumer = t2.TPa_TwrNumer and t1.TPa_DataW = t2.TPa_DataW and t1.TPa_Cecha = t2.TPa_Cecha and t1.TPa_Ean = t2.TPa_Ean and t1.TpA_CCKNumer = t2.TpA_CCKNumer
+								where t2.tpa_id = dst1.dst_tpaid
+								group by t1.TPa_TwrNumer,t1.TPa_DataW,t1.TPa_Cecha,t1.TPa_Ean,t1.TpA_CCKNumer
+							) as [@LotId],
+							TrE_KsiegowaNetto * sum(ts1.trs_Ilosc)/tre_ilosc as [@NetValue],
+							TeO_Opis as [@Description]							
+						FROM cdn.TraElem
+						JOIN cdn.Nazwy jedn on Naz_Nazwa = TrE_JmZ
+						JOIN cdn.TraSelem ts1 on ts1.trs_gidnumer=tre_gidnumer and trE_gidlp=ts1.trs_gidlp
+						JOIN cdn.dostawy dst1 on dst1.dst_gidnumer=ts1.trs_dstnumer 
+						LEFT JOIN CDN.TreOpisy on teo_TreNumer=tre_gidnumer and TeO_TreLp = TrE_GIDLp
+						where tre_gidnumer=MMW.TrN_GIDNumer
+						group by TrE_GIDNumer,tre_gidlp,Tre_Pozycja,Tre_TwrNumer,Tre_TwrKod,Naz_Gidlp,TeO_Opis,TrE_KsiegowaNetto,dst1.dst_tpaid,tre_ilosc
+					) A 
+					GROUP BY  TrE_GIDNumer,TrE_GIDLp,[@OrdinalNumber],[@ProductId],[@ProductCode],[@ProductNameVersion],[@UnitId],[@LotId],[@Description]
+				) B 
+				JOIN CDN.TraSElem ON TrS_GIDNumer=TrE_GIDNumer AND TRS_GIDLP = TrE_GIDLp AND TRS_SUBGIDLP = SUBGIDLP
+				for xml path('Item'), root('Items'), type
+			),
+			(
+				SELECT distinct zan_Guid as [@ParentDocumentGUID]
+					from cdn.ZamNag
+					join cdn.TraNag on TrN_ZaNNumer = ZaN_GIDNumer
+					where ZaN_FrSID = @FrsId and mmw.TrN_ZaNNumer = ZaN_GIDNumer and ZaN_Rodzaj=8
+					for xml path('SourceDocument'), root('SourceDocuments'), type
+			),
+			(
+				select distinct
+					Atr_GUID as [@GUID],
+					AtK_ID as [@AttributeClassId],
+					19 as [@ObjectTypeId],
+					mmw.TrN_Guid as [@ObjectGUID],
+					case when AtK_Typ &gt; 10 then 0 else null end as [@DirectoryValueId],
+					case when AtK_Typ &lt; 10 AND AtK_Typ=4 AND atk_format like '@s%' then (select atw_id from cdn.atrybutywartosci where AtW_AtKId=atk_id and AtW_Wartosc=Atr_Wartosc) else null end as [@ListValueId],		
+				
+					case when AtK_Typ = 1 AND Atr_Wartosc= 'TAK' then 'true' 
+							when AtK_Typ = 1 and Atr_Wartosc=  'NIE' then 'false'  
+							when atk_format like '@d%' then CONVERT(nvarchar,DateAdd(d,cast(Atr_Wartosc as int),convert(datetime,'28-12-1800',105)),101) when NOT(AtK_Typ &lt; 10 AND AtK_Typ=4 AND atk_format like '@s%') then RTRIM(Atr_Wartosc) else null end as [@Value],
+					DATEADD(second,AtR_LastMod,convert(datetime,'01-01-1990',105)) as [@ModificationDate]
+				from cdn.Atrybuty
+				join cdn.AtrybutyKlasy on AtK_ID = Atr_AtkId
+				where AtK_Wielowart = 0 AND (AtR_LastMod &gt; @RowVersion OR @RowVersion = 0) AND case when Atk_Format like '@d%' then 6 when AtK_Typ=1 then 4 when AtK_Typ=2 then 1 when AtK_Typ=3 then 2 when AtK_Typ=4 then 5 else 3 end not in (3)
+					AND Atr_ObiTyp=mmw.TrN_GIDTyp AND Atr_ObiNumer = mmw.TrN_GIDNumer  and Atr_ObiLp = mmw.TrN_GIDLp
+				for xml path('Attribute'), root('Attributes'), type
+			)
+		FROM CDN.TraNag mmw
+		LEFT JOIN cdn.TraNag mmp on mmp.TrN_ZwrTyp = mmw.TrN_GIDTyp and mmp.TrN_ZwrNumer = mmw.TrN_GIDNumer
+		left join cdn.TrNOpisy on TnO_TrnNumer = MMW.TrN_GIDNumer
+		where MMW.trn_guid &lt;&gt; '' and MMW.trn_guid is not null and MMW.TrN_GIDTyp = 1603 and MMW.TrN_stan = 5 
+			and not exists(select * from cdn.traelem left join @twr twr2 on twr2.twrgidnumer=TrE_TwrNumer where tre_gidnumer=MMW.TrN_GIDNumer and twr2.twrgidnumer is null) and mmp.TrN_GIDNumer is null and mmw.TrN_MagDNumer in (select * from @mag)
+
+	for xml path('WarehouseDocument'), type)
+	for xml path('WarehouseDocuments')
+	SET NOCOUNT OFF;	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

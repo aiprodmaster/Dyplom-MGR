@@ -1,0 +1,66 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[ProgiPromocje_UpdateHandlerPGR]"></A><PRE>
+          <FONT SIZE="2"><I>/* [ProgiPromocje_UpdateHandlerPGR] */</I><BR>
+CREATE TRIGGER [CDN].[ProgiPromocje_UpdateHandlerPGR]
+  ON [CDN].[ProgiPromocje]
+  FOR UPDATE
+AS
+BEGIN
+	IF UPDATE(PRP_Rodzaj) BEGIN
+        DECLARE @lPrpId INT;
+        DECLARE @lTprId INT;
+        DECLARE @lPgrWartosc DECIMAL(15,4);
+        DECLARE @lPgrNowaWartosc DECIMAL(15,4);
+        DECLARE @lRoznicaWartosc DECIMAL(15,4);
+        DECLARE @lPgrPozostalaWartosc DECIMAL(15,4);
+        DECLARE @lStarePrpId INT;
+                        		
+		DECLARE updated_cursor CURSOR
+        FOR SELECT PTP_PRPId, PTP_TprId, PTP_WartoscProg,(SELECT SUM(PTP_WartoscProg) FROM CDN.ProgiTwrPromocje where PTP_PRPId = inserted.PRP_ID and PTP_Rodzaj = inserted.PRP_Rodzaj) - inserted.PRP_Wartosc  FROM inserted
+        inner join CDN.ProgiTwrPromocje on PTP_PRPId = inserted.PRP_ID and PTP_Rodzaj = inserted.PRP_Rodzaj
+        left join CDN.TwrPromocje on TPR_Id = PTP_TPRId and TPR_TwrTyp = -16
+        where inserted.PRP_Wartosc &lt; (SELECT SUM(PTP_WartoscProg) FROM CDN.ProgiTwrPromocje where PTP_PRPId = inserted.PRP_ID and PTP_Rodzaj = inserted.PRP_Rodzaj)
+        order by PTP_PRPId,ISNULL(TPR_LP,9999999) DESC
+        
+		OPEN updated_cursor
+
+		FETCH NEXT FROM updated_cursor INTO @lPrpId, @lTprId, @lPgrWartosc, @lRoznicaWartosc
+		SET @lStarePrpId = 0
+		WHILE @@FETCH_STATUS = 0
+		BEGIN
+			IF @lStarePrpId &lt;&gt; @lPrpId BEGIN
+				SET @lPgrPozostalaWartosc = @lRoznicaWartosc
+			END
+			IF @lPgrPozostalaWartosc  &gt; 0 BEGIN
+				IF @lPgrWartosc - @lPgrPozostalaWartosc &lt;= 0 
+					SET @lPgrNowaWartosc = 0
+				ELSE
+					SET @lPgrNowaWartosc = @lPgrWartosc - @lPgrPozostalaWartosc
+					UPDATE CDN.ProgiTwrPromocje SET PTP_WartoscProg = @lPgrNowaWartosc WHERE PTP_PRPId = @lPrpId AND PTP_TPRId = @lTprId
+					select @lPgrNowaWartosc,@lPgrPozostalaWartosc
+					SET @lPgrPozostalaWartosc = @lPgrPozostalaWartosc - @lPgrWartosc +	@lPgrNowaWartosc
+			END
+			SET @lStarePrpId = @lPrpId
+			FETCH NEXT FROM updated_cursor INTO @lPrpId, @lTprId, @lPgrWartosc, @lRoznicaWartosc
+		END
+
+		CLOSE updated_cursor
+		DEALLOCATE updated_cursor
+	END
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

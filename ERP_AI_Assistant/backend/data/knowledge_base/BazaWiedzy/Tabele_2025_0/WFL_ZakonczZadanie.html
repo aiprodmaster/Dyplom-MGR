@@ -1,0 +1,185 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="WFL_ZakonczZadanie"></A><PRE>
+          <FONT SIZE="2"><I>/* WFL_ZakonczZadanie */</I><BR>
+Create Procedure CDN.WFL_ZakonczZadanie
+ @p_WFZID 	integer =0, 	-- identyfikator zadania
+ @p_WDZID    integer = 0, -- identyfikator definicji zadania
+ @p_WFPID 	integer =0, 	-- identyfikator procesu
+ @p_WDSID    	integer =0, -- identyfikator definicji statusu, dla którego źródłowe zostaną zakończone
+ @p_DataZamkniecia integer = 0,
+ @p_PrcTyp   smallint, -- identyfikator pracownika
+ @p_PrcNumer integer,
+ @p_OpeNumer integer, 
+ @p_Opis	varchar(1024),
+ @p_ZwrotWyniku	smallint=0, --  czy zwracać wyynik selectem
+ @ret_status integer OUTPUT
+as 
+begin
+
+	SET @ret_status = 0
+	DECLARE  @lWDPID integer
+	if(@p_DataZamkniecia=0)
+		Set @p_DataZamkniecia = CDN.WFL_PobierzDate(GetDate())
+
+	DECLARE @cNazwaAkcji Varchar(255)
+	set @cNazwaAkcji = ''
+	if (@p_WDZID &gt; 0)
+		Select @cNazwaAkcji = WDA_Nazwa  
+		from CDN.WF_DefZadania (NOLOCK) join CDN.WF_DefAkcje (NOLOCK) on WDA_ID = WDZ_WDAID
+		Where WDZ_ID = @p_WDZID		
+	
+	BEGIN Transaction
+
+	if (@p_WFZID&lt;&gt;0)
+	begin
+		--zakończenie zadań terminarza
+		update cdn.zadania set zad_czaswykonania = @p_DataZamkniecia,
+							   zad_opewtyp = 128,
+							   zad_opewnumer = @p_OpeNumer
+		from cdn.wf_zadania join cdn.zadania on
+		wfz_id = zad_zrdnumer and
+		zad_zrdtyp = 12293	
+		where WFZ_WFPID = @p_WFPID and WFZ_WDSID = @p_WDSID -- usuwamy wszystkie zadania dotyczące wskazanego statusu
+		and WFZ_DataZamkniecia=0	
+
+		set @ret_status = @@ERROR
+		if @ret_status&lt;&gt;0
+		BEGIN
+			RAISERROR('Błąd zakończenia zadania w terminarzu.[%s]',16,1, @ret_status)
+			GOTO BLAD
+		END
+			
+		update CDN.WF_Zadania
+		set 	WFZ_WDZID  = 	@p_WDZID,
+			WFZ_PRCTyp =	@p_PrcTyp ,
+			WFZ_PRCNumer = 	@p_PrcNumer,
+			WFZ_OPIS = 	case when len(@p_Opis)&lt;&gt;0 then @p_Opis else WFZ_OPIS end,
+			WFZ_DataZamkniecia = @p_DataZamkniecia,
+			WFZ_Akcja = @cNazwaAkcji
+		where WFZ_WFPID = @p_WFPID and WFZ_WDSID = @p_WDSID -- usuwamy wszystkie zadania dotyczące wskazanego statusu
+		and WFZ_DataZamkniecia=0
+		set @ret_status = @@ERROR
+		if @ret_status&lt;&gt;0
+		BEGIN
+			RAISERROR('Błąd zakończenia zadania.[%s]',16,1, @ret_status)
+			GOTO BLAD
+		END
+
+	end
+	else
+	begin
+		if (@p_WDSID = -2 ) --  koniec procesu, to kończymy wszystkie zadania
+		begin
+			--zakończenie zadań terminarza
+			update cdn.zadania set zad_czaswykonania = @p_DataZamkniecia,
+							       zad_opewtyp = 128,
+							       zad_opewnumer = @p_OpeNumer
+			from cdn.wf_zadania join cdn.zadania on
+			wfz_id = zad_zrdnumer and
+			zad_zrdtyp = 12293
+			where WFZ_WFPID = @p_WFPID
+			and WFZ_DataZamkniecia=0
+
+			set @ret_status = @@ERROR
+			if @ret_status&lt;&gt;0
+			BEGIN
+				RAISERROR('Błąd zakończenia zadania w terminarzu.[%s]',16,1, @ret_status)
+				GOTO BLAD
+			END			
+		
+			update CDN.WF_Zadania
+			set 	WFZ_WDZID  = 	@p_WDZID,
+				WFZ_PRCTyp =	@p_PrcTyp ,
+				WFZ_PRCNumer = 	@p_PrcNumer,
+ 				WFZ_OPIS = 	case when len(@p_Opis)&lt;&gt;0 then @p_Opis else WFZ_OPIS end,
+				WFZ_DataZamkniecia = @p_DataZamkniecia,
+				WFZ_Akcja = @cNazwaAkcji
+			from CDN.WF_Zadania 
+			where WFZ_WFPID = @p_WFPID
+			and WFZ_DataZamkniecia=0
+
+			set @ret_status = @@ERROR
+			if @ret_status&lt;&gt;0
+			BEGIN
+				RAISERROR('Błąd zakończenia zadania.[%s]',16,1, @ret_status)
+				GOTO BLAD
+			END		
+
+			-- zakończenie całego procesu
+			-- jeśli akcja specjalna zakończ proces
+			EXEC CDN.WFL_ZakonczProces 
+			@p_WFPID = @p_WFPID, 
+			@p_DataZamkniecia = @p_DataZamkniecia,
+			@ret_status = @ret_status
+			if @ret_status&lt;&gt;0
+				GOTO BLAD
+
+		end
+		else
+			Select @lWDPID = WFP_WDPID from cdn.WF_Procesy where WFP_ID =  @p_WFPID
+			
+			--zakończenie zadań terminarza
+			update cdn.zadania set zad_czaswykonania = @p_DataZamkniecia,
+								   zad_opewtyp = 128,
+							       zad_opewnumer = @p_OpeNumer
+			from cdn.wf_zadania join cdn.zadania on
+				wfz_id = zad_zrdnumer and
+				zad_zrdtyp = 12293
+			join CDN.WFL_StatusyZrodlowe(@p_WDSID, @lWDPID) 
+				on T_Status = WFZ_WDSID and WFZ_WFPID = @p_WFPID
+			where WFZ_DataZamkniecia=0 and WFZ_DataUtworzenia&gt;=0
+
+			set @ret_status = @@ERROR
+			if @ret_status&lt;&gt;0
+			BEGIN
+				RAISERROR('Błąd zakończenia zadania w terminarzu.[%s]',16,1, @ret_status)
+				GOTO BLAD
+			END	
+						
+			update CDN.WF_Zadania
+			set 	WFZ_WDZID  = 	@p_WDZID,
+				WFZ_PRCTyp =	@p_PrcTyp ,
+				WFZ_PRCNumer = 	@p_PrcNumer,
+				WFZ_OPIS = 	case when len(@p_Opis)&lt;&gt;0 then @p_Opis else WFZ_OPIS end,
+				WFZ_DataZamkniecia = @p_DataZamkniecia,
+				WFZ_Akcja = @cNazwaAkcji
+			from CDN.WF_Zadania 
+				join CDN.WFL_StatusyZrodlowe(@p_WDSID, @lWDPID) 
+				on T_Status = WFZ_WDSID and WFZ_WFPID = @p_WFPID
+			where WFZ_DataZamkniecia=0 and WFZ_DataUtworzenia&gt;=0
+
+			set @ret_status = @@ERROR
+			if @ret_status&lt;&gt;0
+			BEGIN
+				RAISERROR('Błąd zakończenia zadania.[%s]',16,1, @ret_status)
+				GOTO BLAD
+			END		
+
+	end
+
+BLAD: if (@ret_status&lt;&gt;0)
+	  begin
+		if (@@trancount&gt;0)
+			ROLLBACK TRANSACTION
+	  end
+	  else
+		COMMIT TRANSACTION
+
+
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

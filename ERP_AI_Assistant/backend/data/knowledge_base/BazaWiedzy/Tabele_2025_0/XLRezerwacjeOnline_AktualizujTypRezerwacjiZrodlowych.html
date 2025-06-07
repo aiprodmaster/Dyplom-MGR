@@ -1,0 +1,148 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="("></A><PRE>
+          <FONT SIZE="2"><I>/* ( */</I><BR>
+CREATE TYPE CDN.tParam_XLRezerwacjeOnline_AktualizujTypRezerwacjiZrodlowych AS TABLE (
+		GUID UNIQUEIDENTIFIER,		
+		Ilosc DECIMAL(19, 4),
+		RzwWPrzyszlosc BIT,
+		MasLp SMALLINT,
+		MasSubLp SMALLINT,
+		MasSubLp2 SMALLINT
+	);
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="XLRezerwacjeOnline_AktualizujTypRezerwacjiZrodlowych"></A><PRE>
+          <FONT SIZE="2"><I>/* XLRezerwacjeOnline_AktualizujTypRezerwacjiZrodlowych */</I><BR>
+CREATE PROCEDURE CDN.XLRezerwacjeOnline_AktualizujTypRezerwacjiZrodlowych
+(
+	@p_Rezerwacje CDN.tParam_XLRezerwacjeOnline_AktualizujTypRezerwacjiZrodlowych READONLY, -- Lista parametrów tworzonych rezerwacji
+	@p_MasNumer INT,
+	@p_Tryb INT = 0
+
+	/*
+	@p_Rezerwacje - Lista parametrów tworzonych rezerwacji
+
+	@p_MasNumer - GidNumer dokumentu jeśli wołane dla XL'a
+
+	@p_Tryb - Tryb tworzenia rezerwacji:
+		0 - zmiany w bazie wprowadzane są jedynie w przypadku, gdy uda się wykonać wszystkie żądane rezerwacje, w ilościach takich samych jak żądane. Niepowodzenie przy tworzeniu pojedynczej rezerwacji powinno przerywać proces tworzenia rezerwacji.
+		1 - niepowodzenie przy tworzeniu pojedynczej rezerwacji nie ma wpływu na pozostałe rezerwacje. W przypadku, gdy dostępna jest tylko część żądanej ilości, dla danej rezerwacji, powinna zostać utworzona rezerwacja na mniejszą ilość (maksymalnie dostępną).
+		2 - tryb wewnętrzny, z metody XLRezerwacjeOnline_Modyfikuj - podobnie jak tryb=0, dodatkowo nie zwraca tabeli wynikowej
+
+	*/
+)
+AS
+BEGIN
+	SET NOCOUNT ON;
+
+	DECLARE @c_RezZrdTyp SMALLINT;
+	DECLARE @c_RezZrdNumer INT;
+	DECLARE @c_Ilosc DECIMAL(19, 4);
+	DECLARE @c_RzwWPrzyszlosc BIT;
+	DECLARE @c_MasLp SMALLINT;
+	DECLARE @c_MasSubLp SMALLINT;
+	DECLARE @c_MasSubLp2 SMALLINT;
+	DECLARE @c_RezTyp TINYINT;
+
+	DECLARE @RezDoAktualizacji TABLE(Typ SMALLINT, Numer INT)
+
+	DECLARE C1 CURSOR FAST_FORWARD FOR
+
+		SELECT * FROM (
+			SELECT zrd.Rez_GIDTyp, zrd.Rez_GIDNumer, W.Ilosc, W.RzwWPrzyszlosc, W.MasLp, W.MasSubLp, W.MasSubLp2, zrd.Rez_Typ
+			FROM CDN.Rezerwacje zrd 
+			JOIN CDN.MagSElem on Mas_ZrdTyp=zrd.Rez_GidTyp AND Mas_ZrdNumer=zrd.Rez_GidNumer
+			JOIN CDN.Rezerwacje O on O.Rez_ZrdTyp=Mas_GidTyp AND O.Rez_ZrdNumer=Mas_GidNumer AND O.Rez_ZrdLp=Mas_GidLp AND O.Rez_ZrdSubLp=Mas_SubGidLp
+			JOIN @p_Rezerwacje W ON O.Rez_GUID=CAST(W.GUID as varchar(36))
+			WHERE zrd.Rez_GIDTyp in (2576,2592) AND W.RzwWPrzyszlosc = 0
+			UNION 
+			SELECT zrd.Rez_GIDTyp, zrd.Rez_GIDNumer, W.Ilosc, W.RzwWPrzyszlosc, W.MasLp, W.MasSubLp, W.MasSubLp2, zrd.Rez_Typ
+			FROM CDN.Rezerwacje zrd 
+			JOIN CDN.MagSElem on Mas_ZrdTyp=zrd.Rez_GidTyp AND Mas_ZrdNumer=zrd.Rez_GidNumer
+			JOIN CDN.RezerwacjeWPrzyszlosc O on O.RezP_ZrdTyp=Mas_GidTyp AND O.RezP_ZrdNumer=Mas_GidNumer AND O.RezP_ZrdLp=Mas_GidLp AND O.RezP_ZrdSubLp=Mas_SubGidLp
+			JOIN @p_Rezerwacje W ON O.RezP_GUID=CAST(W.GUID as varchar(36))
+			WHERE zrd.Rez_GIDTyp in (2576,2592) AND W.RzwWPrzyszlosc = 1
+		)
+		A 
+		ORDER BY A.Rez_GIDTyp, A.Rez_GIDNumer, A.MasLp, A.MasSubLp DESC, A.RzwWPrzyszlosc DESC
+		-- sortowanie od końca aby pierwszy subElement został z rezerwacją źródłową
+
+    OPEN C1;
+    FETCH NEXT FROM C1 INTO @c_RezZrdTyp, @c_RezZrdNumer, @c_Ilosc, @c_RzwWPrzyszlosc, @c_MasLp, @c_MasSubLp, @c_MasSubLp2, @c_RezTyp
+    WHILE @@fetch_status = 0
+    BEGIN
+
+		IF (SELECT Rez_Ilosc FROM CDN.Rezerwacje WHERE Rez_GIDTyp=@c_RezZrdTyp and Rez_GIDNumer=@c_RezZrdNumer)&lt;&gt;@c_Ilosc BEGIN
+
+				DECLARE @RozbityMaS BIT
+				DECLARE @IloscDoOdjecia DECIMAL(19, 4);
+
+				SET @RozbityMaS = (SELECT CASE WHEN @c_MasSubLp&lt;&gt;@c_MasSubLp2 AND @c_MasSubLp&lt;&gt;0 AND @c_MasSubLp2&lt;&gt;0 THEN 1 ELSE 0 END)
+
+				IF @RozbityMaS=1 
+					SET @IloscDoOdjecia = @c_Ilosc
+				ELSE
+					SET @IloscDoOdjecia = (SELECT Rez_Ilosc FROM CDN.Rezerwacje WHERE Rez_GIDTyp=@c_RezZrdTyp and Rez_GIDNumer=@c_RezZrdNumer)-@c_Ilosc
+
+				DECLARE @NEW_RezZrdNumer INT
+				EXEC @NEW_RezZrdNumer=CDN.XLRezerwacjeOnline_ZmniejszNaZrdIDodajNaRoznice 
+					@p_RezZrdTyp=@c_RezZrdTyp,
+					@p_RezZrdNumer=@c_RezZrdNumer,
+					@p_Ilosc=@IloscDoOdjecia,
+					@p_ByloRozbicieMaS=@RozbityMaS
+				
+				IF @RozbityMaS=1 BEGIN
+					UPDATE CDN.MagSElem SET MaS_ZrdNumer=@NEW_RezZrdNumer WHERE Mas_GidNumer=@p_MasNumer AND MaS_GIDLp=@c_MasLp AND MaS_SubGIDLp=@c_MasSubLp	
+					
+					IF @c_RzwWPrzyszlosc=0 BEGIN
+
+						INSERT INTO @RezDoAktualizacji (Typ, Numer)
+						SELECT @c_RezZrdTyp, @NEW_RezZrdNumer
+
+						UPDATE CDN.MagSElem set MaS_RezerwacjaZasobu=@c_RezTyp  WHERE Mas_GidNumer=@p_MasNumer AND MaS_GIDLp=@c_MasLp AND MaS_SubGIDLp=@c_MasSubLp
+					END
+				END
+
+		END
+
+		IF @c_RzwWPrzyszlosc=0 BEGIN
+
+			INSERT INTO @RezDoAktualizacji (Typ, Numer)
+			SELECT @c_RezZrdTyp, @c_RezZrdNumer
+
+			UPDATE CDN.MagSElem set MaS_RezerwacjaZasobu=@c_RezTyp  WHERE Mas_GidNumer=@p_MasNumer AND MaS_GIDLp=@c_MasLp AND MaS_SubGIDLp=@c_MasSubLp
+		END
+
+        FETCH NEXT FROM C1 INTO @c_RezZrdTyp, @c_RezZrdNumer, @c_Ilosc, @c_RzwWPrzyszlosc, @c_MasLp, @c_MasSubLp, @c_MasSubLp2, @c_RezTyp
+    END
+    CLOSE C1;
+    DEALLOCATE C1;
+
+	UPDATE R 
+	SET Rez_Typ=0
+	FROM CDN.Rezerwacje R
+	JOIN @RezDoAktualizacji ON Rez_GIDTyp=Typ and Rez_GIDNumer=Numer
+
+	SET NOCOUNT OFF;
+	RETURN
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

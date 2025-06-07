@@ -1,0 +1,263 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="DokSprawdzDostepnyMagazyn"></A><PRE>
+          <FONT SIZE="2"><I>/* DokSprawdzDostepnyMagazyn */</I><BR>
+CREATE    Function CDN.DokSprawdzDostepnyMagazyn(
+@lFrsId int, 
+@lFrsIdW int, 
+@lTypDok smallint, 
+@lZrdTyp smallint, 
+@lZrdNumer int, 
+@lFrSIDZrd int, 
+@lTypDokZrd smallint,
+@lMagTyp smallint,
+@lMagNumer int,
+@lMagWewnetrzny smallint)
+RETURNS Integer
+
+
+
+AS
+BEGIN
+DECLARE @lFrsID_Oryg int
+DECLARE @IleSprawdzen int
+DECLARE @lDokumentZrd int  -- 0- brak, 1-wg GIDu rezerwacji, 2- wg TypDokZrd
+DECLARE @lZnalazl int
+
+SET @lFrSID_Oryg = @lFrSID
+SET @lDokumentZrd = 0
+
+Set @lZnalazl = 0
+
+SET @lTypDok = (Select CDN.DokDokumentDefiniowany(@lTypDok))
+
+
+BEGIN
+        IF (@lTypDok = 9473)
+	    SET @lFrsID = 1  -- TID:51798
+
+	SET @lFrSId = ( select CDN.DokWezelRzeczywistyMag(@lFrSID)  )
+
+	IF ( @lFrSID = @lFrSIDW OR @lFrSID_Oryg=@lFrSIDW OR @lFrSIDW=0)
+	   BEGIN
+	   	SET @IleSprawdzen = 1
+		SET @lFrsIDW = @lFrSID    -- KK 2003.05.28
+	   END
+	ELSE
+	BEGIN
+	   SET @lFrSIDW =  ( select CDN.DokWezelrzeczywistyMag(@lFrSIDW)  )
+	   IF (@lFrSIDW = @lFrSID OR @lFrSID = 0 OR  @lFrSIDW = 0)
+		SET @IleSprawdzen = 1
+	   ELSE
+		SET @IleSprawdzen = 2
+	END
+END
+
+
+IF (@lFrsId = 0 and @lFrSIDW &gt; 0 )          
+    BEGIN
+	SET @lFrsID = @lFrSIDW
+	SET @lFrsIDW = 0
+    END		
+
+	
+IF ( @lTypDok&lt;&gt;0) -- KK:20030516
+    BEGIN
+	IF ((@lZrdTyp = 2576 or @lZrdTyp = 2592) and @lZrdNumer&lt;&gt;0)
+	    SET @lDokumentZrd = 1
+	ELSE
+	    BEGIN
+		SET @lZrdTyp = 0
+		SET @lZrdNumer = 0
+		IF (@lTypDokZrd&lt;&gt;0 and @lFrSIDZrd &lt;&gt; 0)
+		    BEGIN
+		    	SET @lTypDokZrd = (Select CDN.DokDokumentDefiniowany(@lTypDokZrd))
+		    	IF (@lTypDokZrd&lt;&gt;0)
+			   BEGIN
+			   	SET @lFrSIDZrd =  ( select CDN.DokWezelrzeczywistyMag(@lFrSIDZrd)  )
+       	   	        	SET @lDokumentZrd = 2
+			   END
+		    END
+	    END
+    END
+
+
+IF (@lFrSID &lt;&gt; 0 and @lTypDok&lt;&gt;0)
+    BEGIN
+    IF (@lDokumentZrd = 0)
+	    IF (@IleSprawdzen = 2)
+		Set @lZnalazl = (Select Mag_GIDNumer
+		from CDN.Magazyny, CDN.DokDefinicje, CDN.DokRelacje, CDN.FrmObiekty FRM1, CDN.FrmObiekty FRM2
+		where  Dok_FrSID = 1 and Dok_GIDTyp = @lTypDok and Dok_ID = DoR_ID
+		     and  DoR_MsTyp = 208 and DoR_MsNumer = Mag_GIDNumer
+	       	     and FRM1.Fro_FRMID = @lFrsID and FRM1.Fro_GIDTyp = 208 and FRM1.Fro_GIDNumer = Mag_GIDNumer
+		     and FRM2.Fro_FRMID = @lFrsIDW and FRM2.Fro_GIDTyp = 208 and FRM2.Fro_GIDNumer = Mag_GIDNumer
+		     and Mag_GIDTyp = @lMagTyp and Mag_GIDNumer = @lMagNumer and (@lMagWewnetrzny = -1 or @lMagWewnetrzny = Mag_wewnetrzny) )
+	    ELSE
+		Set @lZnalazl = (Select Mag_GIDNumer
+		from CDN.Magazyny, CDN.DokDefinicje, CDN.DokRelacje, CDN.FrmObiekty
+		where  Dok_FrSID = 1 and Dok_GIDTyp = @lTypDok and Dok_ID = DoR_ID
+		     and  DoR_MsTyp = 208 and DoR_MsNumer = Mag_GIDNumer
+	       	     and Fro_FRMID = @lFrsID and Fro_GIDTyp = 208 and Fro_GIDNumer = Mag_GIDNumer
+		     and Mag_GIDTyp = @lMagTyp and Mag_GIDNumer = @lMagNumer and (@lMagWewnetrzny = -1 or @lMagWewnetrzny = Mag_wewnetrzny))
+    ELSE
+	IF (@lDokumentZrd = 1)  -- dodatkowo wg GIDu rezerwacji
+	    IF (@IleSprawdzen = 2)
+		Set @lZnalazl = (Select Mag_GIDNumer
+		from CDN.Magazyny, CDN.DokDefinicje, CDN.DokRelacje, CDN.FrmObiekty FRM1, CDN.FrmObiekty FRM2, CDN.RezMagazyny
+		where  Dok_FrSID = 1 and Dok_GIDTyp = @lTypDok and Dok_ID = DoR_ID
+		     and  DoR_MsTyp = 208 and DoR_MsNumer = Mag_GIDNumer
+	       	     and FRM1.Fro_FRMID = @lFrsID and FRM1.Fro_GIDTyp = 208 and FRM1.Fro_GIDNumer = Mag_GIDNumer
+		     and FRM2.Fro_FRMID = @lFrsIDW and FRM2.Fro_GIDTyp = 208 and FRM2.Fro_GIDNumer = Mag_GIDNumer
+		     and ReM_RezTyp = @lZrdTyp AND ReM_RezNumer = @lZrdNumer AND ReM_MagNumer = Mag_GIDNumer
+		     and Mag_GIDTyp = @lMagTyp and Mag_GIDNumer = @lMagNumer and (@lMagWewnetrzny = -1 or @lMagWewnetrzny = Mag_wewnetrzny))
+	    ELSE
+		Set @lZnalazl = (Select Mag_GIDNumer
+		from CDN.Magazyny, CDN.DokDefinicje, CDN.DokRelacje, CDN.FrmObiekty, CDN.RezMagazyny
+		where  Dok_FrSID = 1 and Dok_GIDTyp = @lTypDok and Dok_ID = DoR_ID
+		     and  DoR_MsTyp = 208 and DoR_MsNumer = Mag_GIDNumer
+	       	     and Fro_FRMID = @lFrsID and Fro_GIDTyp = 208 and Fro_GIDNumer = Mag_GIDNumer
+		     and ReM_RezTyp = @lZrdTyp AND ReM_RezNumer = @lZrdNumer AND ReM_MagNumer = Mag_GIDNumer
+		     and Mag_GIDTyp = @lMagTyp and Mag_GIDNumer = @lMagNumer and (@lMagWewnetrzny = -1 or @lMagWewnetrzny = Mag_wewnetrzny))
+	ELSE  -- wg typu dokumentu źródłowego
+		IF (@lFrsIDZrd = 0) 
+		    IF (@IleSprawdzen = 2)
+		Set @lZnalazl = (Select Mag_GIDNumer
+			from CDN.Magazyny, CDN.DokDefinicje Dok1, CDN.DokRelacje Dor1, CDN.FrmObiekty FRM1, CDN.FrmObiekty FRM2, CDN.DokDefinicje Dok2, CDN.DokRelacje Dor2
+			where  Dok1.Dok_FrSID = 1 and Dok1.Dok_GIDTyp = @lTypDok and Dok1.Dok_ID = Dor1.DoR_ID
+			     and  Dor1.DoR_MsTyp = 208 and Dor1.DoR_MsNumer = Mag_GIDNumer
+		       	     and FRM1.Fro_FRMID = @lFrsID and FRM1.Fro_GIDTyp = 208 and FRM1.Fro_GIDNumer = Mag_GIDNumer
+			     and FRM2.Fro_FRMID = @lFrsIDW and FRM2.Fro_GIDTyp = 208 and FRM2.Fro_GIDNumer = Mag_GIDNumer
+			     and Dok2.Dok_FrSID = 1 and Dok2.Dok_GIDTyp = @lTypDokZrd and Dok2.Dok_ID = Dor2.DoR_ID
+			     and  Dor2.DoR_MsTyp = 208 and Dor2.DoR_MsNumer = Mag_GIDNumer
+		     and Mag_GIDTyp = @lMagTyp and Mag_GIDNumer = @lMagNumer and (@lMagWewnetrzny = -1 or @lMagWewnetrzny = Mag_wewnetrzny))
+		    ELSE
+		Set @lZnalazl = (Select Mag_GIDNumer
+			from CDN.Magazyny, CDN.DokDefinicje Dok1, CDN.DokRelacje Dor1, CDN.FrmObiekty Frm1, CDN.DokDefinicje Dok2, CDN.DokRelacje Dor2
+			where  Dok1.Dok_FrSID = 1 and Dok1.Dok_GIDTyp = @lTypDok and Dok1.Dok_ID = Dor1.DoR_ID
+			     and  Dor1.DoR_MsTyp = 208 and Dor1.DoR_MsNumer = Mag_GIDNumer
+		       	     and FRM1.Fro_FRMID = @lFrsID and FRM1.Fro_GIDTyp = 208 and FRM1.Fro_GIDNumer = Mag_GIDNumer
+			     and Dok2.Dok_FrSID = 1 and Dok2.Dok_GIDTyp = @lTypDokZrd and Dok2.Dok_ID = Dor2.DoR_ID
+			     and  Dor2.DoR_MsTyp = 208 and Dor2.DoR_MsNumer = Mag_GIDNumer
+		     and Mag_GIDTyp = @lMagTyp and Mag_GIDNumer = @lMagNumer and (@lMagWewnetrzny = -1 or @lMagWewnetrzny = Mag_wewnetrzny))
+		ELSE
+		    IF (@IleSprawdzen = 2)
+		Set @lZnalazl = (Select Mag_GIDNumer
+			from CDN.Magazyny, CDN.DokDefinicje Dok1, CDN.DokRelacje Dor1, CDN.FrmObiekty FRM1, CDN.FrmObiekty FRM2, CDN.DokDefinicje Dok2, CDN.DokRelacje Dor2,CDN.FrmObiekty FRM3
+			where  Dok1.Dok_FrSID = 1 and Dok1.Dok_GIDTyp = @lTypDok and Dok1.Dok_ID = Dor1.DoR_ID
+
+			     and  Dor1.DoR_MsTyp = 208 and Dor1.DoR_MsNumer = Mag_GIDNumer
+		       	     and FRM1.Fro_FRMID = @lFrsID and FRM1.Fro_GIDTyp = 208 and FRM1.Fro_GIDNumer = Mag_GIDNumer
+			     and FRM2.Fro_FRMID = @lFrsIDW and FRM2.Fro_GIDTyp = 208 and FRM2.Fro_GIDNumer = Mag_GIDNumer
+			     and FRM3.Fro_FRMID = @lFrsIDZrd and FRM3.Fro_GIDTyp = 208 and FRM3.Fro_GIDNumer = Mag_GIDNumer
+			     and Dok2.Dok_FrSID = 1 and Dok2.Dok_GIDTyp = @lTypDokZrd and Dok2.Dok_ID = Dor2.DoR_ID
+			     and  Dor2.DoR_MsTyp = 208 and Dor2.DoR_MsNumer = Mag_GIDNumer
+		     and Mag_GIDTyp = @lMagTyp and Mag_GIDNumer = @lMagNumer and (@lMagWewnetrzny = -1 or @lMagWewnetrzny = Mag_wewnetrzny))
+		    ELSE
+		Set @lZnalazl = (Select Mag_GIDNumer
+			from CDN.Magazyny, CDN.DokDefinicje Dok1, CDN.DokRelacje Dor1, CDN.FrmObiekty Frm1, CDN.DokDefinicje Dok2, CDN.DokRelacje Dor2, CDN.FrmObiekty FRM3
+			where  Dok1.Dok_FrSID = 1 and Dok1.Dok_GIDTyp = @lTypDok and Dok1.Dok_ID = Dor1.DoR_ID
+			     and  Dor1.DoR_MsTyp = 208 and Dor1.DoR_MsNumer = Mag_GIDNumer
+		       	     and FRM1.Fro_FRMID = @lFrsID and FRM1.Fro_GIDTyp = 208 and FRM1.Fro_GIDNumer = Mag_GIDNumer
+			     and FRM3.Fro_FRMID = @lFrsIDZrd and FRM3.Fro_GIDTyp = 208 and FRM3.Fro_GIDNumer = Mag_GIDNumer
+			     and Dok2.Dok_FrSID = 1 and Dok2.Dok_GIDTyp = @lTypDokZrd and Dok2.Dok_ID = Dor2.DoR_ID
+			     and  Dor2.DoR_MsTyp = 208 and Dor2.DoR_MsNumer = Mag_GIDNumer
+		     and Mag_GIDTyp = @lMagTyp and Mag_GIDNumer = @lMagNumer and (@lMagWewnetrzny = -1 or @lMagWewnetrzny = Mag_wewnetrzny))
+
+    END
+ELSE
+  BEGIN
+  IF (@lFrSID &lt;&gt; 0  and @lTypDok = 0)
+  BEGIN
+     IF (@IleSprawdzen = 2)
+     BEGIN
+		Set @lZnalazl = (Select Mag_GIDNumer
+        from CDN.Magazyny, CDN.FrmObiekty FRM1, CDN.FrmObiekty FRM2
+	where FRM1.Fro_FRMID = @lFrsID and FRM1.Fro_GIDTyp = 208 and FRM1.Fro_GIDNumer = Mag_GIDNumer
+	  and FRM2.Fro_FRMID = @lFrsIDW and FRM2.Fro_GIDTyp = 208 and FRM2.Fro_GIDNumer = Mag_GIDNumer
+		     and Mag_GIDTyp = @lMagTyp and Mag_GIDNumer = @lMagNumer and (@lMagWewnetrzny = -1 or @lMagWewnetrzny = Mag_wewnetrzny))
+     END
+     ELSE
+     BEGIN
+		Set @lZnalazl = (Select Mag_GIDNumer
+        from CDN.Magazyny, CDN.FrmObiekty
+	where Fro_FRMID = @lFrsID and Fro_GIDTyp = 208 and Fro_GIDNumer = Mag_GIDNumer
+		     and Mag_GIDTyp = @lMagTyp and Mag_GIDNumer = @lMagNumer and (@lMagWewnetrzny = -1 or @lMagWewnetrzny = Mag_wewnetrzny))
+     END
+  END
+  ELSE
+  BEGIN
+	IF @lFrSID = 0  and @lTypDok &lt;&gt; 0
+	BEGIN
+	    IF (@lDokumentZrd = 0)
+	    BEGIN
+
+		Set @lZnalazl = (Select Mag_GIDNumer
+	        from CDN.Magazyny, CDN.DokDefinicje, CDN.DokRelacje
+		where Dok_FrSID = 1 and Dok_GIDTyp = @lTypDok and Dok_ID = DoR_ID
+ 		      and  DoR_MsTyp = 208 and DoR_MsNumer = Mag_GIDNumer
+		     and Mag_GIDTyp = @lMagTyp and Mag_GIDNumer = @lMagNumer and (@lMagWewnetrzny = -1 or @lMagWewnetrzny = Mag_wewnetrzny))
+	    END
+	    ELSE
+	    BEGIN
+		IF (@lDokumentZrd = 1)  -- dodatkowo wg GIDu rezerwacji
+		BEGIN
+		Set @lZnalazl = (Select Mag_GIDNumer
+		        from CDN.Magazyny, CDN.DokDefinicje, CDN.DokRelacje,CDN.RezMagazyny
+			where Dok_FrSID = 1 and Dok_GIDTyp = @lTypDok and Dok_ID = DoR_ID
+	 		      and DoR_MsTyp = 208 and DoR_MsNumer = Mag_GIDNumer
+	 		      and ReM_RezTyp = @lZrdTyp AND ReM_RezNumer = @lZrdNumer AND ReM_MagNumer = Mag_GIDNumer
+		     and Mag_GIDTyp = @lMagTyp and Mag_GIDNumer = @lMagNumer and (@lMagWewnetrzny = -1 or @lMagWewnetrzny = Mag_wewnetrzny))
+		END
+		ELSE  -- wg typu dokumentu źródłowego
+		BEGIN
+			IF (@lFrSIDZrd = 0)
+			BEGIN
+		Set @lZnalazl = (Select Mag_GIDNumer
+			        from CDN.Magazyny, CDN.DokDefinicje Dok1, CDN.DokRelacje Dor1, CDN.DokDefinicje Dok2, CDN.DokRelacje Dor2
+				where Dok1.Dok_FrSID = 1 and Dok1.Dok_GIDTyp = @lTypDok and Dok1.Dok_ID = Dor1.DoR_ID
+		 		      and  Dor1.DoR_MsTyp = 208 and Dor1.DoR_MsNumer = Mag_GIDNumer
+			 	      and Dok2.Dok_FrSID = 1 and Dok2.Dok_GIDTyp = @lTypDokZrd and Dok2.Dok_ID = Dor2.DoR_ID
+				      and  Dor2.DoR_MsTyp = 208 and Dor2.DoR_MsNumer = Mag_GIDNumer
+		     and Mag_GIDTyp = @lMagTyp and Mag_GIDNumer = @lMagNumer and (@lMagWewnetrzny = -1 or @lMagWewnetrzny = Mag_wewnetrzny))
+			END
+			ELSE
+			BEGIN
+		Set @lZnalazl = (Select Mag_GIDNumer
+			        from CDN.Magazyny, CDN.DokDefinicje Dok1, CDN.DokRelacje Dor1, CDN.DokDefinicje Dok2, CDN.DokRelacje Dor2, CDN.FrmObiekty
+				where Dok1.Dok_FrSID = 1 and Dok1.Dok_GIDTyp = @lTypDok and Dok1.Dok_ID = Dor1.DoR_ID
+		 		      and Dor1.DoR_MsTyp = 208 and Dor1.DoR_MsNumer = Mag_GIDNumer
+			 	      and Dok2.Dok_FrSID = 1 and Dok2.Dok_GIDTyp = @lTypDokZrd and Dok2.Dok_ID = Dor2.DoR_ID
+				      and Dor2.DoR_MsTyp = 208 and Dor2.DoR_MsNumer = Mag_GIDNumer
+				      and Fro_FRMID = @lFrsIDZrd and Fro_GIDTyp = 208 and Fro_GIDNumer = Mag_GIDNumer
+		     and Mag_GIDTyp = @lMagTyp and Mag_GIDNumer = @lMagNumer and (@lMagWewnetrzny = -1 or @lMagWewnetrzny = Mag_wewnetrzny))
+			END
+		END
+	    END
+	END
+	ELSE
+	BEGIN
+		Set @lZnalazl = (Select Mag_GIDNumer
+	        from CDN.Magazyny
+		Where Mag_GIDTyp = @lMagTyp and Mag_GIDNumer = @lMagNumer)-- and (@lMagWewnetrzny = -1 or @lMagWewnetrzny = Mag_wewnetrzny))
+
+	END
+  END
+  END
+Return isnull(@lZnalazl,0)
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

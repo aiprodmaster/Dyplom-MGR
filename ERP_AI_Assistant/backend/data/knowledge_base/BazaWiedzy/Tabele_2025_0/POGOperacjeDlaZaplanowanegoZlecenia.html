@@ -1,0 +1,46 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="POGOperacjeDlaZaplanowanegoZlecenia"></A><PRE>
+          <FONT SIZE="2"><I>/* POGOperacjeDlaZaplanowanegoZlecenia */</I><BR>
+CREATE FUNCTION CDN.POGOperacjeDlaZaplanowanegoZlecenia( 
+/* ==========================================================================================
+        Zwraca operacje na procesie jakie muszą być wykonane aby móc wyprodukować daną ilość towaru
+	   Mnoznik nie jest mnożnikiem operacji(ignoruje ilość ustawioną bezpośrednio na operacji), odnosi się do ilości na zasobach
+   ========================================================================================== */
+	@PZLId INT 
+)	
+RETURNS TABLE 
+RETURN WITH OP AS (
+SELECT distinct COALESCE(cz2.Pcz_Id,cz1.PCZ_Id) Pcz_Org, 0 POP_PczId, COALESCE(cz2.Pcz_Id,cz1.PCZ_Id) POP_PrzedPczId, PZE_ID FROM  cdn.ProdLinki 
+JOIN cdn.ProdZlecElem  ON	PLK_PZEId = PZE_Id
+LEFT JOIN cdn.ProdZasoby  ON PZA_Id=PLK_ObiNumer AND PLK_ObiTyp=14346
+LEFT JOIN CDN.Rezerwacje ON Rez_GIDTyp=2592 AND Rez_GIDNumer=PLK_ObiNumer AND Rez_ZrdTyp=14345
+JOIN cdn.ProdCzynnosci cz1 ON PCZ_Id=PZA_Czynnosc OR PCZ_Id=Rez_ZrdNumer
+LEFT JOIN CDN.ProdCzynnosci cz2 ON cz2.PCZ_Id=cz1.PCZ_Realizuje	
+
+WHERE PZE_Zlecenie=@PZLId 
+
+UNION ALL
+SELECT	OP.Pcz_Org,wczesniejsza.POP_PczId, wczesniejsza.POP_PrzedPczId, OP.PZE_ID FROM OP
+JOIN CDN.ProdOperacjePowiazane wczesniejsza	ON wczesniejsza.POP_PczId=OP.POP_PrzedPczId
+)
+SELECT  POP_PrzedPczId PczId, PZE_ID,
+1.0 / COUNT(*) OVER (PARTITION BY POP_PrzedPczId) Mnoznik,
+1.0*(ROW_NUMBER() OVER (PARTITION BY POP_PrzedPczId ORDER BY Pcz_Org )-1)/ COUNT(*) OVER (PARTITION BY POP_PrzedPczId) MnoznikOpoznienia
+ FROM	OP
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

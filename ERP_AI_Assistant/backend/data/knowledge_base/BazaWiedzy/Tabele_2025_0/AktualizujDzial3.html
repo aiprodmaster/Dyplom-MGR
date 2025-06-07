@@ -1,0 +1,143 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[AktualizujDzial3]"></A><PRE>
+          <FONT SIZE="2"><I>/* [AktualizujDzial3] */</I><BR>
+CREATE PROCEDURE [CDN].[AktualizujDzial3]
+@OptimaID INT, -- ID rekordu wydziału w bazie Optimy
+@Kod  VARCHAR(40), 
+@Opis  VARCHAR(255), 
+@FRSGRO_Typ  INT,
+@FRSGRO_Numer  INT, 
+@FRSGRO_Firma  INT, 
+@FRSGRO_Lp   INT ,
+@srtTyp  INT , 
+@sKonto VARCHAR(40),
+@Nieaktywny TINYINT,		-- czy nieaktywny
+@OptimaParentID INT --ID rekordu wydzialu nadrzednego 
+
+as SET NOCOUNT ON
+
+Declare 
+@AktywnyDo INT ,
+@XLParentNumer  INT,
+@XLOptimaID INT,
+@FRSGID_Numer INT,
+@lLokIstnieje INT
+
+
+set  @KOD = RTRIM (@KOD)
+
+if @Nieaktywny &lt;&gt; 0
+    set @AktywnyDo = DATEDIFF(day,'18001228',GETDATE())
+else
+    set @AktywnyDo = 0
+
+
+    if @OptimaParentID = 3
+        set @XLParentNumer = 2
+    else    
+        select @XLParentNumer = FRS_GIDNumer from CDN.FrmStruktura where FRS_OptimaID=@OptimaParentID -- pobranie XLowego ID rodzica
+    
+	if @XLParentNumer is NULL -- sprawdzenie czy rodzic istnieje w XL
+	begin
+		RAISERROR('Brak rodzica.',16,1)
+		return
+	end          
+    
+    select @XLOptimaID = frs_optimaid from cdn.FrmStruktura where frs_warstwa = 2 and frs_nazwa = @Kod and frs_gronumer = @XLParentNumer and frs_gidtyp = -4272               
+    if @OptimaID &lt;&gt; 0 and @XLOptimaID &lt;&gt; 0    
+    begin
+		if  exists(select 1 from cdn.FrmStruktura where frs_nazwa = @Kod and frs_optimaid &lt;&gt; @OptimaID and frs_gronumer = @XLParentNumer and frs_warstwa = 2 and frs_gidtyp = -4272) 
+		begin
+			RAISERROR('Duplikacja: obiekt o podanym kodzie (wartości) istnieje już w strukturze projektów w zsynchronizowanej bazie danych. Nie można zapisać danych. Aby w przyszłości uniknąć podobnych sytuacji należy w Comarch ERP XL uruchomić funkcję specjalną: Synchronizacja struktury organizacyjnej.',16,1)
+			return                               	        
+		end
+    end
+
+
+set @lLokIstnieje = 0
+if @srtTyp=1002
+  begin  
+    --czy istnieje lokalizacja o danym kodzie w całej strukturze kosztowej 
+    if  exists(select 1 from cdn.FrmStruktura where frs_nazwa = @Kod and frs_optimaid &lt;&gt; @OptimaID and frs_gronumer &lt;&gt; @XLParentNumer and frs_warstwa = 2 and           frs_gidtyp = -4272)   
+              set @lLokIstnieje = 1       
+          
+    SELECT @FRSGID_Numer=Slw_Id FROM CDN.Slowniki
+    join CDN.SlownikiStruktura on SLW_SLSId = SLS_Id
+    where SLS_Predefiniowany = 52 and Slw_WartoscS=@Kod
+  end
+
+
+if @srtTyp = 1002 and @FRSGID_Numer &lt;&gt; 0 and @lLokIstnieje = 0
+	if @sKonto &lt;&gt; ''
+		update CDN.frmStruktura
+		set 
+			frs_nazwa= @Kod, 
+			frs_opis=@Opis , 
+			frs_strtyp = @srtTyp , 
+			frs_konto = @sKonto,
+			frs_archiwalny=@Nieaktywny,
+			frs_optimaid = @OptimaID,
+			FRS_AktywnyDo = @AktywnyDo,
+			FRS_GidLp = frs_id,
+			FRS_GidNumer = @FRSGID_Numer
+		where
+			frs_gidtyp=@FRSGRO_Typ and frs_gidnumer=@FRSGRO_Numer
+			and frs_gidfirma=@FRSGRO_Firma and frs_gidlp=@FRSGRO_Lp    
+	else
+        update CDN.frmStruktura
+		set 
+			frs_nazwa= @Kod, 
+			frs_opis=@Opis , 
+			frs_strtyp = @srtTyp , 			
+			frs_archiwalny=@Nieaktywny,
+			frs_optimaid = @OptimaID,
+			FRS_AktywnyDo = @AktywnyDo,
+			FRS_GidLp = frs_id,
+			FRS_GidNumer = @FRSGID_Numer
+		where
+			frs_gidtyp=@FRSGRO_Typ and frs_gidnumer=@FRSGRO_Numer
+			and frs_gidfirma=@FRSGRO_Firma and frs_gidlp=@FRSGRO_Lp		
+	
+else
+	if @sKonto &lt;&gt; '' 
+		update CDN.frmStruktura
+		set 
+			frs_nazwa= @Kod, 
+			frs_opis=@Opis , 
+			frs_strtyp = @srtTyp , 
+			frs_konto = @sKonto,
+			frs_archiwalny=@Nieaktywny,
+			frs_optimaid = @OptimaID,
+			FRS_AktywnyDo = @AktywnyDo
+		where
+			frs_gidtyp=@FRSGRO_Typ and frs_gidnumer=@FRSGRO_Numer
+			and frs_gidfirma=@FRSGRO_Firma and frs_gidlp=@FRSGRO_Lp        
+    else
+        update CDN.frmStruktura
+		set 
+			frs_nazwa= @Kod, 
+			frs_opis=@Opis , 
+			frs_strtyp = @srtTyp , 			
+			frs_archiwalny=@Nieaktywny,
+			frs_optimaid = @OptimaID,
+			FRS_AktywnyDo = @AktywnyDo
+		where
+			frs_gidtyp=@FRSGRO_Typ and frs_gidnumer=@FRSGRO_Numer
+			and frs_gidfirma=@FRSGRO_Firma and frs_gidlp=@FRSGRO_Lp     
+		
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

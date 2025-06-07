@@ -1,0 +1,590 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie procedury ZmianaNumeruKonta"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie procedury ZmianaNumeruKonta */</I><BR>
+IF EXISTS (SELECT name  FROM sysobjects WHERE name = 'ZmianaNumeruKonta' AND type = 'P')
+  DROP PROCEDURE CDN.ZmianaNumeruKonta;
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury ZmianaNumeruKonta"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury ZmianaNumeruKonta */</I><BR>
+
+CREATE PROCEDURE CDN.ZmianaNumeruKonta
+@Param int,
+@OkresID INT,
+@StareKonto varchar(50),
+@StareKontoR varchar(70),
+@NoweKonto varchar(50),
+@NoweKontoR varchar(70),
+@NoweSynNumer int,
+@NoweSubKonto varchar(50)
+
+AS
+begin
+
+/*Param numer bitu
+1 - konta we wskazanym okresie, dekrety, predekrety zaksiegowane, zapisy kasowe zaksiegowane, konta kontrahentow w danym okresie, zapisy kasowe wystawione na tych kontrahentow, bilans otwarcia z tego okresu
+2 - towary
+3 - waluty
+4 - karty ST
+5 - wzorce kart ST
+6 - schematy ksiegowe
+7 - ksiegowanie okresowe
+8 - pracownicy
+9 - banki 
+10 - urzedy
+11 - magazyny
+12 - predekrety niezaksiegowane niezwiazane z kontrahentem
+13 - operacje KB
+14 - rejestry
+15 - opis na predekretach
+16 - opis na naglówku dekretu
+17 - opis na pozycji dekretu
+18 - wymiary
+*/
+
+SET NOCOUNT ON
+	
+declare @rv int
+set @rv = 0
+
+if isnull(@StareKonto,'') = '' or isnull(@StareKontoR,'') = '' or isnull(@NoweKonto,'') = '' or isnull(@NoweKontoR,'') = ''
+or (@Param &amp; 1 &gt; 0 and isnull(@NoweSubKonto,'') = '')
+begin
+	raiserror('Błędne parametry procedury ZmianaNumeruKonta', 16,1)
+	return 1
+end
+
+
+declare @Obiekty table (GIDTyp smallint, GIDNumer int)
+
+
+begin tran
+	
+
+
+----------dla okresu
+if @OkresID &lt;&gt; 0 and @Param &amp; 1 &gt; 0
+begin	
+	--wczytaj kontrahentów
+	insert into @Obiekty (GIDTyp, GIDNumer)
+	select distinct KKT_KntTyp, KKT_KntNumer
+	from cdn.Konta
+		join cdn.KntKonta
+			on KKS_GIDNumer = KKT_KKSNumer
+	where Kks_OkresID = @OkresID and KKS_Konto  = @StareKonto
+	
+
+	if @@Error &lt;&gt; 0
+	begin 
+		goto lErr
+	end
+
+	
+	update cdn.Konta set 
+		Kks_SynNumer = @NoweSynNumer,
+		Kks_SubKonto = @NoweSubKonto,
+		Kks_NastKonto = case when Kks_NastKonto = @StareKontoR then @NoweKontoR else Kks_NastKonto end
+	where Kks_OkresID = @OkresID and KKS_Konto  = @StareKonto
+	
+
+	if @@Error &lt;&gt; 0
+	begin 
+		goto lErr
+	end
+	
+	
+	update cdn.Konta set 
+		KKS_KZKonto = @NoweKonto
+	where KKS_OkresID = @OkresID and KKS_KZKonto = @StareKonto
+
+
+	if @@Error &lt;&gt; 0
+	begin 
+		goto lErr
+	end
+
+
+
+
+	if @Param &amp; 32768 &gt; 0
+	begin
+		update del set
+			del.DEL_Opis = @NoweSubKonto
+		from cdn.DziennikElem del
+		where exists(select 1 from cdn.Konta
+				join cdn.Dekrety dt
+					on dt.DT_KKSNumer = KKS_GIDNumer and KKS_OkresID = @OkresID and KKS_Konto = @NoweKonto
+				where DT_GIDNumer = DEL_GIDNumer and DT_GIDLp = DEL_GIDLp)
+	end
+
+
+	if @@Error &lt;&gt; 0
+	begin 
+		goto lErr
+	end
+
+
+
+	if @Param &amp; 65536 &gt; 0
+	begin
+		update dzk set
+			dzk.DZK_Opis = @NoweSubKonto
+		from cdn.Dziennik dzk
+		where exists(select 1 from cdn.Konta
+				join cdn.Dekrety dt
+					on dt.DT_KKSNumer = KKS_GIDNumer and KKS_OkresID = @OkresID and KKS_Konto = @NoweKonto				
+				where DT_GIDNumer = DZK_GIDNumer)
+	end
+
+
+	if @@Error &lt;&gt; 0
+	begin 
+		goto lErr
+	end
+
+
+
+	update dt set
+		dt.DT_Konto = KKS_Konto		
+	from cdn.Dekrety dt
+		join cdn.Konta
+			on dt.DT_KKSNumer = KKS_GIDNumer and KKS_OkresID = @OkresID and KKS_Konto = @NoweKonto
+	
+
+
+	if @@Error &lt;&gt; 0
+	begin 
+		goto lErr
+	end
+
+	
+
+
+	
+	--predekrety zaksiegowane w danym okresie 
+	update cdn.Predekrety set
+		Pdt_KontoDebet = case when Pdt_KontoDebet &lt;&gt; '' then case when Pdt_KontoDebet &lt;&gt; @StareKonto then Pdt_KontoDebet else @NoweKonto end else '' end,
+		Pdt_KontoCredit = case when Pdt_KontoCredit &lt;&gt; '' then case when Pdt_KontoCredit &lt;&gt; @StareKonto then Pdt_KontoCredit else @NoweKonto end else '' end,
+		Pdt_KontoDebetDef = case when Pdt_KontoDebetDef &lt;&gt; '' then case when Pdt_KontoDebetDef &lt;&gt; @StareKonto then Pdt_KontoDebetDef else @NoweKonto end else '' end,
+		Pdt_KontoCreditDef = case when Pdt_KontoCreditDef &lt;&gt; '' then case when Pdt_KontoCreditDef &lt;&gt; @StareKonto then Pdt_KontoCreditDef else @NoweKonto end else '' end,
+		Pdt_KontoDebetR = case when Pdt_KontoDebetR &lt;&gt; '' then case when Pdt_KontoDebetR &lt;&gt; @StareKontoR then Pdt_KontoDebetR else @NoweKontoR end else '' end,
+		Pdt_KontoCreditR = case when Pdt_KontoCreditR &lt;&gt; '' then case when Pdt_KontoCreditR &lt;&gt; @StareKontoR then Pdt_KontoCreditR else @NoweKontoR end else '' end,
+		PDT_Opis = case when @Param &amp; 16384 &gt; 0 then @NoweSubKonto else PDT_Opis end
+	where (Pdt_KontoDebet = @StareKonto or Pdt_KontoCredit = @StareKonto)
+		and exists (select KKS_GIDNumer
+					from cdn.Konta
+						join cdn.Dekrety
+							on KKS_OkresID = @OkresID and KKS_Konto = @NoweKonto and KKS_GIDNumer = DT_KKSNumer
+						join cdn.Zrodla
+							on zro_dttyp = dt_gidtyp and zro_dtnumer = dt_gidnumer 
+					where Pdt_GidTyp = Zro_TrnTyp and Pdt_GidNumer = Zro_TrnNumer)
+	
+
+	if @@Error &lt;&gt; 0
+	begin 
+		goto lErr
+	end
+
+	
+	
+	
+	update cdn.BilansOtwarciaElem set
+		BOE_Konto = @NoweKonto
+	from cdn.BilansOtwarciaElem 
+		join cdn.BilansOtwarciaNag
+			on BOE_GIDTyp = BON_GIDTyp and BOE_GIDNumer = BON_GIDNumer
+	where BOE_Konto = @StareKonto
+		and exists (select OkM_OkrID from cdn.OkresyMiesiace
+			where OkM_OkrID = @OkresID and BON_RokMiesiac = 100*OkM_Rok+OkM_Miesiac)
+	
+
+
+	if @@Error &lt;&gt; 0
+	begin 
+		goto lErr
+	end
+	
+	
+	----zapisy kasowe zaksiegowane
+	update cdn.Zapisy set
+		KAZ_KontoPrzec = @NoweKonto,
+		KAZ_KontoPrzecR = @NoweKontoR
+	where Kaz_KontoPrzec = @StareKonto and
+		exists (select Zro_TrnTyp 
+		from cdn.Zrodla 
+			join cdn.Dekrety 
+				on Zro_DtTyp = Dt_GIDTyp and Zro_DtNumer = Dt_GIDNumer 
+			join cdn.Konta 
+				on dt_KKSNumer = KKS_GIDNumer and KKS_OkresID = @OkresID and KKS_Konto = @NoweKonto
+		where Kaz_GidTyp = Zro_TrnTyp and Kaz_GidNumer = Zro_TrnNumer and Kaz_GIDLp = Zro_TrnLp)
+
+	if @@Error &lt;&gt; 0
+	begin 
+		goto lErr
+	end
+	
+	
+	
+	----zapisy kasowe niezaksiegowane
+	update cdn.Zapisy set
+		KAZ_KontoPrzec = @NoweKonto,
+		KAZ_KontoPrzecR = @NoweKontoR
+	from cdn.Zapisy
+		join @Obiekty
+			on Kaz_KntTyp = GIDTyp and Kaz_KntNumer = GIDNumer 
+		join cdn.Okresy
+			on Okr_ID = @OkresID and Kaz_DataZapisu between Okr_Poczatek and Okr_Koniec
+	where Kaz_KontoPrzec = @StareKonto and
+		not exists (select Zro_TrnTyp 
+		from cdn.Zrodla 
+			join cdn.Dekrety 
+				on Zro_DtTyp = Dt_GIDTyp and Zro_DtNumer = Dt_GIDNumer 
+		where Kaz_GidTyp = Zro_TrnTyp and Kaz_GidNumer = Zro_TrnNumer and Kaz_GIDLp = Zro_TrnLp)
+	
+
+	if @@Error &lt;&gt; 0
+	begin 
+		goto lErr
+	end
+	
+	
+	delete from @Obiekty
+	if @@Error &lt;&gt; 0
+	begin 
+		goto lErr
+	end
+	
+	
+-----------------------------
+end	
+
+
+if @Param &amp; 2 &gt; 0
+begin
+	update cdn.TwrKarty set
+		Twr_Konto1 = case when Twr_Konto1 &lt;&gt; '' then case when Twr_Konto1 &lt;&gt; @StareKonto then Twr_Konto1 else @NoweKonto end else '' end,
+		Twr_Konto2 = case when Twr_Konto2 &lt;&gt; '' then case when Twr_Konto2 &lt;&gt; @StareKonto then Twr_Konto2 else @NoweKonto end else '' end,
+		Twr_Konto3 = case when Twr_Konto3 &lt;&gt; '' then case when Twr_Konto3 &lt;&gt; @StareKonto then Twr_Konto3 else @NoweKonto end else '' end
+	where Twr_Konto1 = @StareKonto or Twr_Konto2 = @StareKonto or Twr_Konto3 = @StareKonto
+
+	if @@Error &lt;&gt; 0
+	begin 
+		goto lErr
+	end
+end	
+
+	
+if @Param &amp; 4 &gt; 0	
+begin
+	update cdn.WalNag set
+		Wan_KontoPlus = case when Wan_KontoPlus &lt;&gt; '' then case when Wan_KontoPlus &lt;&gt; @StareKonto then Wan_KontoPlus else @NoweKonto end else '' end,
+		Wan_KontoMinus = case when Wan_KontoMinus &lt;&gt; '' then case when Wan_KontoMinus &lt;&gt; @StareKonto then Wan_KontoMinus else @NoweKonto end else '' end
+	where Wan_KontoPlus = @StareKonto or Wan_KontoMinus = @StareKonto
+	
+	if @@Error &lt;&gt; 0
+	begin 
+		goto lErr
+	end
+end	
+	
+	
+if @Param &amp; 8 &gt; 0
+begin
+	update cdn.SrtKarty set 
+		Srt_KontoGl = case when Srt_KontoGl &lt;&gt; '' then case when Srt_KontoGl &lt;&gt; @StareKonto then Srt_KontoGl else @NoweKonto end else '' end,
+		Srt_KontoUm = case when Srt_KontoUm &lt;&gt; '' then case when Srt_KontoUm &lt;&gt; @StareKonto then Srt_KontoUm else @NoweKonto end else '' end,
+		Srt_KontoAmP = case when Srt_KontoAmP &lt;&gt; '' then case when Srt_KontoAmP &lt;&gt; @StareKonto then Srt_KontoAmP else @NoweKonto end else '' end,
+		Srt_KontoAmB = case when Srt_KontoAmB &lt;&gt; '' then case when Srt_KontoAmB &lt;&gt; @StareKonto then Srt_KontoAmB else @NoweKonto end else '' end,
+		Srt_KontoSTK = case when Srt_KontoSTK &lt;&gt; '' then case when Srt_KontoSTK &lt;&gt; @StareKonto then Srt_KontoSTK else @NoweKonto end else '' end
+	where Srt_KontoGl = @StareKonto or Srt_KontoUm = @StareKonto or Srt_KontoAmP = @StareKonto or Srt_KontoAmB = @StareKonto or Srt_KontoSTK = @StareKonto 
+
+	if @@Error &lt;&gt; 0
+	begin 
+		goto lErr
+	end
+end
+	
+
+if @Param &amp; 16 &gt; 0	
+begin
+	update cdn.SrtWzorce set 
+		SrW_KontoGl = case when SrW_KontoGl &lt;&gt; '' then case when SrW_KontoGl &lt;&gt; @StareKonto then SrW_KontoGl else @NoweKonto end else '' end,
+		SrW_KontoUm = case when SrW_KontoUm &lt;&gt; '' then case when SrW_KontoUm &lt;&gt; @StareKonto then SrW_KontoUm else @NoweKonto end else '' end,
+		SrW_KontoAmP = case when SrW_KontoAmP &lt;&gt; '' then case when SrW_KontoAmP &lt;&gt; @StareKonto then SrW_KontoAmP else @NoweKonto end else '' end,
+		SrW_KontoAmB = case when SrW_KontoAmB &lt;&gt; '' then case when SrW_KontoAmB &lt;&gt; @StareKonto then SrW_KontoAmB else @NoweKonto end else '' end,
+		SrW_KontoSTK = case when SrW_KontoSTK &lt;&gt; '' then case when SrW_KontoSTK &lt;&gt; @StareKonto then SrW_KontoSTK else @NoweKonto end else '' end
+	where SrW_KontoGl = @StareKonto or SrW_KontoUm = @StareKonto or SrW_KontoAmP = @StareKonto or SrW_KontoAmB = @StareKonto or SrW_KontoSTK = @StareKonto 
+	
+	if @@Error &lt;&gt; 0
+	begin 
+		goto lErr
+	end
+end
+	
+if @Param &amp; 32 &gt; 0
+begin
+	UPDATE cdn.Skladniki SET 
+		Scs_KontoDebet =  @NoweKonto
+		,Scs_KontoDebetSQL = case when SCS_KontoDebetSQLEdycja=0 THEN '''' + rtrim(@NoweKonto) + '''' else Scs_KontoDebetSQL END
+	WHERE Scs_KontoDebet = @StareKonto;
+		
+	if @@Error &lt;&gt; 0
+	begin 
+		goto lErr
+	end				 
+					 
+	UPDATE cdn.Skladniki SET 
+		Scs_KontoCredit =  @NoweKonto
+		,Scs_KontoCreditSQL = case when SCS_KontoCreditSQLEdycja=0 THEN '''' + rtrim(@NoweKonto) + '''' else Scs_KontoCreditSQL END
+	WHERE Scs_KontoCredit = @StareKonto;	 
+		
+	if @@Error &lt;&gt; 0
+	begin 
+		goto lErr
+	end
+end
+	
+if @Param &amp; 64 &gt; 0	
+begin
+	update cdn.KsoElem set
+		KsE_KontoDebet = case when KsE_KontoDebet &lt;&gt; '' then case when KsE_KontoDebet &lt;&gt; @StareKonto then KsE_KontoDebet else @NoweKonto end else '' end,
+		KsE_KontoCredit = case when KsE_KontoCredit &lt;&gt; '' then case when KsE_KontoCredit &lt;&gt; @StareKonto then KsE_KontoCredit else @NoweKonto end else '' end
+	where KsE_KontoDebet = @StareKonto or KsE_KontoCredit = @StareKonto
+	
+	if @@Error &lt;&gt; 0
+	begin 
+		goto lErr
+	end
+end
+	
+	
+if @Param &amp; 128 &gt; 0	
+begin	
+	--wczytaj pracowników
+	insert into @Obiekty (GIDTyp, GIDNumer)
+	select Prc_GIDTyp, Prc_GIDNumer
+	from cdn.PrcKarty
+	where Prc_KontoKs1 = @StareKonto or Prc_KontoKs2 = @StareKonto or Prc_KontoKs3 = @StareKonto 
+		or Prc_KontoKs4 = @StareKonto or Prc_KontoKs5 = @StareKonto
+	
+	if @@Error &lt;&gt; 0
+	begin 
+		goto lErr
+	end
+
+
+	
+	update cdn.PrcKarty set
+		Prc_KontoKs1 = case when Prc_KontoKs1 &lt;&gt; '' then case when Prc_KontoKs1 &lt;&gt; @StareKonto then Prc_KontoKs1 else @NoweKonto end else '' end,
+		Prc_KontoKs2 = case when Prc_KontoKs2 &lt;&gt; '' then case when Prc_KontoKs2 &lt;&gt; @StareKonto then Prc_KontoKs2 else @NoweKonto end else '' end,
+		Prc_KontoKs3 = case when Prc_KontoKs3 &lt;&gt; '' then case when Prc_KontoKs3 &lt;&gt; @StareKonto then Prc_KontoKs3 else @NoweKonto end else '' end,
+		Prc_KontoKs4 = case when Prc_KontoKs4 &lt;&gt; '' then case when Prc_KontoKs4 &lt;&gt; @StareKonto then Prc_KontoKs4 else @NoweKonto end else '' end,
+		Prc_KontoKs5 = case when Prc_KontoKs5 &lt;&gt; '' then case when Prc_KontoKs5 &lt;&gt; @StareKonto then Prc_KontoKs5 else @NoweKonto end else '' end
+	where Prc_KontoKs1 = @StareKonto or Prc_KontoKs2 = @StareKonto or Prc_KontoKs3 = @StareKonto 
+		or Prc_KontoKs4 = @StareKonto or Prc_KontoKs5 = @StareKonto
+	
+	if @@Error &lt;&gt; 0
+	begin 
+		goto lErr
+	end
+end
+	
+	
+if @Param &amp; 256 &gt; 0	
+begin	
+	--wczytaj banki
+	insert into @Obiekty (GIDTyp, GIDNumer)
+	select Bnk_GIDTyp, Bnk_GIDNumer
+	from cdn.Banki
+	where BnK_Konto = @StareKonto
+
+	if @@Error &lt;&gt; 0
+	begin 
+		goto lErr
+	end
+
+
+	
+	update cdn.Banki set
+		Bnk_Konto = @NoweKonto
+	where BnK_Konto = @StareKonto
+	
+	if @@Error &lt;&gt; 0
+	begin 
+		goto lErr
+	end
+end
+	
+	
+if @Param &amp; 512 &gt; 0	
+begin	
+
+	--wczytaj urzedy
+	insert into @Obiekty (GIDTyp, GIDNumer)
+	select Urz_GIDTyp, Urz_GIDNumer
+	from cdn.Urzedy
+	where Urz_KontoKs1 = @StareKonto or Urz_KontoKs2 = @StareKonto or Urz_KontoKs3 = @StareKonto or 
+		Urz_KontoKs4 = @StareKonto
+	
+	if @@Error &lt;&gt; 0
+	begin 
+		goto lErr
+	end
+
+
+
+	update cdn.Urzedy set
+		Urz_KontoKs1 = case when Urz_KontoKs1 &lt;&gt; '' then case when Urz_KontoKs1 &lt;&gt; @StareKonto then Urz_KontoKs1 else @NoweKonto end else '' end,
+		Urz_KontoKs2 = case when Urz_KontoKs2 &lt;&gt; '' then case when Urz_KontoKs2 &lt;&gt; @StareKonto then Urz_KontoKs2 else @NoweKonto end else '' end,
+		Urz_KontoKs3 = case when Urz_KontoKs3 &lt;&gt; '' then case when Urz_KontoKs3 &lt;&gt; @StareKonto then Urz_KontoKs3 else @NoweKonto end else '' end,
+		Urz_KontoKs4 = case when Urz_KontoKs4 &lt;&gt; '' then case when Urz_KontoKs4 &lt;&gt; @StareKonto then Urz_KontoKs4 else @NoweKonto end else '' end
+	where Urz_KontoKs1 = @StareKonto or Urz_KontoKs2 = @StareKonto or Urz_KontoKs3 = @StareKonto or 
+		Urz_KontoKs4 = @StareKonto
+	
+	if @@Error &lt;&gt; 0
+	begin 
+		goto lErr
+	end
+end	
+
+
+if @Param &amp; 1024 &gt; 0	
+begin	
+	update cdn.Magazyny set 
+		Mag_Konto = @NoweKonto
+	where Mag_Konto = @StareKonto
+	
+	if @@Error &lt;&gt; 0
+	begin 
+		goto lErr
+	end
+end
+
+	
+if @Param &amp; 2048 &gt; 0	
+begin	
+	--predekrety niezaksiegowane
+	update cdn.Predekrety set
+		Pdt_KontoDebet = case when Pdt_KontoDebet &lt;&gt; '' then case when Pdt_KontoDebet &lt;&gt; @StareKonto then Pdt_KontoDebet else @NoweKonto end else '' end,
+		Pdt_KontoCredit = case when Pdt_KontoCredit &lt;&gt; '' then case when Pdt_KontoCredit &lt;&gt; @StareKonto then Pdt_KontoCredit else @NoweKonto end else '' end,
+		Pdt_KontoDebetDef = case when Pdt_KontoDebetDef &lt;&gt; '' then case when Pdt_KontoDebetDef &lt;&gt; @StareKonto then Pdt_KontoDebetDef else @NoweKonto end else '' end,
+		Pdt_KontoCreditDef = case when Pdt_KontoCreditDef &lt;&gt; '' then case when Pdt_KontoCreditDef &lt;&gt; @StareKonto then Pdt_KontoCreditDef else @NoweKonto end else '' end,
+		Pdt_KontoDebetR = case when Pdt_KontoDebetR &lt;&gt; '' then case when Pdt_KontoDebetR &lt;&gt; @StareKontoR then Pdt_KontoDebetR else @NoweKontoR end else '' end,
+		Pdt_KontoCreditR = case when Pdt_KontoCreditR &lt;&gt; '' then case when Pdt_KontoCreditR &lt;&gt; @StareKontoR then Pdt_KontoCreditR else @NoweKontoR end else '' end,
+		PDT_Opis = case when @Param &amp; 16384 &gt; 0 then @NoweSubKonto else PDT_Opis end
+	where (Pdt_KontoDebet = @StareKonto or Pdt_KontoCredit = @StareKonto)
+		and not exists (select Zro_TrnTyp 
+			from cdn.Zrodla 
+				join cdn.Dekrety 
+					on Zro_DtTyp = Dt_GIDTyp and Zro_DtNumer = Dt_GIDNumer 
+			where Pdt_GidTyp = Zro_TrnTyp and Pdt_GidNumer = Zro_TrnNumer)
+	
+	if @@Error &lt;&gt; 0
+	begin 
+		goto lErr
+	end
+end	
+	
+	
+if @Param &amp; 4096 &gt; 0	
+begin	
+	update cdn.Operacje set 
+		KAO_KontoPrzec = @NoweKonto
+	where KAO_KontoPrzec = @StareKonto
+	
+	if @@Error &lt;&gt; 0
+	begin 
+		goto lErr
+	end
+end	
+	
+if @Param &amp; 8192 &gt; 0	
+begin	
+	update cdn.Rejestry set
+		Kar_KontoKasy = @NoweKonto
+	where Kar_KontoKasy = @StareKonto
+	
+	if @@Error &lt;&gt; 0
+	begin 
+		goto lErr
+	end
+end	
+	
+	
+	
+	
+----zapisy kasowe niezaksiegowane niewystawione na kontrahentow
+update cdn.Zapisy set
+	KAZ_KontoPrzec = @NoweKonto
+from cdn.Zapisy
+	join @Obiekty
+		on Kaz_KntTyp = GIDTyp and Kaz_KntNumer = GIDNumer 
+where Kaz_KontoPrzec = @StareKonto and
+	not exists (select Zro_TrnTyp 
+	from cdn.Zrodla 
+		join cdn.Dekrety 
+			on Zro_DtTyp = Dt_GIDTyp and Zro_DtNumer = Dt_GIDNumer 
+	where Kaz_GidTyp = Zro_TrnTyp and Kaz_GidNumer = Zro_TrnNumer and Kaz_GIDLp = Zro_TrnLp)
+
+if @@Error &lt;&gt; 0
+begin 
+	goto lErr
+end
+
+
+--wymiary
+if @Param &amp; 131072 &gt; 0	
+begin	
+	update cdn.Wymiary set Wmr_Konto = @NoweKonto
+	where Wmr_typ = 3 and Wmr_Konto = @StareKonto
+
+	if @@Error &lt;&gt; 0
+	begin 
+		goto lErr
+	end
+end
+
+
+commit tran
+
+lExit:
+SET NOCOUNT OFF
+return @rv
+
+
+lErr:
+rollback tran
+raiserror('Błąd aktualizacji danych',16,1)
+set @rv = 1
+goto lExit
+
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury ZmianaNumeruKonta"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury ZmianaNumeruKonta */</I><BR>
+GRANT EXECUTE ON CDN.ZmianaNumeruKonta TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

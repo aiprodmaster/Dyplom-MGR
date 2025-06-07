@@ -1,0 +1,214 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="SumaDokBezPlatnosci"></A><PRE>
+          <FONT SIZE="2"><I>/* SumaDokBezPlatnosci */</I><BR>
+CREATE FUNCTION CDN.SumaDokBezPlatnosci (@p_KntNumer INT, @p_FrSID INT, @p_LimitAkw TINYINT, @p_TrnNumer INT = 0, @jestLimitCelowy TINYINT = NULL)
+	-- Funkcja zwraca sume wartosci dokumentów nie generujących płatności (WZ, WZK, PZ, PZK)
+	-- dla konkretnego kontrahenta
+	-- pomijane są dokumenty spięte do spinaczy
+	-- 
+	-- Format wyniku: 
+	-- Wartosc 
+	-- 
+	-- Wersja 9.0   12.11.2008  MF
+	-- 
+	-- Parametry: 
+	-- @p_KntNumer        Numer kontrahenta dla którego liczymy wartość kredytu
+	-- @p_FrSID			  Właściciel dokumentu, wartość wykorzystywana gdy parametr @p_LimitAkw &gt; 0
+	-- @p_LimitAkw        Czy przekazany kontrahent jest akwizytorem
+	-- 2017.0.0 Limit kredytu przypisany do zamówienia 
+	-- 2019.1.0 "@jestLimitCelowy TINYINT = NULL" może być juz wyliczone wcześniej dla danego dokumentu
+RETURNS VARCHAR(255)
+AS
+BEGIN
+	DECLARE @DokBezPlatnosci DECIMAL(28, 4)
+	DECLARE @DokBezPlatnosciCzesciowy DECIMAL(28, 4)
+
+	SET @jestLimitCelowy = ISNULL(@jestLimitCelowy, cdn.CzyJestLimitCelowy(@p_TrnNumer, 0, 0))
+
+	IF (@p_LimitAkw &gt; 0) -- policzenie płatności z dokumentów nie generujących płatności (WZ, WZK, PZ, PZK, WZE, WKE) dla akwizytora
+		IF @jestLimitCelowy = 0
+		BEGIN
+			SELECT @DokBezPlatnosciCzesciowy = WartoscBrutto
+			FROM cdn.SumaDokBezPlatnosciSpietychCzesciowoAkw(@p_KntNumer, @p_FrSID)
+
+			SELECT @DokBezPlatnosci = sum(Wartosc)
+			FROM (
+				SELECT CASE 
+						WHEN TrN_GIDTyp IN (2001, 2005, 2009, 2013)
+							THEN round(TrN_NettoR + TrN_VatR, 2)
+						WHEN TrN_GIDTyp IN (1489, 1497)
+							THEN round(- TrN_NettoP - TrN_VatP, 2)
+						ELSE 0
+						END Wartosc
+				FROM cdn.TraNag dokbezPlat
+				WHERE TrN_AkwTyp = 32
+					AND TrN_AkwNumer = @p_KntNumer
+					AND TrN_FrsID = @p_FrSID
+					AND TrN_Platnosci = 0
+					AND TrN_SpiTyp = 0
+					AND TrN_GIDTyp IN (2001, 2009, 1489, 1497, 2005, 2013) --WZ, WZK, PZ, PZK, WZE, WKE
+					AND TrN_JestLimitCelowy = 0
+					AND NOT EXISTS (
+						--pominięcie korekt wygenerowanych automatycznie do spinacza "One są tworzone po to, aby zgadzała się wartość „wydania” i wartość „zafakturowania” danej transakcji (jeżeli Klientowi na takiej zgodności zależy)."
+						SELECT *
+						FROM CDN.DokZwiazane, CDN.TraNag spinacz
+						WHERE DOZ_DOKTyp = dokbezPlat.TrN_GIDTyp
+							AND DOZ_DOKNumer = dokbezPlat.TrN_GIDNumer
+							AND spinacz.TrN_GIDNumer = DOZ_ZRDNumer
+							AND spinacz.TrN_GIDTyp = DOZ_ZRDTyp
+							AND spinacz.TrN_SpiTyp &lt;&gt; 0
+							AND - spinacz.TrN_SpiTyp = spinacz.TrN_GIDTyp
+						)
+				) aaa
+
+			SELECT @DokBezPlatnosci = ISNULL(@DokBezPlatnosci, 0) + ISNULL(@DokBezPlatnosciCzesciowy, 0)
+		END
+		ELSE --limit celowy to cześciowo spięte
+			SELECT @DokBezPlatnosci = sum(Wartosc)
+			FROM (
+				SELECT CASE 
+						WHEN TrE_GIDTyp IN (2001, 2005, 2009, 2013)
+							THEN round(sum(CASE 
+											WHEN zafakturowana.Ilosc = TrE_Ilosc
+												OR TrE_Ilosc = 0 -- przyrównanie do nulla zwraca false
+												THEN 0
+											WHEN TrE_Ilosc &gt; zafakturowana.Ilosc -- przyrównanie do nulla zwraca false
+												THEN TrE_KsiegowaBrutto / TrE_Ilosc * (TrE_Ilosc - zafakturowana.Ilosc)
+											ELSE TrE_KsiegowaBrutto
+											END), 2)
+						WHEN TrE_GIDTyp IN (1489, 1497)
+							THEN round(sum(CASE 
+											WHEN zafakturowana.Ilosc = TrE_Ilosc
+												THEN 0
+											WHEN TrE_Ilosc &gt; zafakturowana.Ilosc
+												THEN - TrE_KsiegowaBrutto / TrE_Ilosc * (TrE_Ilosc - zafakturowana.Ilosc)
+											ELSE - TrE_KsiegowaBrutto
+											END), 2)
+						ELSE 0
+						END Wartosc
+				FROM cdn.tranag
+				JOIN cdn.TraElem ON TrN_GIDNumer = TrE_GIDNumer
+				LEFT JOIN (
+					SELECT TrS_SpiNumer SpiNumer, TrS_SpiLp SpiLp, SUM(TrS_Ilosc) Ilosc
+					FROM cdn.TraSElem
+					WHERE TrS_SpiNumer &lt;&gt; 0
+						AND TrS_SpiLp &lt;&gt; 0 --optymalizacja 
+					GROUP BY TrS_SpiNumer, TrS_SpiLp
+					) zafakturowana ON TrE_GIDNumer = SpiNumer
+					AND TrE_GIDLp = SpiLp
+				WHERE TrN_AkwTyp = 32
+					AND TrN_AkwNumer = @p_KntNumer
+					AND TrN_Platnosci = 0
+					AND TrN_FrsID = @p_FrSID
+					AND TrN_SpiTyp &lt;= 0
+					AND TrN_GIDTyp IN (2001, 2009, 1489, 1497, 2005, 2013) --WZ, WZK, PZ, PZK, WZE, WKE
+					AND TrN_JestLimitCelowy = @jestLimitCelowy
+				GROUP BY TrE_GIDNumer, TrE_GIDTyp
+				) aaa
+	ELSE -- policzenie płatności z dokumentów nie generujących płatności (WZ, WZK, PZ, PZK, WZE, WKE) dla kontrahenta
+	IF @jestLimitCelowy = 0
+	BEGIN
+		SELECT @DokBezPlatnosciCzesciowy = WartoscBrutto
+		FROM cdn.SumaDokBezPlatnosciSpietychCzesciowoKnt(@p_KntNumer)
+
+		--jak liczymy po TraNag to nie trzeba uwzględniać zaliczek bo wartość dokumentu to 0
+		--ale jak liczymy po TraElem to trzeba, bo elementy mają wartość
+		--SELECT @Zaliczki = SUM(TRZ_KwotaRozliczona)
+		--FROM cdn.TraRozliczZal
+		--JOIN cdn.TraNag ON TRZ_KonNumer = TrN_GIDNumer
+		--WHERE TRZ_KonTyp IN (2001, 2005, 2009, 2013, 1489, 1497)
+		--	AND TrN_KntNumer = @p_KntNumer
+		--	AND TrN_Platnosci = 0
+		--	AND TrN_SpiTyp = 0
+		--
+		SELECT @DokBezPlatnosci = sum(Wartosc)
+		FROM (
+			SELECT CASE 
+					WHEN TrN_GIDTyp IN (2001, 2005, 2009, 2013)
+						THEN round(TrN_NettoR + TrN_VatR, 2)
+					WHEN TrN_GIDTyp IN (1489, 1497)
+						THEN round(- TrN_NettoP - TrN_VatP, 2)
+					ELSE 0
+					END Wartosc
+			FROM cdn.TraNag dokbezPlat
+			WHERE TrN_KnPTyp = 32
+				AND TrN_KnPNumer = @p_KntNumer
+				AND TrN_Platnosci = 0
+				AND TrN_SpiTyp = 0
+				AND TrN_GIDTyp IN (2001, 2009, 1489, 1497, 2005, 2013) --WZ, WZK, PZ, PZK, WZE, WKE
+				AND TrN_JestLimitCelowy = 0
+				AND NOT EXISTS (
+					--pominięcie korekt wygenerowanych automatycznie do spinacza "One są tworzone po to, aby zgadzała się wartość „wydania” i wartość „zafakturowania” danej transakcji (jeżeli Klientowi na takiej zgodności zależy)."
+					SELECT *
+					FROM CDN.DokZwiazane, CDN.TraNag spinacz
+					WHERE DOZ_DOKTyp = dokbezPlat.TrN_GIDTyp
+						AND DOZ_DOKNumer = dokbezPlat.TrN_GIDNumer
+						AND spinacz.TrN_GIDNumer = DOZ_ZRDNumer
+						AND spinacz.TrN_GIDTyp = DOZ_ZRDTyp
+						AND spinacz.TrN_SpiTyp &lt;&gt; 0
+						AND - spinacz.TrN_SpiTyp = spinacz.TrN_GIDTyp
+					)
+			) aaa
+
+		SELECT @DokBezPlatnosci = ISNULL(@DokBezPlatnosci, 0) + ISNULL(@DokBezPlatnosciCzesciowy, 0)
+	END
+	ELSE
+		SELECT @DokBezPlatnosci = sum(Wartosc)
+		FROM (
+			SELECT CASE 
+					WHEN TrE_GIDTyp IN (2001, 2005, 2009, 2013)
+						THEN round(sum(CASE 
+										WHEN zafakturowana.Ilosc = TrE_Ilosc
+											OR TrE_Ilosc = 0
+											THEN 0
+										WHEN TrE_Ilosc &gt; zafakturowana.Ilosc
+											THEN TrE_KsiegowaBrutto / TrE_Ilosc * (TrE_Ilosc - zafakturowana.Ilosc)
+										ELSE TrE_KsiegowaBrutto
+										END), 2)
+					WHEN TrE_GIDTyp IN (1489, 1497)
+						THEN round(sum(CASE 
+										WHEN zafakturowana.Ilosc = TrE_Ilosc
+											THEN 0
+										WHEN TrE_Ilosc &gt; zafakturowana.Ilosc
+											THEN - TrE_KsiegowaBrutto / TrE_Ilosc * (TrE_Ilosc - zafakturowana.Ilosc)
+										ELSE - TrE_KsiegowaBrutto
+										END), 2)
+					ELSE 0
+					END Wartosc
+			FROM cdn.tranag
+			JOIN cdn.TraElem ON TrN_GIDNumer = TrE_GIDNumer
+			LEFT JOIN (
+				SELECT TrS_SpiNumer SpiNumer, TrS_SpiLp SpiLp, SUM(TrS_Ilosc) Ilosc
+				FROM cdn.TraSElem
+				WHERE TrS_SpiNumer &lt;&gt; 0
+					AND TrS_SpiLp &lt;&gt; 0 --optymalizacja 
+				GROUP BY TrS_SpiNumer, TrS_SpiLp
+				) zafakturowana ON TrE_GIDNumer = SpiNumer
+				AND TrE_GIDLp = SpiLp
+			WHERE TrN_KnPTyp = 32
+				AND TrN_KnPNumer = @p_KntNumer
+				AND TrN_Platnosci = 0
+				AND TrN_SpiTyp &lt;= 0
+				AND TrN_GIDTyp IN (2001, 2009, 1489, 1497, 2005, 2013) --WZ, WZK, PZ, PZK, WZE, WKE
+				AND TrN_JestLimitCelowy = @jestLimitCelowy
+			GROUP BY TrE_GIDNumer, TrE_GIDTyp
+			) aaa
+
+	RETURN isnull(@DokBezPlatnosci, 0)
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

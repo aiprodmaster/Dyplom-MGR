@@ -1,0 +1,311 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="XLNowaWizyta"></A><PRE>
+          <FONT SIZE="2"><I>/* XLNowaWizyta */</I><BR>
+CREATE PROCEDURE CDN.XLNowaWizyta
+(
+/* ==========================================================================================
+	SQL API: Procedura serwerowa do dodawania wizyty handlowej
+
+	Dla uproszczenia założono, że jeżeli w systemie zewnętrznym zostanie wystawiona wizyta handlowa,
+	to w trakcie wystawiania jej przez API nie ma potrzeby kontrolowania uprawnień do obiektów, z których ona korzysta
+	
+	20.06.2012 TS dodano wykonywanie zadania terminarza, gdy wizyta zakończona na potrzeby mobile
+
+	Parametry wejściowe: 
+   ========================================================================================== */
+	@OpeNumer INT,				-- GidNumer operatora, który wykonuje tą operacje
+	@Obsluga INT,				-- Identyfikator pracownika obsługującego
+	
+	@Nazwa VARCHAR(255),		-- Nazwa wizyty
+	@FrsId INT,					-- Identyfikator centrum struktury praw (właściciela dokumentu)
+	
+	@DataWystawienia INT=NULL,	-- Data wystawienia						
+	@TerminOd INT=NULL,			-- Planowana data/godzina rozpoczęcia wizyty
+	@TerminDo INT=NULL,			-- Planowana data/godzina zakończenia wizyty
+	@Zakonczono TINYINT=NULL,	-- czy wizyta jest zakończona (0 - nie, 1 - zakończona/wykonana, 2 - zakończona/niewykonana )
+	@DataZakonczenia INT=NULL,	-- Data/godzina zakończenia realizacji wizyty (tylko gdy podano @Zakonczono)	
+	@DataZakonczeniaOd INT=NULL,-- Data/godzina rozpoczęcia realizacji wizyty
+						
+	@WzNumer INT=NULL,			-- Wzorze wizyty
+	@TypId INT=NULL,			-- Typ wizyty (wartość ze słownika kategorii)
+	@Numer INT = NULL,			-- Numer dokumentu
+	@Seria VARCHAR(5)=NULL,		-- Seria dokumentu
+	@Stan TINYINT=NULL,			-- Stan wizyty
+		
+	@KntTyp SMALLINT=NULL,		-- Typ kontrahenta głównego
+	@KntNumer INT=NULL,			-- Numer kontrahenta głównego
+	@KnATyp SMALLINT=NULL,		-- Typ adresu kontrahenta głównego
+	@KnANumer INT=NULL,			-- Numer adresu kontrahenta głównego
+	@KntOsobaLp SMALLINT=NULL,
+	@Opiekun INT=NULL,			-- Identyfikator opiekuna
+		
+	@Opis VARCHAR(1024)=NULL,	-- Opis	
+	@URL VARCHAR(255)=NULL,		-- URL
+	@Aktywny INT=NULL,			-- Numer bieżącej sesji
+	@ZewnetrznyId INT=NULL,		-- Identyfikator wizyty w systemie zewnętrznym
+	@ZewnetrznySys INT=NULL,	-- Identyfikator systemu zewnętrznego
+
+	@DGETyp SMALLINT=NULL,		-- GIDTyp powiązanego etapu delegacjipowiazanej delegacji
+	@DGEFirma INTEGER=NULL,		-- GIDFirma powiązanego etapu delegacji
+	@DGENumer INTEGER=NULL,		-- GIDNumer powiązanego etapu delegacji
+	@DGELp SMALLINT=NULL,		-- GIDLp powiązanego etapu delegacji
+
+	@Jednorazowa TINYINT=NULL,	-- Czy wizyta jest jednorazowa (0 - nie, 1 - tak)
+	@TsNId INTEGER=NULL,		-- Identyfikator trasy
+	@NrKursu SMALLINT=NULL,		-- Numer kursu
+	@CalyDzien tinyint=NULL     -- Czy wydarzenie jest całodzienne (0 - nie, 1 - tak)
+
+/* ==========================================================================================
+	Return:
+	&gt;0 : Operacja zakończona sukcesem (zwrócono ID nowej wizyty)
+	-1 : Nie powiodło się dodawanie wpisu do tabeli CDN.CRMWizytyNag
+	-2 : Wystąpił błąd podczas dodawania wizyty handlowej. Podany operator nie występuje w bazie.
+	-3 : Wystąpił błąd podczas dodawania wizyty handlowej. Podane centrum nie występuje w bazie.
+	-4 : Wystąpił błąd podczas dodawania wizyty handlowej. Podany pracownik nie występuje w bazie.
+	-5 : Wystąpił błąd podczas dodawania wizyty handlowej. Dokument o takim numerze już istnieje w bazie.
+	-6 : Wystąpił błąd podczas dodawania wizyty handlowej. Podana trasa nie występuje w bazie.
+   ========================================================================================== */
+)
+AS
+BEGIN
+
+	DECLARE @TimeStamp INT
+	DECLARE @Miesiac INT
+	DECLARE @Rok INT
+	DECLARE @Typ_WH SMALLINT
+	DECLARE @CWNId INT
+	SET @CWNId = 0
+	SET @Typ_WH = 4180
+	
+	SET @TimeStamp = DATEDIFF(s,'19900101',GETDATE())
+	IF @DataWystawienia IS NULL SET @DataWystawienia = @TimeStamp/86400+69035 
+			
+	IF EXISTS(SELECT * FROM CDN.Konfig WHERE kon_numer=992 AND (CHARINDEX('6',Kon_wartosc)&gt;0 OR CHARINDEX('7',Kon_wartosc)&gt;0)) -- czy numeracja z miesiącem
+		SET @Miesiac = MONTH(DATEADD(dd,@DataWystawienia,CONVERT(DATETIME,'18001228',11)))
+	ELSE
+		SET @Miesiac = 0
+	SET @Rok = YEAR(DATEADD(dd,@DataWystawienia,CONVERT(DATETIME,'18001228',11)))
+	
+	IF @Seria IS NULL -- pobieramy z definicji dokumentu domyślną serie:
+		SELECT @Seria=SER_Nazwa FROM CDN.DokDefinicje JOIN CDN.Serie ON Dok_SerNumer=SER_GIDNumer WHERE Dok_GIDTyp=@Typ_WH AND Dok_FrsId=@FrsId
+
+	IF IsNull(@Numer,0)&lt;&gt;0 AND EXISTS(SELECT * FROM CDN.CRMWizytyNag WHERE CWN_Rok=@Rok AND CWN_Miesiac=@Miesiac AND CWN_Seria=IsNull(@Seria,'') AND CWN_Numer=@Numer)
+    BEGIN 
+		RAISERROR ('Wystąpił błąd podczas dodawania wizyty handlowej. Dokument o takim numerze już istnieje w bazie.', 16, 1)
+		RETURN -5
+	END
+  
+	INSERT INTO CDN.CRMWizytyNag
+			   (CWN_WzNumer
+			   ,CWN_Rok
+			   ,CWN_Miesiac
+			   ,CWN_Seria
+			   ,CWN_Numer
+			   ,CWN_Nazwa
+			   ,CWN_TypId
+			   ,CWN_Stan
+			   ,CWN_FrsId
+			   ,CWN_KntTyp
+			   ,CWN_KntNumer
+			   ,CWN_KnATyp
+			   ,CWN_KnANumer
+			   ,CWN_KntOsobaLp
+			   ,CWN_Obsluga
+			   ,CWN_Opiekun
+			   ,CWN_DataWystawienia
+			   ,CWN_DataZakonczenia
+			   ,CWN_DataZakonczeniaOd			   
+			   ,CWN_TerminOd
+			   ,CWN_TerminDo
+			   ,CWN_Zakonczono
+			   ,CWN_OpeNumerW
+			   ,CWN_OpeNumerM
+			   ,CWN_OpeNumerZ
+			   ,CWN_OpeNumerK
+			   ,CWN_Opis
+			   ,CWN_URL
+			   ,CWN_Aktywny
+			   ,CWN_ZewnetrznyId
+			   ,CWN_CzasModyfikacji
+			   ,CWN_CzasModyfikacjiC
+			   ,CWN_ZewnetrznySys		
+			   ,CWN_DGETyp
+			   ,CWN_DGEFirma
+			   ,CWN_DGENumer
+			   ,CWN_DGELp
+			   ,CWN_Jednorazowa
+			   ,CWN_TsNId
+			   ,CWN_NrKursu
+			   ,CWN_CalyDzien			   
+				)		   
+	SELECT
+			   IsNull(CWW_Id,0)--CWN_WzNumer,
+			   ,@Rok--CWN_Rok
+			   ,@Miesiac--CWN_Miesiac
+			   ,IsNull(@Seria,'')--CWN_Seria
+			   ,CASE WHEN IsNull(@Numer,0)=0 
+				THEN IsNull((SELECT MAX(CWN_Numer) as Numer FROM CDN.CRMWizytyNag WHERE CWN_Rok=@Rok AND CWN_Miesiac=@Miesiac AND CWN_Seria=IsNull(@Seria,'')),0)+1
+				ELSE @Numer
+				END
+				--CWN_Numer
+			   ,@Nazwa--CWN_Nazw
+			   ,IsNull(SLW_ID,0)--CWN_TypId
+			   ,IsNull(@Stan,1)--CWN_Stan
+			   ,@FrsId--CWN_FrsId
+			   ,IsNull(Knt_GIDTyp,0)--CWN_KntTyp
+			   ,IsNull(Knt_GIDNumer,0)--CWN_KntNumer
+			   ,IsNull(KnA_GIDTyp,0)--CWN_KnATyp
+			   ,IsNull(KnA_GIDNumer,0)--CWN_KnANumer
+			   ,IsNull(KnS_KntLp,0)--CWN_KntOsobaLp
+			   ,Obsluga.Prc_GIDNumer--CWN_Obsluga
+			   ,IsNull(Opiekun.Prc_GIDNumer,CASE WHEN Knt_GIDTyp&gt;0 THEN CDN.GetKntOpiekun(Knt_GIDNumer,DATEDIFF(d,'18001228',GETDATE())) ELSE 0 END)--CWN_Opiekun
+			   ,@DataWystawienia--CWN_DataWystawienia
+			   ,CASE WHEN IsNull(@Zakonczono,0)=0 THEN 0 ELSE IsNull(@DataZakonczenia,@TimeStamp) END--CWN_DataZakonczenia
+			   ,CASE WHEN IsNull(@Zakonczono,0)=0 THEN 0 ELSE IsNull(@DataZakonczeniaOd,@TimeStamp) END--@DataZakonczeniaOd
+			   ,IsNull(@TerminOd,@TimeStamp)--CWN_TerminOd
+			   --,case when IsNull(@CalyDzien,0) = 1 then IsNull(@TerminOd,@TimeStamp) else IsNull(@TerminDo,@TimeStamp) end--CWN_TerminDo
+			   ,IsNull(@TerminDo,@TimeStamp)
+			   ,IsNull(@Zakonczono,0)--CWN_Zakonczono
+			   ,@OpeNumer--CWN_OpeNumerW
+			   ,@OpeNumer--CWN_OpeNumerM
+			   ,CASE WHEN IsNull(@Stan,1)&lt;=1 THEN 0 ELSE @OpeNumer END--CWN_OpeNumerZ
+			   ,CASE WHEN IsNull(@Zakonczono,0)=0 THEN 0 ELSE @OpeNumer END--CWN_OpeNumerK
+			   ,IsNull(@Opis,'')--CWN_Opis
+			   ,IsNull(@URL,'')--CWN_URL
+			   ,IsNull(@Aktywny,0)--CWN_Aktywny
+			   ,IsNull(@ZewnetrznyId,0)--CWN_ZewnetrznyId
+			   ,@TimeStamp--CWN_CzasModyfikacji
+			   ,@TimeStamp--CWN_CzasModyfikacjiC
+			   ,IsNull(@ZewnetrznySys,0)--CWN_ZewnetrznySys	
+			   ,IsNull(@DGETyp,0)--CWN_DGETyp
+			   ,IsNull(@DGEFirma,0)--CWN_DGEFirma
+			   ,IsNull(@DGENumer,0)--CWN_DGENumer
+			   ,IsNull(@DGELp,0)--CWN_DGELp
+			   ,IsNull(@Jednorazowa,0)--CWN_Jednorazowa
+			   ,IsNull(@TsNId,0)--CWN_TsNId
+			   ,IsNull(@NrKursu,0)--CWN_NrKursu
+			   ,IsNull(@CalyDzien,0)--CWN_CalyDzien				   		   
+	FROM CDN.OpeKarty	
+	INNER JOIN CDN.FrmStruktura	ON FRS_Id=@FrsId	
+	INNER JOIN CDN.PrcKarty	Obsluga ON Obsluga.Prc_GIDNumer=@Obsluga
+	--INNER JOIN CDN.DokDefinicje ON Dok_GIDTyp=@Typ_WH AND Dok_FrsId=@FrsId -- musimy mieć to wcześniej dla numeru w ramach serii
+	--LEFT OUTER JOIN CDN.Serie ON SER_GIDTyp=Dok_SerTyp AND SER_GIDNumer=Dok_SerNumer
+	LEFT OUTER JOIN CDN.PrcKarty Opiekun ON Opiekun.Prc_GIDNumer=@Opiekun   
+	LEFT OUTER JOIN CDN.CRMWzorceWizyt ON CWW_Id=@WzNumer
+	LEFT OUTER JOIN CDN.Slowniki ON SLW_ID=@TypId
+	LEFT OUTER JOIN CDN.KntKarty ON Knt_GIDNumer=@KntNumer AND Knt_GIDTyp=@KntTyp	
+	LEFT OUTER JOIN CDN.KntAdresy ON KnA_GIDNumer=@KnANumer AND KnA_GIDTyp=@KnATyp
+	LEFT OUTER JOIN CDN.KntOsoby ON KnS_KntTyp=@KntTyp AND KnS_KntNumer=@KntNumer AND KnS_KntLp=@KntOsobaLp
+	WHERE Ope_GIDNumer=@OpeNumer
+			
+	IF @@ROWCOUNT=0 BEGIN
+
+		IF NOT EXISTS(SELECT * FROM CDN.OpeKarty WHERE Ope_GIDNumer=@OpeNumer) BEGIN
+			RAISERROR ('Wystąpił błąd podczas dodawania wizyty handlowej. Podany operator nie występuje w bazie.', 16, 1)
+			RETURN -2
+		END				
+		IF NOT EXISTS(SELECT * FROM CDN.FrmStruktura WHERE FRS_Id=@FrsId) BEGIN 
+			RAISERROR ('Wystąpił błąd podczas dodawania wizyty handlowej. Podane centrum nie występuje w bazie.', 16, 1)
+			RETURN -3
+		END
+		IF NOT EXISTS(SELECT * FROM CDN.PrcKarty WHERE Prc_GIDNumer=@Obsluga) BEGIN 
+			RAISERROR ('Wystąpił błąd podczas dodawania wizyty handlowej. Podany pracownik obsługujący nie występuje w bazie.', 16, 1)
+			RETURN -4
+		END	
+		IF NOT EXISTS(SELECT * FROM CDN.TrasyNag WHERE TsN_Id=@TsNId) BEGIN 
+			RAISERROR ('Wystąpił błąd podczas dodawania wizyty handlowej. Podana trasa nie występuje w bazie.', 16, 1)
+			RETURN -6
+		END	
+		-- inny powód błędu:						
+		RAISERROR ('Nie powiodło się dodawanie wpisu do tabeli CDN.CRMWizytyNag.', 16, 1)
+		RETURN -1
+	END
+	
+	--OK:
+	SET @CWNId = scope_identity()
+	
+	IF (SELECT Dok_GenerujZapisWTerminarzu FROM CDN.DokDefinicje WHERE Dok_GIDTyp=4180 AND Dok_FrsId=@FrsId)=1 BEGIN
+	
+		IF @TerminOd is null SET @TerminOd = @TimeStamp
+		IF @TerminDo is null SET @TerminDo = @TimeStamp
+		
+		DECLARE	@ZadId INT
+		
+		EXEC @ZadId=CDN.XLNoweZadanieTERMINARZ	
+			@Kod = 'Wizyta',
+			@Nazwa = @Nazwa,
+			@OpeTyp = 128,
+			@OpeNumer = @OpeNumer,
+			--@Priorytet = NULL, -- TODO - domyślny priorytet dla zadań w Clarionie: SlwDomyslny(e_SLW_KAT_PriorytetyZadan,1)
+			--@Opis = NULL,
+			@Przypomnienie = 1,
+			@CzasPrzypomnienia = 0,
+			@CzasPrzypomnieniaJedn = 0,
+			@CzasUtworzenia = @TimeStamp,
+			@TerminOd = @TerminOd,
+			@TerminDo = @TerminDo,
+			--@CzasPlanowany = NULL,
+			--@CzasPlanowanyJedn = NULL,
+			--@PowtarzajCo = NULL,
+			--@PowtarzajOkres = NULL,
+			@RezerwujCzas = 1,
+			@ZrdTyp = @Typ_WH,
+			@ZrdNumer = @CWNId,
+			@ZrdLp = 0,
+			@ZrdPytania = 0,
+			--@OkresId = NULL,
+			--@Notatki = NULL,
+			--@Cykliczne = NULL,
+			--@OpeIdent = NULL,
+			--@ObiTyp = 944, -- Typ_Prc
+			--@ObiNumer = @Obsluga,
+			@OpePrcJakoObiekt = NULL,
+			@IgnorujBledy = NULL			
+		
+		IF @ZadId&gt;0 AND @ZadId is not null BEGIN
+			EXEC CDN.XLDodajObiektDoZadaniaTERMINARZ
+			@ZadId = @ZadId,
+			@ObiTyp = 944,-- Typ_Prc
+			@ObiNumer = @Obsluga,
+			@CzasUtworzenia = @TimeStamp,
+			@IgnorujBledy = NULL
+		END
+		
+		IF @Zakonczono is not null and @Zakonczono&gt;0 and @ZadId is not null and @ZadId&gt;0 BEGIN
+			EXEC CDN.XLWykonajZadanieTERMINARZ
+			@ZadId = @ZadId,
+			@OpeTyp = 128,
+			@OpeNumer = @OpeNumer,
+			@DataWykonania = @DataZakonczenia,
+			@IgnorujBledy = NULL
+		END	
+	END
+	
+	--Atrybuty automatyczne:
+	INSERT INTO CDN.Atrybuty(Atr_ObiTyp,Atr_ObiFirma,Atr_ObiNumer,Atr_ObiLp,Atr_ObiSubLp
+							,Atr_AtkId,Atr_Wartosc,Atr_AtrTyp,Atr_AtrFirma,Atr_AtrNumer,Atr_AtrLp,Atr_AtrSubLp,Atr_OptimaId)
+	SELECT @Typ_WH,CDN.GIDFirma(),@CWNId,0,0,Atk_Id,'',0,0,0,0,0,0
+	FROM CDN.AtrybutyKlasy
+	JOIN CDN.AtrybutyObiekty ON AtO_AtKId=AtK_ID
+	WHERE AtK_Automat=1 AND AtO_GIDTyp=@Typ_WH AND AtO_Element=0
+	
+	--OK:
+	RETURN @CWNId
+	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

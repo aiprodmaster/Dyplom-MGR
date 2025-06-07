@@ -1,0 +1,85 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="PROD_NumerDokumentuZwiazanego"></A><PRE>
+          <FONT SIZE="2"><I>/* PROD_NumerDokumentuZwiazanego */</I><BR>
+Create Function CDN.PROD_NumerDokumentuZwiazanego(@p_PZAID integer, @p_Typ_ProdZasoby integer)
+returns varchar(1000)
+as
+begin
+declare @wynik varchar(1000)
+
+set @wynik = ''
+
+        select  @wynik = @wynik + CDN.NumerDokumentu(TRN_GIDTyp, TRN_SPITyp, TRN_TRNTyp, TRN_TrnNumer, Trn_TRNRok, TRN_TrnSeria, TrN_TrnMiesiac) +', ' +
+        ISNULL((SELECT top 1 ltrim(cast(MIN(tre_Pozycja) as varchar(10)))
+		FROM
+		(SELECT TrE_Pozycja, Trs_GIDTyp, TRs_GIDNumer, TRs_GIDLp
+			from cdn.traselem join cdn.traelem on tre_gidnumer = trs_gidnumer and tre_gidlp = trs_GIDlp
+			where trs_ZlcTyp = @p_Typ_ProdZasoby and trs_zlcNumer = @p_PZAID group by TrE_Pozycja,  Trs_GIDTyp, TRs_GIDNumer, TRs_GIDLp
+		)  A HAVING COUNT(TrS_GIDNumer) = 1),'')
+		+' ' + isnull(( select top 1 
+			CDN.NumerDokumentuZ(Man_GIDTyp,0,MaN_TrNTyp,MaN_TrNNumer,Man_TrnRok,Man_TrnSeria,Man_TrnMiesiac,0,0,MaN_WMS)
+			from CDN.MAgsElem 
+			join cdn.MAgnag on Mas_GIDNUmer = MAn_GIDNUmer
+			where Mas_ZrdTyp = Trn_GidTyp   and Mas_ZrdNumer = Trs_GidNumer
+			group by MAN_GIDTyp,  MAN_TRNTyp, MAN_TrnNumer, MAn_TRNRok, MAN_TrnSeria, MAN_TrnMiesiac,MaN_WMS
+			),'')+' | ' 
+        from CDN.TrasElem join cdn.Tranag on trs_GIDNUmer = trn_GIDNUmer
+        where trs_zlcNumer = @p_PZAID and trs_ZlcTyp = @p_Typ_ProdZasoby
+        group by TRN_GIDTyp, TRN_SPITyp, TRN_TRNTyp, TRN_TrnNumer, Trn_TRNRok, TRN_TrnSeria, TrN_TrnMiesiac, Trs_GidNumer
+
+
+
+    select  @wynik = @wynik + CDN.NumerDokumentuZ(Man_GIDTyp,0,MaN_TrNTyp,MaN_TrNNumer,Man_TrnRok,Man_TrnSeria,Man_TrnMiesiac,0,0,MaN_WMS) +', ' +
+    ISNULL((SELECT top 1 ltrim(cast(MIN(mae_pozycja) as varchar(10)))
+		FROM
+		(SELECT Mae_Pozycja,Mas_GIDTyp, Mas_GIDNumer, Mas_GIDLp
+			from cdn.Magselem join cdn.Magelem on Mae_gidnumer = Mas_gidnumer and Mae_gidlp = Mas_GIDlp
+			where mas_ZlcTyp = @p_Typ_ProdZasoby and mas_zlcNumer = @p_PZAID group by  Mae_Pozycja,Mas_GIDTyp, Mas_GIDNumer, Mas_GIDLp
+		)  A HAVING COUNT(MaS_GIDNumer) = 1),'')
+    from CDN.MAgsElem 
+	join cdn.MAgnag on Mas_GIDNUmer = MAn_GIDNUmer
+    where Mas_zlcNumer = @p_PZAID and Mas_ZlcTyp = @p_Typ_ProdZasoby and MaS_ZrdTyp not in (1616,1617)
+    group by MAN_GIDTyp,  MAN_TRNTyp, MAN_TrnNumer, MAn_TRNRok, MAN_TrnSeria, MAN_TrnMiesiac,MaN_WMS
+
+	IF @p_Typ_ProdZasoby = 14346
+	BEGIN 
+		select  @wynik = @wynik + PTC_Kod +'/'+ ISNULL(Twr_Kod,PTZ_Kod) +','
+		from CDN.ProdZasoby p1 
+		left join  CDN.ProdZasoby p2 on p1.PZA_ID = p2.PZA_Zasob 
+		left join cdn.prodzasoby p3	on P3.PZA_Id IN (SELECT PZP_PZAIDPlanowany FROM CDN.ProdZwiazanePolprodukty WHERE PZP_PZAIDWykonany = P1.PZA_Id)
+		join CDN.ProdTechnologiaZasoby on coalesce(p2.PZA_TechnologiaZasob,p3.pza_technologiaZasob) = PTZ_ID
+		LEFT JOIN CDN.TwrKarty ON COALESCE(P2.PZA_TwrNumer,P3.PZA_TwrNumer) = Twr_GIDNumer AND COALESCE(P2.PZA_TwrTyp,P3.PZA_TwrTyp) = 16
+		left join CDN.ProdCzynnosci on PCZ_ID = coalesce(p2.PZA_CZynnosc,p3.PZA_Czynnosc)
+		join CDN.ProdTechnologiaCzynnosci on PTC_ID = PCZ_TechnologiaCzynnosc
+		Where P1.PZA_id = @P_pzaid AND p1.PZA_TypZasobu = 0 -- produkt
+	END
+
+	if len(@wynik)&gt;995
+		set @wynik = substring(@wynik,1,995)+'...'
+	else
+		begin
+			if RIGHT(rtrim(@wynik),1) = '|'
+				set @wynik = substring(rtrim(@wynik),1,len(rtrim(@wynik)) - 1)
+			if RIGHT(rtrim(@wynik),1) = ','
+				set @wynik = substring(rtrim(@wynik),1,len(rtrim(@wynik)) - 1)
+		end
+	
+
+return @wynik
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

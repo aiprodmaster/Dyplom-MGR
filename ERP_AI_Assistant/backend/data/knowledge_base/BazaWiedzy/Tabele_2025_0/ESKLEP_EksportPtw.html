@@ -1,0 +1,261 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[ESKLEP_EksportPtw]"></A><PRE>
+          <FONT SIZE="2"><I>/* [ESKLEP_EksportPtw] */</I><BR>
+CREATE PROCEDURE [CDN].[ESKLEP_EksportPtw]
+   @ID INT				-- ID e-sklepu
+  ,@ExpCennik INT      	-- Eksport cennika (0 - nie, 1 - tak)
+  ,@ExpCennikTyp INT   	-- Typ eksportu cennika (0 - rĂłĹĽnicowy, 1 - peĹ‚ny)
+AS
+
+DECLARE  @TypPtw_Knt SMALLINT
+		,@TypPtw_Zam SMALLINT
+		,@TypPtw_ZamStan SMALLINT
+		,@TypPtw_Twr SMALLINT
+		,@TypPtw_ZamWysylki SMALLINT		
+		,@PCKTGGNumer	INT
+		,@TypPtw_Rek TINYINT
+		,@TypPtw_RekStan TINYINT
+		,@TypPtwZamkZam TINYINT
+		,@TypPtw_Osoba SMALLINT
+		,@TypPtw_Plt TINYINT
+		,@ZrodloZamESklep INT
+		,@WalutaSys VARCHAR(5)
+
+
+SELECT @TypPtw_Knt		= 1
+   	  ,@TypPtw_Zam		= 2
+	  ,@TypPtw_ZamStan	= 3
+  	  ,@TypPtw_Twr		= 4
+      ,@TypPtw_ZamWysylki = 6  	 
+	  ,@TypPtw_Rek = 11
+	  ,@TypPtw_RekStan = 12
+	  ,@TypPtw_Osoba = 91
+	  ,@TypPtw_Plt = 14
+	   
+SET @WalutaSys = (select Kon_Wartosc from cdn.konfig where kon_numer = 211) 	   
+SELECT @PCKTGGNumer = TwG_GIDNumer,@TypPtwZamkZam = PcK_ExpStanZamZamk FROM CDN.PicoKonfig (nolock) JOIN CDN.TwrGrupy (NOLOCK) ON TwG_SyncId = PcK_TwGNumer AND TwG_GIDTyp = -16 WHERE Pck_PicoId = @ID
+
+
+IF @ExpCennik = 1
+BEGIN
+	-- ustawiamy flagÄ™ dostÄ™pnoĹ›ci w e-sklepie (towar nieaktywny w e-sklepie: PcL_ObiektID = 0, towar aktywny w e-sklepie: PcL_ObiektID = 1 i zmiana timestampu)
+	UPDATE CDN.PicoLog
+		SET PcL_ObiektID = 0, PcL_TStamp = DATEDIFF(s,CONVERT(DATETIME,'19900101',121),GETDATE())  
+	FROM CDN.TwrKarty
+	JOIN CDN.TwrGrupy ON TwG_GIDNumer = Twr_GIDNumer AND TwG_GIDTyp = Twr_GIDTyp
+	JOIN CDN.PicoKonfig ON PcK_PicoID = @ID
+	JOIN CDN.PicoLog ON PcL_PcKID = PcK_PicoID AND PcL_ObiTyp = 16 AND PcL_ObiNumer = Twr_GIDNumer
+	WHERE (Twr_Oddzialowy&amp;2)/2 = 1 AND Twr_GIDNumer &gt; 0 AND (TwG_CzasModyfikacji &gt; PcK_TSSynchrGrupPtw OR Twr_LastModC &gt; PcK_TSSynchrTwrPtw OR PcL_ObiektID = 1)
+	AND (Twr_ESklep = 0 OR Twr_Archiwalny = 1 OR NOT EXISTS(SELECT TwL_GIDNumer FROM CDN.TwrLinki WHERE TwL_GIDNumer = Twr_GIDNumer AND TwL_GIDTyp = 16 AND TwL_GrONumer = @PCKTGGNumer ) )
+
+	UPDATE CDN.PicoLog
+		SET PcL_ObiektID = 1, PcL_TStamp = DATEDIFF(s,CONVERT(DATETIME,'19900101',121),GETDATE())   
+	FROM CDN.TwrKarty
+	JOIN CDN.TwrGrupy ON TwG_GIDNumer = Twr_GIDNumer AND TwG_GIDTyp = Twr_GIDTyp
+	JOIN CDN.PicoKonfig ON PcK_PicoID = @ID
+	JOIN CDN.PicoLog ON PcL_PcKID = PcK_PicoID AND PcL_ObiTyp = 16 AND PcL_ObiNumer = Twr_GIDNumer
+	WHERE (Twr_Oddzialowy&amp;2)/2 = 1 AND Twr_GIDNumer &gt; 0 AND (Twr_LastModC &gt; CASE WHEN @ExpCennikTyp=0 THEN PcK_TSSynchrTwrPtw ELSE 0 END OR TwG_CzasModyfikacji &gt; PcK_TSSynchrGrupPtw OR PcL_ObiektID = 0)
+	AND (Twr_ESklep = 1 AND Twr_Archiwalny = 0 AND EXISTS(SELECT TwL_GIDNumer FROM CDN.TwrLinki WHERE TwL_GIDNumer = Twr_GIDNumer AND TwL_GIDTyp = 16 AND TwL_GrONumer = @PCKTGGNumer ) )
+END
+
+SELECT	 1 AS Tag, NULL AS Parent, 
+		 PTW.Typ		AS [PTW!1!Typ]
+		,PTW.ID			AS [PTW!1!ID]
+		,PTW.GIDNumer	AS [PTW!1!GIDNumer]
+		,PTW.GIDNumer2  AS [PTW!1!GIDNumer2]
+		,PTW.Status		AS [PTW!1!Status]
+		,PTW.Data		AS [PTW!1!Data]
+		,PTW.Opis		AS [PTW!1!Opis]  
+		,PTW.GUID		AS [PTW!1!GUID]  
+		,PTW.Status2	AS [PTW!1!Status2]
+FROM
+	(
+		SELECT	 @TypPtw_Knt	AS Typ 
+				,PcL_ObiektID	AS ID 
+				,PcL_ObiNumer	AS GIDNumer
+				,NULL			AS GIDNumer2
+				,0				AS Status 
+				,''				AS Data 
+				,''				AS Opis
+				,NULL				AS GUID
+				,NULL				AS Status2 
+		FROM CDN.PicoKonfig JOIN CDN.PicoLog ON Pcl_PcKID=PcK_PicoID
+		WHERE PcK_PicoID = @ID AND PcL_ObiTyp = 32 AND PcL_TStamp &gt; PcK_TSSynchrPtw
+
+		UNION ALL
+
+		SELECT	 @TypPtw_Osoba	AS Typ 
+				,o.PcL_ObiektID	AS ID 
+				,o.PcL_ObiNumer	AS GIDNumer 
+				,(SELECT c.PcL_OBiektID FROM CDN.PicoKonfig JOIN CDN.PicoLog c ON Pcl_PcKID=PcK_PicoID
+					WHERE PcK_PicoID = @ID AND PcL_ObiTyp = 32 AND c.PcL_ObiNumer = KnS_KntNumer) AS GIDNumer2
+				,0				AS Status 
+				,''				AS Data 
+				,''				AS Opis
+				,NULL				AS GUID
+				,NULL				AS Status2 
+		FROM CDN.PicoKonfig JOIN CDN.PicoLog o ON o.Pcl_PcKID=PcK_PicoID 
+		JOIN cdn.kntosoby on KnS_SyncID = PcL_ObiNumer
+
+		WHERE PcK_PicoID = @ID AND PcL_ObiTyp = 8211 AND PcL_TStamp &gt; PcK_TSSynchrPtw
+
+		UNION ALL
+
+		SELECT	 @TypPtw_Zam 
+				,ZaN_OddDokID 
+				,ZaN_GIDNumer
+				,NULL
+				,0
+				,CASE WHEN ZaN_DataRealizacji &gt; 0 THEN CAST( (ZaN_DataRealizacji - 69035)*86400  AS VARCHAR) ELSE '' END
+				,CDN.NumerDokumentu(CDN.DokMapTypDokumentu(ZaN_GIDTyp,ZaN_ZamTyp,ZaN_Rodzaj),0,0,ZaN_ZamNumer,ZaN_ZamRok,ZaN_ZamSeria,ZaN_ZamMiesiac)
+				,NULL				AS GUID
+				,NULL				AS Status2 
+		FROM CDN.ZamNag  WITH(NOLOCK) JOIN CDN.PicoKonfig WITH(NOLOCK)ON PcK_PicoID = ZaN_PcKID
+		WHERE PcK_PicoID = @ID AND ZaN_OddDokID &gt; 0 AND ZaN_LastMod &gt; PcK_TSSynchrPtw
+
+		UNION ALL
+
+		SELECT	 @TypPtw_ZamStan
+				,ZaN_OddDokID
+				,ZaN_GIDNumer
+				,NULL
+				,CASE WHEN ZaN_Stan = 2			 THEN 1	 -- oczekuje na potwierdzenie
+ 					 WHEN ZaN_Stan IN (3,5)		 THEN 2  -- potwierdzone
+					 WHEN ZaN_Stan IN (21)		 THEN 3	 -- zrealizowane 	
+					 WHEN ZaN_Stan IN (32,35,37) THEN 4	 -- anulowane
+					 WHEN ZaN_Stan&amp;48 = 48 THEN CASE WHEN @TypPtwZamkZam = 2 THEN 3 ELSE 4 END
+				 END
+				,CASE WHEN ZaN_Stan = 2			 THEN ''						    
+					 WHEN ZaN_Stan IN (3,5)		 THEN CASE WHEN ZaN_DataPotwierdz &gt; 0 THEN CAST( (ZaN_DataPotwierdz - 69035)*86400 + (ZaN_GodzinaPotwierdzenia - 1)/100  AS VARCHAR) ELSE '' END   
+					 WHEN ZaN_Stan IN (21,53)		 THEN CAST((SELECT MAX(TrS_TrnTStamp) FROM CDN.TraSElem WHERE TrS_RezNumer = ZaN_GIDNumer AND TrS_RezTyp = ZaN_GIDTyp)  AS VARCHAR)		
+					 WHEN ZaN_Stan IN (32,35,37,51) THEN ''	    
+				 END
+				,''
+				,NULL				AS GUID
+				,NULL				AS Status2 
+		FROM CDN.ZamNag  WITH(NOLOCK) JOIN CDN.PicoKonfig WITH(NOLOCK)ON PcK_PicoID = ZaN_PcKID
+		WHERE PcK_PicoID = @ID AND ZaN_OddDokID &gt; 0 AND ZaN_LastMod &gt; PcK_TSSynchrPtw AND NOT (@TypPtwZamkZam = 1 AND ZaN_Stan&amp;48 = 48)
+
+		UNION ALL
+
+		SELECT   @TypPtw_Rek
+                        ,RLN_ZewnetrznyId
+                        ,RLN_Id
+						,NULL
+                        ,0
+                        ,''
+                        ,''
+						,NULL				AS GUID
+						,NULL				AS Status2 
+        FROM CDN.ReklNag  WITH(NOLOCK) JOIN CDN.PicoKonfig WITH(NOLOCK)ON PcK_PicoID = RLN_ZewnetrznySys
+        WHERE PcK_PicoID = @ID AND RLN_ZewnetrznyId &gt; 0 AND RLN_CzasModyfikacji &gt; PcK_TSSynchrPtw
+
+        UNION ALL
+
+        SELECT   @TypPtw_RekStan
+                        ,RLN_ZewnetrznyId
+                        ,RLN_Id
+						,NULL
+                        ,CASE WHEN RLN_Status = 0                  THEN 1  -- rozpatrywana
+                                    WHEN RLN_Status IN (1,4)          THEN 2  -- uznana
+                                    WHEN RLN_Status = 2                THEN 3  -- odrzucona
+                                    ELSE 4   -- anulowana
+                            END
+                        ,''
+                        ,''
+						,NULL				AS GUID
+						,NULL				AS Status2 
+        FROM CDN.ReklNag  WITH(NOLOCK) JOIN CDN.PicoKonfig WITH(NOLOCK)ON PcK_PicoID = RLN_ZewnetrznySys
+        WHERE PcK_PicoID = @ID AND RLN_ZewnetrznyId &gt; 0 AND RLN_CzasModyfikacji &gt; PcK_TSSynchrPtw
+		
+        UNION ALL
+		
+		SELECT DISTINCT
+				 @TypPtw_Twr
+				,Twr_GIDNumer
+				,Twr_GIDNumer
+				,NULL
+				,0
+				,''
+				,'' 
+				,NULL				AS GUID
+				,CASE WHEN Twr_ESklep = 0 THEN 0 ELSE Twr_Archiwalny END AS Status2 
+		FROM CDN.TwrKarty
+		JOIN CDN.TwrGrupy On TwG_GIDNumer = Twr_GIDNumer AND TwG_GIDTyp = Twr_GIDTyp
+		JOIN CDN.PicoKonfig ON PcK_PicoID = @ID
+		JOIN CDN.PicoLog ON PcL_PcKID = Pck_PicoId AND PcL_ObiTyp = Twr_GIDTyp AND PcL_ObiNumer = Twr_GIDNumer
+		WHERE @ExpCennik = 1 AND (Twr_Oddzialowy&amp;2)/2 = 1 AND Twr_GIDNumer &gt; 0 	AND
+	    (TwG_CzasModyfikacji &gt; PcK_TSSynchrGrupPtw OR Twr_LastModC &gt; PcK_TSSynchrTwrPtw OR PcL_TStamp &gt; PcK_TSSynchrTwrPtw)
+		AND (Twr_ESklep = 0 OR Twr_Archiwalny = 1 OR NOT EXISTS(SELECT TwL_GIDNumer FROM CDN.TwrLinki WHERE TwL_GIDNumer = Twr_GIDNumer AND TwL_GIDTyp = 16 AND TwL_GrONumer = @PCKTGGNumer ) )
+
+		UNION ALL
+
+		SELECT	 @TypPtw_ZamWysylki
+				,ZaN_OddDokID
+				,ZaN_GIDNumer
+				,NULL
+				,0
+				,CASE WHEN ZaN_Stan = 2			 THEN ''						    
+					 WHEN ZaN_Stan IN (3,5)		 THEN CASE WHEN ZaN_DataPotwierdz &gt; 0 THEN CAST( (ZaN_DataPotwierdz - 69035)*86400 + (ZaN_GodzinaPotwierdzenia - 1)/100  AS VARCHAR) ELSE '' END   
+					 WHEN ZaN_Stan IN (21)		 THEN CAST((SELECT MAX(TrS_TrnTStamp) FROM CDN.TraSElem WHERE TrS_RezNumer = ZaN_GIDNumer AND TrS_RezTyp = ZaN_GIDTyp)  AS VARCHAR)		
+					 WHEN ZaN_Stan IN (32,35,37) THEN ''	    
+				 END
+				,WYS_NumerObcy
+				,NULL			AS GUID
+				,NULL				AS Status2 
+		FROM CDN.ZamNag  WITH(NOLOCK) JOIN CDN.PicoKonfig WITH(NOLOCK)ON PcK_PicoID = ZaN_PcKID
+		join cdn.WysRelacje on ZaN_GIDTyp = WYR_DokTyp and ZaN_GIDNumer = WYR_DokNumer
+		join cdn.WysPaczki on WYR_IdPaczki = WyP_IdPaczki
+		join cdn.Wysylki on WyP_WysTyp = WYS_GIDTyp and WyP_WysNumer = WYS_GIDNumer
+		WHERE PcK_PicoID = @ID AND ZaN_OddDokID &gt; 0 AND WYS_LastMod &gt; PcK_TSSynchrPtw		
+
+		UNION ALL
+		SELECT DISTINCT 20 AS Typ,0,0,NULL,CASE WHEN SLW_Archiwalny = 1 THEN 0 ELSE 1 END AS Status,0,'',SLW_WartoscS4 AS GUID,NULL AS Status2 
+		FROM CDN.SlownikiStruktura 
+		JOIN CDN.Slowniki ON SLW_SLSId = SLS_ID 
+		JOIN CDN.PicoKonfig ON Pck_PicoID = @ID
+		JOIN CDN.PicoRelacje ON PCR_ID = Pck_PicoID AND PcR_ObiTyp = 6560 AND PcR_OBINumer = SLW_ID	
+		LEFT JOIN CDN.PicoLog ZgodaRodzic ON ZgodaRodzic.PCL_PckID = Pck_PicoID AND ZgodaRodzic.PCL_ObiTyp = -6560 AND ZgodaRodzic.PCL_ObiNumer = SLW_WersjaZrodlo
+		WHERE SLS_Predefiniowany = 173 AND SLW_CzasModyfikacji &gt; PcK_TSSynchrPtw AND ISNULL(PcL_ObiektID,-1) = -1 AND SLW_WartoscS4 &lt;&gt; '' --Zgody wystawione w esklep moĹĽna wyĹ‚Ä…czyÄ‡ tylko w esklep
+
+		UNION ALL
+
+		SELECT	DISTINCT @TypPtw_Plt
+				,ZaN_OddDokID
+				,ZaN_GIDNumer
+				,NULL
+				,CASE 
+ 				      WHEN SUM(TrP_KwotaSys)= SUM(TrP_PozostajeSyS)   THEN 0  -- Nierozliczona
+					  WHEN SUM(TrP_PozostajeSyS) &gt; 0				 THEN 2	 -- pĹ‚atnoĹ›Ä‡ czÄ™Ĺ›ciowo rozliczona 
+					  WHEN (CDN.WartoscZamowienia(ZaN_GIDNumer,1,GETDATE())) &gt;  SUM(CASE WHEN @WalutaSys &lt;&gt; Zan_Waluta THEN TrP_Kwota ELSE TrP_KwotaSys END) THEN  2 ELSE 1	 -- pĹ‚atnoĹ›Ä‡ rozliczona
+				 END
+				,NULL
+				,''
+				,NULL				AS GUID
+				,NULL				AS Status2 
+		FROM CDN.ZamNag  WITH(NOLOCK) JOIN CDN.PicoKonfig WITH(NOLOCK)ON PcK_PicoID = ZaN_PcKID
+		JOIN cdn.TraNag ON TrN_ZamDokumentObcy = ZaN_DokumentObcy
+		JOIN CDN.TraPlat ON TrN_GIDNumer = TrP_GIDNumer
+		WHERE PcK_PicoID = @ID AND ZaN_OddDokID &gt; 0  AND NOT (@TypPtwZamkZam = 1 AND ZaN_Stan&amp;48 = 48)
+		GROUP BY ZaN_OddDokID, ZaN_GIDNumer, PcK_TSSynchrPtw
+		HAVING (MAX(Trp_LastMod) &gt; PcK_TSSynchrPtw)
+
+	) PTW
+FOR XML EXPLICIT, ROOT('PTWI')
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

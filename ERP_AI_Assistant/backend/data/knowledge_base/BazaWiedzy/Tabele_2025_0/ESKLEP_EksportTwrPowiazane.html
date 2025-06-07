@@ -1,0 +1,142 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[ESKLEP_EksportTwrPowiazane]"></A><PRE>
+          <FONT SIZE="2"><I>/* [ESKLEP_EksportTwrPowiazane] */</I><BR>
+CREATE PROCEDURE [CDN].[ESKLEP_EksportTwrPowiazane]
+  @ID INT      -- ID e-sklepu
+ ,@TypExp INT  -- Typ eksportu (0 - różnicowy, 1 - pełny)
+AS
+
+CREATE TABLE #tmpZamRW (TwrID INT,ZmnID INT,Warstwa INT,TwP_Id INT, ZamTyp INT)
+INSERT INTO #tmpZamRW 
+SELECT
+	 B.TwP_ZamNumer AS TwrID
+	,A.TwP_ZamNumer AS ZmnID
+	,A.TwP_Warstwa AS Warstwa
+	,A.TwP_Id AS TwP_Id
+	,3 AS ZamTyp --Typ zamiennika równoważny wszystkim
+FROM CDN.TwrPodm A 
+JOIN CDN.TwrPodm B ON B.TwP_Warstwa &gt; 0 AND B.TwP_ZamNumer &lt;&gt; A.TwP_ZamNumer
+JOIN CDN.TwrKarty T WITH(NOLOCK) ON B.TwP_ZamNumer = T.Twr_GIDNumer
+JOIN CDN.TwrKarty Z WITH(NOLOCK) ON A.TwP_ZamNumer = Z.Twr_GIDNumer
+JOIN CDN.PicoKonfig WITH(NOLOCK) ON Pck_PicoId = @ID
+JOIN CDN.TwrGrupy PCKTWG ON PCKTWG.TwG_SyncId = PcK_TwGNumer AND PCKTWG.TwG_GIDTyp = -16
+LEFT OUTER JOIN CDN.PicoLog PT ON PT.PcL_PcKID = Pck_PicoId AND PT.PcL_ObiTyp = T.Twr_GIDTyp AND PT.PcL_ObiNumer = T.Twr_GIDNumer
+LEFT OUTER JOIN CDN.PicoLog PZ ON PZ.PcL_PcKID = Pck_PicoId AND PZ.PcL_ObiTyp = Z.Twr_GIDTyp AND PZ.PcL_ObiNumer = Z.Twr_GIDNumer
+WHERE A.TwP_Warstwa &gt; 0 AND B.TwP_Warstwa = A.TwP_Warstwa AND T.Twr_ESklep = 1 AND Z.Twr_ESklep = 1 AND T.Twr_Archiwalny = 0 AND Z.Twr_Archiwalny = 0 AND B.TwP_TwrNumer = 0 AND A.TwP_TwrNumer = 0
+	  AND B.TwP_ZamNumer &lt; A.TwP_ZamNumer AND A.TwP_DokRodzaj &lt;&gt; 0 AND B.TwP_DokRodzaj &lt;&gt; 0
+      AND (T.Twr_LastModC &gt; CASE WHEN @TypExp=0 THEN PcK_TSSynchrTwrPtw ELSE 0 END OR ISNULL(PT.PcL_TStamp,PcK_TSSynchrTwrPtw + 1) &gt; PcK_TSSynchrTwrPtw
+		OR Z.Twr_LastModC &gt; CASE WHEN @TypExp=0 THEN PcK_TSSynchrTwrPtw ELSE 0 END OR ISNULL(PZ.PcL_TStamp,PcK_TSSynchrTwrPtw + 1) &gt; PcK_TSSynchrTwrPtw )
+	  AND EXISTS(SELECT TwL_GrONumer FROM CDN.TwrLinki WHERE T.Twr_GIDTyp = TwL_GIDTyp AND T.Twr_GIDNumer = TwL_GIDNumer AND TwL_GrONumer = PCKTWG.TwG_GIDNumer )
+	  AND EXISTS(SELECT TwL_GrONumer FROM CDN.TwrLinki WHERE Z.Twr_GIDTyp = TwL_GIDTyp AND Z.Twr_GIDNumer = TwL_GIDNumer AND TwL_GrONumer = PCKTWG.TwG_GIDNumer )
+INSERT INTO #tmpZamRW SELECT B.ZmnID,B.TwrID,B.Warstwa,B.TwP_Id,3 FROM #tmpZamRW B  --Zamienniki  równoważne wszystkim druga strona
+
+CREATE TABLE #tmpZamOB (TwrID INT,ZmnID INT,Warstwa INT,TwP_TwrLp INT, ZamTyp INT)
+INSERT INTO #tmpZamOB --Zamienniki obustronne
+SELECT
+	 A.TwP_TwrNumer AS TwrID
+	,A.TwP_ZamNumer AS ZmnID
+	,A.TwP_Warstwa AS Warstwa
+	,A.TwP_TwrLp AS TwP_TwrLp
+	,2 AS ZamTyp --Typ zamiennika obustronny
+FROM CDN.TwrPodm A 
+JOIN CDN.TwrKarty T WITH(NOLOCK) ON A.TwP_TwrNumer = T.Twr_GIDNumer
+JOIN CDN.TwrKarty Z WITH(NOLOCK) ON A.TwP_ZamNumer = Z.Twr_GIDNumer
+JOIN CDN.PicoKonfig WITH(NOLOCK) ON Pck_PicoId = @ID
+JOIN CDN.TwrGrupy PCKTWG ON PCKTWG.TwG_SyncId = PcK_TwGNumer AND PCKTWG.TwG_GIDTyp = -16
+LEFT OUTER JOIN CDN.PicoLog PT ON PT.PcL_PcKID = Pck_PicoId AND PT.PcL_ObiTyp = T.Twr_GIDTyp AND PT.PcL_ObiNumer = T.Twr_GIDNumer
+LEFT OUTER JOIN CDN.PicoLog PZ ON PZ.PcL_PcKID = Pck_PicoId AND PZ.PcL_ObiTyp = Z.Twr_GIDTyp AND PZ.PcL_ObiNumer = Z.Twr_GIDNumer
+WHERE A.TwP_Warstwa &gt; 0 AND T.Twr_ESklep = 1 AND Z.Twr_ESklep = 1 AND T.Twr_Archiwalny = 0 AND Z.Twr_Archiwalny = 0 AND A.TwP_TwrNumer &gt; 0 AND A.TwP_DokRodzaj &lt;&gt; 0
+      AND (T.Twr_LastModC &gt; CASE WHEN @TypExp=0 THEN PcK_TSSynchrTwrPtw ELSE 0 END OR ISNULL(PT.PcL_TStamp,PcK_TSSynchrTwrPtw + 1) &gt; PcK_TSSynchrTwrPtw
+		OR Z.Twr_LastModC &gt; CASE WHEN @TypExp=0 THEN PcK_TSSynchrTwrPtw ELSE 0 END OR ISNULL(PZ.PcL_TStamp,PcK_TSSynchrTwrPtw + 1) &gt; PcK_TSSynchrTwrPtw )
+	  AND EXISTS(SELECT TwL_GrONumer FROM CDN.TwrLinki WHERE T.Twr_GIDTyp = TwL_GIDTyp AND T.Twr_GIDNumer = TwL_GIDNumer AND TwL_GrONumer = PCKTWG.TwG_GIDNumer )
+	  AND EXISTS(SELECT TwL_GrONumer FROM CDN.TwrLinki WHERE Z.Twr_GIDTyp = TwL_GIDTyp AND Z.Twr_GIDNumer = TwL_GIDNumer AND TwL_GrONumer = PCKTWG.TwG_GIDNumer )
+
+CREATE TABLE #tmpZamWynik (Typ INT, TwrID INT,ZmnID INT,TwP_TwrLp INT, ZamTyp INT)
+
+INSERT INTO #tmpZamWynik
+SELECT DISTINCT --Zamienniki jednostronne
+	1 AS Typ --Typ zamienniki (produkty proponowane)
+	,TwP_TwrNumer AS TwrID
+	,TwP_ZamNumer AS TwrID2
+	,TwP_TwrLp AS Lp
+	,1 AS ZamTyp --Typ zamiennika jednostronny
+FROM CDN.TwrPodm AS TWP 
+JOIN CDN.TwrKarty T WITH(NOLOCK) ON TwP_TwrNumer = T.Twr_GIDNumer
+JOIN CDN.TwrKarty Z WITH(NOLOCK) ON TwP_ZamNumer = Z.Twr_GIDNumer
+JOIN CDN.PicoKonfig WITH(NOLOCK) ON Pck_PicoId = @ID
+JOIN CDN.TwrGrupy PCKTWG ON PCKTWG.TwG_SyncId = PcK_TwGNumer AND PCKTWG.TwG_GIDTyp = -16
+LEFT OUTER JOIN CDN.PicoLog PT ON PT.PcL_PcKID = Pck_PicoId AND PT.PcL_ObiTyp = T.Twr_GIDTyp AND PT.PcL_ObiNumer = T.Twr_GIDNumer
+LEFT OUTER JOIN CDN.PicoLog PZ ON PZ.PcL_PcKID = Pck_PicoId AND PZ.PcL_ObiTyp = Z.Twr_GIDTyp AND PZ.PcL_ObiNumer = Z.Twr_GIDNumer
+WHERE TwP_Warstwa = 0 AND T.Twr_ESklep = 1 AND Z.Twr_ESklep = 1 AND T.Twr_Archiwalny = 0 AND Z.Twr_Archiwalny = 0 AND TwP_DokRodzaj &lt;&gt; 0
+      AND (T.Twr_LastModC &gt; CASE WHEN @TypExp=0 THEN PcK_TSSynchrTwrPtw ELSE 0 END OR ISNULL(PT.PcL_TStamp,PcK_TSSynchrTwrPtw + 1) &gt; PcK_TSSynchrTwrPtw
+		OR Z.Twr_LastModC &gt; CASE WHEN @TypExp=0 THEN PcK_TSSynchrTwrPtw ELSE 0 END OR ISNULL(PZ.PcL_TStamp,PcK_TSSynchrTwrPtw + 1) &gt; PcK_TSSynchrTwrPtw )
+	  AND EXISTS(SELECT TwL_GrONumer FROM CDN.TwrLinki WHERE T.Twr_GIDTyp = TwL_GIDTyp AND T.Twr_GIDNumer = TwL_GIDNumer AND TwL_GrONumer = PCKTWG.TwG_GIDNumer )
+	  AND EXISTS(SELECT TwL_GrONumer FROM CDN.TwrLinki WHERE Z.Twr_GIDTyp = TwL_GIDTyp AND Z.Twr_GIDNumer = TwL_GIDNumer AND TwL_GrONumer = PCKTWG.TwG_GIDNumer )
+
+INSERT INTO #tmpZamWynik
+SELECT --Zamienniki obustronne
+	1 AS Typ --Typ zamienniki (produkty proponowane)
+	,TwrID
+	,ZmnID
+	,TwP_TwrLp
+	,ZamTyp
+FROM #tmpZamOB AS Ob
+WHERE NOT EXISTS (SELECT * FROM #tmpZamWynik WHERE TwrID = Ob.TwrID AND ZmnID = Ob.ZmnID)
+
+INSERT INTO #tmpZamWynik
+SELECT --Zamienniki równoważne wszystkim (T1 ma zamiennik T2, a T2 ma zamiennik T3 to T3 jest też zamiennikiem dla T1) 
+	1 AS Typ --Typ zamienniki (produkty proponowane)
+	,TwrID
+	,ZmnID
+	,TwP_Id
+	,ZamTyp
+FROM #tmpZamRW AS RW
+WHERE NOT EXISTS (SELECT * FROM #tmpZamWynik WHERE TwrID = RW.TwrID AND ZmnID = RW.ZmnID)
+
+INSERT INTO #tmpZamWynik
+SELECT DISTINCT --Zestawy
+	2 AS Typ --Typ zestawy (akcesoria)
+	,TwP_TwrNumer AS TwrID
+	,TwP_ZamNumer AS TwrID2
+	,ROW_NUMBER() OVER(ORDER BY TwP_TwrLp ASC) AS Lp
+	,0 AS ZamTyp --Nie jest zamiennikiem
+FROM CDN.TwrPodm AS TWP 
+JOIN CDN.TwrKarty T WITH(NOLOCK) ON TwP_TwrNumer = T.Twr_GIDNumer
+JOIN CDN.TwrKarty Z WITH(NOLOCK) ON TwP_ZamNumer = Z.Twr_GIDNumer
+JOIN CDN.PicoKonfig WITH(NOLOCK) ON Pck_PicoId = @ID
+JOIN CDN.TwrGrupy PCKTWG ON PCKTWG.TwG_SyncId = PcK_TwGNumer AND PCKTWG.TwG_GIDTyp = -16
+LEFT OUTER JOIN CDN.PicoLog PT ON PT.PcL_PcKID = Pck_PicoId AND PT.PcL_ObiTyp = T.Twr_GIDTyp AND PT.PcL_ObiNumer = T.Twr_GIDNumer
+LEFT OUTER JOIN CDN.PicoLog PZ ON PZ.PcL_PcKID = Pck_PicoId AND PZ.PcL_ObiTyp = Z.Twr_GIDTyp AND PZ.PcL_ObiNumer = Z.Twr_GIDNumer
+WHERE TwP_Warstwa = 1 AND T.Twr_ESklep = 1 AND Z.Twr_ESklep = 1  AND T.Twr_Archiwalny = 0 AND Z.Twr_Archiwalny = 0 AND TwP_TwrNumer &lt;&gt; TwP_ZamNumer AND TwP_DokRodzaj = 0
+      AND (T.Twr_LastModC &gt; CASE WHEN @TypExp=0 THEN PcK_TSSynchrTwrPtw ELSE 0 END OR ISNULL(PT.PcL_TStamp,PcK_TSSynchrTwrPtw + 1) &gt; PcK_TSSynchrTwrPtw
+		OR Z.Twr_LastModC &gt; CASE WHEN @TypExp=0 THEN PcK_TSSynchrTwrPtw ELSE 0 END OR ISNULL(PZ.PcL_TStamp,PcK_TSSynchrTwrPtw + 1) &gt; PcK_TSSynchrTwrPtw )
+	  AND EXISTS(SELECT TwL_GrONumer FROM CDN.TwrLinki WHERE T.Twr_GIDTyp = TwL_GIDTyp AND T.Twr_GIDNumer = TwL_GIDNumer AND TwL_GrONumer = PCKTWG.TwG_GIDNumer )
+	  AND EXISTS(SELECT TwL_GrONumer FROM CDN.TwrLinki WHERE Z.Twr_GIDTyp = TwL_GIDTyp AND Z.Twr_GIDNumer = TwL_GIDNumer AND TwL_GrONumer = PCKTWG.TwG_GIDNumer )
+
+SELECT 
+Typ AS Typ
+,TwrID AS TwrID
+,ZmnID AS TwrID2
+,ROW_NUMBER() OVER(PARTITION BY TwrID, Typ ORDER BY TwrID, ZamTyp, TwP_TwrLp) AS Lp
+FROM #tmpZamWynik AS TWP
+FOR XML AUTO
+
+DROP TABLE #tmpZamOB
+DROP TABLE #tmpZamRW
+DROP TABLE #tmpZamWynik
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,1490 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[POS_PaczkaRabaty]"></A><PRE>
+          <FONT SIZE="2"><I>/* [POS_PaczkaRabaty] */</I><BR>
+CREATE PROCEDURE [CDN].[POS_PaczkaRabaty]
+	@rowVersion bigint,
+	@PointOfSaleId int,
+	@packageSize int,
+	@packageNumber int
+AS
+SET NOCOUNT ON 
+
+
+CREATE TABLE #tmpRecordSet(
+           /*   Discount */	PRMID INT,Name VARCHAR(255), Description VARCHAR(2000), Type SMALLINT, TransactionType SMALLINT,CombiningMethod SMALLINT,Priority INT, SecondaryPriority INT, DateFrom DATETIME, DateTo DATETIME
+		   ,IsActive TINYINT,GlobalID UNIQUEIDENTIFIER,DiscountTypeId INT,HeaderCurrencyId INT,AddHeaderDiscout TINYINT,SkipWhenPrevDiscountsExists TINYINT,IsManualDiscount TINYINT,IncludeNonDiscountedItems TINYINT
+		   ,IncludeNonDiscountedHeaderBundles TINYINT,IsCouponDiscount TINYINT,DistributionOfDiscountAmongPromotionItems TINYINT,DiscountValueSource TINYINT,BundleDiscountType TINYINT,BundleDiscountValue DECIMAL(19,2)
+		   ,BundleDiscountApplyDiscountTo TINYINT,LoyaltyCardValidationMode TINYINT,CalculateDependingOnPreviousDiscountMode TINYINT,CalculateDependingOnPreviousDiscountThresholdType TINYINT,CalculateDependingOnPreviousDiscountThreshold DECIMAL(19,4)
+		   ,AdvancedDiscountRoundingMethod TINYINT,DiscountVersionId INT,DocumentItemsSortedForBundles TINYINT,Code VARCHAR(50),
+		   /* Element */ ProductId INT, ProductGroupId INT, DiscountType TINYINT,CurrencyId INT, Threshold DECIMAL(19,4), QuantityLimit DECIMAL(19,4), ValueLimit DECIMAL(19,4), DiscountValue DECIMAL(19,4),
+		   IsSet TINYINT, IsFromValue TINYINT, DiscountFromStartValue TINYINT, IsMarginControl TINYINT,SkipRest TINYINT,IsNetPrice TINYINT, UnitId INT,ElemGlobalID UNIQUEIDENTIFIER,Gratis TINYINT,Required TINYINT,
+		   BundleGratisType TINYINT,BundleQuantity DECIMAL(19,4),QuantityItemsLimit INT,ThresholdType TINYINT,ThresholdValue DECIMAL(19,4),MasterThresholdId UNIQUEIDENTIFIER,ThresholdFromPrice TINYINT,AdvancedDiscountMultiplier DECIMAL(19,2),
+		   AdvancedDiscountMinimumValue DECIMAL(19,2),AdvancedDiscountMaximumValue DECIMAL(19,2),AdvancedDiscountMinimumValueHandlingType TINYINT,AdvancedDiscountMaximumValueHandlingType TINYINT,AddHeaderDiscountOnGratis TINYINT,
+		   KntTyp SMALLINT,KntNumer INT,KPRGUID UNIQUEIDENTIFIER,TmpProg DECIMAL(19,4),IsKNT int,TPRLp INT,kntGUID nvarchar(41),tprGUID nvarchar(41)
+)          
+CREATE TABLE #tmpDeterminants( PRMID INT,Type TINYINT,ObjectID nvarchar(41),GlobalID UNIQUEIDENTIFIER,IsForElement int)
+CREATE TABLE #tmpItemDiscountThresholds(PRMID INT,ProductId INT,Threshold DECIMAL(19,4),DiscountValue DECIMAL(19,4),ElemGUID UNIQUEIDENTIFIER)
+CREATE TABLE #tmpItemDiscountThresholdsGuids(PRMID INT,ProductId INT,ElemGUID UNIQUEIDENTIFIER)
+CREATE TABLE #tmpPackageDiscountThresholds(PRMID INT,ProductId INT,Type TINYINT,Value DECIMAL(19,4), QuantityItemsLimit INT, GlobalId UNIQUEIDENTIFIER)
+
+
+DECLARE @TwrTyp SMALLINT
+DECLARE @TwgTyp SMALLINT
+DECLARE @KntTyp SMALLINT
+DECLARE @KngTyp SMALLINT
+DECLARE @FrmTyp SMALLINT
+DECLARE @Typ_Wal SMALLINT
+DECLARE @RabatyLicozneOdCeny TINYINT
+DECLARE @RabatyOdCenyKonNumer INT
+DECLARE @LastID INT
+DECLARE @Today INT
+DECLARE @StalaCenaNaliczajInneRabaty INT
+DECLARE @StalaCenaNaliczajInneRabatyKonNumer INT
+
+SET @TwrTyp = 16
+SET @TwgTyp = -16
+SET @KntTyp = 32
+SET @KngTyp = -32
+SET @FrmTyp = -4272
+SET @RabatyOdCenyKonNumer = 9974
+SET @LastID = 2147483647
+SET @Today = DATEDIFF(s,convert(datetime,'1990-01-01',120),GETDATE())
+SET @StalaCenaNaliczajInneRabatyKonNumer = 9822
+
+DECLARE @oddzialy TABLE(ID int, PsaId int, IDGrupyTwr int, IDGrupyKnt int, TWGSyncID int, PckCentrumID int, IdWalutyOddzialu int, WalutaOddzialu varchar(3))
+insert into @oddzialy
+select
+	PckPicoID,
+	PSaID,
+	TwG_GIDNumer,
+	PcK_KnGENumer,
+	TwG_SyncId,
+	PckCentrumID,
+	ISNULL(WalutaLog.PCL_ObiNumer,0),
+	PcK_Waluta
+from cdn.POS_OddzialyDoEksportu(@PointOfSaleId, @rowVersion)
+join cdn.PicoKonfig on PckCentrumID = PcK_CentrumID
+join cdn.TwrGrupy on TwG_GIDNUMER = PcK_TwGENumer
+LEFT OUTER JOIN CDN.PicoWaluty ON PWL_PckID = PcK_PicoID AND PWL_SymbolM = PCK_Waluta
+LEFT OUTER JOIN CDN.PicoLog WalutaLog ON WalutaLog.PcL_ObiTyp = @Typ_Wal AND WalutaLog.PcL_ObiNumer = Pwl_id
+where TwG_GIDTyp = @TwgTyp
+
+	
+SELECT @RabatyLicozneOdCeny = 1^Kon_Wartosc FROM CDN.Konfig WHERE Kon_Numer = @RabatyOdCenyKonNumer --XOR
+SELECT @StalaCenaNaliczajInneRabaty = Kon_Wartosc FROM CDN.Konfig WHERE Kon_Numer = @StalaCenaNaliczajInneRabatyKonNumer
+select distinct MAG_GIDNumer as GidNumer into #tmpWarehouses from cdn.FrmStruktura join cdn.FrmObiekty on FRS_ID=FRO_FRMID join cdn.Magazyny on MAG_GIDNumer=FRO_GIDNumer AND FRO_GIDTyp = MAG_GIDTyp join @oddzialy on FrS_ID = PckCentrumID union select -1
+
+select distinct twg_gidnumer as NumerGrupy into #tmpProductGroups from cdn.PicoKonfig 
+	outer apply cdn.PobierzDrzewoGrupTowarowych(PcK_TwGENumer,DEFAULT,DEFAULT,1,DEFAULT,DEFAULT)
+	join cdn.TwrGrupy on GIDNumer=TwG_GIDNumer and GIDTyp=TwG_GIDTyp
+	join @oddzialy on PcK_PicoID = ID
+	
+select distinct Kng_Gidnumer as GroNumer, Kng_Gidtyp as GroTyp, CAST(KnG_SyncId AS nvarchar) as Knt_GUID into #tmpCustomuerGroups
+	FROM cdn.PicoKonfig 
+	outer apply  cdn.PobierzDrzewoGrupKontrahentow(PcK_KnGENumer,default)
+	join cdn.KntGrupy on KnG_GIDNumer = AktuGidNumer and KnG_GIDTyp = -32
+	join @oddzialy on PcK_PicoID = ID
+	
+
+select distinct PcL_ObiNumer as KntGidNumer,PcL_ObiektGUID as Knt_GUID into #tmpCustomuers from cdn.PicoLog join @oddzialy on PcL_PcKID = ID and PcL_ObiektTyp=@KntTyp
+
+SELECT DISTINCT PRM_Id INTO #tmpPRMS
+		FROM CDN.PrmKarty
+		cross join @oddzialy
+		LEFT OUTER JOIN CDN.ZstPromocje ON PRM_Id = ZPR_PrmID -- Potrzebne do wyeliminowania przypadkow z zestawami TFS: 113525
+		JOIN(
+			SELECT KPR_KntTyp,KPR_KntNumer,KPR_PrmID,KntGidNumer,KPR_GUID,Knt_GUID FROM CDN.KntPromocje (NOLOCK)  
+				JOIN #tmpCustomuers on KntGidNumer = KPR_KntNumer and KPR_KntTyp = @KntTyp
+			UNION ALL
+			SELECT KPR_KntTyp,KPR_KntNumer,KPR_PrmID,0,KPR_GUID,Knt_GUID as Knt_GUID FROM CDN.KntPromocje (NOLOCK)
+				JOIN #tmpCustomuerGroups ON GroTyp = KPR_KntTyp AND GroNumer = KPR_KntNumer AND KPR_KntTyp = -@KntTyp
+		) KPR ON KPR.KPR_PrmID = Prm_ID
+		JOIN cdn.TwrPromocje tpr1 ON PRM_Id = tpr1.tpr_PrmId AND tpr1.TPR_Aktywny = 1
+		JOIN CDN.FrSPromocje ON FPR_PrmID = Prm_ID
+		cross apply (
+			SELECT distinct FrL_GroNumer,FrL_GroTyp FROM CDN.FrmLinki WHERE FrL_GIDNumer = PckCentrumID AND FrL_GIDTyp = @FrmTyp
+			UNION ALL
+			SELECT distinct PckCentrumID,@FrmTyp
+		) FRL
+		LEFT JOIN CDN.TwrLinki ON TwL_GIDNumer = tpr1.tpr_TwrNumer AND TwL_GIDTyp = tpr1.tpr_TwrTyp AND TwL_GrOTyp = -16 AND (case when TwL_GidTyp = -16 then TwL_GIDNumer  else TwL_GrONumer end in (select * from #tmpProductGroups)) --TFSID:421722 TwL_GIDNumer = @IDGrupyTwr
+		LEFT JOIN CDN.TwrGrupy ON TwG_GIDNumer = tpr1.tpr_TwrNumer AND TwG_GIDTyp = tpr1.tpr_TwrTyp --TFSID:422158 AND TwG_GrONumer = TwL_GrONumer AND TwG_GrOTyp = TwL_GrOTyp
+		LEFT OUTER JOIN CDN.PicoWaluty ON PWL_PckID = ID AND PWL_SymbolM = tpr1.tpr_Waluta
+		LEFT OUTER JOIN CDN.PicoLog WalutaLog ON WalutaLog.PcL_ObiTyp = @Typ_Wal AND WalutaLog.PcL_ObiNumer = Pwl_id
+		JOIN cdn.PltPromocje ON PPr_PrmID = PRM_Id
+		JOIN cdn.SpDPromocje ON PRM_Id=SpD_PrmId
+		JOIN cdn.MagPromocje ON MPR_PrmID = PRM_Id 
+		JOIN #tmpWarehouses ON GidNumer = MPR_MagNumer
+		LEFT OUTER JOIN cdn.PicoRelacje ON PPr_PltID = PcR_OBI2Numer
+		LEFT OUTER JOIN CDN.ProgiTwrPromocje ON PTP_TPRId = tpr1.TPR_Id
+		LEFT OUTER JOIN CDN.ProgiPromocje ON PRP_ID = PTP_PRPId
+		LEFT OUTER JOIN cdn.Nazwy ON Naz_Nazwa = PRM_JmZ AND naz_gidtyp=144
+		WHERE PRM_Typ = 5 AND PRM_Stan IN (1,3) AND PRM_Dokument &lt;&gt; 2 AND tpr1.tpr_Typ IN (1,2,3)
+		AND PPr_PltID = -1 --TFS: 117292
+		AND Prm_Cykliczna = 0 AND PRM_CyklRodzaj = 0
+		AND @Today BETWEEN PRM_DataOd AND PRM_DataDo
+		AND ZPR_ID IS NULL -- Potrzebne do wyeliminowania przypadkow z zestawami TFS: 113525
+		--AND NOT (tpr1.tpr_Typ = 3 AND (tpr1.tpr_Prog &gt; 0 OR @WalutaOddzialu &lt;&gt; tpr1.tpr_Waluta)) /*TFSID:422474 stała cena progowa*/
+		AND (TwL_GIDNumer IS NOT NULL OR (tpr1.tpr_TwrTyp = @TwgTyp AND TPR_TwrNumer in (select * from #tmpProductGroups))) --TFSID:422823
+		AND isnull((select count(*) from (select TR.tpr_typ from cdn.TwrPromocje TR WHERE TR.TPR_PrmId=PRM_Id AND TPR1.TPR_TwrNumer = TR.TPR_TwrNumer GROUP by TR.tpr_typ) a),0) &lt; 2
+		AND SpD_SpDLp = -1
+		AND FRL.FrL_GroNumer = FPR_FrsID AND FRL.FrL_GroTyp = @FrmTyp
+		GROUP BY PRM_Id,PRM_GUID,PRM_Akronim,PRM_Uwagi,PRM_Dokument,PRM_SposobStosowania,PRM_Priorytet,PRM_PriorytetLp,PRM_Stan,PRM_PominPozostale,TPR_TwrTyp,TPR_TwrNumer,
+		TPR_Typ,TPR_Prog,WalutaLog.PcL_ObiNumer,TPR_LimitTyp,TPR_LimitWartosc,TPR_Wartosc,TPR_FlagaNB,TPR_GUID,KPR_KntTyp,KPR_KntNumer,KPR_GUID,TPR_Lp,Knt_GUID,
+		PRM_Cykliczna,PRM_DataOd,PRM_DataDo,PRM_Pakietowa,PRM_RodzajPakietu,PTP_Rodzaj,PTP_Wartosc,PTP_GUID,PTP_TPRId,PTP_MinIloscPoz,PRP_GUID,Naz_GIDLp
+UNION ALL 
+SELECT DISTINCT PRM_Id
+FROM CDN.PrmKarty 
+JOIN(
+	SELECT KPR_Wartosc,KPR_KntTyp,KPR_KntNumer,KPR_PrmID,KntGidNumer,KPR_GUID,Knt_GUID FROM CDN.KntPromocje (NOLOCK)  
+		JOIN #tmpCustomuers on KntGidNumer = KPR_KntNumer and KPR_KntTyp = @KntTyp
+	UNION ALL
+	SELECT KPR_Wartosc,KPR_KntTyp,KPR_KntNumer,KPR_PrmID,0,KPR_GUID,Knt_GUID as Knt_GUID FROM CDN.KntPromocje (NOLOCK)
+		JOIN #tmpCustomuerGroups ON GroTyp = KPR_KntTyp AND GroNumer = KPR_KntNumer AND KPR_KntTyp = -@KntTyp
+) KPR ON KPR.KPR_PrmID = Prm_ID
+WHERE PRM_Typ = 1 AND PRM_Pakietowa = 0 AND PRM_Stan IN (1,3)  AND PRM_Dokument &lt;&gt; 2
+UNION ALL
+SELECT DISTINCT PRM_Id
+FROM CDN.PrmKarty 
+JOIN CDN.FrSPromocje ON FPR_PrmID = Prm_ID
+JOIN (
+	SELECT distinct FrL_GroNumer,FrL_GroTyp FROM CDN.FrmLinki join @oddzialy on FrL_GIDNumer = PckCentrumID AND FrL_GIDTyp = @FrmTyp
+	UNION ALL
+	SELECT distinct PckCentrumID,@FrmTyp from @oddzialy
+) FRL ON FRL.FrL_GroNumer = FPR_FrsID AND FRL.FrL_GroTyp = @FrmTyp
+JOIN(
+	SELECT KPR_KntTyp,KPR_KntNumer,KPR_PrmID,KntGidNumer,KPR_GUID,Knt_GUID FROM CDN.KntPromocje (NOLOCK)  
+		JOIN #tmpCustomuers on KntGidNumer = KPR_KntNumer and KPR_KntTyp = @KntTyp
+	UNION ALL
+	SELECT KPR_KntTyp,KPR_KntNumer,KPR_PrmID,0,KPR_GUID,Knt_GUID as Knt_GUID FROM CDN.KntPromocje (NOLOCK)
+		JOIN #tmpCustomuerGroups ON GroTyp = KPR_KntTyp AND GroNumer = KPR_KntNumer AND KPR_KntTyp = -@KntTyp
+) KPR ON KPR.KPR_PrmID = Prm_ID
+LEFT JOIN CDN.ProgiPromocje ON PRP_PrmID = Prm_ID
+LEFT JOIN CDN.ProgiTwrPromocje ON PTP_PRPID = PRP_ID
+JOIN cdn.MagPromocje ON MPR_PrmID = PRM_Id 
+JOIN #tmpWarehouses ON GidNumer = MPR_MagNumer
+JOIN cdn.PltPromocje ON PPr_PrmID = PRM_Id
+JOIN cdn.SpDPromocje ON PRM_Id=SpD_PrmId
+WHERE PRM_Typ = 8 AND PRM_Pakietowa = 0 AND PRM_Stan IN (1,3) AND PRM_Dokument &lt;&gt; 2 AND Prm_Cykliczna = 0 AND PRM_CyklRodzaj = 0 AND PPr_PltID = -1 AND SpD_SpDLp = -1
+UNION ALL
+SELECT DISTINCT PRM_Id
+FROM CDN.PrmKarty
+cross join @oddzialy
+LEFT OUTER JOIN CDN.ZstPromocje ON PRM_Id = ZPR_PrmID -- Potrzebne do wyeliminowania przypadkow z zestawami TFS: 113525
+JOIN(
+	SELECT KPR_KntTyp,KPR_KntNumer,KPR_PrmID,KntGidNumer,KPR_GUID,Knt_GUID FROM CDN.KntPromocje (NOLOCK)  
+		JOIN #tmpCustomuers on KntGidNumer = KPR_KntNumer and KPR_KntTyp = @KntTyp
+	UNION ALL
+	SELECT KPR_KntTyp,KPR_KntNumer,KPR_PrmID,0,KPR_GUID,Knt_GUID as Knt_GUID FROM CDN.KntPromocje (NOLOCK)
+		JOIN #tmpCustomuerGroups ON GroTyp = KPR_KntTyp AND GroNumer = KPR_KntNumer AND KPR_KntTyp = -@KntTyp
+) KPR ON KPR.KPR_PrmID = Prm_ID
+JOIN cdn.TwrPromocje ON PRM_Id = TPR_PrmId AND TPR_Aktywny = 1
+LEFT JOIN CDN.TwrLinki ON TwL_GIDNumer = TPR_TwrNumer AND TwL_GIDTyp = TPR_TwrTyp AND TwL_GrOTyp = -16 AND (case when TwL_GidTyp = -16 then TwL_GIDNumer  else TwL_GrONumer end in (select * from #tmpProductGroups)) --TFSID:421722 TwL_GIDNumer = @IDGrupyTwr
+LEFT JOIN CDN.TwrGrupy ON TwG_GIDNumer = TPR_TwrNumer AND TwG_GIDTyp = TPR_TwrTyp --TFSID:422158 AND TwG_GrONumer = TwL_GrONumer AND TwG_GrOTyp = TwL_GrOTyp
+LEFT OUTER JOIN CDN.PicoLog TwrLog ON TwrLog.PcL_ObiTyp = TPR_TwrTyp AND TwrLog.PcL_ObiNumer = TPR_TwrNumer AND TPR_TwrTyp =@TwrTyp
+LEFT OUTER JOIN CDN.PicoWaluty ON PWL_PckID = ID AND PWL_SymbolM = TPR_Waluta
+LEFT OUTER JOIN CDN.PicoLog WalutaLog ON WalutaLog.PcL_ObiTyp = @Typ_Wal AND WalutaLog.PcL_ObiNumer = Pwl_id
+WHERE PRM_Typ = 4 AND PRM_Pakietowa = 0 AND PRM_Stan IN (1,3) AND PRM_Dokument &lt;&gt; 2 AND TPR_Typ IN (1,2,3)
+AND ZPR_ID IS NULL -- Potrzebne do wyeliminowania przypadkow z zestawami TFS: 113525
+AND (TwL_GIDNumer IS NOT NULL OR (TPR_TwrTyp = @TwgTyp and TPR_TwrNumer in (select * from #tmpProductGroups))) --TFSID:422823
+ORDER BY PRM_ID
+    OFFSET (@packageNumber-1)*@packageSize ROWS  
+    FETCH NEXT @packageSize ROWS ONLY	
+
+/* Zapis danych do tabeli */
+INSERT INTO #tmpRecordSet 
+SELECT DISTINCT CDN.PrmKarty.PRM_Id, SUBSTRING(Prm_Akronim,1,255) AS Name, SUBSTRING(Prm_Uwagi,1,2000) AS Description, 
+CASE 
+	WHEN PrM_Pakietowa = 1 AND PrM_RodzajPakietu = 0 THEN 4 
+	WHEN PrM_Pakietowa = 1 AND PrM_RodzajPakietu = 1 THEN 5 
+	ELSE 1 
+END AS Type,
+CASE PRM_Dokument WHEN 0 THEN 3 ELSE 1 END AS TransactionType,
+CASE PRM_SposobStosowania WHEN 2 THEN 1 ELSE 2 END AS CombiningMethod,
+CASE WHEN PrM_Pakietowa = 1 THEN 0 ELSE PRM_Priorytet END AS Priority,
+PRM_PriorytetLp AS SecondaryPriority,
+CASE 
+	WHEN PRM_Cykliczna = 0 AND PRM_DataOd = 0 THEN NULL
+	WHEN PRM_Cykliczna in (0,2) AND PRM_DataOd &lt;&gt; 0 THEN CONVERT(DATETIME,DATEADD(second,PRM_DataOd,CONVERT(DATETIME,'1990-01-01',120)))
+END AS DateFrom,
+CASE 
+	WHEN PRM_Cykliczna = 0 AND PRM_DataDo = 2147483647 THEN	NULL
+	WHEN PRM_Cykliczna in (0,2) AND PRM_DataDo &lt;&gt; 2147483647 THEN CONVERT(DATETIME,DATEADD(second,PRM_DataDo,CONVERT(DATETIME,'1990-01-01',120)))
+END AS DateTo,
+CASE WHEN Prm_Stan = 1 THEN 1 ELSE 0 END AS IsActive ,
+PRM_GUID AS GlobalID,
+NULL AS DiscountTypeId,
+NULL AS HeaderCurrencyId,
+CASE WHEN PrM_Pakietowa = 1 THEN Prm_PominPozostale ^ 1 ELSE NULL END AS AddHeaderDiscout,
+PRM_PominPozostale AS SkipWhenPrevDiscountsExists,
+0 AS IsManualDiscount,
+0 AS IncludeNonDiscountedItems,
+0 AS IncludeNonDiscountedHeaderBundles,
+0 AS IsCouponDiscount,
+0 AS DistributionOfDiscountAmongPromotionItems,
+NULL AS DiscountValueSource,
+0 AS BundleDiscountType,
+0 AS BundleDiscountValue,
+0 AS BundleDiscountApplyDiscountTo,
+0 AS LoyaltyCardValidationMode,
+0 AS CalculateDependingOnPreviousDiscountMode,
+NULL AS CalculateDependingOnPreviousDiscountThresholdType,
+NULL AS CalculateDependingOnPreviousDiscountThreshold,
+NULL AS AdvancedDiscountRoundingMethod,
+NULL AS DiscountVersionId,
+0 AS DocumentItemsSortedForBundles,
+SUBSTRING(Prm_Akronim,1,50) AS Code,
+CASE WHEN tpr1.tpr_TwrTyp = @TwrTyp THEN tpr1.tpr_TwrNumer ELSE NULL END AS ProductId,
+CASE WHEN tpr1.tpr_TwrTyp = @TwgTyp THEN MIN(TwG_SyncID) ELSE NULL END  AS ProductGroupId,
+CDN.ESKLEP_UstalDiscountType(CDN.PrmKarty.PRM_Id,tpr1.tpr_TwrNumer,tpr1.tpr_Typ,IDGrupyTwr,tpr1.tpr_Prog) AS DiscountType,
+WalutaLog.PCL_ObiNumer AS CurrencyId,
+tpr1.tpr_Prog AS Threshold,
+CASE WHEN tpr1.tpr_LimitTyp = 1 THEN tpr1.tpr_LimitWartosc ELSE NULL END AS QuantityLimit,
+CASE WHEN tpr1.tpr_LimitTyp = 2 THEN tpr1.tpr_LimitWartosc ELSE NULL END AS ValueLimit,
+CASE WHEN tpr1.tpr_Typ IN(5,6) THEN -COALESCE(PTP_Wartosc,tpr1.tpr_Wartosc) ELSE COALESCE(PTP_Wartosc,tpr1.tpr_Wartosc) END AS DiscountValue,
+0 AS IsSet,
+@RabatyLicozneOdCeny AS IsFromValue,
+1 AS DiscountFromStartValue,
+0 AS IsMarginControl,
+CASE WHEN @StalaCenaNaliczajInneRabaty = 1 AND TPR_Typ = 3 THEN PRM_PominPozostale WHEN PRM_Pakietowa = 1 THEN 1 WHEN TPR_Typ &lt;&gt; 3 THEN PRM_PominPozostale ELSE 1 END AS SkipRest,
+CASE WHEN tpr1.tpr_FlagaNB = 'N' AND tpr1.tpr_Typ = 3 THEN 1 ELSE 0 END AS IsNetPrice,
+CASE WHEN PRP_GUID IS NOT NULL THEN NAZ_GidLp ELSE NULL END AS UnitId,
+COALESCE(PTP_GUID,tpr1.tpr_GUID) AS ElemGlobalID,
+0 AS Gratis,
+NULL AS Required,
+NULL AS BundleGratisType,
+CASE WHEN PrM_Pakietowa = 1 AND PTP_TPRID IS NULL THEN tpr1.TPR_Prog WHEN PTP_TPRID IS NOT NULL THEN 0 ELSE NULL END AS BundleQuantity,
+CASE WHEN PrM_Pakietowa = 1 THEN COALESCE(PTP_MinIloscPoz,0) ELSE NULL END AS QuantityItemsLimit,
+CASE WHEN PrM_Pakietowa = 1 THEN COALESCE(PTP_Rodzaj+1,2) ELSE NULL END AS ThresholdType,
+CASE WHEN PrM_Pakietowa = 1 THEN COALESCE(PTP_WartoscProg,tpr1.TPR_Prog) ELSE NULL END AS ThresholdValue,
+PRP_GUID AS MasterThresholdId,
+NULL AS ThresholdFromPrice,
+NULL AS AdvancedDiscountMultiplier,
+NULL AS AdvancedDiscountMinimumValue,
+NULL AS AdvancedDiscountMaximumValue,
+NULL AS AdvancedDiscountMinimumValueHandlingType,
+NULL AS AdvancedDiscountMaximumValueHandlingType,
+NULL AS AddHeaderDiscountOnGratis,
+KPR_KntTyp AS KntTyp,KPR_KntNumer AS KntNumer,KPR_GUID AS KPRGUID,tpr1.tpr_Prog AS TmpProg, 0 AS IsKNT,tpr1.tpr_Lp AS TPRLp,Knt_GUID as kntGUID,tpr1.tpr_guid as tprGUID
+FROM CDN.PrmKarty
+cross join @oddzialy
+LEFT OUTER JOIN CDN.ZstPromocje ON PRM_Id = ZPR_PrmID -- Potrzebne do wyeliminowania przypadkow z zestawami TFS: 113525
+JOIN(
+	SELECT KPR_KntTyp,KPR_KntNumer,KPR_PrmID,KntGidNumer,KPR_GUID,Knt_GUID FROM CDN.KntPromocje (NOLOCK)  
+		JOIN #tmpCustomuers on KntGidNumer = KPR_KntNumer and KPR_KntTyp = @KntTyp
+	UNION ALL
+	SELECT KPR_KntTyp,KPR_KntNumer,KPR_PrmID,0,KPR_GUID,Knt_GUID as Knt_GUID FROM CDN.KntPromocje (NOLOCK)
+		JOIN #tmpCustomuerGroups ON GroTyp = KPR_KntTyp AND GroNumer = KPR_KntNumer AND KPR_KntTyp = -@KntTyp
+) KPR ON KPR.KPR_PrmID = Prm_ID
+JOIN cdn.TwrPromocje tpr1 ON PRM_Id = tpr1.tpr_PrmId AND tpr1.TPR_Aktywny = 1
+JOIN CDN.FrSPromocje ON FPR_PrmID = Prm_ID
+cross apply (
+	SELECT distinct FrL_GroNumer,FrL_GroTyp FROM CDN.FrmLinki WHERE FrL_GIDNumer = PckCentrumID AND FrL_GIDTyp = @FrmTyp
+	UNION ALL
+	SELECT distinct PckCentrumID,@FrmTyp
+) FRL	 
+LEFT JOIN CDN.TwrLinki ON TwL_GIDNumer = tpr1.tpr_TwrNumer AND TwL_GIDTyp = tpr1.tpr_TwrTyp AND TwL_GrOTyp = -16 AND (case when TwL_GidTyp = -16 then TwL_GIDNumer  else TwL_GrONumer end in (select * from #tmpProductGroups)) --TFSID:421722 TwL_GIDNumer = @IDGrupyTwr
+LEFT JOIN CDN.TwrGrupy ON TwG_GIDNumer = tpr1.tpr_TwrNumer AND TwG_GIDTyp = tpr1.tpr_TwrTyp --TFSID:422158 AND TwG_GrONumer = TwL_GrONumer AND TwG_GrOTyp = TwL_GrOTyp
+LEFT OUTER JOIN CDN.PicoWaluty ON PWL_PckID = ID AND PWL_SymbolM = tpr1.tpr_Waluta
+LEFT OUTER JOIN CDN.PicoLog WalutaLog ON WalutaLog.PcL_ObiTyp = @Typ_Wal AND WalutaLog.PcL_ObiNumer = Pwl_id
+JOIN cdn.PltPromocje ON PPr_PrmID = PRM_Id
+JOIN cdn.SpDPromocje ON PRM_Id=SpD_PrmId
+JOIN cdn.MagPromocje ON MPR_PrmID = PRM_Id 
+JOIN #tmpWarehouses ON GidNumer = MPR_MagNumer
+LEFT OUTER JOIN cdn.PicoRelacje ON PPr_PltID = PcR_OBI2Numer
+LEFT OUTER JOIN CDN.ProgiTwrPromocje ON PTP_TPRId = tpr1.TPR_Id
+LEFT OUTER JOIN CDN.ProgiPromocje ON PRP_ID = PTP_PRPId
+LEFT OUTER JOIN cdn.Nazwy ON Naz_Nazwa = PRM_JmZ AND naz_gidtyp=144
+JOIN #tmpPRMS ON #tmpPRMS.PRM_Id = CDN.PrmKarty.PRM_Id
+WHERE PRM_Typ = 5 AND PRM_Stan IN (1,3) AND PRM_Dokument &lt;&gt; 2 AND tpr1.tpr_Typ IN (1,2,3)
+AND PPr_PltID = -1 --TFS: 117292
+AND ZPR_ID IS NULL -- Potrzebne do wyeliminowania przypadkow z zestawami TFS: 113525
+AND (TwL_GIDNumer IS NOT NULL OR (tpr1.tpr_TwrTyp = @TwgTyp AND TPR_TwrNumer in (select * from #tmpProductGroups))) --TFSID:422823
+AND isnull((select count(*) from (select TR.tpr_typ from cdn.TwrPromocje TR WHERE TR.TPR_PrmId=CDN.PrmKarty.PRM_Id AND TPR1.TPR_TwrNumer = TR.TPR_TwrNumer GROUP by TR.tpr_typ) a),0) &lt; 2
+AND SpD_SpDLp = -1
+AND FRL.FrL_GroNumer = FPR_FrsID AND FRL.FrL_GroTyp = @FrmTyp
+GROUP BY CDN.PrmKarty.PRM_Id,PRM_GUID,PRM_Akronim,PRM_Uwagi,PRM_Dokument,PRM_SposobStosowania,PRM_Priorytet,PRM_PriorytetLp,PRM_Stan,PRM_PominPozostale,TPR_TwrTyp,TPR_TwrNumer,
+TPR_Typ,TPR_Prog,WalutaLog.PcL_ObiNumer,TPR_LimitTyp,TPR_LimitWartosc,TPR_Wartosc,TPR_FlagaNB,TPR_GUID,KPR_KntTyp,KPR_KntNumer,KPR_GUID,TPR_Lp,Knt_GUID,
+PRM_Cykliczna,PRM_DataOd,PRM_DataDo,PRM_Pakietowa,PRM_RodzajPakietu,PTP_Rodzaj,PTP_Wartosc,PTP_WartoscProg,PTP_GUID,PTP_TPRId,PTP_MinIloscPoz,PRP_GUID,Naz_GIDLp, IDGrupyTwr
+
+UNION ALL 
+SELECT DISTINCT CDN.PrmKarty.PRM_Id,SUBSTRING(Prm_Akronim,1,255) AS Name, SUBSTRING(Prm_Uwagi,1,2000) AS Description, 1 AS Type,
+CASE PRM_Dokument WHEN 0 THEN 3 ELSE 1 END AS TransactionType,
+CASE PRM_SposobStosowania WHEN 2 THEN 1 ELSE 2 END AS CombiningMethod,
+PRM_Priorytet AS Priority,
+PRM_PriorytetLp AS SecondaryPriority,
+CASE 
+	WHEN PRM_Cykliczna = 0 AND PRM_DataOd = 0 THEN NULL
+	WHEN PRM_Cykliczna in (0,2) AND PRM_DataOd &lt;&gt; 0 THEN CONVERT(DATETIME,DATEADD(second,PRM_DataOd,CONVERT(DATETIME,'1990-01-01',120)))
+END AS DateFrom,
+CASE 
+	WHEN PRM_Cykliczna = 0 AND PRM_DataDo = 2147483647 THEN	NULL
+	WHEN PRM_Cykliczna in (0,2) AND PRM_DataDo &lt;&gt; 2147483647 THEN CONVERT(DATETIME,DATEADD(second,PRM_DataDo,CONVERT(DATETIME,'1990-01-01',120)))
+END AS DateTo,
+CASE WHEN Prm_Stan = 1 THEN 1 ELSE 0 END AS IsActive ,
+PRM_GUID AS GlobalID,
+NULL AS DiscountTypeId,
+IdWalutyOddzialu AS HeaderCurrencyId,
+NULL AS AddHeaderDiscout,
+PRM_PominPozostale AS SkipWhenPrevDiscountsExists,
+NULL AS IsManualDiscount,
+NULL AS IncludeNonDiscountedItems,
+NULL AS IncludeNonDiscountedHeaderBundles,
+NULL AS IsCouponDiscount,
+NULL AS DistributionOfDiscountAmongPromotionItems,
+NULL AS DiscountValueSource,
+NULL AS BundleDiscountType,
+NULL AS BundleDiscountValue,
+NULL AS BundleDiscountApplyDiscountTo,
+NULL AS LoyaltyCardValidationMode,
+NULL AS CalculateDependingOnPreviousDiscountMode,
+NULL AS CalculateDependingOnPreviousDiscountThresholdType,
+NULL AS CalculateDependingOnPreviousDiscountThreshold,
+NULL AS AdvancedDiscountRoundingMethod,
+NULL AS DiscountVersionId,
+NULL AS DocumentItemsSortedForBundles,
+SUBSTRING(Prm_Akronim,1,50) AS Code,
+NULL AS ProductId,
+TWGSyncID  AS ProductGroupId,
+2 DiscountType,
+null AS CurrencyId, --@IdWalutyOddzialu
+NULL AS Threshold,
+NULL AS QuantityLimit,
+NULL AS ValueLimit,
+KPR_Wartosc AS DiscountValue,
+0 AS IsSet,
+@RabatyLicozneOdCeny AS IsFromValue,
+1 AS DiscountFromStartValue,
+0 AS IsMarginControl,
+PRM_PominPozostale AS SkipRest,
+1 AS IsNetPrice,
+NULL AS UnitId,
+KPR_GUID AS ElemGlobalID,
+0 AS Gratis,
+NULL AS Required,
+NULL AS BundleGratisType,
+NULL AS BundleQuantity,
+NULL AS QuantityItemsLimit,
+NULL AS ThresholdType, --2 AS ThresholdType,
+NULL AS ThresholdValue,
+NULL AS MasterThresholdId,
+NULL AS ThresholdFromPrice,
+NULL AS AdvancedDiscountMultiplier,
+NULL AS AdvancedDiscountMinimumValue,
+NULL AS AdvancedDiscountMaximumValue,
+NULL AS AdvancedDiscountMinimumValueHandlingType,
+NULL AS AdvancedDiscountMaximumValueHandlingType,
+NULL AS AddHeaderDiscountOnGratis,
+KPR_KntTyp AS KntTyp,KPR_KntNumer AS KntNumer,KPR_GUID AS KPRGUID,NULL AS TmpProg, 1 AS IsKNT,0 AS TPRLp,Knt_GUID as kntGUID,null as tprGUID
+FROM CDN.PrmKarty 
+cross join @oddzialy
+JOIN(
+	SELECT KPR_Wartosc,KPR_KntTyp,KPR_KntNumer,KPR_PrmID,KntGidNumer,KPR_GUID,Knt_GUID FROM CDN.KntPromocje (NOLOCK)  
+		JOIN #tmpCustomuers on KntGidNumer = KPR_KntNumer and KPR_KntTyp = @KntTyp
+	UNION ALL
+	SELECT KPR_Wartosc,KPR_KntTyp,KPR_KntNumer,KPR_PrmID,0,KPR_GUID,Knt_GUID as Knt_GUID FROM CDN.KntPromocje (NOLOCK)
+		JOIN #tmpCustomuerGroups ON GroTyp = KPR_KntTyp AND GroNumer = KPR_KntNumer AND KPR_KntTyp = -@KntTyp
+) KPR ON KPR.KPR_PrmID = Prm_ID
+JOIN #tmpPRMS ON #tmpPRMS.PRM_Id = CDN.PrmKarty.PRM_Id
+WHERE PRM_Typ = 1 AND PRM_Pakietowa = 0 AND PRM_Stan IN (1,3)  AND PRM_Dokument &lt;&gt; 2
+
+UNION ALL
+SELECT DISTINCT CDN.PrmKarty.PRM_Id,SUBSTRING(Prm_Akronim,1,255) AS Name, SUBSTRING(Prm_Uwagi,1,2000) AS Description, 6 AS Type,
+CASE PRM_Dokument WHEN 0 THEN 3 ELSE 1 END AS TransactionType,
+CASE PRM_SposobStosowania WHEN 2 THEN 1 ELSE 2 END AS CombiningMethod,
+PRM_Priorytet AS Priority,
+PRM_PriorytetLp AS SecondaryPriority,
+CASE 
+	WHEN PRM_Cykliczna = 0 AND PRM_DataOd = 0 THEN NULL
+	WHEN PRM_Cykliczna in (0,2) AND PRM_DataOd &lt;&gt; 0 THEN CONVERT(DATETIME,DATEADD(second,PRM_DataOd,CONVERT(DATETIME,'1990-01-01',120)))
+END AS DateFrom,
+CASE 
+	WHEN PRM_Cykliczna = 0 AND PRM_DataDo = 2147483647 THEN	NULL
+	WHEN PRM_Cykliczna in (0,2) AND PRM_DataDo &lt;&gt; 2147483647 THEN CONVERT(DATETIME,DATEADD(second,PRM_DataDo,CONVERT(DATETIME,'1990-01-01',120)))
+END AS DateTo,
+CASE WHEN Prm_Stan = 1 THEN 1 ELSE 0 END AS IsActive,
+PRM_GUID AS GlobalID,
+PRM_Typ AS DiscountTypeId,
+IdWalutyOddzialu AS HeaderCurrencyId,
+NULL AS AddHeaderDiscout,
+PRM_PominPozostale AS SkipWhenPrevDiscountsExists,
+NULL AS IsManualDiscount,
+NULL AS IncludeNonDiscountedItems,
+NULL AS IncludeNonDiscountedHeaderBundles,
+NULL AS IsCouponDiscount,
+NULL AS DistributionOfDiscountAmongPromotionItems,
+NULL AS DiscountValueSource,
+NULL AS BundleDiscountType,
+NULL AS BundleDiscountValue,
+NULL AS BundleDiscountApplyDiscountTo,
+NULL AS LoyaltyCardValidationMode,
+NULL AS CalculateDependingOnPreviousDiscountMode,
+NULL AS CalculateDependingOnPreviousDiscountThresholdType,
+NULL AS CalculateDependingOnPreviousDiscountThreshold,
+NULL AS AdvancedDiscountRoundingMethod,
+NULL AS DiscountVersionId,
+NULL AS DocumentItemsSortedForBundles,
+SUBSTRING(Prm_Akronim,1,50) AS Code,
+0 AS ProductId,
+TWGSyncID AS ProductGroupId,
+2 AS DiscountType,
+NULL AS CurrencyId,
+NULL AS Threshold,
+NULL AS QuantityLimit,
+NULL AS ValueLimit,
+PTP_Wartosc AS DiscountValue,
+0 AS IsSet,
+@RabatyLicozneOdCeny AS IsFromValue,
+1 AS DiscountFromStartValue,
+0 AS IsMarginControl,
+PRM_PominPozostale AS SkipRest,
+0 AS IsNetPrice,
+NULL AS UnitId,
+PRM_GUID AS ElemGlobalID,
+0 AS Gratis,
+NULL AS Required,
+NULL AS BundleGratisType,
+NULL AS BundleQuantity,
+NULL AS QuantityItemsLimit,
+NULL AS ThresholdType,
+NULL AS ThresholdValue,
+NULL AS MasterThresholdId,
+NULL AS ThresholdFromPrice,
+NULL AS AdvancedDiscountMultiplier,
+NULL AS AdvancedDiscountMinimumValue,
+NULL AS AdvancedDiscountMaximumValue,
+NULL AS AdvancedDiscountMinimumValueHandlingType,
+NULL AS AdvancedDiscountMaximumValueHandlingType,
+NULL AS AddHeaderDiscountOnGratis,
+KPR_KntTyp AS KntTyp,KPR_KntNumer AS KntNumer,KPR_GUID AS KPRGUID,PRP_Wartosc AS TmpProg, 2 AS IsKNT,0 AS TPRLp,Knt_GUID as kntGUID,null as tprGUID
+FROM CDN.PrmKarty
+cross join @oddzialy
+JOIN CDN.FrSPromocje ON FPR_PrmID = Prm_ID
+cross apply (
+	SELECT distinct FrL_GroNumer,FrL_GroTyp FROM CDN.FrmLinki WHERE FrL_GIDNumer = PckCentrumID AND FrL_GIDTyp = @FrmTyp
+	UNION ALL
+	SELECT distinct PckCentrumID,@FrmTyp
+) FRL
+JOIN(
+	SELECT KPR_KntTyp,KPR_KntNumer,KPR_PrmID,KntGidNumer,KPR_GUID,Knt_GUID FROM CDN.KntPromocje (NOLOCK)  
+		JOIN #tmpCustomuers on KntGidNumer = KPR_KntNumer and KPR_KntTyp = @KntTyp
+	UNION ALL
+	SELECT KPR_KntTyp,KPR_KntNumer,KPR_PrmID,0,KPR_GUID,Knt_GUID as Knt_GUID FROM CDN.KntPromocje (NOLOCK)
+		JOIN #tmpCustomuerGroups ON GroTyp = KPR_KntTyp AND GroNumer = KPR_KntNumer AND KPR_KntTyp = -@KntTyp
+) KPR ON KPR.KPR_PrmID = Prm_ID
+LEFT JOIN CDN.ProgiPromocje ON PRP_PrmID = Prm_ID
+LEFT JOIN CDN.ProgiTwrPromocje ON PTP_PRPID = PRP_ID
+JOIN cdn.MagPromocje ON MPR_PrmID = PRM_Id 
+JOIN #tmpWarehouses ON GidNumer = MPR_MagNumer
+JOIN cdn.PltPromocje ON PPr_PrmID = PRM_Id
+JOIN cdn.SpDPromocje ON PRM_Id=SpD_PrmId
+JOIN #tmpPRMS ON #tmpPRMS.PRM_id = CDN.PrmKarty.Prm_ID
+WHERE PRM_Typ = 8 AND PRM_Pakietowa = 0 AND PRM_Stan IN (1,3) AND PRM_Dokument &lt;&gt; 2 AND Prm_Cykliczna = 0 AND PRM_CyklRodzaj = 0 AND PPr_PltID = -1 AND SpD_SpDLp = -1 AND FRL.FrL_GroNumer = FPR_FrsID AND FRL.FrL_GroTyp = @FrmTyp
+UNION ALL
+SELECT DISTINCT CDN.PrmKarty.PRM_Id, SUBSTRING(Prm_Akronim,1,255) AS Name, SUBSTRING(Prm_Uwagi,1,2000) AS Description, 
+1 AS Type,
+CASE PRM_Dokument WHEN 0 THEN 3 ELSE 1 END AS TransactionType,
+CASE PRM_SposobStosowania WHEN 2 THEN 1 ELSE 2 END AS CombiningMethod,
+PRM_Priorytet AS Priority,
+PRM_PriorytetLp AS SecondaryPriority,
+NULL AS DateFrom,
+NULL AS DateTo,
+CASE WHEN Prm_Stan = 1 THEN 1 ELSE 0 END AS IsActive ,
+PRM_GUID AS GlobalID,
+NULL AS DiscountTypeId,
+NULL AS HeaderCurrencyId,
+NULL AS AddHeaderDiscout,
+PRM_PominPozostale AS SkipWhenPrevDiscountsExists,
+0 AS IsManualDiscount,
+0 AS IncludeNonDiscountedItems,
+0 AS IncludeNonDiscountedHeaderBundles,
+0 AS IsCouponDiscount,
+0 AS DistributionOfDiscountAmongPromotionItems,
+NULL AS DiscountValueSource,
+0 AS BundleDiscountType,
+0 AS BundleDiscountValue,
+0 AS BundleDiscountApplyDiscountTo,
+0 AS LoyaltyCardValidationMode,
+0 AS CalculateDependingOnPreviousDiscountMode,
+NULL AS CalculateDependingOnPreviousDiscountThresholdType,
+NULL AS CalculateDependingOnPreviousDiscountThreshold,
+NULL AS AdvancedDiscountRoundingMethod,
+NULL AS DiscountVersionId,
+0 AS DocumentItemsSortedForBundles,
+SUBSTRING(Prm_Akronim,1,50) AS Code,
+CASE WHEN TPR_TwrTyp = @TwrTyp THEN TPR_TwrNumer ELSE NULL END AS ProductId,
+CASE WHEN TPR_TwrTyp = @TwrTyp THEN NULL ELSE MIN(TwG_SyncID) END  AS ProductGroupId,
+CDN.ESKLEP_UstalDiscountType(CDN.PrmKarty.PRM_Id,TPR_TwrNumer,TPR_Typ,IDGrupyTwr,TPR_Prog) AS DiscountType,
+WalutaLog.PCL_ObiNumer AS CurrencyId,
+TPR_Prog AS Threshold,
+CASE WHEN TPR_LimitTyp = 1 THEN TPR_LimitWartosc ELSE NULL END AS QuantityLimit,
+CASE WHEN TPR_LimitTyp = 2 THEN TPR_LimitWartosc ELSE NULL END AS ValueLimit,
+CASE WHEN TPR_Typ IN(5,6) THEN -TPR_Wartosc ELSE TPR_Wartosc END AS DiscountValue,
+0 AS IsSet,
+@RabatyLicozneOdCeny AS IsFromValue,
+1 AS DiscountFromStartValue,
+0 AS IsMarginControl,
+PRM_PominPozostale AS SkipRest,
+CASE WHEN TPR_FlagaNB = 'N' AND TPR_Typ = 3 THEN 1 ELSE 0 END AS IsNetPrice,
+NULL AS UnitId,
+TPR_GUID AS ElemGlobalID,
+0 AS Gratis,
+NULL AS Required,
+NULL AS BundleGratisType,
+NULL AS BundleQuantity,
+NULL AS QuantityItemsLimit,
+NULL AS ThresholdType,
+NULL AS ThresholdValue,
+NULL AS MasterThresholdId,
+NULL AS ThresholdFromPrice,
+NULL AS AdvancedDiscountMultiplier,
+NULL AS AdvancedDiscountMinimumValue,
+NULL AS AdvancedDiscountMaximumValue,
+NULL AS AdvancedDiscountMinimumValueHandlingType,
+NULL AS AdvancedDiscountMaximumValueHandlingType,
+NULL AS AddHeaderDiscountOnGratis,
+KPR_KntTyp AS KntTyp,KPR_KntNumer AS KntNumer,KPR_GUID AS KPRGUID,TPR_Prog AS TmpProg, NULL AS IsKNT,TPR_Lp AS TPRLp,Knt_GUID as kntGUID,tpr_guid as tprGUID
+FROM CDN.PrmKarty 
+cross join @oddzialy
+LEFT OUTER JOIN CDN.ZstPromocje ON PRM_Id = ZPR_PrmID -- Potrzebne do wyeliminowania przypadkow z zestawami TFS: 113525
+JOIN(
+	SELECT KPR_KntTyp,KPR_KntNumer,KPR_PrmID,KntGidNumer,KPR_GUID,Knt_GUID FROM CDN.KntPromocje (NOLOCK)  
+		JOIN #tmpCustomuers on KntGidNumer = KPR_KntNumer and KPR_KntTyp = @KntTyp
+	UNION ALL
+	SELECT KPR_KntTyp,KPR_KntNumer,KPR_PrmID,0,KPR_GUID,Knt_GUID as Knt_GUID FROM CDN.KntPromocje (NOLOCK)
+		JOIN #tmpCustomuerGroups ON GroTyp = KPR_KntTyp AND GroNumer = KPR_KntNumer AND KPR_KntTyp = -@KntTyp
+) KPR ON KPR.KPR_PrmID = Prm_ID
+JOIN cdn.TwrPromocje ON PRM_Id = TPR_PrmId AND TPR_Aktywny = 1
+LEFT JOIN CDN.TwrLinki ON TwL_GIDNumer = TPR_TwrNumer AND TwL_GIDTyp = TPR_TwrTyp AND TwL_GrOTyp = -16 AND (case when TwL_GidTyp = -16 then TwL_GIDNumer  else TwL_GrONumer end in (select * from #tmpProductGroups)) --TFSID:421722 TwL_GIDNumer = @IDGrupyTwr
+LEFT JOIN CDN.TwrGrupy ON TwG_GIDNumer = TPR_TwrNumer AND TwG_GIDTyp = TPR_TwrTyp --TFSID:422158 AND TwG_GrONumer = TwL_GrONumer AND TwG_GrOTyp = TwL_GrOTyp
+LEFT OUTER JOIN CDN.PicoLog TwrLog ON TwrLog.PcL_ObiTyp = TPR_TwrTyp AND TwrLog.PcL_ObiNumer = TPR_TwrNumer AND TPR_TwrTyp =@TwrTyp
+LEFT OUTER JOIN CDN.PicoWaluty ON PWL_PckID = ID AND PWL_SymbolM = TPR_Waluta
+LEFT OUTER JOIN CDN.PicoLog WalutaLog ON WalutaLog.PcL_ObiTyp = @Typ_Wal AND WalutaLog.PcL_ObiNumer = Pwl_id
+JOIN #tmpPRMS ON #tmpPRMS.PRM_Id = CDN.PrmKarty.PRM_Id
+WHERE PRM_Typ = 4 AND PRM_Pakietowa = 0 AND PRM_Stan IN (1,3) AND PRM_Dokument &lt;&gt; 2 AND TPR_Typ IN (1,2,3)
+AND ZPR_ID IS NULL -- Potrzebne do wyeliminowania przypadkow z zestawami TFS: 113525
+AND (TwL_GIDNumer IS NOT NULL OR (TPR_TwrTyp = @TwgTyp and TPR_TwrNumer in (select * from #tmpProductGroups))) --TFSID:422823
+GROUP BY CDN.PrmKarty.PRM_Id,PRM_GUID,PRM_Akronim,PRM_Uwagi,PRM_Dokument,PRM_SposobStosowania,PRM_Priorytet,PRM_PriorytetLp,PRM_Stan,PRM_PominPozostale,TPR_TwrTyp,TPR_TwrNumer,
+TPR_Typ,TPR_Prog,WalutaLog.PcL_ObiNumer,TPR_LimitTyp,TPR_LimitWartosc,TPR_Wartosc,TPR_FlagaNB,TPR_GUID,KPR_KntTyp,KPR_KntNumer,KPR_GUID,TPR_Lp,Knt_GUID, IDGrupyTwr
+
+INSERT INTO #tmpRecordSet 
+SELECT DISTINCT
+PRMID,
+Name, Description,Type,
+TransactionType,
+CombiningMethod,
+Priority,
+SecondaryPriority,
+DateFrom,
+DateTo,
+IsActive,
+GlobalID,
+DiscountTypeId,
+IdWalutyOddzialu AS HeaderCurrencyId,
+AddHeaderDiscout,
+SkipWhenPrevDiscountsExists,
+IsManualDiscount,
+IncludeNonDiscountedItems,
+IncludeNonDiscountedHeaderBundles,
+IsCouponDiscount,
+DistributionOfDiscountAmongPromotionItems,
+DiscountValueSource,
+BundleDiscountType,
+BundleDiscountValue,
+BundleDiscountApplyDiscountTo,
+LoyaltyCardValidationMode,
+CalculateDependingOnPreviousDiscountMode,
+CalculateDependingOnPreviousDiscountThresholdType,
+CalculateDependingOnPreviousDiscountThreshold,
+AdvancedDiscountRoundingMethod,
+DiscountVersionId,
+DocumentItemsSortedForBundles,
+Code,
+GPR_TwrNumer AS ProductId,
+NULL AS ProductGroupId,
+CASE WHEN GPR_Typ = 1 THEN 2 ELSE 3 END AS DiscountType,
+WalutaLog.PCL_ObiNumer AS CurrencyId,
+NULL AS Threshold,
+NULL AS QuantityLimit,
+NULL AS ValueLimit,
+GPR_Wartosc AS DiscountValue,
+0 AS IsSet,
+@RabatyLicozneOdCeny AS IsFromValue,
+1 AS DiscountFromStartValue,
+0 AS IsMarginControl,
+1 AS SkipRest,
+CASE WHEN GPR_FlagaNB = 'N' THEN 1 ELSE 0 END AS IsNetPrice,
+Naz_GIDLp AS UnitId,
+GPR_GUID AS ElemGlobalID,
+1 AS Gratis,
+GPR_Domyslny AS Required,
+0 AS BundleGratisType,
+GPR_Ilosc AS BundleQuantity,
+0 AS QuantityItemsLimit,
+2 AS ThresholdType,
+0 AS ThresholdValue,
+CASE WHEN Type = 5 THEN PRP_GUID ELSE NULL END AS MasterThresholdId,
+NULL AS ThresholdFromPrice,
+NULL AS AdvancedDiscountMultiplier,
+NULL AS AdvancedDiscountMinimumValue,
+NULL AS AdvancedDiscountMaximumValue,
+NULL AS AdvancedDiscountMinimumValueHandlingType,
+NULL AS AdvancedDiscountMaximumValueHandlingType,
+NULL AS AddHeaderDiscountOnGratis,
+KntTyp,KntNumer,KPRGUID,NULL AS TmpProg,IsKNT,
+GPR_Pozycja AS TPRLp,
+kntGUID,
+GPR_GUID AS tprGUID
+FROM #tmpRecordSet
+cross join @oddzialy
+JOIN CDN.GratisyPromocje ON GPR_PrmId = PRMID
+JOIN CDN.TwrKarty ON Twr_GIDNumer = GPR_TwrNumer
+JOIN cdn.Nazwy ON Naz_Nazwa = Twr_Jm AND naz_gidtyp=144
+LEFT OUTER JOIN CDN.ProgiPromocje ON PRP_ID = GPR_PrPID
+LEFT OUTER JOIN CDN.PicoWaluty ON PWL_PckID = ID AND PWL_SymbolM = GPR_Waluta
+LEFT OUTER JOIN CDN.PicoLog WalutaLog ON WalutaLog.PcL_ObiTyp = @Typ_Wal AND WalutaLog.PcL_ObiNumer = Pwl_id
+WHERE Type IN (4,5)
+
+INSERT INTO #tmpPackageDiscountThresholds 
+SELECT PRMID,COALESCE(ProductId,ProductGroupId),PRP_Rodzaj+1 AS Type,PRP_Wartosc AS Value,PRP_MinIloscPoz AS QuantityItemsLimit, PRP_GUID AS GlobalId 
+FROM #tmpRecordSet JOIN CDN.ProgiPromocje ON PRP_PrmID = PRMID 
+WHERE Type = 5
+
+INSERT INTO #tmpDeterminants
+SELECT #tmpRecordSet.PRMID,
+	CASE WHEN KntTyp = @KntTyp THEN 6 ELSE 7 END AS Type,
+	KntGUID AS ObjectID,
+	KPRGUID AS GlobalID,
+	#tmpRecordSet.IsKNT AS IsForElement
+FROM #tmpRecordSet
+
+if @PointOfSaleId is null
+INSERT INTO #tmpDeterminants
+SELECT distinct #tmpRecordSet.PRMID,
+	2 AS Type,
+	PckCentrumID AS ObjectID,
+	NEWID() AS GlobalID,
+	0 AS IsForElement
+FROM #tmpRecordSet
+cross join @oddzialy
+cross apply (
+			SELECT distinct FrL_GroNumer,FrL_GroTyp FROM CDN.FrmLinki WHERE FrL_GIDNumer = PckCentrumID AND FrL_GIDTyp = @FrmTyp
+			UNION ALL
+			SELECT distinct PckCentrumID,@FrmTyp
+		) FRL
+JOIN CDN.FrSPromocje ON FPR_PrmID = PRMID
+where (FRL.FrL_GroNumer = FPR_FrsID AND FRL.FrL_GroTyp = @FrmTyp)
+group by #tmpRecordSet.PRMID, PckCentrumID	
+
+INSERT INTO #tmpItemDiscountThresholds 
+SELECT #tmpRecordSet.PRMID,COALESCE(#tmpRecordSet.ProductId,#tmpRecordSet.ProductGroupId),#tmpRecordSet.TmpProg,#tmpRecordSet.DiscountValue,#tmpRecordSet.ElemGlobalID 
+FROM #tmpRecordSet 
+WHERE DiscountType IN (8,9,11) OR (DiscountType = 2 AND Type = 6)
+
+INSERT INTO #tmpItemDiscountThresholdsGuids
+SELECT #tmpItemDiscountThresholds.PRMID,#tmpItemDiscountThresholds.ProductId,MIN(#tmpItemDiscountThresholds.ElemGUID) FROM #tmpItemDiscountThresholds
+GROUP BY #tmpItemDiscountThresholds.PRMID,#tmpItemDiscountThresholds.ProductId
+
+/* Odczyt danych z tabeli */
+
+SELECT DISTINCT  1 AS Tag, NULL AS Parent, -- Discount
+Name AS [Discount!1!Name], 
+Description AS [Discount!1!Description], 
+Type AS [Discount!1!Type],
+TransactionType AS [Discount!1!TransactionType],
+CombiningMethod AS [Discount!1!CombiningMethod],
+Priority AS [Discount!1!Priority],
+SecondaryPriority AS [Discount!1!SecondaryPriority],
+DateFrom AS [Discount!1!DateFrom],
+DateTo AS [Discount!1!DateTo],
+IsActive AS [Discount!1!IsActive],
+GlobalID AS [Discount!1!GlobalID],
+DiscountTypeId AS [Discount!1!DiscountTypeId],
+AddHeaderDiscout AS [Discount!1!AddHeaderDiscout],
+SkipWhenPrevDiscountsExists AS [Discount!1!SkipWhenPrevDiscountsExists],
+IsManualDiscount AS [Discount!1!IsManualDiscount],
+IncludeNonDiscountedItems AS [Discount!1!IncludeNonDiscountedItems],
+IncludeNonDiscountedHeaderBundles AS [Discount!1!IncludeNonDiscountedHeaderBundles],
+IsCouponDiscount AS [Discount!1!IsCouponDiscount],
+DistributionOfDiscountAmongPromotionItems AS [Discount!1!DistributionOfDiscountAmongPromotionItems],
+DiscountValueSource AS [Discount!1!DiscountValueSource],
+BundleDiscountType AS [Discount!1!BundleDiscountType],
+BundleDiscountValue AS [Discount!1!BundleDiscountValue],
+BundleDiscountApplyDiscountTo AS [Discount!1!BundleDiscountApplyDiscountTo],
+LoyaltyCardValidationMode AS [Discount!1!LoyaltyCardValidationMode],
+CalculateDependingOnPreviousDiscountMode AS [Discount!1!CalculateDependingOnPreviousDiscountMode],
+CalculateDependingOnPreviousDiscountThresholdType AS [Discount!1!CalculateDependingOnPreviousDiscountThresholdType],
+CalculateDependingOnPreviousDiscountThreshold AS [Discount!1!CalculateDependingOnPreviousDiscountThreshold],
+AdvancedDiscountRoundingMethod AS [Discount!1!AdvancedDiscountRoundingMethod],
+DiscountVersionId AS [Discount!1!DiscountVersionId],
+DocumentItemsSortedForBundles AS [Discount!1!DocumentItemsSortedForBundles],
+Code AS [Discount!1!Code],
+PrmID AS [Discount!1!ID!Hide],
+ NULL AS [Elements!2],NULL AS [Element!3!ID!Hide],
+	NULL AS [Element!3!ProductId],
+	NULL AS [Element!3!ProductGroupId],
+	NULL AS [Element!3!DiscountType],
+	NULL AS [Element!3!CurrencyId],
+	NULL AS [Element!3!Threshold],
+	NULL AS [Element!3!QuantityLimit],
+	NULL AS [Element!3!ValueLimit],
+	NULL AS [Element!3!DiscountValue],
+	NULL AS [Element!3!IsSet],
+	NULL AS [Element!3!IsFromValue],
+	NULL AS [Element!3!DiscountFromStartValue],
+	NULL AS [Element!3!IsMarginControl],
+	NULL AS [Element!3!SkipRest],
+	NULL AS [Element!3!IsNetPrice],
+	NULL AS [Element!3!UnitId],
+	NULL AS [Element!3!GlobalID],
+	NULL AS [Element!3!Gratis],
+	NULL AS [Element!3!Required],
+	NULL AS [Element!3!BundleGratisType],
+	NULL AS [Element!3!BundleQuantity],
+	NULL AS [Element!3!QuantityItemsLimit],
+	NULL AS [Element!3!ThresholdType],
+	NULL AS [Element!3!ThresholdValue],
+	NULL AS [Element!3!MasterThresholdId],
+	NULL AS [Element!3!ThresholdFromPrice],
+	NULL AS [Element!3!AdvancedDiscountMultiplier],
+	NULL AS [Element!3!AdvancedDiscountMinimumValue],
+	NULL AS [Element!3!AdvancedDiscountMaximumValue],
+	NULL AS [Element!3!AdvancedDiscountMinimumValueHandlingType],
+	NULL AS [Element!3!AdvancedDiscountMaximumValueHandlingType],
+	NULL AS [Element!3!AddHeaderDiscountOnGratis],
+	NULL AS [Element!3!TPRLp!Hide],
+	  NULL AS [ItemDiscountThresholds!4],NULL AS [ItemDiscountThreshold!5!ID!Hide],
+	   NULL AS [ItemDiscountThreshold!5!Threshold],
+	   NULL AS [ItemDiscountThreshold!5!DiscountValue],
+ NULL AS [Determinants!6],NULL AS [Determinant!7!ID!Hide],
+	NULL AS [Determinant!7!Type],
+	NULL AS [Determinant!7!ObjectGUID],
+	NULL AS [Determinant!7!ObjectId],
+	NULL AS [Determinant!7!ElementGUID], --[Determinant!7!ElementGUID],
+	NULL AS [Determinant!7!IsForElements], --[Determinant!7!IsForElement],
+	NULL AS [Determinant!7!GlobalID],
+	NULL AS [Determinant!7!ObjectTypeId],
+	NULL AS [Thresholds!8],NULL AS [Threshold!9!ID!Hide],
+	NULL AS [Threshold!9!Type],
+	NULL AS [Threshold!9!Value],
+	NULL AS [Threshold!9!QuantityItemsLimit],
+	NULL AS [Threshold!9!GlobalID],
+	NULL AS [Threshold!9!BundleDiscountValue]
+FROM #tmpRecordSet 
+UNION ALL -- Elements
+SELECT DISTINCT 2 AS Tag, 1 AS Parent,
+NULL AS [Discount!1!Name], 
+NULL AS [Discount!1!Description], 
+NULL AS [Discount!1!Type],
+NULL AS [Discount!1!TransactionType],
+NULL AS [Discount!1!CombiningMethod],
+NULL AS [Discount!1!Priority],
+NULL AS [Discount!1!SecondaryPriority],
+NULL AS [Discount!1!DateFrom],
+NULL AS [Discount!1!DateTo],
+NULL AS [Discount!1!IsActive],
+NULL AS [Discount!1!GlobalID],
+NULL AS [Discount!1!DiscountTypeId],
+NULL AS [Discount!1!AddHeaderDiscout],
+NULL AS [Discount!1!SkipWhenPrevDiscountsExists],
+NULL AS [Discount!1!IsManualDiscount],
+NULL AS [Discount!1!IncludeNonDiscountedItems],
+NULL AS [Discount!1!IncludeNonDiscountedHeaderBundles],
+NULL AS [Discount!1!IsCouponDiscount],
+NULL AS [Discount!1!DistributionOfDiscountAmongPromotionItems],
+NULL AS [Discount!1!DiscountValueSource],
+NULL AS [Discount!1!BundleDiscountType],
+NULL AS [Discount!1!BundleDiscountValue],
+NULL AS [Discount!1!BundleDiscountApplyDiscountTo],
+NULL AS [Discount!1!LoyaltyCardValidationMode],
+NULL AS [Discount!1!CalculateDependingOnPreviousDiscountMode],
+NULL AS [Discount!1!CalculateDependingOnPreviousDiscountThresholdType],
+NULL AS [Discount!1!CalculateDependingOnPreviousDiscountThreshold],
+NULL AS [Discount!1!AdvancedDiscountRoundingMethod],
+NULL AS [Discount!1!DiscountVersionId],
+NULL AS [Discount!1!DocumentItemsSortedForBundles],
+NULL AS [Discount!1!Code],
+PrmID AS [Discount!1!ID!Hide],
+ NULL,PrmID,
+	NULL AS [Element!3!ProductId],
+	NULL AS [Element!3!ProductGroupId],
+	NULL AS [Element!3!DiscountType],
+	NULL AS [Element!3!CurrencyId],
+	NULL AS [Element!3!Threshold],
+	NULL AS [Element!3!QuantityLimit],
+	NULL AS [Element!3!ValueLimit],
+	NULL AS [Element!3!DiscountValue],
+	NULL AS [Element!3!IsSet],
+	NULL AS [Element!3!IsFromValue],
+	NULL AS [Element!3!DiscountFromStartValue],
+	NULL AS [Element!3!IsMarginControl],
+	NULL AS [Element!3!SkipRest],
+	NULL AS [Element!3!IsNetPrice],
+	NULL AS [Element!3!UnitId],
+	NULL AS [Element!3!GlobalID],
+	NULL AS [Element!3!Gratis],
+	NULL AS [Element!3!Required],
+	NULL AS [Element!3!BundleGratisType],
+	NULL AS [Element!3!BundleQuantity],
+	NULL AS [Element!3!QuantityItemsLimit],
+	NULL AS [Element!3!ThresholdType],
+	NULL AS [Element!3!ThresholdValue],
+	NULL AS [Element!3!MasterThresholdId],
+	NULL AS [Element!3!ThresholdFromPrice],
+	NULL AS [Element!3!AdvancedDiscountMultiplier],
+	NULL AS [Element!3!AdvancedDiscountMinimumValue],
+	NULL AS [Element!3!AdvancedDiscountMaximumValue],
+	NULL AS [Element!3!AdvancedDiscountMinimumValueHandlingType],
+	NULL AS [Element!3!AdvancedDiscountMaximumValueHandlingType],
+	NULL AS [Element!3!AddHeaderDiscountOnGratis],
+	NULL AS [Element!3!TPRLp!Hide],
+	  NULL AS [ItemDiscountThresholds!4],NULL AS [ItemDiscountThreshold!5!ID!Hide],
+	   NULL AS [ItemDiscountThreshold!5!Threshold],
+	   NULL AS [ItemDiscountThreshold!5!DiscountValue],
+NULL AS [Determinants!6],NULL AS [Determinant!7!ID!Hide],
+	NULL AS [Determinant!7!Type],
+	NULL AS [Determinant!7!ObjectGUID],
+	NULL AS [Determinant!7!ObjectId],
+	NULL AS [Determinant!7!ElementGUID], --[Determinant!7!ElementGUID],
+	NULL AS [Determinant!7!IsForElements], --[Determinant!7!IsForElement],
+	NULL AS [Determinant!7!GlobalID],
+	NULL AS [Determinant!7!ObjectTypeId],
+	NULL AS [Thresholds!8],NULL AS [Threshold!9!ID!Hide],
+	NULL AS [Threshold!9!Type],
+	NULL AS [Threshold!9!Value],
+	NULL AS [Threshold!9!QuantityItemsLimit],
+	NULL AS [Threshold!9!GlobalID],
+	NULL AS [Threshold!9!BundleDiscountValue]
+FROM #tmpRecordSet WHERE ElemGlobalID IS NOT NULL
+UNION ALL -- Element
+SELECT DISTINCT 3 AS Tag, 2 AS Parent,
+NULL AS [Discount!1!Name], 
+NULL AS [Discount!1!Description], 
+NULL AS [Discount!1!Type],
+NULL AS [Discount!1!TransactionType],
+NULL AS [Discount!1!CombiningMethod],
+NULL AS [Discount!1!Priority],
+NULL AS [Discount!1!SecondaryPriority],
+NULL AS [Discount!1!DateFrom],
+NULL AS [Discount!1!DateTo],
+NULL AS [Discount!1!IsActive],
+NULL AS [Discount!1!GlobalID],
+NULL AS [Discount!1!DiscountTypeId],
+NULL AS [Discount!1!AddHeaderDiscout],
+NULL AS [Discount!1!SkipWhenPrevDiscountsExists],
+NULL AS [Discount!1!IsManualDiscount],
+NULL AS [Discount!1!IncludeNonDiscountedItems],
+NULL AS [Discount!1!IncludeNonDiscountedHeaderBundles],
+NULL AS [Discount!1!IsCouponDiscount],
+NULL AS [Discount!1!DistributionOfDiscountAmongPromotionItems],
+NULL AS [Discount!1!DiscountValueSource],
+NULL AS [Discount!1!BundleDiscountType],
+NULL AS [Discount!1!BundleDiscountValue],
+NULL AS [Discount!1!BundleDiscountApplyDiscountTo],
+NULL AS [Discount!1!LoyaltyCardValidationMode],
+NULL AS [Discount!1!CalculateDependingOnPreviousDiscountMode],
+NULL AS [Discount!1!CalculateDependingOnPreviousDiscountThresholdType],
+NULL AS [Discount!1!CalculateDependingOnPreviousDiscountThreshold],
+NULL AS [Discount!1!AdvancedDiscountRoundingMethod],
+NULL AS [Discount!1!DiscountVersionId],
+NULL AS [Discount!1!DocumentItemsSortedForBundles],
+NULL AS [Discount!1!Code],
+#tmpRecordSet.PrmID AS [Discount!1!ID!Hide],
+ NULL,#tmpRecordSet.PrmID,
+	CASE WHEN #tmpRecordSet.ProductId &lt;&gt; 0 THEN #tmpRecordSet.ProductID ELSE NULL END AS [Element!3!ProductId],
+	ProductGroupId AS [Element!3!ProductGroupId],
+	DiscountType AS [Element!3!DiscountType],
+	CurrencyId AS [Element!3!CurrencyId],
+	CASE WHEN DiscountType NOT IN (8,9,11) THEN Threshold ELSE NULL END AS [Element!3!Threshold],
+	QuantityLimit AS [Element!3!QuantityLimit],
+	ValueLimit AS [Element!3!ValueLimit],
+	CASE WHEN DiscountType IN (8,9,11) OR (DiscountType = 2 AND Type = 6) THEN 0 ELSE DiscountValue END AS [Element!3!DiscountValue],
+	IsSet AS [Element!3!IsSet],
+	IsFromValue AS [Element!3!IsFromValue],
+	DiscountFromStartValue AS [Element!3!DiscountFromStartValue],
+	IsMarginControl AS [Element!3!IsMarginControl],
+	SkipRest AS [Element!3!SkipRest],
+	IsNetPrice AS [Element!3!IsNetPrice],
+	UnitId AS [Element!3!UnitId],
+	ElemGlobalID AS [Element!3!GlobalID],
+	Gratis AS [Element!3!Gratis],
+	Required AS [Element!3!Required],
+	BundleGratisType AS [Element!3!BundleGratisType],
+	BundleQuantity AS [Element!3!BundleQuantity],
+	QuantityItemsLimit AS [Element!3!QuantityItemsLimit],
+	ThresholdType AS [Element!3!ThresholdType],
+	ThresholdValue AS [Element!3!ThresholdValue],
+	MasterThresholdId AS [Element!3!MasterThresholdId],
+	CASE WHEN DiscountType IN (8,9,11)  OR (DiscountType = 2 AND Type = 6) THEN 0 ELSE ThresholdFromPrice END AS [Element!3!ThresholdFromPrice],
+	AdvancedDiscountMultiplier AS [Element!3!AdvancedDiscountMultiplier],
+	AdvancedDiscountMinimumValue AS [Element!3!AdvancedDiscountMinimumValue],
+	AdvancedDiscountMaximumValue AS [Element!3!AdvancedDiscountMaximumValue],
+	AdvancedDiscountMinimumValueHandlingType AS [Element!3!AdvancedDiscountMinimumValueHandlingType],
+	AdvancedDiscountMaximumValueHandlingType AS [Element!3!AdvancedDiscountMaximumValueHandlingType],
+	AddHeaderDiscountOnGratis AS [Element!3!AddHeaderDiscountOnGratis],
+	TPRLp AS [Element!3!TPRLp!Hide],
+    NULL AS [ItemDiscountThresholds!4],COALESCE(#tmpRecordSet.ProductId,#tmpRecordSet.ProductGroupId) AS [ItemDiscountThreshold!5!ID!Hide],
+	   NULL AS [ItemDiscountThreshold!5!Threshold],
+	   NULL AS [ItemDiscountThreshold!5!DiscountValue],
+NULL AS [Determinants!6],NULL AS [Determinant!7!ID!Hide],
+	NULL AS [Determinant!7!Type],
+	NULL AS [Determinant!7!ObjectGUID],
+	NULL AS [Determinant!7!ObjectId],
+	NULL AS [Determinant!7!ElementGUID], --[Determinant!7!ElementGUID],
+	NULL AS [Determinant!7!IsForElements], --[Determinant!7!IsForElement],
+	NULL AS [Determinant!7!GlobalID],
+	NULL AS [Determinant!7!ObjectTypeId],
+	NULL AS [Thresholds!8],NULL AS [Threshold!9!ID!Hide],
+	NULL AS [Threshold!9!Type],
+	NULL AS [Threshold!9!Value],
+	NULL AS [Threshold!9!QuantityItemsLimit],
+	NULL AS [Threshold!9!GlobalID],
+	NULL AS [Threshold!9!BundleDiscountValue]
+FROM #tmpRecordSet
+LEFT JOIN #tmpItemDiscountThresholdsGuids ON #tmpItemDiscountThresholdsGuids.PRMId = #tmpRecordSet.PRMId AND #tmpItemDiscountThresholdsGuids.ProductId = COALESCE(#tmpRecordSet.ProductId,#tmpRecordSet.ProductGroupId) AND #tmpItemDiscountThresholdsGuids.ElemGUID = ElemGlobalID
+WHERE ElemGlobalID IS NOT NULL AND NOT (DiscountType IN (8,9,11) AND #tmpItemDiscountThresholdsGuids.PRMId IS NULL)
+UNION ALL -- ThresholdDiscounts
+SELECT DISTINCT 4 AS Tag, 3 AS Parent,
+NULL AS [Discount!1!Name], 
+NULL AS [Discount!1!Description], 
+NULL AS [Discount!1!Type],
+NULL AS [Discount!1!TransactionType],
+NULL AS [Discount!1!CombiningMethod],
+NULL AS [Discount!1!Priority],
+NULL AS [Discount!1!SecondaryPriority],
+NULL AS [Discount!1!DateFrom],
+NULL AS [Discount!1!DateTo],
+NULL AS [Discount!1!IsActive],
+NULL AS [Discount!1!GlobalID],
+NULL AS [Discount!1!DiscountTypeId],
+NULL AS [Discount!1!AddHeaderDiscout],
+NULL AS [Discount!1!SkipWhenPrevDiscountsExists],
+NULL AS [Discount!1!IsManualDiscount],
+NULL AS [Discount!1!IncludeNonDiscountedItems],
+NULL AS [Discount!1!IncludeNonDiscountedHeaderBundles],
+NULL AS [Discount!1!IsCouponDiscount],
+NULL AS [Discount!1!DistributionOfDiscountAmongPromotionItems],
+NULL AS [Discount!1!DiscountValueSource],
+NULL AS [Discount!1!BundleDiscountType],
+NULL AS [Discount!1!BundleDiscountValue],
+NULL AS [Discount!1!BundleDiscountApplyDiscountTo],
+NULL AS [Discount!1!LoyaltyCardValidationMode],
+NULL AS [Discount!1!CalculateDependingOnPreviousDiscountMode],
+NULL AS [Discount!1!CalculateDependingOnPreviousDiscountThresholdType],
+NULL AS [Discount!1!CalculateDependingOnPreviousDiscountThreshold],
+NULL AS [Discount!1!AdvancedDiscountRoundingMethod],
+NULL AS [Discount!1!DiscountVersionId],
+NULL AS [Discount!1!DocumentItemsSortedForBundles],
+NULL AS [Discount!1!Code],
+#tmpRecordSet.PrmID AS [Discount!1!ID!Hide],
+ NULL,#tmpRecordSet.PRMId,
+	NULL AS [Element!3!ProductId],
+	NULL AS [Element!3!ProductGroupId],
+	NULL AS [Element!3!DiscountType],
+	NULL AS [Element!3!CurrencyId],
+	NULL AS [Element!3!Threshold],
+	NULL AS [Element!3!QuantityLimit],
+	NULL AS [Element!3!ValueLimit],
+	NULL AS [Element!3!DiscountValue],
+	NULL AS [Element!3!IsSet],
+	NULL AS [Element!3!IsFromValue],
+	NULL AS [Element!3!DiscountFromStartValue],
+	NULL AS [Element!3!IsMarginControl],
+	NULL AS [Element!3!SkipRest],
+	NULL AS [Element!3!IsNetPrice],
+	NULL AS [Element!3!UnitId],
+	NULL AS [Element!3!GlobalID],
+	NULL AS [Element!3!Gratis],
+	NULL AS [Element!3!Required],
+	NULL AS [Element!3!BundleGratisType],
+	NULL AS [Element!3!BundleQuantity],
+	NULL AS [Element!3!QuantityItemsLimit],
+	NULL AS [Element!3!ThresholdType],
+	NULL AS [Element!3!ThresholdValue],
+	NULL AS [Element!3!MasterThresholdId],
+	NULL AS [Element!3!ThresholdFromPrice],
+	NULL AS [Element!3!AdvancedDiscountMultiplier],
+	NULL AS [Element!3!AdvancedDiscountMinimumValue],
+	NULL AS [Element!3!AdvancedDiscountMaximumValue],
+	NULL AS [Element!3!AdvancedDiscountMinimumValueHandlingType],
+	NULL AS [Element!3!AdvancedDiscountMaximumValueHandlingType],
+	NULL AS [Element!3!AddHeaderDiscountOnGratis],
+	NULL AS [Element!3!TPRLp!Hide],
+    NULL AS [ItemDiscountThresholds!4],#tmpItemDiscountThresholds.ProductId AS [ItemDiscountThreshold!5!ID!Hide],
+	   NULL AS [ItemDiscountThreshold!5!Threshold],
+	   NULL AS [ItemDiscountThreshold!5!DiscountValue],
+NULL AS [Determinants!6],NULL AS [Determinant!7!ID!Hide],
+	NULL AS [Determinant!7!Type],
+	NULL AS [Determinant!7!ObjectGUID],
+	NULL AS [Determinant!7!ObjectId],
+	NULL AS [Determinant!7!ElementGUID], --[Determinant!7!ElementGUID],
+	NULL AS [Determinant!7!IsForElements], --[Determinant!7!IsForElement],
+	NULL AS [Determinant!7!GlobalID],
+	NULL AS [Determinant!7!ObjectTypeId],
+	NULL AS [Thresholds!8],NULL AS [Threshold!9!ID!Hide],
+	NULL AS [Threshold!9!Type],
+	NULL AS [Threshold!9!Value],
+	NULL AS [Threshold!9!QuantityItemsLimit],
+	NULL AS [Threshold!9!GlobalID],
+	NULL AS [Threshold!9!BundleDiscountValue]
+FROM #tmpRecordSet 
+INNER JOIN #tmpItemDiscountThresholds ON #tmpItemDiscountThresholds.PRMId = #tmpRecordSet.PRMId AND #tmpItemDiscountThresholds.ProductId = COALESCE(#tmpRecordSet.ProductId,#tmpRecordSet.ProductGroupId)
+INNER JOIN #tmpItemDiscountThresholdsGuids ON #tmpItemDiscountThresholdsGuids.PRMId = #tmpItemDiscountThresholds.PRMId AND #tmpItemDiscountThresholdsGuids.ProductId = #tmpItemDiscountThresholds.ProductId AND #tmpItemDiscountThresholdsGuids.ElemGUID = ElemGlobalID
+WHERE ElemGlobalID IS NOT NULL
+UNION ALL -- ThresholdDiscount
+SELECT DISTINCT 5 AS Tag, 4 AS Parent,
+NULL AS [Discount!1!Name], 
+NULL AS [Discount!1!Description], 
+NULL AS [Discount!1!Type],
+NULL AS [Discount!1!TransactionType],
+NULL AS [Discount!1!CombiningMethod],
+NULL AS [Discount!1!Priority],
+NULL AS [Discount!1!SecondaryPriority],
+NULL AS [Discount!1!DateFrom],
+NULL AS [Discount!1!DateTo],
+NULL AS [Discount!1!IsActive],
+NULL AS [Discount!1!GlobalID],
+NULL AS [Discount!1!DiscountTypeId],
+NULL AS [Discount!1!AddHeaderDiscout],
+NULL AS [Discount!1!SkipWhenPrevDiscountsExists],
+NULL AS [Discount!1!IsManualDiscount],
+NULL AS [Discount!1!IncludeNonDiscountedItems],
+NULL AS [Discount!1!IncludeNonDiscountedHeaderBundles],
+NULL AS [Discount!1!IsCouponDiscount],
+NULL AS [Discount!1!DistributionOfDiscountAmongPromotionItems],
+NULL AS [Discount!1!DiscountValueSource],
+NULL AS [Discount!1!BundleDiscountType],
+NULL AS [Discount!1!BundleDiscountValue],
+NULL AS [Discount!1!BundleDiscountApplyDiscountTo],
+NULL AS [Discount!1!LoyaltyCardValidationMode],
+NULL AS [Discount!1!CalculateDependingOnPreviousDiscountMode],
+NULL AS [Discount!1!CalculateDependingOnPreviousDiscountThresholdType],
+NULL AS [Discount!1!CalculateDependingOnPreviousDiscountThreshold],
+NULL AS [Discount!1!AdvancedDiscountRoundingMethod],
+NULL AS [Discount!1!DiscountVersionId],
+NULL AS [Discount!1!DocumentItemsSortedForBundles],
+NULL AS [Discount!1!Code],
+#tmpRecordSet.PrmID AS [Discount!1!ID!Hide],
+ NULL,#tmpRecordSet.PrmId,
+	NULL AS [Element!3!ProductId],
+	NULL AS [Element!3!ProductGroupId],
+	NULL AS [Element!3!DiscountType],
+	NULL AS [Element!3!CurrencyId],
+	NULL AS [Element!3!Threshold],
+	NULL AS [Element!3!QuantityLimit],
+	NULL AS [Element!3!ValueLimit],
+	NULL AS [Element!3!DiscountValue],
+	NULL AS [Element!3!IsSet],
+	NULL AS [Element!3!IsFromValue],
+	NULL AS [Element!3!DiscountFromStartValue],
+	NULL AS [Element!3!IsMarginControl],
+	NULL AS [Element!3!SkipRest],
+	NULL AS [Element!3!IsNetPrice],
+	NULL AS [Element!3!UnitId],
+	NULL AS [Element!3!GlobalID],
+	NULL AS [Element!3!Gratis],
+	NULL AS [Element!3!Required],
+	NULL AS [Element!3!BundleGratisType],
+	NULL AS [Element!3!BundleQuantity],
+	NULL AS [Element!3!QuantityItemsLimit],
+	NULL AS [Element!3!ThresholdType],
+	NULL AS [Element!3!ThresholdValue],
+	NULL AS [Element!3!MasterThresholdId],
+	NULL AS [Element!3!ThresholdFromPrice],
+	NULL AS [Element!3!AdvancedDiscountMultiplier],
+	NULL AS [Element!3!AdvancedDiscountMinimumValue],
+	NULL AS [Element!3!AdvancedDiscountMaximumValue],
+	NULL AS [Element!3!AdvancedDiscountMinimumValueHandlingType],
+	NULL AS [Element!3!AdvancedDiscountMaximumValueHandlingType],
+	NULL AS [Element!3!AddHeaderDiscountOnGratis],
+	NULL AS [Element!3!TPRLp!Hide],
+    NULL AS [ItemDiscountThresholds!4],#tmpItemDiscountThresholds.ProductId AS [ItemDiscountThreshold!5!ID!Hide],
+	   #tmpItemDiscountThresholds.Threshold AS [ItemDiscountThreshold!5!Threshold],
+	   #tmpItemDiscountThresholds.DiscountValue AS [ItemDiscountThreshold!5!DiscountValue],
+NULL AS [Determinants!6],NULL AS [Determinant!7!ID!Hide],
+	NULL AS [Determinant!7!Type],
+	NULL AS [Determinant!7!ObjectGUID],
+	NULL AS [Determinant!7!ObjectId],
+	NULL AS [Determinant!7!ElementGUID], --[Determinant!7!ElementGUID],
+	NULL AS [Determinant!7!IsForElements], --[Determinant!7!IsForElement],
+	NULL AS [Determinant!7!GlobalID],
+	NULL AS [Determinant!7!ObjectTypeId],
+	NULL AS [Thresholds!8],NULL AS [Threshold!9!ID!Hide],
+	NULL AS [Threshold!9!Type],
+	NULL AS [Threshold!9!Value],
+	NULL AS [Threshold!9!QuantityItemsLimit],
+	NULL AS [Threshold!9!GlobalID],
+	NULL AS [Threshold!9!BundleDiscountValue]
+FROM #tmpRecordSet 
+INNER JOIN #tmpItemDiscountThresholds ON #tmpItemDiscountThresholds.PRMId = #tmpRecordSet.PRMId AND #tmpItemDiscountThresholds.ProductId = COALESCE(#tmpRecordSet.ProductId,#tmpRecordSet.ProductGroupId)
+INNER JOIN #tmpItemDiscountThresholdsGuids ON #tmpItemDiscountThresholdsGuids.PRMId = #tmpItemDiscountThresholds.PRMId AND #tmpItemDiscountThresholdsGuids.ProductId = #tmpItemDiscountThresholds.ProductId AND #tmpItemDiscountThresholdsGuids.ElemGUID = ElemGlobalID
+WHERE ElemGlobalID IS NOT NULL
+UNION ALL -- Determinants
+SELECT DISTINCT 6 AS Tag, 1 AS Parent,
+NULL AS [Discount!1!Name], 
+NULL AS [Discount!1!Description], 
+NULL AS [Discount!1!Type],
+NULL AS [Discount!1!TransactionType],
+NULL AS [Discount!1!CombiningMethod],
+NULL AS [Discount!1!Priority],
+NULL AS [Discount!1!SecondaryPriority],
+NULL AS [Discount!1!DateFrom],
+NULL AS [Discount!1!DateTo],
+NULL AS [Discount!1!IsActive],
+NULL AS [Discount!1!GlobalID],
+NULL AS [Discount!1!DiscountTypeId],
+NULL AS [Discount!1!AddHeaderDiscout],
+NULL AS [Discount!1!SkipWhenPrevDiscountsExists],
+NULL AS [Discount!1!IsManualDiscount],
+NULL AS [Discount!1!IncludeNonDiscountedItems],
+NULL AS [Discount!1!IncludeNonDiscountedHeaderBundles],
+NULL AS [Discount!1!IsCouponDiscount],
+NULL AS [Discount!1!DistributionOfDiscountAmongPromotionItems],
+NULL AS [Discount!1!DiscountValueSource],
+NULL AS [Discount!1!BundleDiscountType],
+NULL AS [Discount!1!BundleDiscountValue],
+NULL AS [Discount!1!BundleDiscountApplyDiscountTo],
+NULL AS [Discount!1!LoyaltyCardValidationMode],
+NULL AS [Discount!1!CalculateDependingOnPreviousDiscountMode],
+NULL AS [Discount!1!CalculateDependingOnPreviousDiscountThresholdType],
+NULL AS [Discount!1!CalculateDependingOnPreviousDiscountThreshold],
+NULL AS [Discount!1!AdvancedDiscountRoundingMethod],
+NULL AS [Discount!1!DiscountVersionId],
+NULL AS [Discount!1!DocumentItemsSortedForBundles],
+NULL AS [Discount!1!Code],
+#tmpRecordSet.PRMID AS [Discount!1!ID!Hide],
+ NULL,NULL,
+	NULL AS [Element!3!ProductId],
+	NULL AS [Element!3!ProductGroupId],
+	NULL AS [Element!3!DiscountType],
+	NULL AS [Element!3!CurrencyId],
+	NULL AS [Element!3!Threshold],
+	NULL AS [Element!3!QuantityLimit],
+	NULL AS [Element!3!ValueLimit],
+	NULL AS [Element!3!DiscountValue],
+	NULL AS [Element!3!IsSet],
+	NULL AS [Element!3!IsFromValue],
+	NULL AS [Element!3!DiscountFromStartValue],
+	NULL AS [Element!3!IsMarginControl],
+	NULL AS [Element!3!SkipRest],
+	NULL AS [Element!3!IsNetPrice],
+	NULL AS [Element!3!UnitId],
+	NULL AS [Element!3!GlobalID],
+	NULL AS [Element!3!Gratis],
+	NULL AS [Element!3!Required],
+	NULL AS [Element!3!BundleGratisType],
+	NULL AS [Element!3!BundleQuantity],
+	NULL AS [Element!3!QuantityItemsLimit],
+	NULL AS [Element!3!ThresholdType],
+	NULL AS [Element!3!ThresholdValue],
+	NULL AS [Element!3!MasterThresholdId],
+	NULL AS [Element!3!ThresholdFromPrice],
+	NULL AS [Element!3!AdvancedDiscountMultiplier],
+	NULL AS [Element!3!AdvancedDiscountMinimumValue],
+	NULL AS [Element!3!AdvancedDiscountMaximumValue],
+	NULL AS [Element!3!AdvancedDiscountMinimumValueHandlingType],
+	NULL AS [Element!3!AdvancedDiscountMaximumValueHandlingType],
+	NULL AS [Element!3!AddHeaderDiscountOnGratis],
+	NULL AS [Element!3!TPRLp!Hide],
+	  NULL AS [ItemDiscountThresholds!4],@LastID-1 AS [ItemDiscountThreshold!5!ID!Hide],
+	   NULL AS [ItemDiscountThreshold!5!Threshold],
+	   NULL AS [ItemDiscountThreshold!5!DiscountValue],
+NULL AS [Determinants!6],#tmpRecordSet.PRMID AS [Determinant!7!ID!Hide],
+	NULL AS [Determinant!7!Type],
+	NULL AS [Determinant!7!ObjectGUID],
+	NULL AS [Determinant!7!ObjectId],
+	NULL AS [Determinant!7!ElementGUID], --[Determinant!7!ElementGUID],
+	NULL AS [Determinant!7!IsForElements], --[Determinant!7!IsForElement],
+	NULL AS [Determinant!7!GlobalID],
+	NULL AS [Determinant!7!ObjectTypeId],
+	NULL AS [Thresholds!8],NULL AS [Threshold!9!ID!Hide],
+	NULL AS [Threshold!9!Type],
+	NULL AS [Threshold!9!Value],
+	NULL AS [Threshold!9!QuantityItemsLimit],
+	NULL AS [Threshold!9!GlobalID],
+	NULL AS [Threshold!9!BundleDiscountValue]
+FROM #tmpRecordSet JOIN #tmpDeterminants ON #tmpDeterminants.PRMID = #tmpRecordSet.PRMID
+UNION ALL -- Determinant
+SELECT DISTINCT 7 AS Tag, 6 AS Parent,
+NULL AS [Discount!1!Name], 
+NULL AS [Discount!1!Description], 
+NULL AS [Discount!1!Type],
+NULL AS [Discount!1!TransactionType],
+NULL AS [Discount!1!CombiningMethod],
+NULL AS [Discount!1!Priority],
+NULL AS [Discount!1!SecondaryPriority],
+NULL AS [Discount!1!DateFrom],
+NULL AS [Discount!1!DateTo],
+NULL AS [Discount!1!IsActive],
+NULL AS [Discount!1!GlobalID],
+NULL AS [Discount!1!DiscountTypeId],
+NULL AS [Discount!1!AddHeaderDiscout],
+NULL AS [Discount!1!SkipWhenPrevDiscountsExists],
+NULL AS [Discount!1!IsManualDiscount],
+NULL AS [Discount!1!IncludeNonDiscountedItems],
+NULL AS [Discount!1!IncludeNonDiscountedHeaderBundles],
+NULL AS [Discount!1!IsCouponDiscount],
+NULL AS [Discount!1!DistributionOfDiscountAmongPromotionItems],
+NULL AS [Discount!1!DiscountValueSource],
+NULL AS [Discount!1!BundleDiscountType],
+NULL AS [Discount!1!BundleDiscountValue],
+NULL AS [Discount!1!BundleDiscountApplyDiscountTo],
+NULL AS [Discount!1!LoyaltyCardValidationMode],
+NULL AS [Discount!1!CalculateDependingOnPreviousDiscountMode],
+NULL AS [Discount!1!CalculateDependingOnPreviousDiscountThresholdType],
+NULL AS [Discount!1!CalculateDependingOnPreviousDiscountThreshold],
+NULL AS [Discount!1!AdvancedDiscountRoundingMethod],
+NULL AS [Discount!1!DiscountVersionId],
+NULL AS [Discount!1!DocumentItemsSortedForBundles],
+NULL AS [Discount!1!Code],
+#tmpRecordSet.PrmID AS [Discount!1!ID!Hide],
+ NULL,NULL,
+	NULL AS [Element!3!ProductId],
+	NULL AS [Element!3!ProductGroupId],
+	NULL AS [Element!3!DiscountType],
+	NULL AS [Element!3!CurrencyId],
+	NULL AS [Element!3!Threshold],
+	NULL AS [Element!3!QuantityLimit],
+	NULL AS [Element!3!ValueLimit],
+	NULL AS [Element!3!DiscountValue],
+	NULL AS [Element!3!IsSet],
+	NULL AS [Element!3!IsFromValue],
+	NULL AS [Element!3!DiscountFromStartValue],
+	NULL AS [Element!3!IsMarginControl],
+	NULL AS [Element!3!SkipRest],
+	NULL AS [Element!3!IsNetPrice],
+	NULL AS [Element!3!UnitId],
+	NULL AS [Element!3!GlobalID],
+	NULL AS [Element!3!Gratis],
+	NULL AS [Element!3!Required],
+	NULL AS [Element!3!BundleGratisType],
+	NULL AS [Element!3!BundleQuantity],
+	NULL AS [Element!3!QuantityItemsLimit],
+	NULL AS [Element!3!ThresholdType],
+	NULL AS [Element!3!ThresholdValue],
+	NULL AS [Element!3!MasterThresholdId],
+	NULL AS [Element!3!ThresholdFromPrice],
+	NULL AS [Element!3!AdvancedDiscountMultiplier],
+	NULL AS [Element!3!AdvancedDiscountMinimumValue],
+	NULL AS [Element!3!AdvancedDiscountMaximumValue],
+	NULL AS [Element!3!AdvancedDiscountMinimumValueHandlingType],
+	NULL AS [Element!3!AdvancedDiscountMaximumValueHandlingType],
+	NULL AS [Element!3!AddHeaderDiscountOnGratis],
+	NULL AS [Element!3!TPRLp!Hide],
+     NULL AS [ItemDiscountThresholds!4],@LastID-1 AS [ItemDiscountThreshold!5!ID!Hide],
+	   NULL AS [ItemDiscountThreshold!5!Threshold],
+	   NULL AS [ItemDiscountThreshold!5!DiscountValue],
+NULL AS [Determinants!6],#tmpDeterminants.PrmID AS [Determinant!7!ID!Hide],
+	#tmpDeterminants.Type AS [Determinant!7!Type],
+	case when #tmpDeterminants.Type not in (7,2) then #tmpDeterminants.ObjectID else null end AS [Determinant!7!ObjectGUID],
+	case when #tmpDeterminants.Type in (7,2) then #tmpDeterminants.ObjectID else null end  AS [Determinant!7!ObjectId],
+	(CASE WHEN IsForElement = 1 THEN #tmpDeterminants.GlobalID WHEN IsForElement = 2 THEN #tmpRecordSet.GlobalID ELSE NULL END) AS [Determinant!7!ElementGUID], --[Determinant!7!ElementGUID],
+	case when IsForElement &gt; 0 then 1 else 0 end AS [Determinant!7!IsForElements], --[Determinant!7!IsForElement],
+	#tmpDeterminants.GlobalID AS [Determinant!7!GlobalID],
+	NULL AS [Determinant!7!ObjectTypeId],
+	NULL AS [Thresholds!8],NULL AS [Threshold!9!ID!Hide],
+	NULL AS [Threshold!9!Type],
+	NULL AS [Threshold!9!Value],
+	NULL AS [Threshold!9!QuantityItemsLimit],
+	NULL AS [Threshold!9!GlobalID],
+	NULL AS [Threshold!9!BundleDiscountValue]
+FROM #tmpRecordSet JOIN #tmpDeterminants ON #tmpDeterminants.PRMID = #tmpRecordSet.PRMID
+UNION ALL -- Thresholds
+SELECT DISTINCT 8 AS Tag, 1 AS Parent,
+NULL AS [Discount!1!Name], 
+NULL AS [Discount!1!Description], 
+NULL AS [Discount!1!Type],
+NULL AS [Discount!1!TransactionType],
+NULL AS [Discount!1!CombiningMethod],
+NULL AS [Discount!1!Priority],
+NULL AS [Discount!1!SecondaryPriority],
+NULL AS [Discount!1!DateFrom],
+NULL AS [Discount!1!DateTo],
+NULL AS [Discount!1!IsActive],
+NULL AS [Discount!1!GlobalID],
+NULL AS [Discount!1!DiscountTypeId],
+NULL AS [Discount!1!AddHeaderDiscout],
+NULL AS [Discount!1!SkipWhenPrevDiscountsExists],
+NULL AS [Discount!1!IsManualDiscount],
+NULL AS [Discount!1!IncludeNonDiscountedItems],
+NULL AS [Discount!1!IncludeNonDiscountedHeaderBundles],
+NULL AS [Discount!1!IsCouponDiscount],
+NULL AS [Discount!1!DistributionOfDiscountAmongPromotionItems],
+NULL AS [Discount!1!DiscountValueSource],
+NULL AS [Discount!1!BundleDiscountType],
+NULL AS [Discount!1!BundleDiscountValue],
+NULL AS [Discount!1!BundleDiscountApplyDiscountTo],
+NULL AS [Discount!1!LoyaltyCardValidationMode],
+NULL AS [Discount!1!CalculateDependingOnPreviousDiscountMode],
+NULL AS [Discount!1!CalculateDependingOnPreviousDiscountThresholdType],
+NULL AS [Discount!1!CalculateDependingOnPreviousDiscountThreshold],
+NULL AS [Discount!1!AdvancedDiscountRoundingMethod],
+NULL AS [Discount!1!DiscountVersionId],
+NULL AS [Discount!1!DocumentItemsSortedForBundles],
+NULL AS [Discount!1!Code],
+tmp.PRMID AS [Discount!1!ID!Hide],
+ NULL,NULL,
+ NULL AS [Element!3!ProductId],
+	NULL AS [Element!3!ProductGroupId],
+	NULL AS [Element!3!DiscountType],
+	NULL AS [Element!3!CurrencyId],
+	NULL AS [Element!3!Threshold],
+	NULL AS [Element!3!QuantityLimit],
+	NULL AS [Element!3!ValueLimit],
+	NULL AS [Element!3!DiscountValue],
+	NULL AS [Element!3!IsSet],
+	NULL AS [Element!3!IsFromValue],
+	NULL AS [Element!3!DiscountFromStartValue],
+	NULL AS [Element!3!IsMarginControl],
+	NULL AS [Element!3!SkipRest],
+	NULL AS [Element!3!IsNetPrice],
+	NULL AS [Element!3!UnitId],
+	NULL AS [Element!3!GlobalID],
+	NULL AS [Element!3!Gratis],
+	NULL AS [Element!3!Required],
+	NULL AS [Element!3!BundleGratisType],
+	NULL AS [Element!3!BundleQuantity],
+	NULL AS [Element!3!QuantityItemsLimit],
+	NULL AS [Element!3!ThresholdType],
+	NULL AS [Element!3!ThresholdValue],
+	NULL AS [Element!3!MasterThresholdId],
+	NULL AS [Element!3!ThresholdFromPrice],
+	NULL AS [Element!3!AdvancedDiscountMultiplier],
+	NULL AS [Element!3!AdvancedDiscountMinimumValue],
+	NULL AS [Element!3!AdvancedDiscountMaximumValue],
+	NULL AS [Element!3!AdvancedDiscountMinimumValueHandlingType],
+	NULL AS [Element!3!AdvancedDiscountMaximumValueHandlingType],
+	NULL AS [Element!3!AddHeaderDiscountOnGratis],
+	NULL AS [Element!3!TPRLp!Hide],
+	  NULL AS [ItemDiscountThresholds!4],@LastID AS [ItemDiscountThreshold!5!ID!Hide],
+	   NULL AS [ItemDiscountThreshold!5!Threshold],
+	   NULL AS [ItemDiscountThreshold!5!DiscountValue],
+NULL AS [Determinants!6],NULL AS [Determinant!7!ID!Hide],
+	NULL AS [Determinant!7!Type],
+	NULL AS [Determinant!7!ObjectGUID],
+	NULL AS [Determinant!7!ObjectId],
+	NULL AS [Determinant!7!ElementGUID], --[Determinant!7!ElementGUID],
+	NULL AS [Determinant!7!IsForElements], --[Determinant!7!IsForElement],
+	NULL AS [Determinant!7!GlobalID],
+	NULL AS [Determinant!7!ObjectTypeId],
+	NULL AS [Thresholds!8],tmp.PrmID AS [Threshold!9!ID!Hide],
+	NULL AS [Threshold!9!Type],
+	NULL AS [Threshold!9!Value],
+	NULL AS [Threshold!9!QuantityItemsLimit],
+	NULL AS [Threshold!9!GlobalID],
+	NULL AS [Threshold!9!BundleDiscountValue]
+FROM #tmpRecordSet tmp
+JOIN #tmpPackageDiscountThresholds thr ON thr.PRMID = tmp.PRMID WHERE tmp.Type = 5 
+UNION ALL -- Element
+SELECT DISTINCT 9 AS Tag, 8 AS Parent,
+NULL AS [Discount!1!Name], 
+NULL AS [Discount!1!Description], 
+NULL AS [Discount!1!Type],
+NULL AS [Discount!1!TransactionType],
+NULL AS [Discount!1!CombiningMethod],
+NULL AS [Discount!1!Priority],
+NULL AS [Discount!1!SecondaryPriority],
+NULL AS [Discount!1!DateFrom],
+NULL AS [Discount!1!DateTo],
+NULL AS [Discount!1!IsActive],
+NULL AS [Discount!1!GlobalID],
+NULL AS [Discount!1!DiscountTypeId],
+NULL AS [Discount!1!AddHeaderDiscout],
+NULL AS [Discount!1!SkipWhenPrevDiscountsExists],
+NULL AS [Discount!1!IsManualDiscount],
+NULL AS [Discount!1!IncludeNonDiscountedItems],
+NULL AS [Discount!1!IncludeNonDiscountedHeaderBundles],
+NULL AS [Discount!1!IsCouponDiscount],
+NULL AS [Discount!1!DistributionOfDiscountAmongPromotionItems],
+NULL AS [Discount!1!DiscountValueSource],
+NULL AS [Discount!1!BundleDiscountType],
+NULL AS [Discount!1!BundleDiscountValue],
+NULL AS [Discount!1!BundleDiscountApplyDiscountTo],
+NULL AS [Discount!1!LoyaltyCardValidationMode],
+NULL AS [Discount!1!CalculateDependingOnPreviousDiscountMode],
+NULL AS [Discount!1!CalculateDependingOnPreviousDiscountThresholdType],
+NULL AS [Discount!1!CalculateDependingOnPreviousDiscountThreshold],
+NULL AS [Discount!1!AdvancedDiscountRoundingMethod],
+NULL AS [Discount!1!DiscountVersionId],
+NULL AS [Discount!1!DocumentItemsSortedForBundles],
+NULL AS [Discount!1!Code],
+tmp.PRMID AS [Discount!1!ID!Hide],
+ NULL,NULL,
+ NULL AS [Element!3!ProductId],
+	NULL AS [Element!3!ProductGroupId],
+	NULL AS [Element!3!DiscountType],
+	NULL AS [Element!3!CurrencyId],
+	NULL AS [Element!3!Threshold],
+	NULL AS [Element!3!QuantityLimit],
+	NULL AS [Element!3!ValueLimit],
+	NULL AS [Element!3!DiscountValue],
+	NULL AS [Element!3!IsSet],
+	NULL AS [Element!3!IsFromValue],
+	NULL AS [Element!3!DiscountFromStartValue],
+	NULL AS [Element!3!IsMarginControl],
+	NULL AS [Element!3!SkipRest],
+	NULL AS [Element!3!IsNetPrice],
+	NULL AS [Element!3!UnitId],
+	NULL AS [Element!3!GlobalID],
+	NULL AS [Element!3!Gratis],
+	NULL AS [Element!3!Required],
+	NULL AS [Element!3!BundleGratisType],
+	NULL AS [Element!3!BundleQuantity],
+	NULL AS [Element!3!QuantityItemsLimit],
+	NULL AS [Element!3!ThresholdType],
+	NULL AS [Element!3!ThresholdValue],
+	NULL AS [Element!3!MasterThresholdId],
+	NULL AS [Element!3!ThresholdFromPrice],
+	NULL AS [Element!3!AdvancedDiscountMultiplier],
+	NULL AS [Element!3!AdvancedDiscountMinimumValue],
+	NULL AS [Element!3!AdvancedDiscountMaximumValue],
+	NULL AS [Element!3!AdvancedDiscountMinimumValueHandlingType],
+	NULL AS [Element!3!AdvancedDiscountMaximumValueHandlingType],
+	NULL AS [Element!3!AddHeaderDiscountOnGratis],
+	NULL AS [Element!3!TPRLp!Hide],
+	  NULL AS [ItemDiscountThresholds!4],@LastID AS [ItemDiscountThreshold!5!ID!Hide],
+	   NULL AS [ItemDiscountThreshold!5!Threshold],
+	   NULL AS [ItemDiscountThreshold!5!DiscountValue],
+NULL AS [Determinants!6],NULL AS [Determinant!7!ID!Hide],
+	NULL AS [Determinant!7!Type],
+	NULL AS [Determinant!7!ObjectGUID],
+	NULL AS [Determinant!7!ObjectId],
+	NULL AS [Determinant!7!ElementGUID], --[Determinant!7!ElementGUID],
+	NULL AS [Determinant!7!IsForElements], --[Determinant!7!IsForElement],
+	NULL AS [Determinant!7!GlobalID],
+	NULL AS [Determinant!7!ObjectTypeId],
+	NULL AS [Thresholds!8],tmp.PrmID AS [Threshold!9!ID!Hide],
+	thr.Type AS [Threshold!9!Type],
+	thr.Value AS [Threshold!9!Value],
+	thr.QuantityItemsLimit AS [Threshold!9!QuantityItemsLimit],
+	thr.GlobalId AS [Threshold!9!GlobalID],
+	null AS [Threshold!9!BundleDiscountValue]
+FROM #tmpRecordSet tmp
+JOIN #tmpPackageDiscountThresholds thr ON thr.PRMID = tmp.PRMID WHERE tmp.Type = 5
+ORDER BY [Discount!1!ID!Hide],[ItemDiscountThreshold!5!ID!Hide],Tag
+FOR XML EXPLICIT
+
+DROP TABLE #tmpRecordSet
+DROP TABLE #tmpDeterminants
+DROP TABLE #tmpItemDiscountThresholds
+DROP TABLE #tmpItemDiscountThresholdsGuids
+DROP TABLE #tmpProductGroups
+DROP TABLE #tmpPackageDiscountThresholds
+DROP TABLE #tmpCustomuerGroups
+DROP TABLE #tmpCustomuers
+SET NOCOUNT OFF
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

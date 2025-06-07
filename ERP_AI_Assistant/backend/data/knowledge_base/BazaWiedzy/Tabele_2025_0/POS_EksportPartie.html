@@ -1,0 +1,86 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[POS_EksportPartie]"></A><PRE>
+          <FONT SIZE="2"><I>/* [POS_EksportPartie] */</I><BR>
+CREATE PROCEDURE [CDN].[POS_EksportPartie] 
+	@rowVersion bigint,
+	@PointOfSaleId int
+AS
+BEGIN
+SET NOCOUNT ON;
+
+	DECLARE @Oddzialy TABLE(oddzialBylWyslany int, PSaDataDodania int, PSaID int, PckPicoId int)
+	insert into @Oddzialy select oddzialBylWyslany, PSaDataDodania, PSaID, PckPicoID  FROM cdn.POS_OddzialyDoEksportu(@PointOfSaleId, @rowVersion)
+
+	DECLARE @TwrDoEksportu Table(TwrGidNumer INT, TwrBon TINYINT, TwrBylWyslany int, PsaDataDodania int)
+	INSERT INTO @TwrDoEksportu SELECT TwrGidNumer, TwrBon, max(oddzialBylWyslany), max(PSaDataDodania) FROM @Oddzialy cross apply CDN.POS_TwrDoEksportu(PSaID,0) group by TwrGidNumer, TwrBon
+	
+
+	DECLARE @Wyslane TABLE(ID INT, PRODUCTID INT, EXPIRATIONDATE INT, CHARACTERISTIC VARCHAR(255), EAN VARCHAR(40), CCKNUMBER INT)
+	INSERT INTO @Wyslane SELECT distinct p.TPa_Id, p.TPa_TwrNumer, p.TPa_DataW, p.TPa_Cecha, p.TPa_Ean, p.TPa_CCKNumer FROM cdn.TwrPartie p
+	JOIN @TwrDoEksportu on TPa_TwrNumer = TwrGidNumer
+	JOIN cdn.Dostawy on Dst_GIDNumer=TpA_DstNumer
+	JOIN cdn.TraNag on TrN_GIDTyp=Dst_TrnTyp AND TrN_GIDNumer=Dst_TrnNumer
+	join cdn.TwrPartie w on p.TPa_TwrTyp = w.TPa_TwrTyp and p.TPa_TwrNumer = w.TPa_TwrNumer and p.TPa_CCKTyp = w.TPa_CCKTyp and p.TPa_CCKNumer = w.TPa_CCKNumer  and p.TPa_DataW = w.TPa_DataW and p.TPa_Ean = w.TPa_Ean and p.TPa_Cecha = w.TPa_Cecha
+	where (TrN_OperatorPOS &lt;&gt; 0 or (/*p.TPa_Zewn = 0 and */w.TPa_Zewn=1 and p.TPa_Id&gt;w.TPa_Id))
+
+	/*DECLARE @WyslaneGrupy TABLE(ID INT)
+	INSERT INTO @WyslaneGrupy SELECT DISTINCT TPa_Id FROM cdn.TwrPartie 
+	JOIN @TwrDoEksportu on TPa_TwrNumer = TwrGidNumer
+	JOIN @Wyslane on PRODUCTID = TPa_TwrNumer AND EXPIRATIONDATE = TPa_DataW AND CHARACTERISTIC = TPa_Cecha and EAN = TPa_Ean and CCKNUMBER = TPa_CCKNumer
+	*/
+	DECLARE @TPA TABLE(ID INT,PRODUCTID INT,Quantity DECIMAL(16,4),QuantityReserved DECIMAL(16,4), IsDefault NVARCHAR(5),DefaultBarcode INT, CreationDate BIGINT)
+		
+	INSERT INTO @TPA SELECT MIN(TPa_Id),TPa_TwrNumer,0,0,CASE WHEN TPa_DataW=0 AND TPa_Cecha='' AND TPa_Ean='' AND TpA_CCKNumer=0 THEN 'true' ELSE 'false' END,MIN(TPa_Id),
+	case when MIN(TPa_DataUtworzenia) &gt; MIN(PcL_TStamp) then MIN(TPa_DataUtworzenia) else MIN(PcL_TStamp) end
+	FROM cdn.TwrPartie 
+	JOIN @TwrDoEksportu on TPa_TwrNumer = TwrGidNumer
+	LEFT JOIN CDN.Dostawy ON Dst_TpaId=TPa_Id
+	LEFT JOIN CDN.TwrZasoby ON TwZ_DstNumer = DsT_GIDNumer
+	LEFT JOIN @Wyslane ON TPa_Id = ID
+	LEFT JOIN cdn.PicoLog on PcL_PcKID IN (select PckPicoId from @Oddzialy) and PcL_ObiTyp = 16 and PcL_ObiNumer = TwrGidNumer and PcL_ObiektID = TwrGidNumer and PcL_ObiektTyp = 16
+	WHERE 1=(CASE WHEN TwrBon = 1 AND Dst_GIDNumer IS NULL THEN 0 ELSE 1 END) AND (convert(BIGINT, TPa_DataUtworzenia)  &gt; @rowversion or convert(BIGINT, PcL_TStamp) &gt; @rowVersion or (@PointOfSaleId is null and TwrBylWyslany = 0)) and ID is null
+	group by TPa_TwrNumer,TPa_DataW,TPa_Cecha,TPa_Ean,TpA_CCKNumer
+	
+	UPDATE CDN.TwrPartie SET TPA_ZEWN = TPA_ZEWN ^ 1 WHERE TPA_ZEWN &amp; 1 = 0 AND TPa_Id IN (SELECT ID FROM @TPA)
+
+	DECLARE @LastMod BIGINT = ISNULL((SELECT MAX(convert(BIGINT,CreationDate )) FROM @TPA),@rowVersion)	
+	If @PointOfSaleId is null and (Select max(PsaDatadodania) from @TwrDoEksportu where TwrBylWyslany = 0) &gt; @LastMod and @LastMod &lt;&gt; @rowVersion
+		SET @LastMod = (Select max(PsaDatadodania) from @TwrDoEksportu where TwrBylWyslany = 0)
+
+	SELECT @LastMod as [@RowVersion],
+		(SELECT * FROM(
+			select DISTINCT 
+				ID as [@Id],
+				PRODUCTID as [@ProductId],
+				Quantity as [@Quantity],
+				QuantityReserved as [@QuantityReserved],
+				IsDefault as [@IsDefault],
+				DefaultBarcode as [@DefaultBarcode]
+			from @TPA
+			union
+			select -twr_GidNumer,twr_GidNumer,0,0,'true',0
+			FROM cdn.TwrKarty 
+			JOIN @TwrDoEksportu on TwrGidNumer = Twr_GIDNumer
+			WHERE Twr_Typ = 4
+			)a
+			for xml path('Lot'), type)
+	for xml path('Lots')
+	SET NOCOUNT OFF;	
+
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

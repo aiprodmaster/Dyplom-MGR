@@ -1,0 +1,510 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="OFFLXLSrv_ImportKnA"></A><PRE>
+          <FONT SIZE="2"><I>/* OFFLXLSrv_ImportKnA */</I><BR>
+CREATE PROCEDURE CDN.OFFLXLSrv_ImportKnA
+ @ID			INT			-- ID oddziału
+,@KnA_KntNumer	INT			-- GIDNumer kontrahenta
+,@xml			TEXT 
+,@LogID			INT = -1	-- ID loga synchronizacji 
+AS
+	RAISERROR('Procedura OFFLXLSrv_ImportKnA nie jest obługiwana na MSSQL 2000',16,1)
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="OFFLXLSrv_ImportKnA"></A><PRE>
+          <FONT SIZE="2"><I>/* OFFLXLSrv_ImportKnA */</I><BR>
+CREATE PROCEDURE CDN.OFFLXLSrv_ImportKnA
+ @ID			INT			-- ID oddziału
+,@KnA_KntNumer	INT			-- GIDNumer kontrahenta
+,@xml			XML 
+,@LogID			INT = -1	-- ID loga synchronizacji 
+AS
+SET NOCOUNT ON
+DECLARE @CzyUsuwanyAdres TINYINT;
+SET @CzyUsuwanyAdres = 0;
+DECLARE @KnA_GIDTyp SMALLINT,
+                @KnA_GIDFirma INT,
+                @KnA_GIDNumer INT,
+                @KnA_GIDLp SMALLINT,
+                @KnA_KntTyp SMALLINT,
+                @KnA_KntFirma INT,
+                --@KnA_KntNumer INT,
+                @KnA_KntLp SMALLINT,
+                @KnA_DataArc INT,
+                @KnA_Akronim VARCHAR(20),
+                @KnA_Wysylkowy SMALLINT,
+                @KnA_Nazwa1 VARCHAR(50),
+                @KnA_Nazwa2 VARCHAR(50),
+                @KnA_Nazwa3 VARCHAR(250), -- zwiększono z 50 do 250 (TFS[122530])
+                @KnA_KodP VARCHAR(10),
+                @KnA_Miasto VARCHAR(30),
+                @KnA_Ulica VARCHAR(30),
+                @KnA_Adres VARCHAR(30),
+                @KnA_NipE VARCHAR(13),
+                @KnA_Nip VARCHAR(13),
+                @KnA_NipPrefiks VARCHAR(2),
+                @KnA_Regon VARCHAR(20),
+                @KnA_Pesel VARCHAR(11),
+                @KnA_KontoDostawcy VARCHAR(30),
+                @KnA_KontoOdbiorcy VARCHAR(30),
+                @KnA_Kraj VARCHAR(2),
+                @KnA_Powiat VARCHAR(30),
+                @KnA_Gmina VARCHAR(30),
+                @KnA_Wojewodztwo VARCHAR(30),
+                @KnA_RegionCRM INT,
+                @KnA_GLN VARCHAR(13),
+                @KnA_Telefon1 VARCHAR(30),
+                @KnA_Telefon2 VARCHAR(30),
+                @KnA_Fax VARCHAR(30),
+                @KnA_Modem VARCHAR(30),
+                @KnA_Telex VARCHAR(30),
+                @KnA_EMail VARCHAR(255),
+                @KnA_BnkTyp SMALLINT,
+                @KnA_BnkFirma INT,
+                @KnA_BnkNumer INT,
+                @KnA_BnkLp SMALLINT,
+                @KnA_NrRachunku VARCHAR(50),
+                @KnA_LastModL INT,
+                @KnA_Odleglosc DECIMAL(10, 2),
+                @KnA_NRB SMALLINT,
+                @KnA_NiePublikuj SMALLINT,
+                @KnA_Domyslny SMALLINT,
+                @KnA_DokumentTozsamosci VARCHAR(50),
+                @KnA_DataWydania INT,
+                @KnA_OrganWydajacy VARCHAR(50),
+                @KnA_RolnikRyczaltowy SMALLINT,
+            @KnA_GPSSz DECIMAL(9,6),
+                @KnA_GPSDl DECIMAL(9,6),
+                @KnA_GPSDataPobrania INT,
+                @KnA_GPSGodzinaPobrania INT,
+                @KnA_Opis VARCHAR(2000),
+				@KnAKorespondencyjny INT
+
+DECLARE @KnA_GIDNumerC  INT,            -- GIDNumer adresu kontrahenta w centrali
+                @Pck_Typ                SMALLINT        -- Typ oddziału
+
+DECLARE @index                  INT,
+                @max_index              INT,
+                @buffer_size    INT,
+                @xml_buffer             XML,
+                @xml_tmp                XML
+
+DECLARE @Opis                   VARCHAR(512)
+
+DECLARE @NowTS INT = DATEDIFF(s,CONVERT(DATETIME,'19900101',121),GETDATE())
+DECLARE @OpeGIDNumer INT = ISNULL(CDN.PolaczenieInfo(5),'')
+
+SELECT @Pck_Typ = PcK_Typ
+FROM CDN.PicoKonfig WHERE PcK_PicoId = @ID
+
+SET @xml = @xml.query('/KNAI/KNA')
+
+SELECT  @index = 0,
+                @max_index = CAST(CAST(@xml.query ('count(KNA)') AS VARCHAR(20)) AS INT),
+                @buffer_size = 200
+
+
+WHILE @index &lt; @max_index
+BEGIN
+        SET XACT_ABORT ON;
+        BEGIN TRY
+                BEGIN TRANSACTION;
+
+                IF @index % @buffer_size = 0
+                        SET @xml_buffer = ( SELECT @xml.query('KNA[position()&gt; sql:variable("@index") and position() &lt;= sql:variable("@index") + sql:variable("@buffer_size") ] ')  )
+                SET @xml_tmp = ( SELECT @xml_buffer.query('KNA[position()= (sql:variable("@index") mod sql:variable("@buffer_size")) + 1 ] ')  )
+
+                SELECT
+                        @KnA_GIDTyp = KNA.Attribute.value('@GIDTyp','SMALLINT'),
+                        @KnA_GIDFirma = CDN.GIDFirma(),
+                        @KnA_GIDNumer = KNA.Attribute.value('@GIDNumer','INT'),
+                        @KnA_GIDNumerC = KNA.Attribute.value('@GIDNumerC','INT'),
+                        @KnA_GIDLp = 0,
+                        @KnA_KntTyp = 32,
+                        @KnA_KntFirma = CDN.GIDFirma(),
+                        @KnA_KntLp = 0,
+                        @KnA_DataArc = KNA.Attribute.value('@DataArc','INT'),
+                        @KnA_Akronim = KNA.Attribute.value('@Akronim','VARCHAR(20)'),
+                        @KnA_Wysylkowy = KNA.Attribute.value('@Wysylkowy','SMALLINT'),
+                        @KnA_Nazwa1 = KNA.Attribute.value('@Nazwa1','VARCHAR(50)'),
+                        @KnA_Nazwa2 = KNA.Attribute.value('@Nazwa2','VARCHAR(50)'),
+                        @KnA_Nazwa3 = KNA.Attribute.value('@Nazwa3','VARCHAR(250)'), -- zwiększono z 50 do 250 (TFS[122530])
+                        @KnA_KodP = KNA.Attribute.value('@KodP','VARCHAR(10)'),
+                        @KnA_Miasto = KNA.Attribute.value('@Miasto','VARCHAR(30)'),
+                        @KnA_Ulica = KNA.Attribute.value('@Ulica','VARCHAR(30)'),
+                        @KnA_Adres = KNA.Attribute.value('@Adres','VARCHAR(30)'),
+                        @KnA_NipE = KNA.Attribute.value('@NipE','VARCHAR(13)'),
+                        @KnA_Nip = KNA.Attribute.value('@Nip','VARCHAR(13)'),
+                        @KnA_NipPrefiks = KNA.Attribute.value('@NipPrefiks','VARCHAR(2)'),
+                        @KnA_Regon = KNA.Attribute.value('@Regon','VARCHAR(20)'),
+                        @KnA_Pesel = KNA.Attribute.value('@Pesel','VARCHAR(11)'),
+                        @KnA_KontoDostawcy = KNA.Attribute.value('@KontoDostawcy','VARCHAR(30)'),
+                        @KnA_KontoOdbiorcy = KNA.Attribute.value('@KontoOdbiorcy','VARCHAR(30)'),
+                        @KnA_Kraj = KNA.Attribute.value('@Kraj','VARCHAR(2)'),
+                        @KnA_Powiat = KNA.Attribute.value('@Powiat','VARCHAR(30)'),
+                        @KnA_Gmina = KNA.Attribute.value('@Gmina','VARCHAR(30)'),
+                        @KnA_Wojewodztwo = KNA.Attribute.value('@Wojewodztwo','VARCHAR(30)'),
+                        @KnA_RegionCRM = KNA.Attribute.value('@RegionCRM','INT'),
+                        @KnA_GLN = KNA.Attribute.value('@GLN','VARCHAR(13)'),
+                        @KnA_Telefon1 = KNA.Attribute.value('@Telefon1','VARCHAR(30)'),
+                        @KnA_Telefon2 = KNA.Attribute.value('@Telefon2','VARCHAR(30)'),
+                        @KnA_Fax = KNA.Attribute.value('@Fax','VARCHAR(30)'),
+                        @KnA_Modem = KNA.Attribute.value('@Modem','VARCHAR(30)'),
+                        @KnA_Telex = KNA.Attribute.value('@Telex','VARCHAR(30)'),
+                        @KnA_EMail = KNA.Attribute.value('@EMail','VARCHAR(255)'),
+                        --@KnA_BnkTyp = 0,
+                        --@KnA_BnkFirma = 0,
+                        --@KnA_BnkNumer = 0,
+                        --@KnA_BnkLp = 0,
+                        @KnA_NrRachunku = KNA.Attribute.value('@NrRachunku','VARCHAR(50)'),
+                        @KnA_LastModL = KNA.Attribute.value('@LastModL','INT'),
+                        @KnA_Odleglosc = KNA.Attribute.value('@Odleglosc','DECIMAL(10, 2)'),
+                        @KnA_NRB = KNA.Attribute.value('@NRB','SMALLINT'),
+                        @KnA_NiePublikuj = KNA.Attribute.value('@NiePublikuj','SMALLINT'),
+                        @KnA_Domyslny = KNA.Attribute.value('@Domyslny','SMALLINT'),
+                        @KnA_DokumentTozsamosci = KNA.Attribute.value('@DokumentTozsamosci','VARCHAR(50)'),
+                        @KnA_DataWydania = KNA.Attribute.value('@DataWydania','INT'),
+                        @KnA_OrganWydajacy = KNA.Attribute.value('@OrganWydajacy','VARCHAR(50)'),
+                        @KnA_RolnikRyczaltowy = KNA.Attribute.value('@RolnikRyczaltowy','SMALLINT'),
+                        @KnA_GPSSz = KNA.Attribute.value('@GPSSz','DECIMAL(9,6)'),
+                        @KnA_GPSDl = KNA.Attribute.value('@GPSDl','DECIMAL(9,6)'),
+                        @KnA_GPSDataPobrania = KNA.Attribute.value('@GPSDataPobrania','INT'),
+                        @KnA_GPSGodzinaPobrania = KNA.Attribute.value('@GPSGodzinaPobrania ','INT'),                    
+                        @KnA_Opis  = KNA.Attribute.value('@Opis','VARCHAR(2000)'),
+						@KnAKorespondencyjny = KNA.Attribute.value('@Korespondencyjny','INT')
+                FROM @xml_tmp.nodes('KNA') AS KNA(Attribute)
+
+                --Identyfikacja adresu kontrahenta po GIDNumerze oddziału
+                IF ISNULL(@KnA_GIDNumerC,0) = 0
+                BEGIN
+                        SELECT @KnA_GIDNumerC = PcL_ObiNumer
+                        FROM CDN.PicoLog
+                        WHERE PcL_PcKID = @ID AND PcL_ObiTyp = @KnA_GIDTyp AND PcL_ObiektID = @KnA_GIDNumer
+                END
+                --Sprawdzenie czy taki adres kontrahenta rzeczywiście w centrali istnieje
+                IF NOT EXISTS(SELECT * FROM CDN.KntAdresy WHERE KnA_GIDNumer = @KnA_GIDNumerC)
+                BEGIN
+						--Sprawdz czy nie ma w picousuniete !TFSID:203050						
+						IF EXISTS(SELECT * FROM CDN.PicoUsuniete WHERE PcU_ObiTyp = @KnA_GIDTyp AND PcU_ObiNumer = @KnA_GIDNumerC AND PcU_ObiektID = @KnA_GIDNumer)
+							SET @CzyUsuwanyAdres = 1;
+						ELSE
+							SET @CzyUsuwanyAdres = 0;
+
+						IF @CzyUsuwanyAdres = 0
+						BEGIN
+							DELETE FROM CDN.PicoLog WHERE PcL_PcKID = @ID AND PcL_ObiTyp = @KnA_GIDTyp AND PcL_ObiektID = @KnA_GIDNumer
+							SET @KnA_GIDNumerC = NULL
+						END							
+                END
+
+                -- Sprawdzenie czy aktualizujemy adres główny na archiwalny
+				IF @Pck_Typ = 5 AND @KnA_GIDTyp = 864 AND ISNULL(@KnA_DataArc,0) &lt;&gt; 0
+				 AND EXISTS
+				(
+                        SELECT * FROM CDN.KntAdresy
+                        WHERE KnA_GIDNumer = @KnA_GIDNumerC AND KnA_GIDTyp = @KnA_GIDTyp AND KnA_DataArc = 0
+                )
+                BEGIN
+                        SET @KnA_GIDNumerC = NULL
+                        -- Sprawdzenie na wypadek wczytania drugi raz tego samego pliku
+                        SELECT @KnA_GIDNumerC = PcL_ObiNumer
+                        FROM CDN.PicoLog
+                        WHERE PcL_PcKID = @ID AND PcL_ObiTyp = @KnA_GIDTyp AND PcL_ObiektID = @KnA_GIDNumer
+                END
+
+                IF @KnA_GIDNumerC IS NOT NULL AND @CzyUsuwanyAdres = 0--istniejący adres kontrahenta
+                BEGIN
+                        UPDATE CDN.KntAdresy
+                        SET KnA_DataArc = ISNULL(@KnA_DataArc,KnA_DataArc),
+                                KnA_Akronim = ISNULL(@KnA_Akronim,KnA_Akronim),
+                                KnA_Wysylkowy = ISNULL(@KnA_Wysylkowy,KnA_Wysylkowy),
+                                KnA_Nazwa1 = ISNULL(@KnA_Nazwa1,KnA_Nazwa1),
+                                KnA_Nazwa2 = ISNULL(@KnA_Nazwa2,KnA_Nazwa2),
+                                KnA_Nazwa3 = ISNULL(@KnA_Nazwa3,KnA_Nazwa3),
+                                KnA_KodP = ISNULL(@KnA_KodP,KnA_KodP),
+                                KnA_Miasto = ISNULL(@KnA_Miasto,KnA_Miasto),
+                                KnA_Ulica = ISNULL(@KnA_Ulica,KnA_Ulica),
+                                KnA_Adres = ISNULL(@KnA_Adres,KnA_Adres),
+                                KnA_NipE = ISNULL(@KnA_NipE,KnA_NipE),
+                                KnA_Nip = ISNULL(@KnA_Nip,KnA_Nip),
+                                KnA_NipPrefiks = ISNULL(@KnA_NipPrefiks,KnA_NipPrefiks),
+                                KnA_Regon = ISNULL(@KnA_Regon,KnA_Regon),
+                                KnA_Pesel = ISNULL(@KnA_Pesel,KnA_Pesel),
+                                KnA_KontoDostawcy = ISNULL(@KnA_KontoDostawcy,KnA_KontoDostawcy),
+                                KnA_KontoOdbiorcy = ISNULL(@KnA_KontoOdbiorcy,KnA_KontoOdbiorcy),
+                                KnA_Kraj = ISNULL(@KnA_Kraj,KnA_Kraj),
+                                KnA_Powiat = ISNULL(@KnA_Powiat,KnA_Powiat),
+                                KnA_Gmina = ISNULL(@KnA_Gmina,KnA_Gmina),
+                                KnA_Wojewodztwo = ISNULL(@KnA_Wojewodztwo,KnA_Wojewodztwo),
+                                KnA_RegionCRM = ISNULL(@KnA_RegionCRM,KnA_RegionCRM),
+                                KnA_GLN = ISNULL(@KnA_GLN,KnA_GLN),
+                                KnA_Telefon1 = ISNULL(@KnA_Telefon1,KnA_Telefon1),
+                                KnA_Telefon2 = ISNULL(@KnA_Telefon2,KnA_Telefon2),
+                                KnA_Fax = ISNULL(@KnA_Fax,KnA_Fax),
+                                KnA_Modem = ISNULL(@KnA_Modem,KnA_Modem),
+                                KnA_Telex = ISNULL(@KnA_Telex,KnA_Telex),
+                                KnA_EMail = ISNULL(@KnA_EMail,KnA_EMail),
+                                KnA_BnkTyp = ISNULL(@KnA_BnkTyp,KnA_BnkTyp),
+                                KnA_BnkFirma = ISNULL(@KnA_BnkFirma,KnA_BnkFirma),
+                                KnA_BnkNumer = ISNULL(@KnA_BnkNumer,KnA_BnkNumer),
+                                KnA_BnkLp = ISNULL(@KnA_BnkLp,KnA_BnkLp),
+                                KnA_NrRachunku = ISNULL(@KnA_NrRachunku,KnA_NrRachunku),
+                                KnA_LastModL = ISNULL(@KnA_LastModL,KnA_LastModL),
+                                KnA_Odleglosc = ISNULL(@KnA_Odleglosc,KnA_Odleglosc),
+                                KnA_NRB = ISNULL(@KnA_NRB,KnA_NRB),
+                                KnA_NiePublikuj = ISNULL(@KnA_NiePublikuj,KnA_NiePublikuj),
+                                KnA_Domyslny = ISNULL(@KnA_Domyslny,KnA_Domyslny),
+                                KnA_DokumentTozsamosci = ISNULL(@KnA_DokumentTozsamosci,KnA_DokumentTozsamosci),
+                                KnA_DataWydania = ISNULL(@KnA_DataWydania,KnA_DataWydania),
+                                KnA_OrganWydajacy = ISNULL(@KnA_OrganWydajacy,KnA_OrganWydajacy),
+                                KnA_RolnikRyczaltowy = ISNULL(@KnA_RolnikRyczaltowy,KnA_RolnikRyczaltowy),
+                                KnA_GPSSz = ISNULL(@KnA_GPSSz,KnA_GPSSz),
+                                KnA_GPSDl = ISNULL(@KnA_GPSDl,KnA_GPSDl),
+                                KnA_GPSDataPobrania = ISNULL(@KnA_GPSDataPobrania,KnA_GPSDataPobrania),
+                                KnA_GPSGodzinaPobrania = ISNULL(@KnA_GPSGodzinaPobrania,KnA_GPSGodzinaPobrania),
+								KnA_Opis = ISNULL(@KnA_Opis,KnA_Opis)	
+                        WHERE KnA_GIDNumer = @KnA_GIDNumerC
+						
+						IF @KnAKorespondencyjny = 1 
+						BEGIN
+							MERGE CDN.ObiektyDomyslne AS ObD
+							USING (SELECT @KnA_KntTyp,
+								@KnA_KntFirma,
+								@KnA_KntNumer,
+								@KnA_KntLp,
+								1,
+								@NowTS,
+								@OpeGIDNumer,
+								@NowTS,
+								@OpeGIDNumer,
+								@KnA_GIDTyp,
+								@KnA_GIDFirma,
+								@KnA_GIDNumerC,
+								@KnA_GIDLp) AS src(ObD_ObiTyp,ObD_ObiFirma,ObD_ObiNumer,ObD_ObiLp,ObD_KontekstDomyslnego,ObD_CzasModyfikacji,ObD_OpeModyfikujacy,ObD_CzasDodania,ObD_OpeDodajacy,ObD_DomTyp,ObD_DomFirma,ObD_DomNumer,ObD_DomLp)
+								ON (ObD.ObD_ObiNumer = src.ObD_ObiNumer AND ObD.ObD_ObiTyp = src.ObD_ObiTyp AND ObD.ObD_ObiLp = src.ObD_ObiLp AND ObD.ObD_KontekstDomyslnego = src.ObD_KontekstDomyslnego)
+							WHEN NOT MATCHED THEN							
+							INSERT (ObD_ObiTyp,ObD_ObiFirma,ObD_ObiNumer,ObD_ObiLp,ObD_KontekstDomyslnego,ObD_CzasModyfikacji,ObD_OpeModyfikujacy,ObD_CzasDodania,ObD_OpeDodajacy,ObD_DomTyp,ObD_DomFirma,ObD_DomNumer,ObD_DomLp)
+							VALUES (@KnA_KntTyp,
+								@KnA_KntFirma,
+								@KnA_KntNumer,
+								@KnA_KntLp,
+								1,
+								@NowTS,
+								@OpeGIDNumer,
+								@NowTS,
+								@OpeGIDNumer,
+								@KnA_GIDTyp,
+								@KnA_GIDFirma,
+								@KnA_GIDNumerC,
+								@KnA_GIDLp);
+						END
+						ELSE
+						BEGIN
+							DELETE FROM CDN.ObiektyDomyslne WHERE ObD_ObiNumer = @KnA_KntNumer AND ObD_ObiTyp = @KnA_KntTyp AND ObD_ObiLp = @KnA_KntLp AND ObD_KontekstDomyslnego = 1
+						END
+                END
+                ELSE IF @CzyUsuwanyAdres = 0
+                BEGIN
+                        INSERT INTO CDN.KntAdresy
+                        (
+                                KnA_GIDTyp,
+                                KnA_GIDFirma,
+                                KnA_GIDLp,
+                                KnA_KntTyp,
+                                KnA_KntFirma,
+                                KnA_KntNumer,
+                                KnA_KntLp,
+                                KnA_DataArc,
+                                KnA_Akronim,
+                                KnA_Wysylkowy,
+                                KnA_Nazwa1,
+                                KnA_Nazwa2,
+                                KnA_Nazwa3,
+                                KnA_KodP,
+                                KnA_Miasto,
+                                KnA_Ulica,
+                                KnA_Adres,
+                                KnA_NipE,
+                                KnA_Nip,
+                                KnA_NipPrefiks,
+                                KnA_Regon,
+                                KnA_Pesel,
+                                KnA_KontoDostawcy,
+                                KnA_KontoOdbiorcy,
+                                KnA_Kraj,
+                                KnA_Powiat,
+                                KnA_Gmina,
+                                KnA_Wojewodztwo,
+                                KnA_RegionCRM,
+                                KnA_GLN,
+                                KnA_Telefon1,
+                                KnA_Telefon2,
+                                KnA_Fax,
+                                KnA_Modem,
+                                KnA_Telex,
+                                KnA_EMail,
+                                KnA_BnkTyp,
+                                KnA_BnkFirma,
+                                KnA_BnkNumer,
+                                KnA_BnkLp,
+                                KnA_NrRachunku,
+                                KnA_LastModL,
+                                KnA_Odleglosc,
+                                KnA_NRB,
+                                KnA_NiePublikuj,
+                                KnA_Domyslny,
+                                KnA_DokumentTozsamosci,
+                                KnA_DataWydania,
+                                KnA_OrganWydajacy,
+                                KnA_RolnikRyczaltowy,
+                                KnA_GPSSz,
+                                KnA_GPSDl,
+                                KnA_GPSDataPobrania,
+                                KnA_GPSGodzinaPobrania,
+                                KnA_Opis
+                        )
+                        VALUES
+                        (
+                                @KnA_GIDTyp,
+                                @KnA_GIDFirma,
+                                @KnA_GIDLp,
+                                @KnA_KntTyp,
+                                @KnA_KntFirma,
+                                @KnA_KntNumer,
+                                @KnA_KntLp,
+                                ISNULL(@KnA_DataArc,0),
+                                ISNULL(@KnA_Akronim,''),
+                                ISNULL(@KnA_Wysylkowy,0),
+                                ISNULL(@KnA_Nazwa1,''),
+                                ISNULL(@KnA_Nazwa2,''),
+                                ISNULL(@KnA_Nazwa3,''),
+                                ISNULL(@KnA_KodP,''),
+                                ISNULL(@KnA_Miasto,''),
+                                ISNULL(@KnA_Ulica,''),
+                                ISNULL(@KnA_Adres,''),
+                                ISNULL(@KnA_NipE,''),
+                                ISNULL(@KnA_Nip,''),
+                                ISNULL(@KnA_NipPrefiks,''),
+                                ISNULL(@KnA_Regon,''),
+                                ISNULL(@KnA_Pesel,''),
+                                ISNULL(@KnA_KontoDostawcy,''),
+                                ISNULL(@KnA_KontoOdbiorcy,''),
+                                ISNULL(@KnA_Kraj,''),
+                                ISNULL(@KnA_Powiat,''),
+                                ISNULL(@KnA_Gmina,''),
+                                ISNULL(@KnA_Wojewodztwo,''),
+                                ISNULL(@KnA_RegionCRM,0),
+                                ISNULL(@KnA_GLN,''),
+                                ISNULL(@KnA_Telefon1,''),
+                                ISNULL(@KnA_Telefon2,''),
+                                ISNULL(@KnA_Fax,''),
+                                ISNULL(@KnA_Modem,''),
+                                ISNULL(@KnA_Telex,''),
+                                ISNULL(@KnA_EMail,''),
+                                ISNULL(@KnA_BnkTyp,0),
+                                ISNULL(@KnA_BnkFirma,0),
+                                ISNULL(@KnA_BnkNumer,0),
+                                ISNULL(@KnA_BnkLp,0),
+                                ISNULL(@KnA_NrRachunku,''),
+                                ISNULL(@KnA_LastModL,0),
+                                ISNULL(@KnA_Odleglosc,0),
+                                ISNULL(@KnA_NRB,0),
+                                ISNULL(@KnA_NiePublikuj,0),
+                                ISNULL(@KnA_Domyslny,0),
+                                ISNULL(@KnA_DokumentTozsamosci,''),
+                                ISNULL(@KnA_DataWydania,0),
+                                ISNULL(@KnA_OrganWydajacy,''),
+                                ISNULL(@KnA_RolnikRyczaltowy,0),
+                                ISNULL(@KnA_GPSSz,0),
+                                ISNULL(@KnA_GPSDl,0),
+                                ISNULL(@KnA_GPSDataPobrania,0),
+                                ISNULL(@KnA_GPSGodzinaPobrania,0),
+                                ISNULL(@KnA_Opis,'')
+                        )
+                        SELECT @KnA_GIDNumerC = SCOPE_IDENTITY()
+
+                        INSERT INTO CDN.PicoLog
+                        (
+                                PcL_PcKID,
+                                PcL_ObiTyp,
+                                PcL_ObiNumer,
+                                PcL_ObiektID,
+                                PcL_Komentarz,
+                                PcL_Info,
+                                PcL_TStamp
+                        )
+                        VALUES
+                        (
+                                @ID,
+                                @KnA_GIDTyp,
+                                @KnA_GIDNumerC,
+                                @KnA_GIDNumer,
+                                '',
+                                '',
+                                DATEDIFF(s,CONVERT(DATETIME,'19900101',121),GETDATE())
+                        )
+						IF @KnAKorespondencyjny = 1 
+						BEGIN
+							MERGE CDN.ObiektyDomyslne AS ObD
+							USING (SELECT @KnA_KntTyp,
+								@KnA_KntFirma,
+								@KnA_KntNumer,
+								@KnA_KntLp,
+								1,
+								@NowTS,
+								@OpeGIDNumer,
+								@NowTS,
+								@OpeGIDNumer,
+								@KnA_GIDTyp,
+								@KnA_GIDFirma,
+								@KnA_GIDNumerC,
+								@KnA_GIDLp) AS src(ObD_ObiTyp,ObD_ObiFirma,ObD_ObiNumer,ObD_ObiLp,ObD_KontekstDomyslnego,ObD_CzasModyfikacji,ObD_OpeModyfikujacy,ObD_CzasDodania,ObD_OpeDodajacy,ObD_DomTyp,ObD_DomFirma,ObD_DomNumer,ObD_DomLp)
+								ON (ObD.ObD_ObiNumer = src.ObD_ObiNumer AND ObD.ObD_ObiTyp = src.ObD_ObiTyp AND ObD.ObD_ObiLp = src.ObD_ObiLp AND ObD.ObD_KontekstDomyslnego = src.ObD_KontekstDomyslnego)
+							WHEN NOT MATCHED THEN							
+							INSERT (ObD_ObiTyp,ObD_ObiFirma,ObD_ObiNumer,ObD_ObiLp,ObD_KontekstDomyslnego,ObD_CzasModyfikacji,ObD_OpeModyfikujacy,ObD_CzasDodania,ObD_OpeDodajacy,ObD_DomTyp,ObD_DomFirma,ObD_DomNumer,ObD_DomLp)
+							VALUES (@KnA_KntTyp,
+								@KnA_KntFirma,
+								@KnA_KntNumer,
+								@KnA_KntLp,
+								1,
+								@NowTS,
+								@OpeGIDNumer,
+								@NowTS,
+								@OpeGIDNumer,
+								@KnA_GIDTyp,
+								@KnA_GIDFirma,
+								@KnA_GIDNumerC,
+								@KnA_GIDLp);
+						END						
+                END
+                COMMIT TRANSACTION;
+        END TRY
+        BEGIN CATCH
+                IF XACT_STATE() &lt;&gt; 0
+                        ROLLBACK TRANSACTION;
+
+                SELECT @Opis = @KnA_Akronim + ' - błąd podczas importu adresu kontrahenta: ' + CDN.Log_SzczegolyBledu(ERROR_NUMBER(),ERROR_PROCEDURE(),ERROR_LINE(),ERROR_MESSAGE())
+                EXEC CDN.Log_Dopisz @LogID, @Opis, 2
+        END CATCH
+        SET @index = @index + 1
+END
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

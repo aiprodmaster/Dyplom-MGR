@@ -1,0 +1,569 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="OFFLXLSrv_EksportTwr"></A><PRE>
+          <FONT SIZE="2"><I>/* OFFLXLSrv_EksportTwr */</I><BR>
+CREATE PROCEDURE CDN.OFFLXLSrv_EksportTwr
+ @ID INT		 -- ID oddziału
+,@TS INT  = 0    -- TimeStamp synchronizacji
+,@Opcje INT = 0  -- Maska opcji eksportu: (1) - Eksport tylko nowododanych kart towarowych
+									  --  (2) - Eksport stanów zerowych (0 - nie, 1 - tak)
+,@LogID INT = -1 -- Identyfikator Log synchronizacji 
+AS
+	RAISERROR('Procedura OFFLXLSrv_EksportTwr nie jest obługiwana na MSSQL 2000',16,1)
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="OFFLXLSrv_EksportTwr"></A><PRE>
+          <FONT SIZE="2"><I>/* OFFLXLSrv_EksportTwr */</I><BR>
+CREATE PROCEDURE CDN.OFFLXLSrv_EksportTwr
+ @ID INT		 -- ID oddziału
+,@TS INT  = 0    -- TimeStamp synchronizacji
+,@Opcje INT = 0  -- Maska opcji eksportu 
+,@LogID INT = -1 -- Identyfikator Log synchronizacji 
+AS
+
+SET ARITHABORT ON
+DECLARE @Opis			VARCHAR(512),
+		@DataStart		VARCHAR(19),
+		@IloscWierszy    INT
+
+DECLARE	 @ExpTylkoNowe      BIT -- (1)    Eksport tylko nowododanych kart towarowych (0 - nie, 1 - tak) 
+		,@ExpStanyZerowe	BIT -- (2)    Eksport stanów zerowych (0 - nie, 1 - tak) 
+
+SELECT   @ExpTylkoNowe 	 =  @Opcje &amp; 1
+        ,@ExpStanyZerowe = (@Opcje &amp; 2) / 2
+
+SELECT @DataStart = CONVERT(VARCHAR(19),GETDATE(),121)
+	  ,@Opis = 'Towary'
+EXEC CDN.Log_OtworzPoziom @LogID, @Opis
+
+CREATE TABLE #TwrMM(TwrNumer INT);
+INSERT INTO #TwrMM(TwrNumer)
+SELECT A.TrE_TwrNumer FROM
+(
+	SELECT CDN.CzyTowarWGrupie(TrE_TwrNumer,PCKTWG.TwG_GIDNumer) AS CzyWGrupie,
+			TrE_TwrNumer
+	FROM CDN.TraNag
+	INNER JOIN CDN.TraElem ON TrE_GIDTyp = TrN_GIDTyp AND TrE_GIDNumer = TrN_GIDNumer
+	JOIN CDN.PicoKonfig ON PcK_PicoID = @ID
+	LEFT JOIN CDN.TwrGrupy PCKTWG ON PCKTWG.TwG_SyncId = PcK_TwGNumer AND PCKTWG.TwG_GIDTyp = -16
+	LEFT OUTER JOIN CDN.Magazyny MAGZ ON TrN_MagZNumer=MAGZ.MAG_GIDNumer
+	LEFT OUTER JOIN CDN.Magazyny MAGD ON TrN_MagDNumer=MAGD.MAG_GIDNumer
+	WHERE TrN_GIDTyp IN (1604) --MMP 
+		  AND PcK_Typ = 5 -- Tylko ALTUM (dla pozostałych tabela jest pusta)
+          AND TrN_Stan&gt;=3 AND TrN_Aktywny=0 AND TrN_TrNLp=127 AND ISNULL(TrN_OddDokId,0)=0
+          AND TrN_MagDNumer IN ( SELECT FRO_GIDNumer FROM CDN.FrmObiekty
+                                                 WHERE FRO_GIDTyp = 208 AND FRO_FRMID = PcK_CentrumId )
+          AND ((PcK_Typ = 5 AND MAGD.Mag_Pico &lt;&gt; 0) OR PcK_Typ &lt;&gt; 5)
+) A  WHERE A.CzyWGrupie = 0
+
+SELECT --TOP 50
+	Twr_GIDTyp								AS [@GIDTyp],
+	Twr_GIDNumer							AS [@GIDNumer],
+	Twr_GIDLp								AS [@GIDLp],
+	ISNULL(Twr_Typ,0)						AS [@Typ],
+	CDN.XLValidateXMLChars(ISNULL(Twr_Kod,''))						AS [@Kod],
+	CDN.XLValidateXMLChars(ISNULL(Twr_KodFormat,''))				AS [@KodFormat],
+	CDN.XLValidateXMLChars(ISNULL(Twr_FPPKod,''))					AS [@FPPKod],
+	CDN.XLValidateXMLChars(ISNULL(Twr_Nazwa,''))					AS [@Nazwa],
+	CDN.XLValidateXMLChars(ISNULL(Twr_Nazwa1,''))					AS [@Nazwa1],
+	CDN.XLValidateXMLChars(ISNULL(Twr_Certyfikat,''))				AS [@Certyfikat],
+	CDN.XLValidateXMLChars(ISNULL(Twr_Sww,''))						AS [@Sww],
+	CDN.XLValidateXMLChars(ISNULL(Twr_Ean,''))						AS [@Ean],
+	CDN.XLValidateXMLChars(ISNULL(Twr_Jm,''))						AS [@Jm],
+	ISNULL(Twr_Waga,0)						AS [@Waga],
+	CDN.XLValidateXMLChars(ISNULL(Twr_WJm,''))						AS [@WJm],
+	ISNULL(Twr_JmFormat,0)					AS [@JmFormat],
+	ISNULL(Twr_IloscZam,0)					AS [@IloscZam],
+	ISNULL(Twr_IloscMin,0)					AS [@IloscMin],
+	ISNULL(Twr_IloscMax,0)					AS [@IloscMax],
+	ISNULL(Twr_Ubytek,0)					AS [@Ubytek],
+	ISNULL(Twr_AutoZam,0)					AS [@AutoZam],
+	ISNULL(Twr_IloscAZam,0)					AS [@IloscAZam],
+	ISNULL(Twr_CzasDst,0)					AS [@CzasDst],
+	ISNULL(Twr_CenaSpr,0)					AS [@CenaSpr],
+	ISNULL(Twr_JmDomyslna,0)				AS [@JmDomyslna],
+	ISNULL(Twr_DstDomyslny,0)				AS [@DstDomyslny],
+	ISNULL(Twr_RozliczMag,0)				AS [@RozliczMag],
+	ISNULL(Twr_Zakup,0)						AS [@Zakup],
+	ISNULL(Twr_Sprzedaz,0)					AS [@Sprzedaz],
+	ISNULL(Twr_GrupaPod,'')					AS [@GrupaPod],
+	ISNULL(Twr_StawkaPod,0)					AS [@StawkaPod],
+	ISNULL(Twr_Akcyza,0)					AS [@Akcyza],
+	ISNULL(Twr_OpeTyp,0)					AS [@OpeTyp],
+	ISNULL(Twr_OpeNumer,0)					AS [@OpeNumer],
+	ISNULL(Twr_OpeLp,0)						AS [@OpeLp],
+	ISNULL(Twr_PrcTyp,0)					AS [@PrcTyp],
+	ISNULL(Twr_PrcNumer,0)					AS [@PrcNumer],
+	ISNULL(Twr_PrcLp,0)						AS [@PrcLp],       
+	ISNULL(Twr_KontaktTyp,0)				AS [@KontaktTyp],
+	ISNULL(Twr_KontaktZa,0)					AS [@KontaktZa],
+	ISNULL(Twr_KontaktJC,0)					AS [@KontaktJC],
+	ISNULL(Twr_Okresowy,0)					AS [@Okresowy],
+	CDN.XLValidateXMLChars(ISNULL(Twr_Cel,''))						AS [@Cel],
+	ISNULL(Twr_Atrybut1,'')					AS [@Atrybut1],
+	ISNULL(Twr_Format1,0)					AS [@Format1],
+	ISNULL(Twr_Wartosc1,'')					AS [@Wartosc1],
+	ISNULL(Twr_Atrybut2,'')					AS [@Atrybut2],
+	ISNULL(Twr_Format2,0)					AS [@Format2],
+	ISNULL(Twr_Wartosc2,'')					AS [@Wartosc2],
+	ISNULL(Twr_Atrybut3,'')					AS [@Atrybut3],
+	ISNULL(Twr_Format3,0)					AS [@Format3],
+	ISNULL(Twr_Wartosc3,'')					AS [@Wartosc3],
+	ISNULL(Twr_Punkty,0)					AS [@Punkty],
+	ISNULL(Twr_Koncesja,0)					AS [@Koncesja],
+	CDN.XLValidateXMLChars(ISNULL(Twr_Konto1,''))					AS [@Konto1],
+	CDN.XLValidateXMLChars(ISNULL(Twr_Konto2,''))					AS [@Konto2],
+	CDN.XLValidateXMLChars(ISNULL(Twr_Konto3,''))					AS [@Konto3],
+	ISNULL(Twr_Polozenie,'')				AS [@Polozenie],
+	CDN.XLValidateXMLChars(ISNULL(Twr_Katalog,''))					AS [@Katalog],
+	ISNULL(Twr_WCenniku,0)					AS [@WCenniku],
+	ISNULL(Twr_EdycjaNazwy,0)				AS [@EdycjaNazwy],
+	ISNULL(Twr_BezRabatu,0)					AS [@BezRabatu],
+	ISNULL(Twr_KopiujOpis,0)				AS [@KopiujOpis],
+	CDN.XLValidateXMLChars(ISNULL(Twr_URL,''))						AS [@URL],
+	ISNULL(Twr_Warunek,'')					AS [@Warunek],
+	ISNULL(Twr_ObjetoscL,0)					AS [@ObjetoscL],
+	ISNULL(Twr_ObjetoscM,0)					AS [@ObjetoscM],
+	ISNULL(Twr_LastModL,0)					AS [@LastModL],
+	ISNULL(Twr_LastModO,0)					AS [@LastModO],
+	ISNULL(Twr_LastModC,0)					AS [@LastModC],
+	ISNULL(Twr_TerminZwrotu,0)				AS [@TerminZwrotu],
+	ISNULL(Twr_ZakupAutoryz,0)				AS [@ZakupAutoryz],
+	ISNULL(Twr_MagTyp,0)					AS [@MagTyp],       
+	ISNULL(Twr_MagNumer,0)					AS [@MagNumer],
+	ISNULL(Twr_MagLp,0)						AS [@MagLp],       
+	ISNULL(Twr_MarzaMin,0)					AS [@MarzaMin],
+	ISNULL(Twr_KosztUslugi,0)				AS [@KosztUslugi],
+	ISNULL(Twr_KosztUTyp,0)					AS [@KosztUTyp],
+	ISNULL(Twr_Clo,0)						AS [@Clo],
+	ISNULL(Twr_PodatekImp,0)				AS [@PodatekImp],
+	ISNULL(Twr_StanInfoLimit,0)				AS [@StanInfoLimit],
+	ISNULL(Twr_StanInfoMax,0)				AS [@StanInfoMax],
+	ISNULL(Twr_StanInfoProcent,0)			AS [@StanInfoProcent],
+	ISNULL(Twr_Wsk,0)						AS [@Wsk],
+	ISNULL(Twr_CCKTyp,0)					AS [@CCKTyp],
+	ISNULL(Twr_CCKNumer,0)					AS [@CCKNumer],
+	ISNULL(Twr_CCKLp,0)						AS [@CCKLp],       
+	ISNULL(Twr_PrdTyp,0)					AS [@PrdTyp],       
+	ISNULL(Twr_PrdNumer,0)					AS [@PrdNumer],
+	ISNULL(Twr_PrdLp,0)						AS [@PrdLp],              
+	ISNULL(Twr_OpeTypM,0)					AS [@OpeTypM],	   
+	ISNULL(Twr_OpeNumerM,0)					AS [@OpeNumerM],
+	ISNULL(Twr_OpeLpM,0)					AS [@OpeLpM],	          
+	CDN.XLValidateXMLChars(ISNULL(Twr_PCN,''))						AS [@PCN],
+	ISNULL(Twr_Notowania,0)					AS [@Notowania],
+	ISNULL(Twr_WagaBrutto,0)				AS [@WagaBrutto],
+	CDN.XLValidateXMLChars(ISNULL(Twr_WJmBrutto,''))				AS [@WJmBrutto],
+	ISNULL(Twr_GrupaPodSpr,'')				AS [@GrupaPodSpr],
+	ISNULL(Twr_StawkaPodSpr,0)				AS [@StawkaPodSpr],
+	ISNULL(Twr_Licencja,0)					AS [@Licencja],
+	ISNULL(Twr_Blokada,0)					AS [@Blokada],
+	ISNULL(Twr_Archiwalny,0)				AS [@Archiwalny],
+	ISNULL(Twr_JMCalkowita,0)				AS [@JMCalkowita],
+	ISNULL(Twr_Oddzialowy,0)				AS [@Oddzialowy],
+	ISNULL(Twr_JmDomyslnaZak,0)				AS [@JmDomyslnaZak],
+	CDN.XLValidateXMLChars(ISNULL(Twr_KrajPoch,''))					AS [@KrajPoch],
+	ISNULL(Twr_WspFin,0)					AS [@WspFin],
+	ISNULL(Twr_PobierzWgCech,0)				AS [@PobierzWgCech],
+	ISNULL(Twr_Kaucja,0)					AS [@Kaucja],
+	ISNULL(Twr_SkNId,0)						AS [@SkNId],
+	ISNULL(Twr_RejWyposazenia,0)			AS [@RejWyposazenia],
+	ISNULL(Twr_OkresGwarancji,0)			AS [@OkresGwarancji],
+	ISNULL(Twr_GrupaWyposazenia,0)			AS [@GrupaWyposazenia],
+	ISNULL(Twr_ProdTechnologia,0)			AS [@ProdTechnologia],
+	ISNULL(Twr_ProdAktualnaWersja,0)		AS [@ProdAktualnaWersja],
+	ISNULL(Twr_TwZOdNajwiekszego,0)			AS [@TwZOdNajwiekszego],
+	ISNULL(Twr_DataUtworzenia,0)			AS [@DataUtworzenia],
+	CDN.XLValidateXMLChars(ISNULL(Twr_WymJm,''))					AS [@WymJm],
+	ISNULL(Twr_PartiaDataW,0)				AS [@PartiaDataW],
+	ISNULL(Twr_TerminW,0)					AS [@TerminW],
+	ISNULL(Twr_PartiaDostawa,0)				AS [@PartiaDostawa],
+	ISNULL(Twr_NrSeryjnyZCechy,0)			AS [@NrSeryjnyZCechy],
+	ISNULL(Twr_ESklep,0)					AS [@ESklep],
+	ISNULL(CASE WHEN TWG.TwG_GIDNumer = 0 THEN 0 ELSE TWG.TwG_SyncID END,0)					AS [@GrupaDom],
+	CDN.XLValidateXMLChars(ISNULL(TwO_Opis,''))						AS [@Opis],
+	ISNULL(Twr_Zlom,0)						AS [@TwrZlom],
+	ISNULL(Twr_MarkaId,0)					AS [@MarkaId],	
+	(
+		SELECT DISTINCT
+			A.TwC_TwrLp						AS [@TwrLp],
+			ISNULL(A.TwC_Waluta,'')			AS [@Waluta],
+			ISNULL(A.TwC_NrKursu,0)			AS [@NrKursu],
+			ISNULL(A.TwC_Marza,0)				AS [@Marza],
+			ISNULL(A.TwC_Wartosc,0)			AS [@Wartosc],
+			ISNULL(A.TwC_Zaok,0)				AS [@Zaok],
+			ISNULL(A.TwC_Offset,0)			AS [@Offset],
+			ISNULL(A.TwC_Aktualizacja,0)		AS [@Aktualizacja],
+			ISNULL(A.TwC_Priorytet,0)			AS [@Priorytet]
+		FROM CDN.TwrCeny A
+		LEFT OUTER JOIN CDN.FrmObiekty ON  FRO_FRMID = PcK_CentrumID AND FRO_GIDTyp = 64 AND A.TwC_TwrLp = FRO_GIDLp	
+		LEFT OUTER JOIN cdn.PicoCenniki ON PcC_PcKID=@ID and PcC_TwCTwrTyp=64 
+			AND PcC_TwCTwrNumer=A.TwC_ID and PcC_TwCTwrLp = 0
+		WHERE A.TwC_TwrNumer = Twr_GIDNumer AND ((PcK_Typ &lt;&gt; 3 AND FRO_GIDLp IS NOT NULL) OR (PcK_CenaZakupu = 1 AND TwC_TwrLp = 0 )  )
+			AND ((ISNULL(FRO_Autonomiczna,0) = 0 AND A.TwC_CzasModyfikacji &gt; ISNULL(PcC_TS,0)) OR (ISNULL(FRO_Autonomiczna,0)=1 AND isnull(PcC_TS, @TS+1) &gt; @TS))-- zawsze wysyłaj cenniki nieautonomiczne TFSID:245101 isnull(PcC_TS, @TS+1) &gt; @TS 
+			AND A.TwC_ID = (
+				SELECT TOP 1 B.TwC_ID FROM CDN.TwrCeny B 
+				WHERE B.TwC_TwrNumer = Twr_GIDNumer AND B.TwC_TwrLp = A.TwC_TwrLp AND B.TwC_DataOd &lt;= DATEDIFF(s,CONVERT(DATETIME,'1990-01-01',120),GETDATE())
+				ORDER BY B.TwC_TwrLp,B.TwC_DataOd DESC
+				)
+		FOR XML PATH('TWC'), ROOT('TWCI'), TYPE
+	),
+	(
+		SELECT 
+			TwJ_TwrLp						AS [@TwrLp],
+			ISNULL(TwJ_JmZ,'')				AS [@JmZ],
+			ISNULL(TwJ_JmFormat,0)			AS [@JmFormat],
+			ISNULL(TwJ_TypJm,0)				AS [@TypJm],
+			ISNULL(TwJ_Calkowita,0)			AS [@Calkowita],
+			ISNULL(TwJ_PrzeliczM,0)			AS [@PrzeliczM],
+			ISNULL(TwJ_PrzeliczL,0)			AS [@PrzeliczL],
+			ISNULL(TwJ_Prog,0)				AS [@Prog],
+			ISNULL(TwJ_Obowiazek,0)			AS [@Obowiazek],
+			ISNULL(TwJ_Waga,0)				AS [@Waga],
+			ISNULL(TwJ_WJm,'')				AS [@WJm],
+			--ISNULL(TwJ_EAN,'')                       AS [@EAN],
+			CDN.XLValidateXMLChars(ISNULL(CDN.PobierzKodObiektu(3,TwJ_TwrNumer,TwJ_JmZ,NULL,NULL,NULL),''))	AS [@EAN],
+			ISNULL(TwJ_WyliczPrzySpr,0)		AS [@WyliczPrzySpr],
+			ISNULL(TwJ_ObjetoscL,0)			AS [@ObjetoscL],
+			ISNULL(TwJ_ObjetoscM,0)			AS [@ObjetoscM],
+			ISNULL(TwJ_WagaBrutto,0)		AS [@WagaBrutto],
+			ISNULL(TwJ_WJmBrutto,'')		AS [@WJmBrutto],
+			ISNULL(TwJ_WymJm,'')			AS [@TwJ_WymJm],
+			CASE WHEN Twr_JMDomyslna = TwJ_TwrLp THEN 1 ELSE 0 END					AS [@DomyslnaSPR],	--TID[171043]
+			CASE WHEN Twr_JMDomyslnaZak = TwJ_TwrLp THEN 1 ELSE 0 END				AS [@DomyslnaZAK],	--TID[171043]
+			CASE WHEN Twr_JMDomyslna = TwJ_TwrLp OR Twr_JMDomyslnaZak = TwJ_TwrLp THEN Twr_JMBlokujZmiane ELSE 0 END				AS [@JmBlokada]	--TFSID:241909
+		FROM CDN.TwrJm
+		WHERE TwJ_TwrNumer = Twr_GIDNumer
+		FOR XML PATH('TWJ'), ROOT('TWJI'), TYPE 
+	),
+	(
+		SELECT
+			ISNULL(TAP_Status,0)			AS [@Status],
+			ISNULL(TAP_Dostepnosc,0)		AS [@Dostepnosc],
+			ISNULL(TAP_PodlegaRabatowaniu,0)AS [@PodlegaRabatowaniu],
+			ISNULL(TAP_KontrolaStanow,0)	AS [@KontrolaStanow]
+		FROM CDN.TwrAplikacje
+		WHERE TAP_ObiNumer = Twr_GIDNumer AND TAP_ObiTyp = Twr_GIDTyp AND PcK_Typ = 5
+		FOR XML PATH('TAP'), ROOT('TAPI'), TYPE 
+	),
+	(
+		SELECT 
+			ISNULL(RTRIM(SLW_WartoscS1),'pl-PL')	AS [@Jezyk],
+			ISNULL(TPO_TytulStrony,'')				AS [@TytulStrony],
+			ISNULL(TPO_SlowaKluczowe,'')			AS [@SlowaKluczowe],
+			ISNULL(TPO_OpisKrotki,'')				AS [@OpisKrotki],
+			ISNULL(TPO_MetaOpis,'')					AS [@MetaOpis]
+		FROM CDN.TwrAplikacjeOpisy 
+			LEFT OUTER JOIN CDN.Slowniki ON SLW_ID = TPO_JezykId
+		WHERE TPO_ObiTyp = Twr_GIDTyp AND TPO_ObiNumer = Twr_GIDNumer AND PcK_Typ = 5
+			and ISNULL(SLW_WartoscS1,'pl-PL') IN ('pl-PL','en-GB','de-DE','fr-FR')
+		FOR XML PATH('TPO'), ROOT('TPOI'), TYPE
+	),
+	(SELECT ISNULL((
+		SELECT
+		Towary.Twr_GIDTyp as		[@TwrTyp]
+		, Towary.Twr_GIDNumer as	[@TwrNumer]
+		, Towary.Twr_GIDLp as		[@TwrLp]
+		, Towary.Twr_Jm as			[@Jm]
+		, Magazyny.MAG_GIDTyp as	[@MagTyp]
+		, Magazyny.MAG_GIDNumer as	[@MagNumer]
+		, coalesce(Tpm_IloscMax, Towary.twr_iloscmax, 0) as [@iloscMax]
+		, coalesce(Tpm_IloscMin, Towary.twr_iloscmin, 0) as [@iloscMin]
+		, coalesce(Tpm_IloscZam, Towary.twr_ilosczam, 0) as [@iloscZam]
+		from cdn.TwrKarty Towary
+		FULL JOIN (select MAG_GIDNumer, MAG_GIDTyp
+			from cdn.Magazyny
+			join cdn.FrmObiekty on FRO_GIDTyp=MAG_GIDTyp and FRO_GIDNumer=mag_gidnumer
+			join cdn.PicoKonfig on PcK_CentrumID = FRO_FRMID					
+			where PcK_PicoID=@ID and MAG_Pico=1 and MAG_Wewnetrzny=1) Magazyny ON 1=1
+		left outer join cdn.TwrParMag on Towary.Twr_GIDNumer = Tpm_TwrNumer and Magazyny.MAG_GIDNumer = Tpm_MagNumer
+		where Towary.Twr_GIDNumer = TwrGlowne.Twr_GIDNumer
+		and coalesce(Tpm_IloscMax, Towary.twr_iloscmax, 0) &gt; 0
+		FOR XML PATH('TWN'), ROOT('TWNI'), TYPE),'&lt;TWNI&gt;&lt;TWN/&gt;&lt;/TWNI&gt;'
+	)),	
+	CDN.OFFLXL_AtrybutyObiektuXml(Twr_GIDTyp,Twr_GIDNumer,0,0)
+FROM   CDN.TwrKarty TwrGlowne
+	INNER JOIN CDN.PicoKonfig ON PcK_PicoID = @ID
+	LEFT JOIN CDN.TwrGrupy PCKTWG ON PCKTWG.TwG_SyncId = PcK_TwGNumer AND PCKTWG.TwG_GIDTyp = -16
+	LEFT OUTER JOIN CDN.TwrLinki ON TwL_GROTyp=PcK_TwGTyp AND TwL_GRONumer=PCKTWG.TwG_GIDNumer
+		AND TwL_GIDTyp=Twr_GIDTyp AND TwL_GIDNumer=Twr_GIDNumer
+	LEFT OUTER JOIN CDN.TwrGrupyDom ON Twr_GIDTyp = TGD_GIDTyp AND Twr_GIDNumer = TGD_GIDNumer
+	LEFT OUTER JOIN CDN.TwrGrupy TWG ON TWG.TwG_GIDTyp = TGD_GrOTyp AND TWG.TwG_GIDNumer = TGD_GrONumer
+	LEFT OUTER JOIN CDN.TwrOpisy ON Twr_GIDNumer = TwO_TwrNumer
+	LEFT OUTER JOIN CDN.TwrAplikacjeOpisy ON TPO_ObiTyp = Twr_GIDTyp AND TPO_ObiNumer = Twr_GIDNumer
+WHERE 
+	( 
+		Twr_GIDNumer &gt; 0 AND Twr_Aktywna = 0 AND 
+		(
+			Twr_LastModC &gt; @TS OR 
+			EXISTS 
+			(
+				SELECT * FROM CDN.TwrCeny A
+					LEFT OUTER JOIN CDN.FrmObiekty ON FRO_FRMID = PcK_CentrumID AND FRO_GIDTyp = 64 AND A.TwC_TwrLp = FRO_GIDLp
+					LEFT OUTER JOIN CDN.PicoCenniki ON PcC_TwCTwrNumer = A.TwC_ID AND PcC_TwCTwrTyp=64 AND PcC_TwCTwrLp = 0 AND PcC_PcKID=@ID
+					JOIN CDN.Nazwy ON A.TwC_TwrLp = Naz_GIDLp and Naz_GIDTyp = 64
+				WHERE A.TwC_TwrNumer = Twr_GIDNumer AND 
+					(					 
+					Naz_CzasModyfikacji &gt; @TS OR
+					 A.TwC_ID = ( --Zmieniła się data cennika i cennik ten nie był wyeksportowany, lub cennik był modyfikowany
+							SELECT TOP 1 B.TwC_ID FROM CDN.TwrCeny B
+							LEFT OUTER JOIN CDN.PicoCenniki BP ON BP.PcC_TwCTwrNumer = B.TwC_ID AND BP.PcC_TwCTwrTyp=64 AND BP.PcC_TwCTwrLp = 0 AND BP.PcC_PcKID=@ID
+							WHERE B.TwC_TwrNumer = Twr_GIDNumer AND B.TwC_TwrLp = A.TwC_TwrLp AND B.TwC_DataOd &lt;= DATEDIFF(s,CONVERT(DATETIME,'1990-01-01',120),GETDATE())
+							AND (BP.PcC_ID IS NULL OR BP.PcC_TS &lt; B.TwC_CzasModyfikacji) --cennik nie był wysłany lub był modyfikowany po ostatniej synchronizacji							
+							ORDER BY B.TwC_TwrLp,B.TwC_DataOd DESC
+						)
+					)						
+					AND ( (PcK_Typ &lt;&gt; 3 AND FRO_GIDLp IS NOT NULL) OR (PcK_CenaZakupu = 1 AND A.TwC_TwrLp = 0 ) ) 
+					AND ((ISNULL(FRO_Autonomiczna,0) = 0 AND A.TwC_CzasModyfikacji &gt; ISNULL(PcC_TS,0)) OR (ISNULL(FRO_Autonomiczna,0)=1 AND isnull(PcC_TS, @TS+1) &gt; @TS))
+			)
+			OR EXISTS(
+				select * from cdn.PicoUsuniete where PcU_ObiTyp = 64 and PcU_PcKId = @ID
+				and PcU_ObiNumer = Twr_GIDNumer and PcU_TSUsuniecia &gt;= @TS
+			)
+			OR ISNULL(TPO_CzasModyfikacji,0) &gt; @TS
+			OR EXISTS( SELECT * FROM cdn.TwrKody WHERE TwK_TwrNumer = Twr_GIDNumer AND TwK_CzasModyfikacji &gt; @TS
+			)
+		)
+		AND ((@ExpTylkoNowe = 1 AND Twr_DataUtworzenia &gt; (@TS/86400 + 69035)) OR @ExpTylkoNowe = 0)
+		AND (PcK_Typ&lt;&gt;5 OR PcK_TwGTyp=0 OR TwL_GIDTyp IS NOT NULL)
+		AND ( isnull(TwO_Jezyk,0) = 0 )
+		AND 
+		(
+			@ExpStanyZerowe = CASE WHEN EXISTS(SELECT * FROM CDN.TwrZasoby WITH(NOLOCK)WHERE TwZ_TwrNumer=Twr_GIDNumer AND TwZ_MagNumer IN ( SELECT FRO_GIDNumer FROM CDN.FrmObiekty WHERE FRO_GIDTyp = 208 AND FRO_FRMID = PcK_CentrumId )) THEN 0 ELSE 1 END
+			OR @ExpStanyZerowe=1
+        )
+	) OR (Twr_GIDNumer IN (SELECT * FROM #TwrMM) AND Twr_Aktywna = 0)
+ORDER BY Twr_Kod
+FOR XML PATH('TWR'), ROOT('TWRI')
+
+SET @IloscWierszy = @@ROWCOUNT
+
+UPDATE CDN.TwrKarty SET Twr_Oddzialowy = 1
+FROM   CDN.TwrKarty
+INNER JOIN CDN.PicoKonfig ON PcK_PicoID = @ID
+LEFT JOIN CDN.TwrGrupy PCKTWG ON PCKTWG.TwG_SyncId = PcK_TwGNumer AND PCKTWG.TwG_GIDTyp = -16
+LEFT OUTER JOIN CDN.TwrLinki ON TwL_GROTyp=PcK_TwGTyp AND TwL_GRONumer=PCKTWG.TwG_GIDNumer
+	AND TwL_GIDTyp=Twr_GIDTyp AND TwL_GIDNumer=Twr_GIDNumer
+LEFT OUTER JOIN CDN.TwrGrupyDom ON Twr_GIDTyp = TGD_GIDTyp AND Twr_GIDNumer = TGD_GIDNumer
+LEFT OUTER JOIN CDN.TwrOpisy ON Twr_GIDNumer = TwO_TwrNumer
+LEFT OUTER JOIN CDN.TwrAplikacjeOpisy ON TPO_ObiTyp = Twr_GIDTyp AND TPO_ObiNumer = Twr_GIDNumer
+WHERE ( Twr_GIDNumer &gt; 0 AND Twr_Aktywna = 0 AND Twr_Oddzialowy = 0 AND
+		(Twr_LastModC &gt; @TS OR 
+			EXISTS 
+			(
+				SELECT * FROM CDN.TwrCeny A
+					LEFT OUTER JOIN CDN.FrmObiekty ON FRO_FRMID = PcK_CentrumID AND FRO_GIDTyp = 64 AND A.TwC_TwrLp = FRO_GIDLp
+					LEFT OUTER JOIN CDN.PicoCenniki ON PcC_TwCTwrNumer = A.TwC_ID
+					JOIN CDN.Nazwy ON A.TwC_TwrLp = Naz_GIDLp and Naz_GIDTyp = 64
+				WHERE A.TwC_TwrNumer = Twr_GIDNumer AND 
+					(					 
+					Naz_CzasModyfikacji &gt; @TS 
+					OR A.TwC_ID = ( --Zmieniła się data cennika i cennik ten nie był wyeksportowany, lub cennik był modyfikowany
+							SELECT TOP 1 B.TwC_ID FROM CDN.TwrCeny B
+							LEFT OUTER JOIN CDN.PicoCenniki ON PcC_TwCTwrNumer = B.TwC_ID
+							WHERE B.TwC_TwrNumer = Twr_GIDNumer AND B.TwC_TwrLp = A.TwC_TwrLp AND B.TwC_DataOd &lt;= DATEDIFF(s,CONVERT(DATETIME,'1990-01-01',120),GETDATE())
+							AND (PcC_ID IS NULL OR PcC_TS &lt; B.TwC_CzasModyfikacji) --cennik nie był wysłany lub był modyfikowany po ostatniej synchronizacji
+							ORDER BY B.TwC_TwrLp,B.TwC_DataOd DESC
+						)
+					)						
+					AND ( (PcK_Typ &lt;&gt; 3 AND FRO_GIDLp IS NOT NULL) OR (PcK_CenaZakupu = 1 AND A.TwC_TwrLp = 0 ) )
+			)
+			OR ISNULL(TPO_CzasModyfikacji,0) &gt; @TS
+		)
+		AND ((@ExpTylkoNowe = 1 AND Twr_DataUtworzenia &gt; (@TS/86400 + 69035)) OR @ExpTylkoNowe = 0)
+		AND (PcK_Typ&lt;&gt;5 OR PcK_TwGTyp=0 OR TwL_GIDTyp IS NOT NULL)
+		AND 
+		(
+			@ExpStanyZerowe = CASE WHEN EXISTS(SELECT * FROM CDN.TwrZasoby WITH(NOLOCK)WHERE TwZ_TwrNumer=Twr_GIDNumer AND TwZ_MagNumer IN ( SELECT FRO_GIDNumer FROM CDN.FrmObiekty WHERE FRO_GIDTyp = 208 AND FRO_FRMID = PcK_CentrumId )) THEN 0 ELSE 1 END
+			OR @ExpStanyZerowe=1
+        )
+      ) OR (Twr_GIDNumer IN (SELECT * FROM #TwrMM) AND Twr_Aktywna = 0 AND Twr_Oddzialowy = 0)
+
+	DECLARE @CennikiTmp TABLE(TWCID INT)
+	INSERT INTO @CennikiTmp
+		SELECT A.TwC_ID
+		FROM CDN.TwrKarty
+		INNER JOIN CDN.PicoKonfig ON PcK_PicoID = @ID		
+		LEFT JOIN CDN.TwrGrupy PCKTWG ON PCKTWG.TwG_SyncId = PcK_TwGNumer AND PCKTWG.TwG_GIDTyp = -16
+		LEFT OUTER JOIN CDN.TwrLinki ON TwL_GROTyp=PcK_TwGTyp AND TwL_GRONumer=PCKTWG.TwG_GIDNumer
+			AND TwL_GIDTyp=Twr_GIDTyp AND TwL_GIDNumer=Twr_GIDNumer
+		LEFT OUTER JOIN CDN.TwrGrupyDom ON Twr_GIDTyp = TGD_GIDTyp AND Twr_GIDNumer = TGD_GIDNumer
+		LEFT OUTER JOIN CDN.TwrOpisy ON Twr_GIDNumer = TwO_TwrNumer
+		JOIN CDN.TwrCeny A ON A.TwC_TwrNumer = Twr_GIDNumer
+		LEFT OUTER JOIN CDN.FrmObiekty ON  FRO_FRMID = PcK_CentrumID AND FRO_GIDTyp = 64 AND A.TwC_TwrLp = FRO_GIDLp	
+		LEFT OUTER JOIN cdn.PicoCenniki ON PcC_PcKID=@ID and PcC_TwCTwrTyp=64
+			AND PcC_TwCTwrNumer=A.TwC_ID and PcC_TwCTwrLp = 0
+		WHERE ((ISNULL(FRO_Autonomiczna,0) = 0 AND A.TwC_CzasModyfikacji &gt; ISNULL(PcC_TS,0)) OR (ISNULL(FRO_Autonomiczna,0)=1 AND isnull(PcC_TS, @TS+1) &gt; @TS)) AND ((PcK_Typ &lt;&gt; 3 AND FRO_GIDLp IS NOT NULL) OR (PcK_CenaZakupu = 1 AND A.TwC_TwrLp = 0 )  )		
+		AND (
+ 				Twr_GIDNumer &gt; 0 AND Twr_Aktywna = 0 AND 
+				(
+					Twr_LastModC &gt; @TS OR 
+					EXISTS 
+					(
+						SELECT * FROM CDN.TwrCeny A
+							LEFT OUTER JOIN CDN.FrmObiekty ON FRO_FRMID = PcK_CentrumID AND FRO_GIDTyp = 64 AND A.TwC_TwrLp = FRO_GIDLp
+							LEFT OUTER JOIN CDN.PicoCenniki ON PcC_TwCTwrNumer = A.TwC_ID
+							JOIN CDN.Nazwy ON A.TwC_TwrLp = Naz_GIDLp and Naz_GIDTyp = 64
+						WHERE A.TwC_TwrNumer = Twr_GIDNumer AND 
+							(					 
+							Naz_CzasModyfikacji &gt; @TS 
+							OR A.TwC_ID = ( --Zmieniła się data cennika i cennik ten nie był wyeksportowany, lub cennik był modyfikowany
+									SELECT TOP 1 B.TwC_ID FROM CDN.TwrCeny B
+									LEFT OUTER JOIN CDN.PicoCenniki ON PcC_TwCTwrNumer = B.TwC_ID
+									WHERE B.TwC_TwrNumer = Twr_GIDNumer AND B.TwC_TwrLp = A.TwC_TwrLp AND B.TwC_DataOd &lt;= DATEDIFF(s,CONVERT(DATETIME,'1990-01-01',120),GETDATE())
+									AND (PcC_ID IS NULL OR PcC_TS &lt; B.TwC_CzasModyfikacji) --cennik nie był wysłany lub był modyfikowany po ostatniej synchronizacji
+									ORDER BY B.TwC_TwrLp,B.TwC_DataOd DESC
+								)
+							)						
+							AND ( (PcK_Typ &lt;&gt; 3 AND FRO_GIDLp IS NOT NULL) OR (PcK_CenaZakupu = 1 AND A.TwC_TwrLp = 0 ) )
+					)
+				)
+				AND ((@ExpTylkoNowe = 1 AND Twr_DataUtworzenia &gt; (@TS/86400 + 69035)) OR @ExpTylkoNowe = 0)
+				AND (PcK_Typ&lt;&gt;5 OR PcK_TwGTyp=0 OR TwL_GIDTyp IS NOT NULL)
+				AND 
+				(
+					@ExpStanyZerowe = CASE WHEN EXISTS(SELECT * FROM CDN.TwrZasoby WITH(NOLOCK)WHERE TwZ_TwrNumer=Twr_GIDNumer AND TwZ_MagNumer IN ( SELECT FRO_GIDNumer FROM CDN.FrmObiekty WHERE FRO_GIDTyp = 208 AND FRO_FRMID = PcK_CentrumId )) THEN 0 ELSE 1 END
+					OR @ExpStanyZerowe=1
+				)
+			)
+		ORDER BY Twr_Kod
+
+		DELETE A FROM cdn.PicoCenniki A
+		JOIN @CennikiTmp ON TWCID = A.PcC_TwCTwrNumer
+	    WHERE PcC_PcKID = @ID AND PcC_TwCTwrTyp = 64 AND PcC_TwCTwrLp = 0
+
+		INSERT INTO cdn.PicoCenniki (PcC_TwCTwrTyp, PcC_TwCTwrNumer, PcC_TwCTwrLp, PcC_PcKID, PcC_TS)
+		SELECT 64, TWCID, 0, @ID, DATEDIFF(s,CONVERT(DATETIME,'1990-01-01',120),GETDATE())/*TFSID:248586@TS*/ FROM @CennikiTmp
+		
+
+
+SELECT @Opis = 'Ilość wyeksportowanych kart towarowych: '+ CAST(@IloscWierszy AS VARCHAR(10))
+EXEC CDN.Log_Dopisz @LogID, @Opis,0
+EXEC CDN.Log_ZamknijPoziom @LogID	
+
+
+/******* Schematy kaucji **********/
+SELECT @DataStart = CONVERT(VARCHAR(19),GETDATE(),121)
+	  ,@Opis = 'Schematy kaucji'
+EXEC CDN.Log_OtworzPoziom @LogID, @Opis
+
+SELECT   SKN_Id AS [@Id] 
+		,SKN_Kod AS [@Kod] 
+		,CDN.XLValidateXMLChars(SKN_Nazwa) AS [@Nazwa] 
+		,SKN_LastMod AS [@LastMod] 
+		,SKN_Oddzialowy AS [@Oddzialowy] 
+		,SKN_Archiwalny AS [@Archiwalny] 
+		,(SELECT SKE_Lp AS [@Lp] 
+				,SKE_TwrNumer AS [@TwrNumer] 
+				,SKE_Prog AS [@Prog] 
+				,SKE_Ilosc AS [@Ilosc] 
+		  FROM CDN.TwrSchematyKaucjiElem
+		  WHERE SKE_SKNId = SKN_Id
+		  FOR XML PATH('SKE'), ROOT('SKEI'),TYPE)
+		  ,(SELECT Twr_GIDNumer AS [@GIDNumer] 
+		  FROM CDN.TwrKarty
+		  WHERE Twr_SkNId = SKN_Id
+		  FOR XML PATH('TWR'), ROOT('TWRI'),TYPE)
+FROM CDN.TwrSchematyKaucjiNag
+WHERE SKN_LastMod &gt; @TS
+FOR XML PATH('SKN'), ROOT('SKNI')
+
+SET @IloscWierszy = @@ROWCOUNT
+
+SELECT @Opis = 'Ilość wyeksportowanych schematów kaucji: '+ CAST(@IloscWierszy AS VARCHAR(10))
+EXEC CDN.Log_Dopisz @LogID, @Opis,0
+EXEC CDN.Log_ZamknijPoziom @LogID	
+
+/******* Dostawcy towaru **********/
+SELECT @DataStart = CONVERT(VARCHAR(19),GETDATE(),121)
+	  ,@Opis = 'Dostawcy towarów'
+EXEC CDN.Log_OtworzPoziom @LogID, @Opis
+
+SELECT 
+   TWD_TwrTyp	                            AS [@TwrTyp],
+   TWD_TwrNumer                             AS [@TwrNumer],		   
+   TWD_TwrLp                                AS [@TwrLp],
+   ISNULL(TWD_KntTyp,0)                     AS [@KntTyp],
+   ISNULL(TWD_KntNumer,0)                   AS [@KntNumer],
+   TWD_KlasaKnt                             AS [@KlasaKnt],
+   ISNULL(TWD_Cena,0)                       AS [@Cena],
+   ISNULL(TWD_Waluta,'')                    AS [@Waluta],
+   ISNULL(TWD_NrKursu,0)                    AS [@NrKursu],
+   ISNULL(TWD_DataAkt,0)                    AS [@DataAkt],
+   ISNULL(TWD_Czas,0)                       AS [@Czas],
+   --ISNULL(TWD_KodOrgKnt,'')                 AS [@KodOrgKnt],
+   ISNULL(CDN.PobierzKodObiektu(3,Twr_GIDNumer,NULL,TWD_KntNumer,TWD_KlasaKnt,NULL),'') AS [@KodOrgKnt],
+   CDN.XLValidateXMLChars(ISNULL(TWD_Notatki,''))                   AS [@Notatki],
+   --ISNULL(TWD_JmZ,'')                       AS [@JmZ]
+   (SELECT ISNULL(SUBSTRING(A.JmZ,CHARINDEX(':',A.JmZ)+1,8),'')
+    FROM
+    ( SELECT ISNULL(CDN.PobierzKodObiektu(3,Twr_GIDNumer,NULL,TWD_KntNumer,TWD_KlasaKnt,1),'') AS JmZ ) A 
+   )AS [@JmZ]
+FROM CDN.TwrDost
+JOIN CDN.TwrKarty ON TwD_TwrNumer = Twr_GIDNumer
+INNER JOIN CDN.PicoKonfig ON PcK_PicoID = @ID
+LEFT JOIN CDN.TwrGrupy PCKTWG ON PCKTWG.TwG_SyncId = PcK_TwGNumer AND PCKTWG.TwG_GIDTyp = -16
+LEFT OUTER JOIN CDN.TwrLinki ON TwL_GROTyp=PcK_TwGTyp AND TwL_GRONumer=PCKTWG.TwG_GIDNumer
+	AND TwL_GIDTyp=Twr_GIDTyp AND TwL_GIDNumer=Twr_GIDNumer
+WHERE Twr_GIDNumer &gt; 0 AND Twr_Aktywna = 0 AND Twr_LastModC &gt; @TS
+	AND (PcK_Typ&lt;&gt;5 OR PcK_TwGTyp=0 OR TwL_GIDTyp IS NOT NULL)
+FOR XML PATH('TWD'), ROOT('TWDI')
+
+SET @IloscWierszy = @@ROWCOUNT
+
+SELECT @Opis = 'Ilość wyeksportowanych dostawców towarów: '+ CAST(@IloscWierszy AS VARCHAR(10))
+EXEC CDN.Log_Dopisz @LogID, @Opis,0
+EXEC CDN.Log_ZamknijPoziom @LogID	
+
+/******* Zamienniki (zestawy) **********/
+SELECT @DataStart = CONVERT(VARCHAR(19),GETDATE(),121)
+	  ,@Opis = 'Zamienniki (zestawy)'
+EXEC CDN.Log_OtworzPoziom @LogID, @Opis
+SELECT 
+	TwP_TwrTyp	                            AS [@TwrTyp],
+	TwP_TwrNumer                            AS [@TwrNumer],
+	ISNULL(TwP_TwrLp,0)                     AS [@TwrLp],
+	ISNULL(TwP_ZamTyp,0)                    AS [@ZamTyp],	
+	ISNULL(TwP_ZamNumer,0)                  AS [@ZamNumer],
+	ISNULL(TwP_ZamLp,0)                     AS [@ZamLp],		
+	ISNULL(TwP_Warstwa,0)                   AS [@Warstwa],
+	ISNULL(TwP_PrzeliczM,0)                 AS [@PrzeliczM],
+	ISNULL(TwP_PrzeliczL,0)                 AS [@PrzeliczL]
+FROM CDN.TwrPodm
+INNER JOIN CDN.PicoKonfig ON PcK_PicoID = @ID
+JOIN CDN.TwrKarty T ON TwP_TwrNumer = T.Twr_GIDNumer
+LEFT JOIN CDN.TwrGrupy PCKTWG ON PCKTWG.TwG_SyncId = PcK_TwGNumer AND PCKTWG.TwG_GIDTyp = -16
+LEFT OUTER JOIN CDN.TwrLinki L ON L.TwL_GROTyp=PcK_TwGTyp AND L.TwL_GRONumer=PCKTWG.TwG_GIDNumer
+	AND L.TwL_GIDTyp=T.Twr_GIDTyp AND L.TwL_GIDNumer=T.Twr_GIDNumer
+JOIN CDN.TwrKarty Z ON TwP_ZamNumer = Z.Twr_GIDNumer
+LEFT OUTER JOIN CDN.TwrLinki M ON M.TwL_GROTyp=PcK_TwGTyp AND M.TwL_GRONumer=PCKTWG.TwG_GIDNumer
+	AND M.TwL_GIDTyp=Z.Twr_GIDTyp AND M.TwL_GIDNumer=Z.Twr_GIDNumer
+WHERE (T.Twr_LastModC &gt; @TS	OR Z.Twr_LastModC &gt; @TS)
+   AND (PcK_Typ&lt;&gt;5 OR PcK_TwGTyp=0 OR (L.TwL_GIDTyp IS NOT NULL AND M.TwL_GIDTyp IS NOT NULL))
+FOR XML PATH('TWP'), ROOT('TWPI')
+
+SET @IloscWierszy = @@ROWCOUNT
+
+SELECT @Opis = 'Ilość wyeksportowanych rekordów: '+ CAST(@IloscWierszy AS VARCHAR(10))
+EXEC CDN.Log_Dopisz @LogID, @Opis,0
+EXEC CDN.Log_ZamknijPoziom @LogID	
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

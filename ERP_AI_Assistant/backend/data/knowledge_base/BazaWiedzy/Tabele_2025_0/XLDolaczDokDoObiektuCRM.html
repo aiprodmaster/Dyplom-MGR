@@ -1,0 +1,618 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[XLDolaczDokDoObiektuCRM]"></A><PRE>
+          <FONT SIZE="2"><I>/* [XLDolaczDokDoObiektuCRM] */</I><BR>
+CREATE PROCEDURE [CDN].[XLDolaczDokDoObiektuCRM] 
+	@ObiTyp				smallint,
+	@ObiNumer			int,
+	@ObiLp				smallint,																
+	@DokTyp				smallint,
+	@DokNumer			int,
+	@OpeNumer			int,
+
+	@Kwota				decimal(15,2) = NULL, 
+	@Procent			decimal(5,2) = NULL, 
+	@Typ				smallint = NULL, 
+	@Opis				varchar(512) = NULL,
+	@TimeStamp			int = NULL,
+	@Parametry			tinyint = NULL,-- parametry dla pozycji dokumentu (wartości bitowe)
+						/* -- oznaczenie na bitach:
+						...1 - dla wskazanych pozycji dokumentu;
+						..1. - tylko pozycje z towarem na kampanii;
+						*/
+	@SqlFiltr			varchar(2048) = NULL,--Dodatkowe filtry SQL (dla pozycji dokumentów)
+	@IgnorujBledy		tinyint = NULL --nie wyświetla raiserror
+
+AS
+declare @BrakDok		tinyint
+declare @KwotaNaDok		decimal(15,2)
+declare @TypDomyslny	smallint
+declare @ZamTyp			smallint --konkretny typ zamówienia
+declare @KwotaDostepna	decimal(15,2)
+
+if @DokTyp is null
+	set @DokTyp = 0
+if @DokNumer is null
+	set @DokNumer = 0
+if @OpeNumer is null
+	set @OpeNumer = 0
+
+SET NOCOUNT ON
+if exists(select * from cdn.CRMDokumentyLinki where CDL_CRMTyp=@ObiTyp and CDL_CRMNumer=@ObiNumer and CDL_CRMLp=@ObiLp and CDL_DokTyp=@DokTyp and CDL_DokNumer=@DokNumer)	
+	begin
+		if @IgnorujBledy is null
+			raiserror('Dany obiekt jest już związany z danym dokumentem - (-5)',16,1)
+		return -5
+	end
+
+if @TimeStamp is null or @TimeStamp &lt; 1
+	select @TimeStamp = DATEDIFF(s,'19900101',GETDATE())
+
+DECLARE @Trancount INT
+SET @Trancount = @@TRANCOUNT
+IF @Trancount = 0 --TFSID:286527
+BEGIN TRAN XLDolaczDokDoObiektuCRM
+ELSE
+SAVE TRAN XLDolaczDokDoObiektuCRM
+set @BrakDok = 0
+
+if (@Parametry is null) or @DokTyp in (3344/*Typ_FAI*/,3352/*Typ_FKI*/,4144/*Typ_Nota_Memorialowa*/,4145/*TYP_UNM*/,784/*Typ_Zapis_kasowy*/,2832/*Typ_Nota_odsetkowa*/,2833/*Typ_Upomnienie*/,4700/*Typ_ZSR*/,4702/*Typ_SZC*/,4345/*Typ_SerwisObiektu*/,4346/*Typ_RemontObiektu*/,14343/*Typ_ProdZlecenia*/,4192/*Typ_kompletacja*/, 4208/*Typ_dekompletacja*/,337/*Typ_Wys*/,340/*Typ_WyP*/,4592/*Typ_PrjStruktura*/)
+	set @Parametry = 0
+
+if @DokTyp in (1521/*Typ_FZ*/, 1529/*Typ_FZK*/, 1520/*Typ_FRR*/, 1528/*Typ_FRK*/, 1312/*Typ_FZL*/, 1320/*Typ_KZL*/, 1489/*Typ_PZ*/, 1497/*Typ_PZK*/,
+1490/*Typ_PZI*/, 1498/*Typ_PKI*/, 2002/*Typ_PKA*/, 2010/*Typ_PKK*/, 1617/*Typ_PW*/, 1625/*Typ_PWK*/, 1604/*Typ_MMP*/)
+	begin 
+		if not exists(select * from CDN.TraNag where TrN_GIDNumer = @DokNumer)
+			set @BrakDok = 1
+		else
+			select @TypDomyslny = 2, @KwotaNaDok = isnull((select TrN_NettoP from CDN.TraNag where TrN_GIDNumer = @DokNumer),0)			
+	end
+else
+	--Handlowe sprzedaż
+	if @DokTyp in (2033/*Typ_FS*/, 2041/*Typ_FSK*/, 2034/*Typ_PA*/, 2042/*Typ_PAK*/, 2035/*Typ_RA*/, 2043/*Typ_RAK*/, 1824/*Typ_FSL*/, 1832/*Typ_KSL*/,
+	2036/*Typ_FW*/, 2001/*Typ_WZ*/, 2009/*Typ_WZK*/, 1968/*Typ_TF*/, 2039/*Typ_RS*/, 2047/*Typ_RSK*/, 2003/*Typ_KK*/, 2005/*Typ_WZE*/, 2013/*Typ_WKE*/,
+	2044/*Typ_FWK*/, 2000/*Typ_WKA*/, 2008/*Typ_WKK*/, 1616/*Typ_RW*/, 1624/*Typ_RWK*/, 1603/*Typ_MMW*/, 2037/*Typ_FSE*/, 2045/*Typ_FKE*/, 1828/*Typ_FEL*/,
+	1836/*Typ_KEL*/)
+		begin 
+			if not exists(select * from CDN.TraNag where TrN_GIDNumer = @DokNumer)
+				set @BrakDok = 1
+			else
+				select @TypDomyslny = 1, @KwotaNaDok = isnull((select TrN_NettoR from CDN.TraNag where TrN_GIDNumer = @DokNumer),0)
+		end
+	else
+		--Importowe
+		if @DokTyp in (3344/*Typ_FAI*/, 3352/*Typ_FKI*/)
+			begin
+				if not exists(select * from CDN.ImpNag where ImN_GIDNumer = @DokNumer)
+					set @BrakDok = 1
+				else
+					select @TypDomyslny = 1, @KwotaNaDok = isnull((select ImN_Wartosc * ImN_KursL / ImN_KursM from CDN.ImpNag where ImN_GIDNumer = @DokNumer),0)			
+			end
+		else
+			--Zamówienia
+			if @DokTyp = 960/*Typ_Zam*/
+				begin
+					if not exists(select * from CDN.ZamNag where ZaN_GIDNumer = @DokNumer)
+						set @BrakDok = 1
+					else
+						select @ZamTyp = isnull((select ZaN_ZamTyp from CDN.ZamNag where ZaN_GIDNumer = @DokNumer),0)
+						if @ZamTyp = 2816/*Typ__ZOS*/
+							select @TypDomyslny = 1, @KwotaNaDok = 0, @Procent = 0, @Kwota = 0 
+						else
+							if @ZamTyp = 2688/*Typ__ZOZ*/
+								select @TypDomyslny = 2, @KwotaNaDok = 0, @Procent = 0, @Kwota = 0
+							else
+								if @ZamTyp in (768/*Typ__OS*/, 1280/*Typ__ZS*/)
+									select @TypDomyslny = 1, @KwotaNaDok = CDN.WartoscZamowienia(@DokNumer, 0, getdate())
+								else
+									if @ZamTyp in (640/*Typ__OZ*/, 1152/*Typ__ZZ*/)
+										select @TypDomyslny = 2, @KwotaNaDok = CDN.WartoscZamowienia(@DokNumer, 0, getdate())
+									else
+										--błąd czy [TODO]?
+										begin
+											rollback tran XLDolaczDokDoObiektuCRM
+											if @IgnorujBledy is null
+												raiserror('Wybrano niepoprawny typ dokumentu - (-2)',16,1)
+											return -2
+										end
+				end
+			else
+				--Noty memotiałowe
+				if @DokTyp in (4144/*Typ_Nota_Memorialowa*/, 4145/*TYP_UNM*/)
+					begin
+						if not exists(select * from CDN.MemNag where MeN_GIDNumer = @DokNumer)
+							set @BrakDok = 1
+						else
+							set @KwotaNaDok = isnull((select (MeN_KwotaPrz - MeN_KwotaRoz) * MeN_KursL / MeN_KursM from CDN.MemNag where MeN_GIDNumer = @DokNumer),0)
+							select @TypDomyslny = 2, @Procent = 100, @Kwota = @KwotaNaDok
+					end
+				else
+					--Zapisy
+					if @DokTyp = 784/*Typ_Zapis_kasowy*/
+						begin
+							if not exists(select * from CDN.Zapisy where KAZ_GIDNumer = @DokNumer)
+								set @BrakDok = 1
+							else
+								set @KwotaNaDok = isnull((select KaZ_Kwota * KaZ_KursL / KaZ_KursM from CDN.Zapisy where KAZ_GIDNumer = @DokNumer),0)
+								set @TypDomyslny = isnull((select case when KaZ_RP = 2 then 1 else 2 end from CDN.Zapisy where KAZ_GIDNumer = @DokNumer),1)
+						end
+					else
+						--Upomnienia
+						if @DokTyp in (2832/*Typ_Nota_odsetkowa*/, 2833/*Typ_Upomnienie*/)
+							begin
+								if not exists(select * from CDN.UpoNag where UpN_GIDNumer = @DokNumer)
+									set @BrakDok = 1
+								else
+									set @KwotaNaDok = isnull((select UpN_KwotaOdsSys + UpN_KosztUPSys from CDN.UpoNag where UpN_GIDNumer = @DokNumer),0)
+									select @TypDomyslny = 2, @Procent = 100, @Kwota = @KwotaNaDok
+							end
+						else
+							--Reklamacje
+							if @DokTyp in (3584/*Typ_RLS*/,3585/*Typ_RLZ*/)
+								begin
+									if not exists(select * from CDN.ReklNag where RLN_Id = @DokNumer)
+										set @BrakDok = 1
+									else
+										select @TypDomyslny = case when @DokTyp = 3585 then 2 else 1 end , @KwotaNaDok = 0 --ToDo?
+								end
+							else
+								--Nowy serwis
+								if @DokTyp = 4700/*Typ_ZSR*/
+									begin
+										if not exists(select * from CDN.SrwZlcNag where SZN_Id = @DokNumer)
+											set @BrakDok = 1
+										else
+											select @TypDomyslny = 2, @KwotaNaDok = 0 --ToDo?
+									end
+								else
+									if @DokTyp = 4702/*Typ_SZC*/
+									begin
+										if not exists(select * from CDN.SrwZlcCzynnosci where SZC_Id = @DokNumer)
+											set @BrakDok = 1
+										else
+											select @TypDomyslny = 2, @KwotaNaDok = 0 --ToDo?
+									end
+								else
+									--Zlecenia serwisowe/remontowe
+									if @DokTyp in (4345/*Typ_SerwisObiektu*/, 4346/*Typ_RemontObiektu*/)
+										begin
+											if not exists(select * from CDN.ZlcRemNag where ZRN_GIDNumer = @DokNumer)
+												set @BrakDok = 1
+											else
+												select @TypDomyslny = 2, @KwotaNaDok = 0 --ToDo?
+										end
+									else
+										--Zlecenia produkcyjne
+										if @DokTyp = 14343/*Typ_ProdZlecenia*/
+											begin
+												if not exists(select * from CDN.ProdZlecenia where PZL_Id = @DokNumer)
+													set @BrakDok = 1
+												else
+													select @TypDomyslny = 2, @KwotaNaDok = 0 --ToDo?
+											end
+										else
+											--Kompletacja/dekompletacja
+											if @DokTyp in (4192/*Typ_kompletacja*/, 4208/*Typ_dekompletacja*/)
+												begin
+													if not exists(select * from CDN.ZlcNag where ZcN_GIDNumer = @DokNumer)
+														set @BrakDok = 1
+													else
+														select @TypDomyslny = 2, @KwotaNaDok = 0 --ToDo?
+												end
+											else
+												--Wysyłki
+												if @DokTyp = 337/*Typ_Wys*/
+													begin
+														if not exists(select * from CDN.Wysylki where WYS_GIDNumer = @DokNumer)
+															set @BrakDok = 1
+														else
+															select @TypDomyslny = 1, @KwotaNaDok = 0 --ToDo?
+													end
+												else
+													--Paczki
+													if @DokTyp = 340/*Typ_WyP*/ 
+														begin
+															if not exists(select * from CDN.WysPaczki where WyP_IdPaczki = @DokNumer)
+																set @BrakDok = 1
+															else
+																select @TypDomyslny = 1, @KwotaNaDok = 0 --ToDo?
+														end
+													else
+														--Projekty
+														if @DokTyp = 4592/*Typ_PrjStruktura*/
+															begin
+																if not exists(select * from CDN.PrjStruktura where PRJ_Id = @DokNumer)
+																	set @BrakDok = 1
+																else
+																	select @TypDomyslny = 2, @KwotaNaDok = 0 --ToDo?
+															end
+														else
+															-- Obieg dokumentów
+															if @DokTyp in (14451,14452,14453)
+																begin
+																	if not exists(select * from CDN.SekDokumenty where SDD_Id = @DokNumer)
+																		set @BrakDok = 1
+																	else
+																		set @KwotaNaDok = isnull((select SDD_Wartosc from CDN.SekDokumenty where SDD_Id = @DokNumer),0)
+																		select @TypDomyslny = case when @DokTyp = 14451 then 1 else 2 end, @Procent = 100, @Kwota = @KwotaNaDok																							
+																end
+															else
+																--Magazynowe
+																if @DokTyp = 1601/*Typ_WM*/
+																	begin
+																		if not exists(select * from CDN.MagNag where MaN_GIDNumer = @DokNumer)
+																			set @BrakDok = 1
+																		else
+																			select @TypDomyslny = 2, @KwotaNaDok = 0
+																	end
+																else
+																	begin
+																		rollback tran XLDolaczDokDoObiektuCRM
+																		if @IgnorujBledy is null
+																			raiserror('Wybrano niepoprawny typ dokumentu - (-2)',16,1)
+																		return -2
+																	end
+
+if @BrakDok = 1
+	begin
+		rollback tran XLDolaczDokDoObiektuCRM
+		if @IgnorujBledy is null
+			raiserror('Nie znaleziono dokumentu - (-1)',16,1)
+		return -1
+	end	
+
+if @OpeNumer = 0 or not exists (select * from cdn.opekarty where Ope_GIDNumer = @OpeNumer and Ope_Zablokowane &lt;&gt; 1)
+	begin
+		rollback tran XLDolaczDokDoObiektuCRM
+		if @IgnorujBledy is null
+			raiserror('Nie znaleziono operatora - (-3)',16,1)
+		return -3
+	end
+
+if @ObiTyp = 341
+	begin
+		if not exists(select * from cdn.CrmKntEtapy where CEK_Id = @ObiNumer)
+			begin
+				rollback tran XLDolaczDokDoObiektuCRM
+				if @IgnorujBledy is null
+					raiserror('Nie znaleziono kontrahenta w etapie - (-4)',16,1)
+				return -4
+			end
+	end
+else
+	if @ObiTyp = 4176
+		begin
+			if @ObiLp = 0
+				begin
+					if not exists(select * from cdn.CrmKampNag where CKN_GIdNumer = @ObiNumer)
+						begin
+							rollback tran XLDolaczDokDoObiektuCRM
+							if @IgnorujBledy is null
+								raiserror('Nie znaleziono kampanii - (-4)',16,1)
+							return -4
+						end					
+				end
+			else
+				begin
+					if not exists(select * from cdn.CrmKampEtapy where CKE_GIdNumer = @ObiNumer and CKE_GIdLp = @ObiLp)
+						begin
+							rollback tran XLDolaczDokDoObiektuCRM
+							if @IgnorujBledy is null
+								raiserror('Nie znaleziono etapu kampanii - (-4)',16,1)
+							return -4
+						end	
+				end
+		end
+	else
+		if @ObiTyp = 339
+			begin
+				if @ObiLp = 0
+					begin
+						if not exists(select * from cdn.Srsnag where SsN_GIdNumer = @ObiNumer )
+							begin
+								rollback tran XLDolaczDokDoObiektuCRM
+								if @IgnorujBledy is null
+									raiserror('Nie znaleziono wątku - (-4)',16,1)
+								return -4
+							end					
+					end
+				else
+					begin
+						if not exists(select * from cdn.SrsElem where SsE_GIdNumer = @ObiNumer and SsE_GIdLp = @ObiLp)
+							begin
+								rollback tran XLDolaczDokDoObiektuCRM
+								if @IgnorujBledy is null
+									raiserror('Nie znaleziono elementu wątku - (-4)',16,1)
+								return -4
+							end	
+					end
+			end
+		else
+			if /* BEGIN: wizyta hadlowa */ @ObiTyp = 4180 and @ObiLp = 0 begin
+				if not exists(select * from cdn.CRMWizytyNag where CWN_ID = @ObiNumer) begin
+					rollback tran XLDolaczDokDoObiektuCRM
+					if @IgnorujBledy is null
+						raiserror('Nie znaleziono wizyty handlowej - (-4)',16,1)
+					return -4
+				end	
+			end -- END: wizyta hadlowa
+			else -- BEGIN: element wizyty, element wzorca wizyty, wzorzec elementu wizyty
+				if @ObiTyp in (4180,4181,4182) and @ObiLp &lt;&gt; 0 begin
+					if not exists(select * from cdn.CRMWizytyElem where CWE_GidTyp=@ObiTyp and CWE_GidNumer=@ObiNumer and CWE_GidLp=@ObiLp) begin
+						rollback tran XLDolaczDokDoObiektuCRM
+						if @IgnorujBledy is null
+							raiserror('Nie znaleziono elementu wizyty handlowej - (-4)',16,1)
+						return -4
+					end	
+				end -- END: element wizyty, element wzorca wizyty, wzorzec elementu wizyty
+				else
+					begin
+						rollback tran XLDolaczDokDoObiektuCRM
+						if @IgnorujBledy is null
+							raiserror('Błędny obiekt CRM - (-4)',16,1)
+						return -4
+					end
+select @KwotaDostepna = @KwotaNaDok - isnull(sum(CDL_Kwota),0) from CDN.CRMDokumentyLinki where CDL_DokTyp = @DokTyp and CDL_DokNumer = @DokNumer
+/*
+if @KwotaDostepna &lt;= 0
+	begin
+		rollback tran XLDolaczDokDoObiektuCRM
+		if @IgnorujBledy is null
+			raiserror('Cała kwota z tego dokumentu jest już wykorzystana - (-5)',16,1)
+		return -5
+	end
+*/
+
+if @KwotaNaDok = 0
+	select @Procent = 0, @Kwota = 0
+else
+	begin
+		if @Kwota is null or @Kwota &lt;= 0 or @Kwota &gt; 999999999.99 or @Kwota &gt; @KwotaDostepna
+			begin
+				set @Kwota = @KwotaDostepna
+				set @Procent = @Kwota / @KwotaNaDok * 100
+			end
+		else
+			set @Procent = @Kwota / @KwotaNaDok * 100
+
+		if @Procent is null or @Procent &lt; 0 or @Procent &gt; 100
+			begin
+				set @Kwota = @KwotaDostepna
+				set @Procent = @Kwota / @KwotaNaDok * 100
+			end
+		else
+			if @Kwota = 0
+				set @Kwota = @KwotaNaDok * @Procent / 100
+	end
+
+if @Typ is null or @Typ not in (1,2)
+	set @Typ = @TypDomyslny
+
+insert into cdn.CRMDokumentyLinki(
+CDL_CRMTyp,
+CDL_CRMNumer,
+CDL_CRMLp,
+CDL_DokTyp,
+CDL_DokNumer,
+CDL_OpeNumer,
+CDL_Opis,
+CDL_Typ,
+CDL_Kwota,
+CDL_Procent,
+CDL_TimeStamp,
+CDL_Pozycje
+)values(
+@ObiTyp,--CDL_CRMTyp
+@ObiNumer,--CDL_CRMNumer
+@ObiLp,--CDL_CRMLp
+@DokTyp,--CDL_DokTyp
+@DokNumer,--CDL_DokNumer
+@OpeNumer,--CDL_OpeNumer
+isnull(@Opis,''),--CDL_Opis
+@Typ,--CDL_Typ
+@Kwota,--CDL_Kwota
+@Procent,--CDL_Procent
+@TimeStamp,--CDL_TimeStamp
+@Parametry&amp;1
+)
+if @@error &lt;&gt; 0  
+	begin
+		ROLLBACK TRAN XLDolaczDokDoObiektuCRM
+		if @IgnorujBledy is null
+			RAISERROR ('Błąd podczas dodawania dokumentu do obiektu CRM - (-33)', 16, 1)
+		return -33
+	end	
+else
+	if @Parametry&amp;1=1
+	begin -- wiązanie pozycji
+	
+		declare @ZapytanieSQL varchar(max)
+		set @ZapytanieSQL=''
+		declare @SQLTowary varchar(512)
+		set @SQLTowary=''
+		declare @KwotaPozycji decimal(15,2)
+		set @KwotaPozycji = 0
+			
+		/** TODO
+			zsumować wartość kwoty i procentu dla CDL na postawie CDP 
+		 **/
+		 
+		if @Parametry&amp;2=2-- pobranie towaru z kampanii
+		begin
+			if @ObiTyp = 341 -- prospekt
+				set @SQLTowary = 'SELECT TwG_GidNumer FROM CDN.CRMKntEtapyTwr JOIN CDN.CRMKampTwr ON CPT_CKTId=CKT_ID JOIN CDN.TwrGrupy ON TwG_GidTyp=16 AND ((TwG_GIDTyp=CKT_TwrTyp AND TwG_GIDNumer=CKT_TwrNumer) OR (TwG_GroTyp=CKT_TwrTyp AND TwG_GroNumer=CKT_TwrNumer)) WHERE CPT_CEKId='+cast(@ObiNumer as varchar)
+			if @ObiTyp = 4176 and @ObiLp = 0 -- kampania
+				set @SQLTowary = 'SELECT TwG_GidNumer FROM CDN.CRMEtapyTwr JOIN CDN.CRMKampTwr ON CET_CKTId=CKT_ID JOIN CDN.TwrGrupy ON TwG_GidTyp=16 AND ((TwG_GIDTyp=CKT_TwrTyp AND TwG_GIDNumer=CKT_TwrNumer) OR (TwG_GroTyp=CKT_TwrTyp AND TwG_GroNumer=CKT_TwrNumer)) WHERE CET_CKENumer='+cast(@ObiNumer as varchar)+' AND CET_CKELp='+cast(@ObiLp as varchar)
+			else if @ObiTyp = 4176 and @ObiLp &lt;&gt; 0 -- etap kampani
+				set @SQLTowary = 'SELECT TwG_GidNumer FROM CDN.CRMKampTwr JOIN CDN.TwrGrupy ON TwG_GidTyp=16 AND ((TwG_GIDTyp=CKT_TwrTyp AND TwG_GIDNumer=CKT_TwrNumer) OR (TwG_GroTyp=CKT_TwrTyp AND TwG_GroNumer=CKT_TwrNumer)) WHERE CKT_CKNNumer='+cast(@ObiNumer as varchar)
+		end
+
+		if @DokTyp = 960/*Typ_Zam*/ begin
+			SET @ZapytanieSQL = 
+			'
+			INSERT INTO CDN.CRMDokumentyPozycje
+			([CDP_CRMTyp]
+			,[CDP_CRMNumer]
+			,[CDP_CRMLp]
+			,[CDP_DokTyp]
+			,[CDP_DokNumer]
+			,[CDP_DokLp])
+			SELECT
+			 '+cast(@ObiTyp as varchar)+'
+			,'+cast(@ObiNumer as varchar)+'
+			,'+cast(@ObiLp as varchar)+'
+			,ZaE_GIDTyp
+			,ZaE_GIDNumer
+			,ZaE_GIDLp
+			FROM CDN.ZamElem
+			WHERE ZaE_GIDTyp = '+cast(@DokTyp as varchar)+' AND ZaE_GIDNumer = '+cast(@DokNumer as varchar)
+			
+			if @Parametry&amp;2=2-- pobranie towaru z kampanii
+			begin
+				SET	@ZapytanieSQL = @ZapytanieSQL +' and ZaE_TwrNumer IN ('+@SQLTowary+')'
+			end
+					
+			IF @SqlFiltr is not null and @SqlFiltr&lt;&gt;''
+				SET @ZapytanieSQL = @ZapytanieSQL +' and '+@SqlFiltr			
+			EXEC(@ZapytanieSQL)
+			
+			if @@error &lt;&gt; 0 begin
+				ROLLBACK TRAN XLDolaczDokDoObiektuCRM
+				if @IgnorujBledy is null
+					RAISERROR ('Błąd podczas dodawania pozycji dokumentu - ZamElem (-34)', 16, 1)
+				return -34
+			end	
+			
+			IF @KwotaNaDok &lt;&gt; 0 BEGIN
+				SELECT @KwotaPozycji=IsNull(SUM(ZaE_WartoscPoRabacie),0)
+				FROM CDN.ZamElem
+				JOIN CDN.CRMDokumentyPozycje ON ZaE_GIDTyp=CDP_DokTyp AND ZaE_GIDNumer=CDP_DokNumer AND ZaE_GIDLp=CDP_DokLp
+				WHERE ZaE_GIDTyp=@DokTyp AND ZaE_GIDNumer=@DokNumer			
+			END			
+		end 
+		else begin --Reklamacje
+			if @DokTyp in (3584/*Typ_RLS*/,3585/*Typ_RLZ*/) begin 
+				SET @ZapytanieSQL = 
+				'
+				INSERT INTO CDN.CRMDokumentyPozycje
+				([CDP_CRMTyp]
+				,[CDP_CRMNumer]
+				,[CDP_CRMLp]
+				,[CDP_DokTyp]
+				,[CDP_DokNumer]
+				,[CDP_DokLp])
+				SELECT
+				 '+cast(@ObiTyp as varchar)+'
+				,'+cast(@ObiNumer as varchar)+'
+				,'+cast(@ObiLp as varchar)+'
+				,'+cast(@DokTyp as varchar)+'
+				,'+cast(@DokNumer as varchar)+'
+				,RLE_Id
+				FROM CDN.ReklElem
+				WHERE RLE_RLNId = '+cast(@DokNumer as varchar)
+			
+				if @Parametry&amp;2=2-- pobranie towaru z kampanii
+				begin
+					SET	@ZapytanieSQL = @ZapytanieSQL +' and RLE_TwrNumer IN ('+@SQLTowary+')'				
+				end
+			
+				IF @SqlFiltr is not null and @SqlFiltr&lt;&gt;''
+					SET @ZapytanieSQL = @ZapytanieSQL +' and '+@SqlFiltr
+				
+				EXEC(@ZapytanieSQL)				
+				if @@error &lt;&gt; 0  begin
+					ROLLBACK TRAN XLDolaczDokDoObiektuCRM
+					if @IgnorujBledy is null
+						RAISERROR ('Błąd podczas dodawania pozycji dokumentu - ReklElem (-35)', 16, 1)
+					return -35
+				end					
+			end
+			else begin --Handlowe
+				SET @ZapytanieSQL = 
+				'			
+				INSERT INTO CDN.CRMDokumentyPozycje
+				([CDP_CRMTyp]
+				,[CDP_CRMNumer]
+				,[CDP_CRMLp]
+				,[CDP_DokTyp]
+				,[CDP_DokNumer]
+				,[CDP_DokLp])
+				SELECT
+				 '+cast(@ObiTyp as varchar)+'
+				,'+cast(@ObiNumer as varchar)+'
+				,'+cast(@ObiLp as varchar)+'
+				,TrE_GIDTyp
+				,TrE_GIDNumer
+				,TrE_GIDLp
+				FROM CDN.TraElem
+				WHERE TrE_GIDTyp = '+cast(@DokTyp as varchar)+' AND TrE_GIDNumer = '+cast(@DokNumer as varchar)
+			
+				if @Parametry&amp;2=2-- pobranie towaru z kampanii
+				begin
+					SET	@ZapytanieSQL = @ZapytanieSQL +' and TrE_TwrNumer IN ('+@SQLTowary+')'
+				end
+			
+				IF @SqlFiltr is not null and @SqlFiltr&lt;&gt;''
+					SET @ZapytanieSQL = @ZapytanieSQL +' and '+@SqlFiltr	
+								
+				EXEC(@ZapytanieSQL)
+				if @@error &lt;&gt; 0  begin
+					ROLLBACK TRAN XLDolaczDokDoObiektuCRM
+					if @IgnorujBledy is null
+						RAISERROR ('Błąd podczas dodawania pozycji dokumentu - TraElem (-36)', 16, 1)
+					return -36
+				end	
+				IF @KwotaNaDok &lt;&gt; 0 BEGIN
+					SELECT @KwotaPozycji=IsNull(SUM(TrE_KsiegowaNetto),0)
+					FROM CDN.TraElem
+					JOIN CDN.CRMDokumentyPozycje ON TrE_GIDTyp=CDP_DokTyp AND TrE_GIDNumer=CDP_DokNumer AND TrE_GIDLp=CDP_DokLp
+					WHERE TrE_GIDTyp=@DokTyp AND TrE_GIDNumer=@DokNumer						
+				END							
+			end
+		end	
+		IF (EXISTS(SELECT * FROM CDN.CRMDokumentyPozycje WHERE CDP_CRMTyp=@ObiTyp AND CDP_CRMNumer=@ObiNumer AND CDP_CRMLp=@ObiLp 
+				AND CDP_DokTyp=@DokTyp AND CDP_DokNumer=@DokNumer))
+		BEGIN	
+			-- czyli są pozycje - uaktualniamy procent oraz kwotę
+			IF @Kwota &lt;&gt; 0 BEGIN
+
+				if @KwotaPozycji is null or @KwotaPozycji &gt; @KwotaDostepna
+					set @KwotaPozycji = @KwotaDostepna
+		
+				UPDATE CDN.CRMDokumentyLinki
+				SET CDL_Kwota = @KwotaPozycji,
+					CDL_Procent = @KwotaPozycji / @KwotaNaDok * 100
+				WHERE CDL_CRMTyp=@ObiTyp AND CDL_CRMNumer=@ObiNumer AND CDL_CRMLp=@ObiLp AND CDL_DokTyp=@DokTyp AND CDL_DokNumer=@DokNumer	
+			END
+		END
+		ELSE -- brak pozycji czyli usuwamy też CDL
+		BEGIN
+			ROLLBACK TRAN XLDolaczDokDoObiektuCRM
+			DELETE CDN.CRMDokumentyLinki WHERE CDL_CRMTyp=@ObiTyp AND CDL_CRMNumer=@ObiNumer AND CDL_CRMLp=@ObiLp 
+				AND CDL_DokTyp=@DokTyp AND CDL_DokNumer=@DokNumer
+			RETURN -37 --nie zgłaszamy raiserrora ale zgłaszamy numer błądu (braku pozycji)
+		END									
+		/*
+		TODO - jeśli nie ma pozycji CDP, to delete CDL
+		w przeciwnym wypadku aktualizacja kwoty na CDL
+		*/							
+	end -- wiązanie pozycji
+IF @Trancount = 0 
+COMMIT TRAN XLDolaczDokDoObiektuCRM
+SET NOCOUNT OFF
+RETURN 0
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

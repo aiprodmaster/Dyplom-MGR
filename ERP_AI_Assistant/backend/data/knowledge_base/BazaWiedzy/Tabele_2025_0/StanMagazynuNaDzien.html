@@ -1,0 +1,127 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[StanMagazynuNaDzien]"></A><PRE>
+          <FONT SIZE="2"><I>/* [StanMagazynuNaDzien] */</I><BR>
+CREATE PROCEDURE [CDN].[StanMagazynuNaDzien] (@Data int, @CDN_MagSesja int, @CDN_MagWatek int, @CDN_Filtr varchar(max)='1=1' )
+AS
+DECLARE @MAGTyp SMALLINT
+SET NOCOUNT ON
+
+SET @MAGTyp = 208
+
+CREATE TABLE #TmpTwrKarty
+(
+        GIDNumer int
+        PRIMARY KEY(GIDNumer)
+)
+
+IF IsNull(@CDN_Filtr,'')=''
+  EXEC (N'Insert Into #TmpTwrKarty Select TwrKarty.Twr_GIDNumer FROM CDN.TwrKarty TwrKarty WHERE TwrKarty.Twr_Typ in (1,2)');
+Else
+  EXEC (N'Insert Into #TmpTwrKarty Select TwrKarty.Twr_GIDNumer FROM CDN.TwrKarty TwrKarty WHERE TwrKarty.Twr_Typ in (1,2) AND ' + @CDN_Filtr);
+
+SET NOCOUNT OFF
+
+SELECT
+DokSprzedaz.Ilosc As IloscDoSprzedazy, 
+DokMagazyn.Ilosc As W_Magazynie, 
+DokSprzedaz.Wartosc As Wartosc, 
+isnull(DokSprzedaz.Twr_Kod,DokMagazyn.Twr_Kod) As KodTowaru, 
+isnull(DokSprzedaz.Twr_Nazwa,DokMagazyn.Twr_Nazwa) As NazwaTowaru,
+isnull(DokSprzedaz.Twr_Jm,DokMagazyn.Twr_Jm) As JmTowaru,
+DokSprzedaz.WartoscRzeczywista As WartoscRzeczywista
+FROM
+(
+  SELECT 
+  Twr_Kod, Twr_Nazwa, 
+  ISNULL(SUM(CASE WHEN TrN_GIDTyp in (2033,2001,2000,1616,1603,2034,2037,2005,2036) THEN 0-TrS_Ilosc  -- Dokumenty rozchodowe
+               WHEN TrN_GIDTyp in (2041,2009,2008,1624,2042,2045,2013,2044) AND TrS_Ilosc &lt;= 0 THEN CASE WHEN TrN_Stan&lt;3 THEN 0 ELSE 0-TrS_Ilosc END -- Dokumenty rozchodowe - korekty zwykłe
+               WHEN TrN_GIDTyp in (2041,2009,2008,1624,2042,2045,2013,2044) AND TrS_Ilosc &gt; 0 THEN 0-TrS_Ilosc -- Dokumenty rozchodowe - korekty na plus
+               WHEN TrN_GIDTyp in (1520,1521,1489,1490,1617,1604,2002) THEN CASE WHEN TrN_Stan&lt;3 THEN 0 ELSE TrS_Ilosc END -- Dokumenty przychodowe
+               WHEN TrN_GIDTyp in (1528,1529,1497,1498,1625,2010) AND TrS_Ilosc &lt;= 0 THEN TrS_Ilosc -- Dokumenty przychodowe - korekty zwykłe
+               WHEN TrN_GIDTyp in (1528,1529,1497,1498,1625,2010) AND TrS_Ilosc &gt; 0 AND TrS_ZwrTyp &gt; 0 THEN CASE WHEN TrN_Stan&lt;3 THEN 0 ELSE TrS_Ilosc END -- Dokumenty przychodowe - korekty na plus
+               WHEN TrN_GIDTyp in (1528,1529,1497,1498,1625,2010) AND TrS_Ilosc &gt; 0 AND TrS_ZwrTyp = 0 THEN TrS_Ilosc -- Dokumenty przychodowe - korekty element na plus (podmiana dostaw)
+               WHEN TrN_GIDTyp in (2003,2004,1232) THEN 0 --Korekta kosztu, deprecjacja
+               WHEN TrN_GIDTyp = 1600 THEN
+                CASE WHEN TrN_Stan&lt;3 AND TrS_SubGIDLp&lt;=0 THEN 0 ELSE
+                     CASE WHEN TrS_SubGIDLp&gt;0 THEN
+                          CASE WHEN TrS_Ilosc&gt;0 THEN 0-TrS_Ilosc ELSE TrS_Ilosc END ELSE
+                               CASE WHEN TrS_Ilosc&lt;0 THEN 0-TrS_Ilosc ELSE TrS_Ilosc END END END
+        END),0) AS Ilosc,
+  ISNULL(SUM(CASE WHEN TrN_GIDTyp in (2033,2001,2000,1616,1603,2034,2037,2005,2036) THEN 0-TrS_KosztKsiegowy  -- Dokumenty rozchodowe
+               WHEN TrN_GIDTyp in (2041,2009,2008,1624,2042,2045,2013,2044) AND TrS_Ilosc &lt;= 0 THEN CASE WHEN TrN_Stan&lt;3 THEN 0 ELSE 0-TrS_KosztKsiegowy END -- Dokumenty rozchodowe - korekty zwykłe
+               WHEN TrN_GIDTyp in (2041,2009,2008,1624,2042,2045,2013,2044) AND TrS_Ilosc &gt; 0 THEN 0-TrS_KosztKsiegowy -- Dokumenty rozchodowe - korekty na plus
+               WHEN TrN_GIDTyp in (1520,1521,1489,1490,1604,1617,2002) THEN CASE WHEN TrN_Stan&lt;3 THEN 0 ELSE TrS_KosztKsiegowy END -- Dokumenty przychodowe
+               WHEN TrN_GIDTyp in (1232,1528,1529,1497,1498,1625,2010) AND TrS_Ilosc &lt;= 0 THEN TrS_KosztKsiegowy -- Dokumenty przychodowe - korekty zwykłe
+               WHEN TrN_GIDTyp in (1232,1528,1529,1497,1498,1625,2010) AND TrS_Ilosc &gt; 0 AND TrS_ZwrTyp &gt; 0 THEN CASE WHEN TrN_Stan&lt;3 THEN 0 ELSE TrS_KosztKsiegowy END -- Dokumenty przychodowe - korekty na plus
+               WHEN TrN_GIDTyp in (1232,1528,1529,1497,1498,1625,2010) AND TrS_Ilosc &gt; 0 AND TrS_ZwrTyp = 0 THEN TrS_KosztKsiegowy -- Dokumenty przychodowe - korekty element na plus (podmiana dostaw)
+               WHEN TrN_GIDTyp = 2003 THEN 0-TrS_KosztKsiegowy -- korekta kosztow
+               WHEN TrN_GIDTyp = 2004 AND TrN_ZmodyfikowanoZasob=1 THEN 0-TrS_KosztKsiegowy -- deprecjacja
+               WHEN TrN_GIDTyp = 1600 THEN -- MMka
+               CASE WHEN TrN_Stan&lt;3 AND TrS_SubGIDLp&lt;=0 THEN 0 ELSE
+                 CASE WHEN TrS_SubGIDLp&gt;0 THEN
+                   CASE WHEN TrS_Ilosc&gt;0 THEN 0-TrS_KosztKsiegowy ELSE TrS_KosztKsiegowy END ELSE
+                     CASE WHEN TrS_Ilosc&lt;0 THEN 0-TrS_KosztKsiegowy ELSE TrS_KosztKsiegowy END END END
+          END),0) AS Wartosc,  
+  ISNULL(SUM(CASE WHEN TrN_GIDTyp in (2033,2001,2000,1616,1603,2034,2037,2005,2036) THEN 0-TrS_KosztRzeczywisty  -- Dokumenty rozchodowe
+               WHEN TrN_GIDTyp in (2041,2009,2008,1624,2042,2045,2013,2044) AND TrS_Ilosc &lt;= 0 THEN CASE WHEN TrN_Stan&lt;3 THEN 0 ELSE 0-TrS_KosztRzeczywisty END -- Dokumenty rozchodowe - korekty zwykłe
+               WHEN TrN_GIDTyp in (2041,2009,2008,1624,2042,2045,2013,2044) AND TrS_Ilosc &gt; 0 THEN 0-TrS_KosztRzeczywisty -- Dokumenty rozchodowe - korekty na plus
+               WHEN TrN_GIDTyp in (1520,1521,1489,1490,1617,1604,2002) THEN CASE WHEN TrN_Stan&lt;3 THEN 0 ELSE TrS_KosztRzeczywisty END -- Dokumenty przychodowe
+               WHEN TrN_GIDTyp in (1232,1528,1529,1497,1498,1625,2010) AND TrS_Ilosc &lt;= 0 THEN TrS_KosztRzeczywisty -- Dokumenty przychodowe - korekty zwykłe
+               WHEN TrN_GIDTyp in (1232,1528,1529,1497,1498,1625,2010) AND TrS_Ilosc &gt; 0 AND TrS_ZwrTyp &gt; 0 THEN CASE WHEN TrN_Stan&lt;3 THEN 0 ELSE TrS_KosztRzeczywisty END -- Dokumenty przychodowe - korekty na plus
+               WHEN TrN_GIDTyp in (1232,1528,1529,1497,1498,1625,2010) AND TrS_Ilosc &gt; 0 AND TrS_ZwrTyp = 0 THEN TrS_KosztRzeczywisty -- Dokumenty przychodowe - korekty element na plus (podmiana dostaw)
+               WHEN TrN_GIDTyp in (2003,2004) THEN 0-TrS_KosztRzeczywisty -- korekta kosztow, deprecjacja
+               WHEN TrN_GIDTyp = 1600 THEN -- MMka
+                CASE WHEN TrN_Stan&lt;3 AND TrS_SubGIDLp&lt;=0 THEN 0 ELSE
+                     CASE WHEN TrS_SubGIDLp&gt;0 THEN
+                          CASE WHEN TrS_Ilosc&gt;0 THEN 0-TrS_KosztRzeczywisty ELSE TrS_KosztRzeczywisty END ELSE
+                               CASE WHEN TrS_Ilosc&lt;0 THEN 0-TrS_KosztRzeczywisty ELSE TrS_KosztRzeczywisty END END END
+        END),0) as WartoscRzeczywista,
+  max(Twr_Jm) as Twr_Jm
+  FROM
+  #TmpTwrKarty
+  JOIN CDN.TwrKarty ON Twr_GIDNumer=GIDNumer
+  JOIN CDN.TraElem  ON Twr_GIDNumer=TrE_TwrNumer
+  JOIN CDN.TraSElem ON TrS_GIDNumer=TrE_GIDNumer AND TrS_GIDLp=TrE_GIDLp AND TrS_MagTyp=@MAGTyp
+  JOIN CDN.MagWybor ON TrS_MagNumer=MgW_MagNumer AND MgW_SesjaID=@CDN_MagSesja AND MgW_Watek=@CDN_MagWatek
+  JOIN CDN.TraNag   ON TrN_GIDNumer=TrE_GIDNumer
+  WHERE Trn_DataMag  &lt;=@Data
+  GROUP BY Twr_Kod, Twr_Nazwa
+)As DokSprzedaz
+FULL JOIN
+(
+  SELECT
+  Twr_Kod, Twr_Nazwa, 
+  isnull(
+		sum(
+			CASE WHEN MaN_TrNTyp=8 THEN 0-MaS_Ilosc 
+				WHEN MaN_TrNTyp=9 THEN CASE WHEN MaN_Stan&lt;3 THEN 0 ELSE MaS_Ilosc END 
+				WHEN MaN_TrNTyp=27 THEN CASE WHEN MaN_Stan &lt; 3 AND MaS_Ilosc &lt; 0 THEN 0 ELSE 0- MaS_Ilosc END END
+			),0
+		) AS Ilosc,
+  max(Twr_Jm) as Twr_Jm
+  FROM
+  CDN.MagNag
+  JOIN CDN.MagsElem ON MaN_GIDNumer=MaS_GIDNumer
+  JOIN CDN.MagWybor ON MaS_MagNumer=MgW_MagNumer AND MgW_SesjaID=@CDN_MagSesja AND MgW_Watek=@CDN_MagWatek
+  JOIN CDN.TwrKarty ON Twr_GIDNumer=MaS_TwrNumer
+  JOIN #TmpTwrKarty ON Twr_GIDNumer=GIDNumer
+  WHERE Man_Data3&lt;= @Data
+  GROUP BY Twr_Kod, Twr_Nazwa
+) As DokMagazyn ON DokSprzedaz.Twr_Kod=DokMagazyn.Twr_Kod
+WHERE IsNull(DokSprzedaz.Ilosc,0) &lt;&gt;0 OR IsNull(DokMagazyn.Ilosc,0) &lt;&gt; 0 OR IsNull(DokSprzedaz.Wartosc,0) &lt;&gt; 0
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,249 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="SumaWartosciKredytuTerminKntCentrali"></A><PRE>
+          <FONT SIZE="2"><I>/* SumaWartosciKredytuTerminKntCentrali */</I><BR>
+CREATE FUNCTION CDN.SumaWartosciKredytuTerminKntCentrali (
+	@p_timestamp INT
+	, @p_tolerancja INT
+	, @p_KntNumer INT
+	, @p_UwzglDokBezPlat TINYINT
+	, @p_UwzglZam TINYINT
+	, @p_UwzglSaldoKntGlownego TINYINT = 1
+	)
+	-- Funkcja zwraca sume wartosci nierozliczonych płatności i zapisów kasowych
+	--
+	-- Format wyniku:
+	-- Wartosc
+	--
+	-- Wersja 3.1   23.09.2003  Nomad
+	-- Wersja 9.0   12.11.2008  MF
+	--dodane parametry
+	--@p_UwzglDokBezPlat
+	--@p_UwzglZam
+	--usunięty parametr
+	--@p_KntFirma
+	-- Wersja 10.5  18.03.2011 GZ
+	-- dodano nowy parametr @p_UwzglSaldoKntGlownego	
+	--
+	-- Parametry:
+	-- @p_timestamp			Teraźniejszy timestamp
+	-- @p_tolerancja		Ilość dni tolerancji dla przekroczenia terminu płatności należności
+	-- @p_KntNumer			Numer kontrahenta dla którego liczymy wartość kredytu
+	-- @p_UwzglDokBezPlat	Czy uwzględniać dokumenty bez płatności (WZ, WZK, PZ, PZK)
+	-- @p_UwzgZam			Czy uwzględniać rezerwacje
+RETURNS VARCHAR(255)
+AS
+BEGIN
+	DECLARE @retval VARCHAR(255);
+	DECLARE @platnosci_z DECIMAL(28, 4);
+	DECLARE @platnosci_n DECIMAL(28, 4);
+	DECLARE @platnosci_ZPLT DECIMAL(28, 4);
+	DECLARE @platnosci_NPLT DECIMAL(28, 4);
+	DECLARE @platnosci_Oddzialow DECIMAL(28, 4);
+	DECLARE @zapisy DECIMAL(28, 4);
+	DECLARE @data INT;
+	DECLARE @p_pltnumer INT;
+	DECLARE @MaxDniPoTerminie INT;
+
+	SET @MaxDniPoTerminie = isnull((
+				SELECT Knt_MaxDniPoTerminie
+				FROM cdn.KntKarty
+				WHERE Knt_GIDNumer = @p_KntNumer
+				), 0)
+	-- policzenie płatności zobowiazań
+	SET @data = DATEDIFF(d, CONVERT(DATETIME, '28-12-1800', 105), DATEADD(SECOND, @p_timestamp, CONVERT(DATETIME, '01-01-1990', 105)))
+
+	SELECT @platnosci_z = SUM(sumaplatnosci)
+	FROM (
+		SELECT SUM(TrP_Pozostaje) * ISNULL((
+					SELECT TOP 1 WaE_KursL / WaE_KursM
+					FROM CDN.WalElem
+					WHERE WaE_Symbol = TrP_Waluta
+						AND WaE_Lp = TrP_NrKursu
+						AND WaE_KursTS &lt;= @p_timestamp
+					ORDER BY - WaE_KursTS
+					), 1) AS sumaplatnosci
+		FROM CDN.TraPlat
+		LEFT JOIN CDN.TraNag ON TrN_GIDTyp = TrP_GIDTyp
+			AND TrN_GIDNumer = TrP_GIDNumer
+		LEFT JOIN CDN.ZamNag ON TrN_ZaNNumer = ZaN_GIDNumer
+			AND TrN_ZaNTyp = ZaN_GIDTyp
+		WHERE TrP_KntTyp = 32
+			AND TrP_KntNumer = @p_kntnumer
+			AND TrP_Typ = 1
+			AND TrP_Rozliczona = 0
+			AND TrP_Termin &lt; @data
+			AND ISNULL(ZaN_LimitKredytowy, 0) = 0
+		GROUP BY TrP_Waluta
+			, TrP_NrKursu
+		) AS res
+
+	IF @p_UwzglSaldoKntGlownego = 1
+	BEGIN
+		-- TID:175418 policzenie płatności zobowiązań dla płatnika wskazanego na kontrahencie
+		SELECT @p_pltnumer = (
+				CASE 
+					WHEN Knt_KnPParam = 0
+						AND Knt_GIDNumer &lt;&gt; Knt_KnPNumer
+						AND Knt_GIDTyp = Knt_KnPTyp
+						THEN Knt_KnPNumer
+					ELSE Knt_GIDNumer
+					END
+				)
+		FROM CDN.kntkarty(NOLOCK)
+		WHERE Knt_GIDNumer = @p_kntnumer
+
+		IF @p_PltNumer &lt;&gt; @p_kntnumer
+			AND @p_PltNumer NOT IN -- Warunek że płatnik nie jest oddziałem centrali
+			(
+				SELECT Knt_GIDNumer
+				FROM CDN.KntKarty
+				WHERE Knt_KnCTyp = 32
+					AND Knt_KnCNumer = @p_kntnumer
+				)
+		BEGIN
+			SELECT @platnosci_ZPLT = SUM(sumaplatnosci)
+			FROM (
+				SELECT SUM(TrP_Pozostaje) * ISNULL((
+							SELECT TOP 1 WaE_KursL / WaE_KursM
+							FROM CDN.WalElem
+							WHERE WaE_Symbol = TrP_Waluta
+								AND WaE_Lp = TrP_NrKursu
+								AND WaE_KursTS &lt;= @p_timestamp
+							ORDER BY - WaE_KursTS
+							), 1) AS sumaplatnosci
+				FROM CDN.TraPlat
+				INNER JOIN CDN.TraNag ON TrN_GIDTyp = TrP_GIDTyp
+					AND TrN_GIDNumer = TrP_GIDNumer 
+				LEFT JOIN CDN.ZamNag ON TrN_ZaNNumer = ZaN_GIDNumer
+					AND TrN_ZaNTyp = ZaN_GIDTyp
+				WHERE TrP_KntTyp = 32
+					AND TrP_KntNumer = @p_PltNumer
+					AND TrP_Rozliczona = 0
+					AND TrN_KntNumer = @p_kntnumer
+					AND TrP_Typ = 1
+					AND TrP_Termin &lt; @data
+					AND ISNULL(ZaN_LimitKredytowy, 0) = 0
+				GROUP BY TrP_Waluta
+					, TrP_NrKursu
+				) AS res
+
+			SET @platnosci_z = ISNULL(@platnosci_z, 0) + @platnosci_ZPLT
+		END
+	END
+
+	-- policzenie płatności naleznosci
+	SELECT @platnosci_n = SUM(sumaplatnosci)
+	FROM (
+		SELECT SUM(TrP_Pozostaje) * ISNULL((
+					SELECT TOP 1 WaE_KursL / WaE_KursM
+					FROM CDN.WalElem
+					WHERE WaE_Symbol = TrP_Waluta
+						AND WaE_Lp = TrP_NrKursu
+						AND WaE_KursTS &lt;= @p_timestamp
+					ORDER BY - WaE_KursTS
+					), 1) AS sumaplatnosci
+		FROM CDN.TraPlat
+		LEFT JOIN CDN.TraNag ON TrN_GIDTyp = TrP_GIDTyp
+			AND TrN_GIDNumer = TrP_GIDNumer
+		LEFT JOIN CDN.ZamNag ON TrN_ZaNNumer = ZaN_GIDNumer
+			AND TrN_ZaNTyp = ZaN_GIDTyp
+		WHERE TrP_KntTyp = 32
+			AND TrP_KntNumer = @p_kntnumer
+			AND TrP_Typ = 2
+			AND TrP_Rozliczona = 0
+			AND TrP_Termin &lt; @data - @p_tolerancja - @MaxDniPoTerminie
+			AND ISNULL(ZaN_LimitKredytowy, 0) = 0
+		GROUP BY TrP_Waluta
+			, TrP_NrKursu
+		) AS res
+
+	-- TID:175418 policzenie płatności należnosci dla płatnika wskazanego na kontrahencie
+	SELECT @p_pltnumer = (
+			CASE 
+				WHEN Knt_KnPParam = 0
+					AND Knt_GIDNumer &lt;&gt; Knt_KnPNumer
+					AND Knt_GIDTyp = Knt_KnPTyp
+					THEN Knt_KnPNumer
+				ELSE Knt_GIDNumer
+				END
+			)
+	FROM cdn.kntkarty(NOLOCK)
+	WHERE Knt_GIDNumer = @p_kntnumer
+
+	IF @p_PltNumer &lt;&gt; @p_kntnumer
+		AND @p_PltNumer NOT IN -- Warunek że płatnik nie jest oddziałem centrali
+		(
+			SELECT Knt_GIDNumer
+			FROM CDN.KntKarty
+			WHERE Knt_KnCTyp = 32
+				AND Knt_KnCNumer = @p_kntnumer
+			)
+	BEGIN
+		SELECT @platnosci_NPLT = SUM(sumaplatnosci)
+		FROM (
+			SELECT SUM(TrP_Pozostaje) * ISNULL((
+						SELECT TOP 1 WaE_KursL / WaE_KursM
+						FROM CDN.WalElem
+						WHERE WaE_Symbol = TrP_Waluta
+							AND WaE_Lp = TrP_NrKursu
+							AND WaE_KursTS &lt;= @p_timestamp
+						ORDER BY - WaE_KursTS
+						), 1) AS sumaplatnosci
+			FROM CDN.TraPlat
+			INNER JOIN CDN.TraNag ON TrN_GIDTyp = TrP_GIDTyp
+				AND TrN_GIDNumer = TrP_GIDNumer
+			LEFT JOIN CDN.ZamNag ON TrN_ZaNNumer = ZaN_GIDNumer
+				AND TrN_ZaNTyp = ZaN_GIDTyp
+			WHERE TrP_KntTyp = 32
+				AND TrP_KntNumer = @p_PltNumer
+				AND TrP_Rozliczona = 0
+				AND TrN_KntNumer = @p_kntnumer
+				AND TrP_Typ = 2
+				AND TrP_Termin &lt; @data - @p_tolerancja - @MaxDniPoTerminie
+				AND ISNULL(ZaN_LimitKredytowy, 0) = 0
+			GROUP BY TrP_Waluta
+				, TrP_NrKursu
+			) AS res
+
+		SET @platnosci_n = ISNULL(@platnosci_n, 0) + @platnosci_NPLT
+	END
+
+	-- Policzenie zapisów
+	SELECT @zapisy = SUM(CASE KAZ_RP
+				WHEN 1
+					THEN KAZ_Pozostaje * (KAZ_KursL / KAZ_KursM)
+				ELSE - KAZ_Pozostaje * (KAZ_KursL / KAZ_KursM)
+				END)
+	FROM CDN.Zapisy
+	WHERE KAZ_KNTTyp = 32
+		AND KAZ_KNTNumer = @p_KntNumer
+		AND KAZ_Rozliczony = 0
+
+	-- /Policzenie zapisów
+	-- policzenie płatności oddziałów centrali
+	SELECT @platnosci_Oddzialow = SUM(CAST(CDN.SumaWartosciKredytuTerminKntOddzialuCentrali(@p_timestamp, @p_tolerancja, Knt_GIDNumer, @p_UwzglDokBezPlat, @p_UwzglZam, @p_UwzglSaldoKntGlownego, @p_KntNumer) AS DECIMAL(28, 4)))
+	FROM CDN.KntKarty
+	WHERE Knt_KnCTyp = 32
+		AND Knt_KnCNumer = @p_kntnumer
+
+	-- /policzenie płatności oddziałów centrali
+	SET @retval = (ISNULL(@platnosci_n, 0) + ISNULL(@zapisy, 0)) - ISNULL(@platnosci_z, 0) + ISNULL(@platnosci_Oddzialow, 0)
+
+	RETURN @retval
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

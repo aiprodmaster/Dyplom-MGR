@@ -1,0 +1,383 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Prod_CzasPrzepracowany"></A><PRE>
+          <FONT SIZE="2"><I>/* Prod_CzasPrzepracowany */</I><BR>
+CREATE           PROCEDURE CDN.Prod_CzasPrzepracowany(@_dataOd int,@_dataDo int,@_ignorujPrzerweSec int) as
+begin
+set nocount on
+
+Declare prac_cursor Cursor
+for 
+	select PRC_GidNumer,PRC_Akronim,PRC_Nazwisko,PRC_Imie1,
+              Convert(varchar(10),DateAdd(second,PCT_TerminOd,'19900101'),111) as DataOd,
+              Convert(varchar(10),DateAdd(second,PCT_TerminDo,'19900101'),111) as DataDo,
+              DateAdd(second,PCT_TerminOd,'19900101') as GodzOd,DateAdd(second,PCT_TerminDo,'19900101') as GodzDo,'P' as TYP,
+              case when Convert(varchar(5),DateAdd(second,PCT_TerminOd,'19900101'),108)&gt;=Convert(varchar(5),DateAdd(second,PCT_TerminDo,'19900101'),108)
+                        then (PCT_TerminDo-PCT_TerminOd)/86400 
+		   else ((PCT_TerminDo-PCT_TerminOd)/86400)+1  
+                   end as Ilosc_dni
+	from CDN.PrcKarty
+   	  inner join CDN.ProdObiekty on Prc_GIDNumer=POB_ObiNumer and POB_ObiTyp=944 
+   	  inner join CDN.ProdCzynnosciObiekty on PCO_Obiekt=POB_Id 
+   	  inner join CDN.ProdCzynnosci on PCZ_Id=PCO_Czynnosc 
+   	  inner join CDN.ProdCzynnosciTerminy on PCZ_ID=PCT_Czynnosc and (PCO_Termin=PCT_ID or PCO_Termin=0)  
+	where PCZ_Realizuje&lt;&gt;0 and PCT_TerminDo&lt;=DateDiff(second,'19900101',DateAdd(d,@_dataDo,'18001228')) and PCT_TerminDo&gt;=DateDiff(second,'19900101',DateAdd(d,@_dataOd,'18001228'))
+        order by PRC_GidNumer,PCT_TerminOd
+OPEN prac_cursor
+
+DECLARE @oldId int,@oldDate varchar(25),@lpCzyn int --dla rekordow 1 obiektu
+declare @id int,@akronim varchar(20),@nazw varchar(20),@imie varchar(15),@typ varchar(10),@dataOd varchar(11),@dataDo varchar(11),@godzOd dateTime,@godzDo dateTime,@ilosc_dni int
+Declare @tabCzasPrzepracowany table(PrcGidNumer int, Kod varchar(20),Nazwisko varchar(20),Imie varchar(20),
+                                    Data varchar(20),TypDnia varchar(20),
+                                    W1_GodzOd dateTime,W1_GodzDo dateTime,W1_Strefa varchar(20),
+ 				                    W2_GodzOd dateTime,W2_GodzDo dateTime,W2_Strefa varchar(20),
+ 				                    W3_GodzOd dateTime,W3_GodzDo dateTime,W3_Strefa varchar(20),
+				                    W4_GodzOd dateTime,W4_GodzDo dateTime,W4_Strefa varchar(20),
+                                                    W5_GodzOd dateTime,W5_GodzDo dateTime,W5_Strefa varchar(20),
+                                                    W6_GodzOd dateTime,W6_GodzDo dateTime,W6_Strefa varchar(20)				    
+                                    )
+declare @od1 dateTime,@od2 dateTime,@do1 dateTime,@do2 dateTime, @i int
+
+ Fetch Next from prac_cursor INTO @id,@akronim,@nazw,@imie,@dataOd,@dataDo,@godzOd ,@godzDo,@typ,@ilosc_dni
+ select  @oldId=0,@oldDate=0,@lpCzyn=0
+ while @@Fetch_Status=0
+ begin
+      if @@Fetch_Status&lt;&gt;(-2)
+       begin
+	if (@oldId=@id and @oldDate=@dataOd) --dla tego samego obiektu w tym samym dniu
+	 begin
+         set @lpCzyn=@lpCzyn+1
+         set @i=1
+		if @lpCzyn=2 
+                   BEGIN
+                      if @ilosc_dni=1
+                      begin --sprawdz ignorowany czas przerwy
+                            if  (select DateDiff(second,W1_GodzDo,@godzOd)
+                                  from @tabCzasPrzepracowany
+                                  where PrcGidNumer=@id and Data=@dataOd)&lt;=@_ignorujPrzerweSec
+                            begin Update @tabCzasPrzepracowany --ignoruj przerwe
+			                      set W1_GodzDo=@godzDo                           
+			                      where PrcGidNumer=@id and Data=@dataOd
+                            set @lpCzyn=1
+                            end
+                            else                            
+                                  Update @tabCzasPrzepracowany
+			                      set W2_GodzOd=@godzOd, W2_GodzDo=@godzDo, W2_Strefa='praca.pdst'                           
+			                      where PrcGidNumer=@id and Data=@dataOd                             
+                            
+                      end
+                      else --ilosc dni&gt;1
+                      begin         --pierwsza dobe włóż w GodzOdX,GodzDoX z ta sama godz rozpoczecia i zakonczenia
+                            if  (select DateDiff(second,W1_GodzDo,@godzOd)
+                                  from @tabCzasPrzepracowany
+                                  where PrcGidNumer=@id and Data=@dataOd)&lt;=@_ignorujPrzerweSec
+                            begin Update @tabCzasPrzepracowany --ignoruj przerwe
+			                      set W1_GodzDo=@godzDo                           
+			                      where PrcGidNumer=@id and Data=@dataOd
+                                  set @lpCzyn=@lpCzyn-1
+                            end
+                            else
+                                  Update @tabCzasPrzepracowany
+				  set W2_GodzOd=@godzOd, W2_GodzDo=@godzOd, W2_Strefa='praca.pdst'                           
+				  where PrcGidNumer=@id and Data=@dataOd 
+                            
+		          set @i=2  --kazda kolejna dobe wloz do osobnego rekordu			 
+		           WHILE (@i&lt;=@ilosc_dni) 
+		            BEGIN  --gdy czynnosc trwa wiecej niz 1dobe to rozbija na kilka dni
+			    insert into @tabCzasPrzepracowany(PrcGidNumer,Kod,Nazwisko,Imie,
+				   	   		     Data,TypDnia,W1_Strefa,
+		                                  	     W1_GodzOd,W1_GodzDo)
+		                            	      values(@id,@akronim,@nazw,@imie,
+		                                   	     Convert(varchar(11),DateAdd(day,@i-1,Replace(@dataOd,'/','')),111),@typ,'praca.pdst',
+		                                             @godzOd,case when @i&lt;@ilosc_dni then @godzOd else @godzDo end
+					                     )
+		            set @i=@i+1
+		            END
+                      end
+                   END
+		if @lpCzyn=3
+                   BEGIN
+                      if @ilosc_Dni=1                      
+                      begin --sprawdz ignorowany czas przerwy
+                            if  (select DateDiff(second,W2_GodzDo,@godzOd)
+                                  from @tabCzasPrzepracowany
+                                  where PrcGidNumer=@id and Data=@dataOd)&lt;=@_ignorujPrzerweSec
+                            begin Update @tabCzasPrzepracowany --ignoruj przerwe
+			          set W2_GodzDo=@godzDo                           
+			          where PrcGidNumer=@id and Data=@dataOd
+                            set @lpCzyn=2
+                            end
+                            else 
+                                  Update @tabCzasPrzepracowany
+				  SET W3_GodzOd=@godzOd,W3_GodzDo=@godzDo,W3_Strefa='praca.pdst'
+				  where PrcGidNumer=@id and Data=@dataOd 
+                                   
+                      end
+                      else --ilosc dni&gt;1
+                       begin         --pierwsza dobe włóż w GodzOdX,GodzDoX z ta sama godz rozpoczecia i zakonczenia
+                            if  (select DateDiff(second,W2_GodzDo,@godzOd)
+                                  from @tabCzasPrzepracowany
+                                  where PrcGidNumer=@id and Data=@dataOd)&lt;=@_ignorujPrzerweSec
+                            begin Update @tabCzasPrzepracowany --ignoruj przerwe
+			          set W2_GodzDo=@godzDo                           
+			          where PrcGidNumer=@id and Data=@dataOd
+                            set @lpCzyn=@lpCzyn-1
+                            end
+                            else
+                                  Update @tabCzasPrzepracowany
+				  set W3_GodzOd=@godzOd, W3_GodzDo=@godzOd                           
+				  where PrcGidNumer=@id and Data=@dataOd                             
+		          set @i=2  --kazda kolejna dobe wloz do osobnego rekordu			 
+		           WHILE (@i&lt;=@ilosc_dni) 
+		            BEGIN  --gdy czynnosc trwa wiecej niz 1dobe to rozbija na kilka dni
+			    insert into @tabCzasPrzepracowany(PrcGidNumer,Kod,Nazwisko,Imie,
+				   	   		     Data,TypDnia,W1_Strefa,
+		                                  	     W1_GodzOd,W1_GodzDo)
+		                            	      values(@id,@akronim,@nazw,@imie,
+		                                   	     Convert(varchar(11),DateAdd(day,@i-1,Replace(@dataOd,'/','')),111),@typ,'praca.pdst',
+		                                             @godzOd,case when @i&lt;@ilosc_dni then @godzOd else @godzDo end
+					                     )
+		            set @i=@i+1
+		            END
+                      end
+                   END
+		if @lpCzyn=4
+                   BEGIN
+                      if @ilosc_Dni=1
+                      begin
+                      if  (select DateDiff(second,W3_GodzDo,@godzOd)
+                                  from @tabCzasPrzepracowany
+                                  where PrcGidNumer=@id and Data=@dataOd)&lt;=@_ignorujPrzerweSec
+                            begin Update @tabCzasPrzepracowany --ignoruj przerwe
+			          set W3_GodzDo=@godzDo                           
+			          where PrcGidNumer=@id and Data=@dataOd
+                            set @lpCzyn=3
+                            end
+                            else 
+                                  Update @tabCzasPrzepracowany
+				                  SET W4_GodzOd=@godzOd,W4_GodzDo=@godzDo,W4_Strefa='praca.pdst'
+				                  where PrcGidNumer=@id and Data=@dataOd 
+                                   
+                      end
+                      else
+                         begin         --pierwsza dobe włóż w GodzOdX,GodzDoX z ta sama godz rozpoczecia i zakonczenia
+                              if  (select DateDiff(second,W3_GodzDo,@godzOd)
+                              	   from @tabCzasPrzepracowany
+                              	   where PrcGidNumer=@id and Data=@dataOd)&lt;=@_ignorujPrzerweSec
+			                  begin
+                                    Update @tabCzasPrzepracowany
+				                    set W3_GodzDo=@godzDo                           
+				                    where PrcGidNumer=@id and Data=@dataOd 
+                              end
+                              else
+                                    Update @tabCzasPrzepracowany
+				                    set W4_GodzOd=@godzOd, W4_GodzDo=@godzOd,W4_Strefa='praca.pdst'                           
+				                    where PrcGidNumer=@id and Data=@dataOd 
+
+		          set @i=2  --kazda kolejna dobe wloz do osobnego rekordu			 
+		           WHILE (@i&lt;=@ilosc_dni) 
+		            BEGIN  --gdy czynnosc trwa wiecej niz 1dobe to rozbija na kilka dni
+			            insert into @tabCzasPrzepracowany(PrcGidNumer,Kod,Nazwisko,Imie,
+				   	   		     Data,TypDnia,W1_Strefa, W1_GodzOd,W1_GodzDo)
+		                            	      values(@id,@akronim,@nazw,@imie,
+		                                   	     Convert(varchar(11),DateAdd(day,@i-1,Replace(@dataOd,'/','')),111),@typ,'praca.pdst',
+		                                             @godzOd,case when @i&lt;@ilosc_dni then @godzOd else @godzDo end
+					                     )
+		            set @i=@i+1
+		            END
+                      end
+                   END
+		if @lpCzyn=5
+                   BEGIN
+                      if @ilosc_Dni=1
+                      begin
+                             if  (select DateDiff(second,W4_GodzDo,@godzOd)
+                                  from @tabCzasPrzepracowany
+                                  where PrcGidNumer=@id and Data=@dataOd)&lt;=@_ignorujPrzerweSec
+                             begin  
+                                  Update @tabCzasPrzepracowany
+			                      SET W4_GodzDo=@godzDo
+			                      where PrcGidNumer=@id and Data=@dataOd
+			                      set @lpCzyn=4
+                             end
+                             else
+                                  Update @tabCzasPrzepracowany
+				                  SET W5_GodzOd=@godzOd,W5_GodzDo=@godzDo,W5_Strefa='praca.pdst'
+				                  where PrcGidNumer=@id and Data=@dataOd
+
+                                     
+                      end
+                      else --ilosc_dni&gt;1
+                      begin         --pierwsza dobe włóż w GodzOdX,GodzDoX z ta sama godz rozpoczecia i zakonczenia
+                             if  (select DateDiff(second,W4_GodzDo,@godzOd)
+                                  from @tabCzasPrzepracowany
+                                  where PrcGidNumer=@id and Data=@dataOd)&lt;=@_ignorujPrzerweSec
+                             begin 
+                                    Update @tabCzasPrzepracowany
+				                    set W4_GodzDo=@godzDo                           
+				                    where PrcGidNumer=@id and Data=@dataOd 
+                                    
+                                    set @lpCzyn=4
+                             end
+                             else
+                                    Update @tabCzasPrzepracowany
+				                    set W5_GodzOd=@godzOd, W5_GodzDo=@godzOd, W5_Strefa= 'praca.pdst'                           
+				                    where PrcGidNumer=@id and Data=@dataOd 
+
+
+		          set @i=2  --kazda kolejna dobe wloz do osobnego rekordu			 
+		           WHILE (@i&lt;=@ilosc_dni) 
+		            BEGIN  --gdy czynnosc trwa wiecej niz 1dobe to rozbija na kilka dni
+			    insert into @tabCzasPrzepracowany(PrcGidNumer,Kod,Nazwisko,Imie,
+				   	   		     Data,TypDnia,W1_Strefa,
+		                                  	     W1_GodzOd,W1_GodzDo)
+		                            	      values(@id,@akronim,@nazw,@imie,
+		                                   	     Convert(varchar(11),DateAdd(day,@i-1,Replace(@dataOd,'/','')),111),@typ,'praca.pdst',
+		                                             @godzOd,case when @i&lt;@ilosc_dni then @godzOd else @godzDo end
+					                     )
+		            set @i=@i+1
+		            END
+                      end
+                   END
+		if @lpCzyn=6 
+                   BEGIN
+                      if @ilosc_Dni=1
+                      begin
+                             if  (select DateDiff(second,W5_GodzDo,@godzOd)
+                                  from @tabCzasPrzepracowany
+                                  where PrcGidNumer=@id and Data=@dataOd)&lt;=@_ignorujPrzerweSec
+                             begin 
+                                  Update @tabCzasPrzepracowany
+		                          SET W5_GodzDo=@godzDo
+				                  where PrcGidNumer=@id and Data=@dataOd
+                                  set @lpCzyn=5
+                             end
+                             else
+                                  Update @tabCzasPrzepracowany
+		                          SET W6_GodzOd=@godzOd,W6_GodzDo=@godzDo,W6_Strefa='praca.pdst'
+				                  where PrcGidNumer=@id and Data=@dataOd
+                             end
+                      else
+                      begin         --pierwsza dobe włóż w GodzOd5,GodzDo5 z ta sama godz rozpoczecia i zakonczenia
+
+                             if  (select DateDiff(second,W5_GodzDo,@godzOd)
+                                  from @tabCzasPrzepracowany
+                                  where PrcGidNumer=@id and Data=@dataOd)&lt;=@_ignorujPrzerweSec
+                             begin 
+                                    Update @tabCzasPrzepracowany
+				                    set W5_GodzDo=@godzOd                           
+				                    where PrcGidNumer=@id and Data=@dataOd 
+				                    set @lpCzyn=5
+                             end
+                             else				
+                                    Update @tabCzasPrzepracowany
+				                    set W6_GodzOd=@godzOd, W6_GodzDo=@godzOd, W6_Strefa='praca.pdst'                           
+				                    where PrcGidNumer=@id and Data=@dataOd 
+
+		          set @i=2  --kazda kolejna dobe wloz do osobnego rekordu			 
+		           WHILE (@i&lt;=@ilosc_dni) 
+		            BEGIN  --gdy czynnosc trwa wiecej niz 1dobe to rozbija na kilka dni
+			    insert into @tabCzasPrzepracowany(PrcGidNumer,Kod,Nazwisko,Imie,
+				   	   		     Data,TypDnia,W1_Strefa,
+		                                  	     W1_GodzOd,W1_GodzDo)
+		                            	      values(@id,@akronim,@nazw,@imie,
+		                                   	     Convert(varchar(11),DateAdd(day,@i-1,Replace(@dataOd,'/','')),111),@typ,'praca.pdst',
+		                                             @godzOd,case when @i&lt;@ilosc_dni then @godzOd else @godzDo end
+					                     )
+		            set @i=@i+1
+	                    END
+                      end
+                   END
+                if @lpCzyn&gt;6  
+                   BEGIN
+                      if @ilosc_Dni=1
+                      begin
+                                     Update @tabCzasPrzepracowany
+				     SET W6_GodzOd=DateAdd(second,(DateDiff(second,W6_GodzDo,W6_GodzOd)),@godzOd),
+                                         W6_GodzDo=@godzDo
+				     where PrcGidNumer=@id and Data=@dataOd                    
+                      end
+                     else
+                      begin         --pierwsza dobe włóż w GodzOd6,GodzDo6 
+                                    Update @tabCzasPrzepracowany
+				     SET W6_GodzOd=DateAdd(second,(DateDiff(second,W6_GodzDo,W6_GodzOd)),@godzOd),
+                                         W6_GodzDo=@godzOd
+				    where PrcGidNumer=@id and Data=@dataOd 
+
+		          set @i=2  --kazda kolejna dobe wloz do osobnego rekordu			 
+		           WHILE (@i&lt;=@ilosc_dni) 
+		            BEGIN  --gdy czynnosc trwa wiecej niz 1dobe to rozbija na kilka dni
+			    insert into @tabCzasPrzepracowany(PrcGidNumer,Kod,Nazwisko,Imie,
+				   	   		     Data,TypDnia,W1_Strefa,
+		                                  	     W1_GodzOd,W1_GodzDo)
+		                            	      values(@id,@akronim,@nazw,@imie,
+		                                   	     Convert(varchar(11),DateAdd(day,@i-1,Replace(@dataOd,'/','')),111),@typ,'praca.pdst',
+		                                             @godzOd,case when @i&lt;@ilosc_dni then @godzOd else @godzDo end
+					                     )
+		            set @i=@i+1
+	                    END
+                      end
+		   END	   
+         end
+        else --dla nastepnego nowego terminu obiektu 
+         begin
+          select @oldId=@id,@oldDate=@dataOd,@lpCzyn=1,@i=1	 
+           WHILE (@i&lt;=@ilosc_dni) 
+            BEGIN  --gdy czynnosc trwa wiecej niz 1dobe to rozbija na kilka dni
+	    insert into @tabCzasPrzepracowany(PrcGidNumer,Kod,Nazwisko,Imie,
+		   	   		     Data,TypDnia,W1_Strefa,
+                                  	     W1_GodzOd,W1_GodzDo)
+                            	      values(@id,@akronim,@nazw,@imie,
+                                   	     Convert(varchar(11),DateAdd(day,@i-1,Replace(@dataOd,'/','')),111),@typ,'praca.pdst',
+                                             @godzOd,case when @i&lt;@ilosc_Dni then @godzOd else @godzDo end
+			                     )
+            set @i=@i+1
+            END
+	 end       					                                                                                         
+       end
+      Fetch Next from prac_cursor INTO @id,@akronim,@nazw,@imie,@dataOd,@dataDo,@godzOd,@godzDo,@typ,@ilosc_dni
+
+ end--//cursor
+select Kod,Nazwisko,Imie,Replace(Data,'/','-') as Data,TypDnia,
+				      Convert(varchar(5),W1_GodzOd,108) as W1GodzOd,Convert(varchar(5),W1_GodzDo,108) as W1GodzDo,
+						      W1_Strefa, '' as W1_Opis_Nadg,'' as W1_Wydzial,'' as W1_Wydzial_adres_wezla,
+                                                '' as W1_Projekt,'' W1_Projekt_adres_wezla ,
+			              isnull(Convert(varchar(5),W2_GodzOd,108),'00:00') as W2GodzOd,isnull(Convert(varchar(5),W2_GodzDo,108),'00:00') as W2GodzDo,
+                                                 W2_Strefa, '' as W2_Opis_Nadg,'' as W2_Wydzial,'' as W2_Wydzial_adres_wezla,
+                                                '' as W2_Projekt,'' W2_Projekt_adres_wezla ,
+				      isnull(Convert(varchar(5),W3_GodzOd,108),'00:00') as W3GodzOd,isnull(Convert(varchar(5),W3_GodzDo,108),'00:00') as W3GodzDo,
+                                                W3_Strefa, '' as W3_Opis_Nadg,'' as W3_Wydzial,'' as W3_Wydzial_adres_wezla,
+                                                '' as W3_Projekt,'' W3_Projekt_adres_wezla ,
+				      isnull(Convert(varchar(5),W4_GodzOd,108),'00:00') as W4GodzOd,isnull(Convert(varchar(5),W4_GodzDo,108),'00:00') as W4GodzDo,
+                                                W4_Strefa, '' as W4_Opis_Nadg,'' as W4_Wydzial,'' as W4_Wydzial_adres_wezla,
+                                                '' as W4_Projekt,'' W4_Projekt_adres_wezla ,
+				      isnull(Convert(varchar(5),W5_GodzOd,108),'00:00') as W5GodzOd,isnull(Convert(varchar(5),W5_GodzDo,108),'00:00') as W5GodzDo,
+                                                W5_Strefa, '' as W5_Opis_Nadg,'' as W5_Wydzial,'' as W5_Wydzial_adres_wezla,
+                                                '' as W5_Projekt,'' W5_Projekt_adres_wezla ,
+				      isnull(Convert(varchar(5),W6_GodzOd,108),'00:00') as W6GodzOd,isnull(Convert(varchar(5),W6_GodzDo,108),'00:00') as W6GodzDo,
+                                                W6_Strefa, '' as W6_Opis_Nadg,'' as W6_Wydzial,'' as W6_Wydzial_adres_wezla,
+                                                '' as W6_Projekt,'' W6_Projekt_adres_wezla 
+
+from @tabCzasPrzepracowany
+order by Kod,Data
+
+Close prac_cursor
+DealLocate prac_cursor
+
+set nocount off
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

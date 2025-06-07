@@ -1,0 +1,157 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="WFL_AkcjeStatusuEx"></A><PRE>
+          <FONT SIZE="2"><I>/* WFL_AkcjeStatusuEx */</I><BR>
+CREATE PROCEDURE  cdn.WFL_AkcjeStatusuEx (
+@WDPID int, -- ID definicji procesu
+@WDSID int, -- ID definicji statusu
+@Ope_GIDNumer int, --GIDNumer operatora 
+@Ope_GIDTyp int, --GIDTyp operatora 
+@InniOper smallint, --czy uwzgledniac innych operatorow pracownika danego operatora
+@DataOd int, --data waznosci struktury
+@DataDo int,
+@WFPID int = 0
+)
+as
+begin
+  -- zwraca mozliwe do wykonania zadania na danym statusie (dla konkretnego procesu lub liste procesow (zadania) do uruchomienia)
+  -- dla przypadku listy zadan do uruchomienia sprawdza aktywnosc definicji procesu
+  DECLARE @sqlParametry nvarchar(512)
+  DECLARE @OpiekunSQL nvarchar(4000)
+  DECLARE @SQL nvarchar(4000)
+  DECLARE @lWDZId int 
+  DECLARE @lWFPObiTyp int
+  DECLARE @lWFPObiNumer int
+
+  SET NOCOUNT ON
+
+  declare @Opiekunowie table (Typ smallint, Numer int)
+
+  if @Ope_GidTyp=128
+    insert into @Opiekunowie
+	  select Frs_GIDTyp, Frs_GIDNumer 
+    from cdn.WFL_Opiekunowie(0, @Ope_GIDNumer, 0, @InniOper, @DataOd, @DataDo)
+  else if @Ope_GidTyp=944
+    insert into @Opiekunowie
+	  select Frs_GIDTyp, Frs_GIDNumer 
+	  from cdn.WFL_Opiekunowie(@Ope_GIDNumer, 0, 0, @InniOper, @DataOd, @DataDo)
+  else if @Ope_GidTyp=-4272
+    insert into @Opiekunowie
+	select Frs_GIDTyp, Frs_GIDNumer 
+	from cdn.WFL_Opiekunowie(0, 0, @Ope_GIDNumer, @InniOper, @DataOd, @DataDo)
+  else if @Ope_GidTyp = 12289	--TID: 180671
+    insert into @Opiekunowie values(@Ope_GidTyp,@Ope_GidNumer)
+  else
+  begin
+    raiserror('Przekazano nieprawidłowy GIDTyp opiekuna zadania, dopuszczalne wartośći to 128, 944 lub -4272',16,1)
+	return
+  end
+
+  --opiekunowie ustalani dynamicznie (TID: 177251)
+  if object_id('tempdb..#opiekunowieDyn') is not null
+	DROP TABLE #opiekunowieDyn
+
+  CREATE TABLE #opiekunowieDyn (OpiTyp smallint,OpiNumer int,WDZId int)
+
+  declare OpiekunCursor cursor fast_forward for
+      select wdz_opiekunsql, WDZ_Id, WFP_ObiTyp, WFP_ObiNumer
+	  from cdn.wf_defzadania 
+	  join cdn.wf_defprocesy on WDP_ID = WDZ_WDPID
+	  join cdn.WF_Procesy on WDP_ID=WFP_WDPID
+      where wdz_wdsid = @WDSID and wdz_wdsid &lt;&gt; -1 and wdz_opiekuntyp &gt; 0 and WDP_Stan = 1 and WFP_DataZamkniecia = 0 --dla statusu startowego (wdz_wdsid = -1) nie ma sensu opiekun dynamiczny
+
+  open OpiekunCursor
+  fetch next from OpiekunCursor into @OpiekunSQL, @lWDZId, @lWFPObiTyp, @lWFPObiNumer
+  WHILE @@FETCH_STATUS = 0
+  BEGIN	
+	Set @SQL = N'insert into #opiekunowieDyn (OpiTyp,OpiNumer,WDZId) select OpiTyp, OpiNumer, '+convert(varchar,@lWDZId)+' from ('+ @OpiekunSQL+') O'
+		
+    set @sqlParametry = N'@WDSID integer, @OpiekunSQL varchar(2000), @WFPID int, @ObiTyp int, @ObiNumer int'
+
+	EXEC sp_ExecuteSql @SQL, @sqlParametry, @WDSID = @lWDZId, @OpiekunSQL = @OpiekunSQL, @WFPID = @WFPID, @ObiTyp = @lWFPObiTyp, @ObiNumer = @lWFPObiNumer
+
+    fetch next from OpiekunCursor into @OpiekunSQL, @lWDZId, @lWFPObiTyp, @lWFPObiNumer
+  END
+  CLOSE OpiekunCursor
+  Deallocate OpiekunCursor 
+  -------------------------------------------
+
+  SET NOCOUNT OFF
+
+  select distinct WDA_ID, WDA_Nazwa, WDA_Kluczowa, 
+	case 
+		when WDA_WDPID = 0 then
+			1
+		else
+			0
+	end as Specjalna, 
+	a1.WDZ_Lp, a1.WDZ_ID, WDP_Nazwa, WDP_ID, WDP_TypObiektu, WDP_Priorytet
+  from (
+	select distinct WDZ_ID, WDZ_Lp, WDZ_WDAID, WDZ_WDPID, WDO_OpiTyp, WDO_OpiNumer
+	from cdn.WF_DefZadania 
+	inner join cdn.WF_DefOpiekun
+		on WDZ_ID = WDO_WDZID 
+			and (@WDPID = 0 or @WDPID &lt;&gt; 0 and WDZ_WDPID = @WDPID)
+			and (@WDSID = 0 or @WDSID &lt;&gt; 0 and WDZ_WDSID = @WDSID)
+	union
+	select WDZ_ID, WDZ_Lp, WDZ_WDAID, WDZ_WDPID, OpiTyp, OpiNumer		--dodanie opiekunów dynamicznych (TID: 177251)
+	from #opiekunowieDyn
+	join cdn.wf_defzadania on wdz_id = wdzid
+  ) as a1
+    inner join (
+		select Typ, Numer 
+		from @Opiekunowie
+  ) as O on WDO_OpiTyp = Typ and WDO_OpiNumer = Numer
+  inner join cdn.WF_DefAkcje 
+	on WDA_ID = a1.WDZ_WDAID
+  inner join cdn.WF_DefProcesy
+	on WDP_ID = a1.WDZ_WDPID 
+	and (@WDPID = 0 and isnull(WDP_Stan,0) = 1 or @WDPID &lt;&gt; 0)
+
+  DROP TABLE #opiekunowieDyn	--TID: 177251
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="WFL_AkcjeStatusu"></A><PRE>
+          <FONT SIZE="2"><I>/* WFL_AkcjeStatusu */</I><BR>
+CREATE PROCEDURE  cdn.WFL_AkcjeStatusu (
+@WDPID int, -- ID definicji procesu
+@WDSID int, -- ID definicji statusu
+@Ope_GIDNumer int, --GIDNumer operatora 
+@InniOper smallint, --czy uwzgledniac innych operatorow pracownika danego operatora
+@DataOd int, --data waznosci struktury
+@DataDo int,
+@WFPID int = 0
+)
+as
+begin
+
+exec CDN.WFl_AkcjeStatusuEx 
+@WDPID , 
+@WDSID , 
+@Ope_GIDNumer , 
+128,
+@InniOper,
+@DataOd, 
+@DataDo,
+@WFPID
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

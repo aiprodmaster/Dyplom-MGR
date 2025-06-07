@@ -1,0 +1,106 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="WydrRealizacjaEtapProd"></A><PRE>
+          <FONT SIZE="2"><I>/* WydrRealizacjaEtapProd */</I><BR>
+CREATE function CDN.WydrRealizacjaEtapProd(@PCZID int)
+returns @table table(
+  lp int, 
+  PZA_ID int,
+  Surowiec_Kod varchar(40), 
+  PZA_Zasob int, 
+  PZA_TypZasobu TINYINT, 
+  PCZ_ID int, 
+  Surowiec_Ilosc DECIMAL(11,4),
+  Surowiec_Koszt DECIMAL(15,4),
+  Produkt_Kod varchar(40), 
+  Produkt_Ilosc DECIMAL(11,4),
+  Produkt_Koszt DECIMAL(15,4)
+) as
+BEGIN
+
+declare @table1 table(lp int identity, PZA_ID int,Kod varchar(40),PZA_Zasob int,PZA_TypZasobu TINYINT,PCZ_ID int,Ilosc DECIMAL(11,4),Koszt DECIMAL(15,4)) 
+declare @table2 table(lp int identity, PZA_ID int,Kod varchar(40),PZA_Zasob int,PZA_TypZasobu TINYINT,PCZ_ID int,Ilosc DECIMAL(11,4),Koszt DECIMAL(15,4)) 
+declare @baza TABLE (ID int, Kod varchar(40), PZA_Zasob int, PZA_TypZasobu int, PCZ_ID int, PZA_Ilosc decimal(15,4), PZA_Koszt decimal(15,4) )
+declare @wynik TABLE (PZA_ID int, Kod varchar(40), PZA_Zasob int, PZA_TypZasobu int, PCZ_ID int, PZA_Ilosc decimal(15,4), PZA_Koszt decimal(15,4) )
+declare @nadprodukty TABLE (ID int, Kod varchar(40), PZA_Zasob int, PZA_TypZasobu int, PCZ_ID int, PZA_Ilosc decimal(15,4), PZA_Koszt decimal(15,4) )
+declare @petla smallint
+set @petla = 0
+delete from @nadprodukty
+
+insert into @nadprodukty --1.zaladuj nadprodukty (3.)na podstawie bazy znajdz wszystkie nadprodukty
+select PZA_ID , PTZ_Kod, PZA_Zasob, PZA_TypZasobu, PCZ_ID, PZA_Ilosc , PZA_Koszt 
+from CDN.ProdZasoby
+inner join CDN.ProdTechnologiaZasoby on PZA_TechnologiaZasob = PTZ_ID
+inner join CDN.ProdCzynnosci on PZA_Czynnosc = PCZ_ID
+where PZA_TypZasobu = 0 and PCZ_ID = @PCZID /*TO DO ID REALIZACJI KTÓRA JEST ETAPEM*/
+
+insert into @wynik 
+select * from @nadprodukty
+ 
+while (select count(*) from @nadprodukty)&gt;0
+begin
+set @petla = @petla +1
+insert into @baza --1.znajdz wszystkie surowce dla nadproduktów i daj je do bazy
+select S.PZA_ID , SS.PTZ_Kod, S.PZA_Zasob, S.PZA_TypZasobu, PCZ_ID,  S.PZA_Ilosc , S.PZA_Koszt 
+from CDN.ProdZasoby S
+inner join CDN.ProdTechnologiaZasoby SS on S.PZA_TechnologiaZasob = SS.PTZ_ID
+inner join CDN.ProdZasoby P on S.PZA_Czynnosc = P.PZA_Czynnosc
+inner join CDN.ProdCzynnosci on S.PZA_Czynnosc = PCZ_ID --and PCZ_Etap = 0
+where P.PZA_Id in (select ID from @nadprodukty) and S.PZA_TypZasobu = 1 and (PCZ_Etap = 0 or @petla = 1)
+ 
+insert into @wynik --2.przenies wszystkie surowce do wyniku, ale tylko te, które nie sa polproduktami
+select * from @baza
+where PZA_Zasob = 0
+
+delete from @nadprodukty
+
+insert into @nadprodukty --3.na podstawie bazy znajdz kolejne wszystkie nadprodukty
+select NadProd.PZA_ID , NadProd2.PTZ_Kod, NadProd.PZA_Zasob, NadProd.PZA_TypZasobu, NadProd.PZA_Czynnosc,NadProd.PZA_Ilosc,NadProd.PZA_Koszt 
+from @baza SurBazy
+inner join CDN.ProdZasoby NadProd on SurBazy.PZA_Zasob = NadProd.PZA_Id
+inner join CDN.ProdTechnologiaZasoby NadProd2 on NadProd.PZA_TechnologiaZasob = NadProd2.PTZ_ID 
+inner join CDN.ProdCzynnosci C on C.PCZ_ID = NadProd.PZA_Czynnosc
+where SurBazy.PZA_TypZasobu = 1
+ 
+delete from @baza --4. czyszczenie bazy
+end
+
+insert into @table1 (PZA_ID,Kod,PZA_Zasob,PZA_TypZasobu,PCZ_ID,Ilosc,Koszt)
+select Wynik.PZA_ID ,Wynik.Kod , Wynik.PZA_Zasob , Wynik.PZA_TypZasobu, Wynik.PCZ_ID, Wynik.PZA_Ilosc, 
+sum(case when PZA_TypZasobu = 0 then PZA_Koszt else PKE_Kwota end)
+from @wynik Wynik --wypisz wszystkie surowce
+left outer join CDN.ProdKosztyElem on PKE_ObiTyp = 14346 and PKE_ObiNumer = Wynik.PZA_ID and Wynik.PZA_TypZasobu = 1
+left outer join CDN.ProdKoszty on PKO_ID = PKE_PkoId
+left outer join CDN.Slowniki on PKO_Kategoria = SLW_ID and SLW_WartoscN2=1
+where PZA_TypZasobu = 1
+group by Wynik.PZA_ID ,Wynik.Kod , Wynik.PZA_Zasob , Wynik.PZA_TypZasobu , Wynik.PCZ_ID, Wynik.PZA_Ilosc  
+
+insert into @table2 (PZA_ID,Kod,PZA_Zasob,PZA_TypZasobu,PCZ_ID,Ilosc,Koszt)
+select Wynik.PZA_ID ,Wynik.Kod , Wynik.PZA_Zasob , Wynik.PZA_TypZasobu , Wynik.PCZ_ID, Wynik.PZA_Ilosc, 
+sum(case when PZA_TypZasobu = 0 then PZA_Koszt else PKE_Kwota end)
+from @wynik Wynik --wypisz wszystkie surowce
+left outer join CDN.ProdKosztyElem on PKE_ObiTyp = 14346 and PKE_ObiNumer = Wynik.PZA_ID and Wynik.PZA_TypZasobu = 1
+left outer join CDN.ProdKoszty on PKO_ID = PKE_PkoId
+left outer join CDN.Slowniki on PKO_Kategoria = SLW_ID and SLW_WartoscN2=1
+where PZA_TypZasobu = 0
+group by Wynik.PZA_ID ,Wynik.Kod , Wynik.PZA_Zasob , Wynik.PZA_TypZasobu , Wynik.PCZ_ID, Wynik.PZA_Ilosc  
+
+insert into @table select a.*, b.Kod, b.Ilosc, b.Koszt from @table1 a full join @table2 b on a.lp=b.lp
+
+RETURN
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

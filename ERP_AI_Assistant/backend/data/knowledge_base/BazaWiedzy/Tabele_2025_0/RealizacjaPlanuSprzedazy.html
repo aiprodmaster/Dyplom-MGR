@@ -1,0 +1,379 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="RealizacjaPlanuSprzedazy"></A><PRE>
+          <FONT SIZE="2"><I>/* RealizacjaPlanuSprzedazy */</I><BR>
+CREATE FUNCTION CDN.RealizacjaPlanuSprzedazy(@PSPID INT,@TypPSP TINYINT,@RealizacjaDok TINYINT,@Today DATETIME,@PSpDataOd INT,@PSpDataDo INT,@TypDaty INT,@NieUwzgledniacDokumentZrodlowyPrzyKorektach TINYINT)
+RETURNS @Wynik TABLE (Ilosc DECIMAL(21,4),Rejon INT)
+BEGIN
+        --Parametry : @PSPID - ID Planu sprzedaży dla którego liczymy realizację
+        --            @TypPSP - plan ilościowy (2)/Wartościowy(1)
+        --            @RealizacjaDok - realizacja zamówieniami(1)/fakturami(2)
+        --            @Today - bieżąca data
+	   --		  @TypDaty - Wg. której daty sprawdzać okres planu sprzedaży
+	   --		  @NieUwzgledniacDokumentZrodlowyPrzyKorektach - Czy dokument źródłowy nie musi znajdować się w okresie planu sprzedaży
+
+        DECLARE @WalutaSystemowa VARCHAR(4)
+        DECLARE @TSTamp INT
+
+        SELECT @WalutaSystemowa = Kon_Wartosc FROM CDN.Konfig WHERE Kon_Numer = 211
+        SET @TSTamp = DATEDIFF(s,CONVERT(DATETIME,'1990-01-01',120),@Today)
+
+        IF @TypPSP = 2
+        BEGIN
+                  IF @RealizacjaDok = 1 --Zamówienia
+                         INSERT @Wynik SELECT SUM(ZaE_Ilosc),RejonID FROM
+                                           (
+                                                         SELECT ZaE_Ilosc,RejonID
+                                                         FROM CDN.PlanSprzedazyKnt (NOLOCK)
+                                                         JOIN CDN.KntLinki (NOLOCK) ON (KnL_GroTyp = PSK_KntTyp AND KnL_GroNumer = PSK_KntNumer AND PSK_KntTyp = -32) OR (KnL_GIDTyp = PSK_KntTyp AND KnL_GIDNumer = PSK_KntNumer AND PSK_KntTyp = 32)
+                                                         JOIN CDN.KntKarty (NOLOCK) ON Knt_GIDNumer = KnL_GIDNumer
+                                                         JOIN CDN.PlanSprzedazyTwr (NOLOCK) ON PST_PSPID = @PSPID
+                                                         JOIN CDN.TwrLinki (NOLOCK) ON (TwL_GroTyp = PST_TwrTyp AND TwL_GroNumer = PST_TwrNumer AND PST_TwrTyp = -16) OR (TwL_GIDTyp = PST_TwrTyp AND TwL_GIDNumer = PST_TwrNumer AND PST_TwrTyp = 16)
+                                                         JOIN CDN.PlanySprzedazyRejonyPodrz(@PSPID) ON RejonID = Knt_RegionCRM
+                                                         JOIN CDN.ZamNag (NOLOCK) ON ZaN_KntNumer = KnL_GIDNumer AND ZaN_DataWystawienia BETWEEN @PSpDataOd AND @PSpDataDo AND ZaN_Stan&amp;32 &lt;&gt; 32 AND ZaN_ZamTyp&amp;1280 = 1280--TFS 96923/11.0/23.04.2012/ŁM/SBI
+                                                         JOIN CDN.ZamElem (NOLOCK) ON ZaE_GIDNumer = ZaN_GIDNumer AND ZaE_TwrNumer = TwL_GIDNumer
+                                                         WHERE PSK_PSpID = @PSPID
+                                                         GROUP BY KnL_GIDNumer,TwL_GIDNumer,RejonID,ZaE_GIDNumer,ZaE_GIDLp,ZaE_Ilosc
+                                           ) WYN
+                                           GROUP BY RejonID
+                  ELSE --Faktury
+                         IF @NieUwzgledniacDokumentZrodlowyPrzyKorektach = 0
+                         BEGIN
+                                if @TypDaty = 1
+                                begin
+                                    INSERT @Wynik SELECT SUM(TrE_Ilosc),RejonID FROM
+                                                  (
+                                                                SELECT TrE_Ilosc,RejonID
+                                                                FROM CDN.PlanSprzedazyKnt (NOLOCK)
+                                                                JOIN CDN.KntLinki (NOLOCK) ON (KnL_GroTyp = PSK_KntTyp AND KnL_GroNumer = PSK_KntNumer AND PSK_KntTyp = -32) OR (KnL_GIDTyp = PSK_KntTyp AND KnL_GIDNumer = PSK_KntNumer AND PSK_KntTyp = 32)
+                                                                JOIN CDN.KntKarty (NOLOCK) ON Knt_GIDNumer = KnL_GIDNumer
+                                                                JOIN CDN.PlanSprzedazyTwr (NOLOCK) ON PST_PSPID = @PSPID
+                                                                JOIN CDN.TwrLinki (NOLOCK) ON (TwL_GroTyp = PST_TwrTyp AND TwL_GroNumer = PST_TwrNumer AND PST_TwrTyp = -16) OR (TwL_GIDTyp = PST_TwrTyp AND TwL_GIDNumer = PST_TwrNumer AND PST_TwrTyp = 16)
+                                                                JOIN CDN.PlanySprzedazyRejonyPodrz(@PSPID) ON RejonID = Knt_RegionCRM
+                                                                JOIN CDN.TraNag (NOLOCK) ON TrN_KntNumer = KnL_GIDNumer AND TrN_Data2 BETWEEN @PSpDataOd AND @PSpDataDo AND TrN_Stan &lt;&gt; 6 AND TrN_GIDTyp IN (2033,2035,2037,2001,2005,2034) AND NOT (TrN_SpiTyp &lt;&gt; 0 AND TrN_SpiTyp = (TrN_GIDTyp)*(-1))
+                                                                JOIN CDN.TraElem (NOLOCK) ON TrE_GIDNumer = TrN_GIDNumer AND TrE_TwrNumer = TwL_GIDNumer
+                                                                WHERE PSK_PSpID = @PSPID
+                                                                GROUP BY KnL_GIDNumer,TwL_GIDNumer,RejonID,TrE_GIDNumer,TrE_GIDLp,TrE_Ilosc
+                                                  ) WYN
+                                                  GROUP BY RejonID
+                                                   ;WITH CTEDrzewo AS --Uwzglednienie Korekt
+                                                           (
+                                                                   SELECT TrN_GIDTyp ,TrN_GIDNumer, TrN_ZwrTyp, TrN_ZwrNumer, RejonId, TrE_TwrNumer,TrE_Ilosc
+                                                                   FROM CDN.PlanSprzedazyKnt (NOLOCK)
+                                                                   JOIN CDN.PlanSprzedazyTwr (NOLOCK) ON PST_PSPID = @PSPID
+                                                                   JOIN CDN.TwrLinki (NOLOCK) ON (TwL_GroTyp = PST_TwrTyp AND TwL_GroNumer = PST_TwrNumer AND PST_TwrTyp = -16) OR (TwL_GIDTyp = PST_TwrTyp AND TwL_GIDNumer = PST_TwrNumer AND PST_TwrTyp = 16)
+                                                                   JOIN CDN.TraNag (NOLOCK) ON TrN_Data2 BETWEEN @PSpDataOd AND @PSpDataDo AND TrN_Stan &lt;&gt; 6 AND TrN_GIDTyp  IN (2041,2046,2009,2042,2045,2013)
+                                                                   JOIN CDN.TraElem  ON TrE_GIDNumer = TrN_GIDNumer AND TrE_TwrNumer = TwL_GIDNumer
+                                                                   JOIN CDN.KntKarty (NOLOCK) ON Knt_GIDNumer = TrN_KntNumer
+                                                                   JOIN CDN.PlanySprzedazyRejonyPodrz(@PSPID) ON RejonID = Knt_RegionCRM
+                                                                   WHERE TrN_Data2 BETWEEN @PSpDataOd AND @PSpDataDo AND TrN_ZwrNumer IN (
+                                                                           SELECT DISTINCT  TrN_GIDNumer
+                                                                           FROM CDN.PlanSprzedazyKnt (NOLOCK)
+                                                                           JOIN CDN.KntLinki (NOLOCK) ON (KnL_GroTyp = PSK_KntTyp AND KnL_GroNumer = PSK_KntNumer AND PSK_KntTyp = -32) OR (KnL_GIDTyp = PSK_KntTyp AND KnL_GIDNumer = PSK_KntNumer AND PSK_KntTyp = 32)
+                                                                           JOIN CDN.KntKarty (NOLOCK) ON Knt_GIDNumer = KnL_GIDNumer
+                                                                           JOIN CDN.PlanSprzedazyTwr (NOLOCK) ON PST_PSPID = @PSPID
+                                                                           JOIN CDN.TwrLinki (NOLOCK) ON (TwL_GroTyp = PST_TwrTyp AND TwL_GroNumer = PST_TwrNumer AND PST_TwrTyp = -16) OR (TwL_GIDTyp = PST_TwrTyp AND TwL_GIDNumer = PST_TwrNumer AND PST_TwrTyp = 16)
+                                                                           JOIN CDN.PlanySprzedazyRejonyPodrz(@PSPID) ON RejonID = Knt_RegionCRM
+                                                                           JOIN CDN.TraNag (NOLOCK) ON TrN_KntNumer = KnL_GIDNumer AND TrN_Data2 BETWEEN @PSpDataOd AND @PSpDataDo AND TrN_Stan &lt;&gt; 6 AND TrN_GIDTyp IN (2033,2035,2037,2001,2005,2034)  AND NOT (TrN_SpiTyp &lt;&gt; 0 AND TrN_SpiTyp = (TrN_GIDTyp)*(-1))
+                                                                           JOIN CDN.TraElem (NOLOCK) ON TrE_GIDNumer = TrN_GIDNumer AND TrE_TwrNumer = TwL_GIDNumer
+                                                                           WHERE PSK_PSpID = @PSPID
+                                                                           )
+                                                                   UNION ALL
+                                                                   SELECT B.TrN_GIDTyp , B.TrN_GIDNumer, B.TrN_ZwrTyp, B.TrN_ZwrNumer, E.RejonId,C.TrE_TwrNumer, C.TrE_Ilosc
+                                                                   FROM CTEDrzewo A
+                                                                   INNER JOIN CDN.TraNag B ON A.TrN_GIDNumer = B.TrN_ZwrNumer AND A.TrN_GIDTyp = B.TrN_ZwrTyp
+                                                                   JOIN CDN.TraElem C ON C.TrE_GIDNumer = B.TrN_GIDNumer AND A.TrE_TwrNumer = C.TrE_TwrNumer
+                                                                   JOIN CDN.KntKarty D (NOLOCK) ON D.Knt_GIDNumer = B.TrN_KntNumer
+                                                                   JOIN CDN.PlanySprzedazyRejonyPodrz(@PSPID) E ON E.RejonID = D.Knt_RegionCRM
+                                                                   WHERE B.TrN_Data2 BETWEEN @PSpDataOd AND @PSpDataDo AND B.TrN_GIDTyp IN(2041,2046,2009,2042,2045,2013)
+                                                           ) UPDATE @Wynik
+                                                           SET Ilosc += KorektaIlosc
+                                                           FROM @Wynik AS T1
+                                                           JOIN (SELECT RejonID, ISNULL(SUM(TrE_Ilosc),0) AS KorektaIlosc FROM (SELECT RejonID, TrE_Ilosc FROM CTEDrzewo  GROUP BY  TrN_GIDTyp ,TrN_GIDNumer, TrN_ZwrTyp, TrN_ZwrNumer, RejonId, TrE_TwrNumer,TrE_Ilosc)WYN  GROUP BY RejonID) Korekty ON Korekty.RejonID =T1.Rejon
+                                           END
+                                           ELSE
+                                           BEGIN
+                                                  INSERT @Wynik SELECT SUM(TrE_Ilosc),RejonID FROM
+                                                  (
+                                                                SELECT TrE_Ilosc,RejonID
+                                                                FROM CDN.PlanSprzedazyKnt (NOLOCK)
+                                                                JOIN CDN.KntLinki (NOLOCK) ON (KnL_GroTyp = PSK_KntTyp AND KnL_GroNumer = PSK_KntNumer AND PSK_KntTyp = -32) OR (KnL_GIDTyp = PSK_KntTyp AND KnL_GIDNumer = PSK_KntNumer AND PSK_KntTyp = 32)
+                                                                JOIN CDN.KntKarty (NOLOCK) ON Knt_GIDNumer = KnL_GIDNumer
+                                                                JOIN CDN.PlanSprzedazyTwr (NOLOCK) ON PST_PSPID = @PSPID
+                                                                JOIN CDN.TwrLinki (NOLOCK) ON (TwL_GroTyp = PST_TwrTyp AND TwL_GroNumer = PST_TwrNumer AND PST_TwrTyp = -16) OR (TwL_GIDTyp = PST_TwrTyp AND TwL_GIDNumer = PST_TwrNumer AND PST_TwrTyp = 16)
+                                                                JOIN CDN.PlanySprzedazyRejonyPodrz(@PSPID) ON RejonID = Knt_RegionCRM
+                                                                JOIN CDN.TraNag (NOLOCK) ON TrN_KntNumer = KnL_GIDNumer AND TrN_Data3 BETWEEN @PSpDataOd AND @PSpDataDo AND TrN_Stan &lt;&gt; 6 AND TrN_GIDTyp IN (2033,2035,2037,2001,2005,2034)  AND NOT (TrN_SpiTyp &lt;&gt; 0 AND TrN_SpiTyp = (TrN_GIDTyp)*(-1))
+                                                                JOIN CDN.TraElem (NOLOCK) ON TrE_GIDNumer = TrN_GIDNumer AND TrE_TwrNumer = TwL_GIDNumer
+                                                                WHERE PSK_PSpID = @PSPID
+                                                                GROUP BY KnL_GIDNumer,TwL_GIDNumer,RejonID,TrE_GIDNumer,TrE_GIDLp,TrE_Ilosc
+                                                  ) WYN
+                                                  GROUP BY RejonID
+                                                   ;WITH CTEDrzewo AS --Uwzglednienie Korekt
+                                                           (
+                                                                   SELECT TrN_GIDTyp ,TrN_GIDNumer, TrN_ZwrTyp, TrN_ZwrNumer, RejonId, TrE_TwrNumer,TrE_Ilosc
+                                                                   FROM CDN.PlanSprzedazyKnt (NOLOCK)
+                                                                   JOIN CDN.PlanSprzedazyTwr (NOLOCK) ON PST_PSPID = @PSPID
+                                                                   JOIN CDN.TwrLinki (NOLOCK) ON (TwL_GroTyp = PST_TwrTyp AND TwL_GroNumer = PST_TwrNumer AND PST_TwrTyp = -16) OR (TwL_GIDTyp = PST_TwrTyp AND TwL_GIDNumer = PST_TwrNumer AND PST_TwrTyp = 16)
+                                                                   JOIN CDN.TraNag (NOLOCK) ON TrN_Data3 BETWEEN @PSpDataOd AND @PSpDataDo AND TrN_Stan &lt;&gt; 6 AND TrN_GIDTyp  IN (2041,2046,2009,2042,2045,2013)
+                                                                   JOIN CDN.TraElem  ON TrE_GIDNumer = TrN_GIDNumer AND TrE_TwrNumer = TwL_GIDNumer
+                                                                   JOIN CDN.KntKarty (NOLOCK) ON Knt_GIDNumer = TrN_KntNumer
+                                                                   JOIN CDN.PlanySprzedazyRejonyPodrz(@PSPID) ON RejonID = Knt_RegionCRM
+                                                                   WHERE TrN_Data3 BETWEEN @PSpDataOd AND @PSpDataDo AND TrN_ZwrNumer IN (
+                                                                           SELECT DISTINCT  TrN_GIDNumer
+                                                                           FROM CDN.PlanSprzedazyKnt (NOLOCK)
+                                                                           JOIN CDN.KntLinki (NOLOCK) ON (KnL_GroTyp = PSK_KntTyp AND KnL_GroNumer = PSK_KntNumer AND PSK_KntTyp = -32) OR (KnL_GIDTyp = PSK_KntTyp AND KnL_GIDNumer = PSK_KntNumer AND PSK_KntTyp = 32)
+                                                                           JOIN CDN.KntKarty (NOLOCK) ON Knt_GIDNumer = KnL_GIDNumer
+                                                                           JOIN CDN.PlanSprzedazyTwr (NOLOCK) ON PST_PSPID = @PSPID
+                                                                           JOIN CDN.TwrLinki (NOLOCK) ON (TwL_GroTyp = PST_TwrTyp AND TwL_GroNumer = PST_TwrNumer AND PST_TwrTyp = -16) OR (TwL_GIDTyp = PST_TwrTyp AND TwL_GIDNumer = PST_TwrNumer AND PST_TwrTyp = 16)
+                                                                           JOIN CDN.PlanySprzedazyRejonyPodrz(@PSPID) ON RejonID = Knt_RegionCRM
+                                                                           JOIN CDN.TraNag (NOLOCK) ON TrN_KntNumer = KnL_GIDNumer AND TrN_Data3 BETWEEN @PSpDataOd AND @PSpDataDo AND TrN_Stan &lt;&gt; 6 AND TrN_GIDTyp IN (2033,2035,2037,2001,2005,2034)  AND NOT (TrN_SpiTyp &lt;&gt; 0 AND TrN_SpiTyp = (TrN_GIDTyp)*(-1))
+                                                                           JOIN CDN.TraElem (NOLOCK) ON TrE_GIDNumer = TrN_GIDNumer AND TrE_TwrNumer = TwL_GIDNumer
+                                                                           WHERE PSK_PSpID = @PSPID
+                                                                           )
+                                                                   UNION ALL
+                                                                   SELECT B.TrN_GIDTyp , B.TrN_GIDNumer, B.TrN_ZwrTyp, B.TrN_ZwrNumer, E.RejonId,C.TrE_TwrNumer, C.TrE_Ilosc
+                                                                   FROM CTEDrzewo A
+                                                                   INNER JOIN CDN.TraNag B ON A.TrN_GIDNumer = B.TrN_ZwrNumer AND A.TrN_GIDTyp = B.TrN_ZwrTyp
+                                                                   JOIN CDN.TraElem C ON C.TrE_GIDNumer = B.TrN_GIDNumer AND A.TrE_TwrNumer = C.TrE_TwrNumer
+                                                                   JOIN CDN.KntKarty D (NOLOCK) ON D.Knt_GIDNumer = B.TrN_KntNumer
+                                                                   JOIN CDN.PlanySprzedazyRejonyPodrz(@PSPID) E ON E.RejonID = D.Knt_RegionCRM
+                                                                   WHERE B.TrN_Data3 BETWEEN @PSpDataOd AND @PSpDataDo AND B.TrN_GIDTyp IN(2041,2046,2009,2042,2045,2013)
+                                                           ) UPDATE @Wynik
+                                                           SET Ilosc += KorektaIlosc
+                                                           FROM @Wynik AS T1
+                                                           JOIN (SELECT RejonID, ISNULL(SUM(TrE_Ilosc),0) AS KorektaIlosc FROM (SELECT RejonID, TrE_Ilosc FROM CTEDrzewo  GROUP BY  TrN_GIDTyp ,TrN_GIDNumer, TrN_ZwrTyp, TrN_ZwrNumer, RejonId, TrE_TwrNumer,TrE_Ilosc)WYN  GROUP BY RejonID) Korekty ON Korekty.RejonID =T1.Rejon
+                                           END
+                                END
+                                ELSE
+                                BEGIN
+                                    if @TypDaty = 1
+                                    begin
+                                        INSERT @Wynik SELECT SUM(TrE_Ilosc),RejonID FROM
+                                           (
+                                                         SELECT TrE_Ilosc,RejonID
+                                                         FROM CDN.PlanSprzedazyKnt (NOLOCK)
+                                                         JOIN CDN.KntLinki (NOLOCK) ON (KnL_GroTyp = PSK_KntTyp AND KnL_GroNumer = PSK_KntNumer AND PSK_KntTyp = -32) OR (KnL_GIDTyp = PSK_KntTyp AND KnL_GIDNumer = PSK_KntNumer AND PSK_KntTyp = 32)
+                                                         JOIN CDN.KntKarty (NOLOCK) ON Knt_GIDNumer = KnL_GIDNumer
+                                                         JOIN CDN.PlanSprzedazyTwr (NOLOCK) ON PST_PSPID = @PSPID
+                                                         JOIN CDN.TwrLinki (NOLOCK) ON (TwL_GroTyp = PST_TwrTyp AND TwL_GroNumer = PST_TwrNumer AND PST_TwrTyp = -16) OR (TwL_GIDTyp = PST_TwrTyp AND TwL_GIDNumer = PST_TwrNumer AND PST_TwrTyp = 16)
+                                                         JOIN CDN.PlanySprzedazyRejonyPodrz(@PSPID) ON RejonID = Knt_RegionCRM
+                                                         JOIN CDN.TraNag (NOLOCK) ON TrN_KntNumer = KnL_GIDNumer AND TrN_Data2 BETWEEN @PSpDataOd AND @PSpDataDo AND TrN_Stan &lt;&gt; 6 AND TrN_GIDTyp IN (2033,2035,2037,2001,2005,2034,2041,2009,2042,2045,2013)  AND NOT (TrN_SpiTyp &lt;&gt; 0 AND TrN_SpiTyp = (TrN_GIDTyp)*(-1))
+                                                         JOIN CDN.TraElem (NOLOCK) ON TrE_GIDNumer = TrN_GIDNumer AND TrE_TwrNumer = TwL_GIDNumer
+                                                         WHERE PSK_PSpID = @PSPID
+                                                         GROUP BY KnL_GIDNumer,TwL_GIDNumer,RejonID,TrE_GIDNumer,TrE_GIDLp,TrE_Ilosc
+                                           )WYN
+                                           GROUP BY RejonID
+                                    END
+                                    ELSE
+                                    begin
+                                           INSERT @Wynik SELECT SUM(TrE_Ilosc),RejonID FROM
+                                           (
+                                                         SELECT TrE_Ilosc,RejonID
+                                                         FROM CDN.PlanSprzedazyKnt (NOLOCK)
+                                                         JOIN CDN.KntLinki (NOLOCK) ON (KnL_GroTyp = PSK_KntTyp AND KnL_GroNumer = PSK_KntNumer AND PSK_KntTyp = -32) OR (KnL_GIDTyp = PSK_KntTyp AND KnL_GIDNumer = PSK_KntNumer AND PSK_KntTyp = 32)
+                                                         JOIN CDN.KntKarty (NOLOCK) ON Knt_GIDNumer = KnL_GIDNumer
+                                                         JOIN CDN.PlanSprzedazyTwr (NOLOCK) ON PST_PSPID = @PSPID
+                                                         JOIN CDN.TwrLinki (NOLOCK) ON (TwL_GroTyp = PST_TwrTyp AND TwL_GroNumer = PST_TwrNumer AND PST_TwrTyp = -16) OR (TwL_GIDTyp = PST_TwrTyp AND TwL_GIDNumer = PST_TwrNumer AND PST_TwrTyp = 16)
+                                                         JOIN CDN.PlanySprzedazyRejonyPodrz(@PSPID) ON RejonID = Knt_RegionCRM
+                                                         JOIN CDN.TraNag (NOLOCK) ON TrN_KntNumer = KnL_GIDNumer AND TrN_Data3 BETWEEN @PSpDataOd AND @PSpDataDo AND TrN_Stan &lt;&gt; 6 AND TrN_GIDTyp IN (2033,2035,2037,2001,2005,2034,2041,2009,2042,2045,2013)  AND NOT (TrN_SpiTyp &lt;&gt; 0 AND TrN_SpiTyp = (TrN_GIDTyp)*(-1))
+                                                         JOIN CDN.TraElem (NOLOCK) ON TrE_GIDNumer = TrN_GIDNumer AND TrE_TwrNumer = TwL_GIDNumer
+                                                         WHERE PSK_PSpID = @PSPID
+                                                         GROUP BY KnL_GIDNumer,TwL_GIDNumer,RejonID,TrE_GIDNumer,TrE_GIDLp,TrE_Ilosc
+                                           )WYN
+                                           GROUP BY RejonID
+                                    END
+                                END
+        END
+        ELSE
+        BEGIN
+
+                        IF @RealizacjaDok = 1 --Zamówienia
+                        begin
+                                                  INSERT @Wynik SELECT SUM(ROUND((CASE WHEN ZaE_Waluta &lt;&gt; @WalutaSystemowa THEN CASE WHEN ZaN_TypKursu = 1 THEN CDN.WartoscWWalucieSys(ZaE_WartoscPoRabacie,ZaE_Waluta,ZaE_NrKursu,@TSTamp) WHEN ZaN_TypKursu = 2 THEN ZaE_WartoscPoRabacie*(ZaV_KursL/ZaV_KursM) WHEN ZaN_TypKursu = 3 AND ZaN_DataWaznosci&lt;=DATEDIFF(d,CONVERT(DATETIME,'1800-12-28',120),@Today) THEN CDN.WartoscWWalucieSys(ZaE_WartoscPoRabacie,ZaE_Waluta,ZaE_NrKursu,@TSTamp) ELSE ZaE_WartoscPoRabacie*(ZaV_KursL/ZaV_KursM) END ELSE ZaE_WartoscPoRabacie END)/(CASE WHEN ZaN_FlagaNB='N' THEN 1 ELSE 1+(ZaE_StawkaPod*0.01) END),2)),RejonID FROM
+                                                  (
+                                                                SELECT ZaE_Waluta,ZaN_TypKursu,ZaN_DataWaznosci,ZaE_WartoscPoRabacie,ZaE_NrKursu,ZaV_KursL,ZaV_KursM,RejonID,ZaN_FlagaNB,ZaE_StawkaPod
+                                                                FROM CDN.PlanSprzedazyKnt (NOLOCK)
+                                                                JOIN CDN.KntLinki (NOLOCK) ON (KnL_GroTyp = PSK_KntTyp AND KnL_GroNumer = PSK_KntNumer AND PSK_KntTyp = -32) OR (KnL_GIDTyp = PSK_KntTyp AND KnL_GIDNumer = PSK_KntNumer AND PSK_KntTyp = 32)
+                                                                JOIN CDN.KntKarty (NOLOCK) ON Knt_GIDNumer = KnL_GIDNumer
+                                                                JOIN CDN.PlanSprzedazyTwr (NOLOCK) ON PST_PSPID = @PSPID
+                                                                JOIN CDN.TwrLinki (NOLOCK) ON (TwL_GroTyp = PST_TwrTyp AND TwL_GroNumer = PST_TwrNumer AND PST_TwrTyp = -16) OR (TwL_GIDTyp = PST_TwrTyp AND TwL_GIDNumer = PST_TwrNumer AND PST_TwrTyp = 16)
+                                                                JOIN CDN.PlanySprzedazyRejonyPodrz(@PSPID) ON RejonID = Knt_RegionCRM
+                                                                JOIN CDN.ZamNag (NOLOCK) ON ZaN_KntNumer = KnL_GIDNumer AND ZaN_DataWystawienia BETWEEN @PSpDataOd AND @PSpDataDo AND ZaN_Stan&amp;32 &lt;&gt; 32 AND ZaN_ZamTyp&amp;1280 = 1280--TFS 96923/11.0/23.04.2012/ŁM/SBI
+                                                                JOIN CDN.ZamElem (NOLOCK) ON ZaE_GIDNumer = ZaN_GIDNumer AND ZaE_TwrNumer = TwL_GIDNumer
+                                                                JOIN CDN.ZamVat (NOLOCK) ON ZaV_GIDNumer = ZaE_GIDNumer
+                                                                WHERE PSK_PSpID = @PSPID
+                                                                GROUP BY KnL_GIDNumer,TwL_GIDNumer,RejonID,ZaE_GIDNumer,ZaE_GIDLp,ZaE_Ilosc,ZaE_Waluta,ZaN_TypKursu,ZaN_DataWaznosci,ZaE_WartoscPoRabacie,ZaE_NrKursu,ZaV_KursL,ZaV_KursM,ZaN_FlagaNB,ZaE_StawkaPod
+                                                  ) WYN
+                                                  GROUP BY RejonID
+                         end
+                         ELSE --Faktury
+                         begin
+                                IF @NieUwzgledniacDokumentZrodlowyPrzyKorektach = 0
+                                BEGIN
+                                    if @TypDaty = 1
+                                    begin
+                                                  INSERT @Wynik SELECT SUM(TrE_KsiegowaNetto),RejonID FROM
+                                                  (
+                                                                SELECT TrE_KsiegowaNetto,RejonID
+                                                                FROM CDN.PlanSprzedazyKnt (NOLOCK)
+                                                                JOIN CDN.KntLinki (NOLOCK) ON (KnL_GroTyp = PSK_KntTyp AND KnL_GroNumer = PSK_KntNumer AND PSK_KntTyp = -32) OR (KnL_GIDTyp = PSK_KntTyp AND KnL_GIDNumer = PSK_KntNumer AND PSK_KntTyp = 32)
+                                                                JOIN CDN.KntKarty (NOLOCK) ON Knt_GIDNumer = KnL_GIDNumer
+                                                                JOIN CDN.PlanSprzedazyTwr (NOLOCK) ON PST_PSPID = @PSPID
+                                                                JOIN CDN.TwrLinki (NOLOCK) ON (TwL_GroTyp = PST_TwrTyp AND TwL_GroNumer = PST_TwrNumer AND PST_TwrTyp = -16) OR (TwL_GIDTyp = PST_TwrTyp AND TwL_GIDNumer = PST_TwrNumer AND PST_TwrTyp = 16)
+                                                                JOIN CDN.PlanySprzedazyRejonyPodrz(@PSPID) ON RejonID = Knt_RegionCRM
+                                                                JOIN CDN.TraNag (NOLOCK) ON TrN_KntNumer = KnL_GIDNumer AND TrN_KntTyp = KnL_GIDTyp  AND TrN_Data2 BETWEEN @PSpDataOd AND @PSpDataDo AND TrN_Stan &lt;&gt; 6 AND TrN_GIDTyp IN (2033,2035,2037,2001,2005,2034)  AND NOT (TrN_SpiTyp &lt;&gt; 0 AND TrN_SpiTyp = (TrN_GIDTyp)*(-1))
+                                                                JOIN CDN.TraElem (NOLOCK) ON TrE_GIDNumer = TrN_GIDNumer AND TrE_TwrNumer = TwL_GIDNumer and Tre_TwrTyp=Twl_GidTyp 
+                                                                WHERE PSK_PSpID = @PSPID
+                                                                GROUP BY KnL_GIDNumer,TwL_GIDNumer,RejonID,TrE_GIDNumer,TrE_GIDLp,TrE_KsiegowaNetto
+                                                  ) WYN
+                                                  GROUP BY RejonID
+                                                           ;WITH CTEDrzewo AS --Uwzglednienie Korekt
+                                                           (
+                                                                   SELECT TrN_GIDTyp ,TrN_GIDNumer, TrN_ZwrTyp, TrN_ZwrNumer, RejonId, TrE_TwrNumer,TrE_KsiegowaNetto
+                                                                   FROM CDN.PlanSprzedazyKnt (NOLOCK)
+                                                                   JOIN CDN.PlanSprzedazyTwr (NOLOCK) ON PST_PSPID = @PSPID
+                                                                   JOIN CDN.TwrLinki (NOLOCK) ON (TwL_GroTyp = PST_TwrTyp AND TwL_GroNumer = PST_TwrNumer AND PST_TwrTyp = -16) OR (TwL_GIDTyp = PST_TwrTyp AND TwL_GIDNumer = PST_TwrNumer AND PST_TwrTyp = 16)
+                                                                   JOIN CDN.TraNag (NOLOCK) ON TrN_Data2 BETWEEN @PSpDataOd AND @PSpDataDo AND TrN_Stan &lt;&gt; 6 AND TrN_GIDTyp  IN (2041,2046,2009,2042,2045,2013)  AND NOT (TrN_SpiTyp &lt;&gt; 0 AND TrN_SpiTyp = (TrN_GIDTyp)*(-1))
+                                                                   JOIN CDN.TraElem  ON TrE_GIDNumer = TrN_GIDNumer AND TrE_TwrNumer = TwL_GIDNumer and Tre_TwrTyp=Twl_GidTyp 
+                                                                   JOIN CDN.KntKarty (NOLOCK) ON Knt_GIDNumer = TrN_KntNumer
+                                                                   JOIN CDN.PlanySprzedazyRejonyPodrz(@PSPID) ON RejonID = Knt_RegionCRM
+                                                                   WHERE TrN_Data2 BETWEEN @PSpDataOd AND @PSpDataDo AND TrN_ZwrNumer IN (
+                                                                           SELECT DISTINCT  TrN_GIDNumer
+                                                                           FROM CDN.PlanSprzedazyKnt (NOLOCK)
+                                                                           JOIN CDN.KntLinki (NOLOCK) ON (KnL_GroTyp = PSK_KntTyp AND KnL_GroNumer = PSK_KntNumer AND PSK_KntTyp = -32) OR (KnL_GIDTyp = PSK_KntTyp AND KnL_GIDNumer = PSK_KntNumer AND PSK_KntTyp = 32)
+                                                                           JOIN CDN.KntKarty (NOLOCK) ON Knt_GIDNumer = KnL_GIDNumer
+                                                                           JOIN CDN.PlanSprzedazyTwr (NOLOCK) ON PST_PSPID = @PSPID
+                                                                           JOIN CDN.TwrLinki (NOLOCK) ON (TwL_GroTyp = PST_TwrTyp AND TwL_GroNumer = PST_TwrNumer AND PST_TwrTyp = -16) OR (TwL_GIDTyp = PST_TwrTyp AND TwL_GIDNumer = PST_TwrNumer AND PST_TwrTyp = 16)
+                                                                           JOIN CDN.PlanySprzedazyRejonyPodrz(@PSPID) ON RejonID = Knt_RegionCRM
+                                                                           JOIN CDN.TraNag (NOLOCK) ON TrN_KntNumer = KnL_GIDNumer AND TrN_Data2 BETWEEN @PSpDataOd AND @PSpDataDo AND TrN_Stan &lt;&gt; 6 AND TrN_GIDTyp IN (2033,2035,2037,2001,2005,2034)  AND NOT (TrN_SpiTyp &lt;&gt; 0 AND TrN_SpiTyp = (TrN_GIDTyp)*(-1))
+                                                                           JOIN CDN.TraElem (NOLOCK) ON TrE_GIDNumer = TrN_GIDNumer AND TrE_TwrNumer = TwL_GIDNumer and Tre_TwrTyp=Twl_GidTyp 
+                                                                           WHERE PSK_PSpID = @PSPID
+                                                                           )
+                                                                   UNION ALL
+                                                                   SELECT B.TrN_GIDTyp , B.TrN_GIDNumer, B.TrN_ZwrTyp, B.TrN_ZwrNumer, E.RejonId,C.TrE_TwrNumer, C.TrE_KsiegowaNetto
+                                                                   FROM CTEDrzewo A
+                                                                   INNER JOIN CDN.TraNag B ON A.TrN_GIDNumer = B.TrN_ZwrNumer AND A.TrN_GIDTyp = B.TrN_ZwrTyp
+                                                                   JOIN CDN.TraElem C ON C.TrE_GIDNumer = B.TrN_GIDNumer AND A.TrE_TwrNumer = C.TrE_TwrNumer
+                                                                   JOIN CDN.KntKarty D (NOLOCK) ON D.Knt_GIDNumer = B.TrN_KntNumer
+                                                                   JOIN CDN.PlanySprzedazyRejonyPodrz(@PSPID) E ON E.RejonID = D.Knt_RegionCRM
+                                                                   WHERE B.TrN_Data2 BETWEEN @PSpDataOd AND @PSpDataDo AND B.TrN_GIDTyp IN(2041,2046,2009,2042,2045,2013)
+                                                           ) UPDATE @Wynik
+                                                           SET Ilosc += KorektaIlosc
+                                                           FROM @Wynik AS T1
+                                                                JOIN (SELECT RejonID, ISNULL(SUM(TrE_KsiegowaNetto),0) AS KorektaIlosc FROM (SELECT RejonID, TrE_KsiegowaNetto FROM CTEDrzewo  GROUP BY  TrN_GIDTyp ,TrN_GIDNumer, TrN_ZwrTyp, TrN_ZwrNumer, RejonId, TrE_TwrNumer,TrE_KsiegowaNetto)WYN  GROUP BY RejonID) Korekty ON Korekty.RejonID =T1.Rejon
+                                    END
+                                    ELSE
+                                    BEGIN
+                                                INSERT @Wynik SELECT SUM(TrE_KsiegowaNetto),RejonID FROM
+                                                  (
+                                                                SELECT TrE_KsiegowaNetto,RejonID
+                                                                FROM CDN.PlanSprzedazyKnt (NOLOCK)
+                                                                JOIN CDN.KntLinki (NOLOCK) ON (KnL_GroTyp = PSK_KntTyp AND KnL_GroNumer = PSK_KntNumer AND PSK_KntTyp = -32) OR (KnL_GIDTyp = PSK_KntTyp AND KnL_GIDNumer = PSK_KntNumer AND PSK_KntTyp = 32)
+                                                                JOIN CDN.KntKarty (NOLOCK) ON Knt_GIDNumer = KnL_GIDNumer
+                                                                JOIN CDN.PlanSprzedazyTwr (NOLOCK) ON PST_PSPID = @PSPID
+                                                                JOIN CDN.TwrLinki (NOLOCK) ON (TwL_GroTyp = PST_TwrTyp AND TwL_GroNumer = PST_TwrNumer AND PST_TwrTyp = -16) OR (TwL_GIDTyp = PST_TwrTyp AND TwL_GIDNumer = PST_TwrNumer AND PST_TwrTyp = 16)
+                                                                JOIN CDN.PlanySprzedazyRejonyPodrz(@PSPID) ON RejonID = Knt_RegionCRM
+                                                                JOIN CDN.TraNag (NOLOCK) ON TrN_KntNumer = KnL_GIDNumer AND TrN_KntTyp = KnL_GIDTyp  AND TrN_Data3 BETWEEN @PSpDataOd AND @PSpDataDo AND TrN_Stan &lt;&gt; 6 AND TrN_GIDTyp IN (2033,2035,2037,2001,2005,2034) AND NOT (TrN_SpiTyp &lt;&gt; 0 AND TrN_SpiTyp = (TrN_GIDTyp)*(-1))
+                                                                JOIN CDN.TraElem (NOLOCK) ON TrE_GIDNumer = TrN_GIDNumer AND TrE_TwrNumer = TwL_GIDNumer and Tre_TwrTyp=Twl_GidTyp 
+                                                                WHERE PSK_PSpID = @PSPID
+                                                                GROUP BY KnL_GIDNumer,TwL_GIDNumer,RejonID,TrE_GIDNumer,TrE_GIDLp,TrE_KsiegowaNetto
+                                                  ) WYN
+                                                  GROUP BY RejonID
+                                                           ;WITH CTEDrzewo AS --Uwzglednienie Korekt
+                                                           (
+                                                                   SELECT TrN_GIDTyp ,TrN_GIDNumer, TrN_ZwrTyp, TrN_ZwrNumer, RejonId, TrE_TwrNumer,TrE_KsiegowaNetto
+                                                                   FROM CDN.PlanSprzedazyKnt (NOLOCK)
+                                                                   JOIN CDN.PlanSprzedazyTwr (NOLOCK) ON PST_PSPID = @PSPID
+                                                                   JOIN CDN.TwrLinki (NOLOCK) ON (TwL_GroTyp = PST_TwrTyp AND TwL_GroNumer = PST_TwrNumer AND PST_TwrTyp = -16) OR (TwL_GIDTyp = PST_TwrTyp AND TwL_GIDNumer = PST_TwrNumer AND PST_TwrTyp = 16)
+                                                                   JOIN CDN.TraNag (NOLOCK) ON TrN_Data3 BETWEEN @PSpDataOd AND @PSpDataDo AND TrN_Stan &lt;&gt; 6 AND TrN_GIDTyp  IN (2041,2046,2009,2042,2045,2013) AND NOT (TrN_SpiTyp &lt;&gt; 0 AND TrN_SpiTyp = (TrN_GIDTyp)*(-1))
+                                                                   JOIN CDN.TraElem  ON TrE_GIDNumer = TrN_GIDNumer AND TrE_TwrNumer = TwL_GIDNumer and Tre_TwrTyp=Twl_GidTyp 
+                                                                   JOIN CDN.KntKarty (NOLOCK) ON Knt_GIDNumer = TrN_KntNumer
+                                                                   JOIN CDN.PlanySprzedazyRejonyPodrz(@PSPID) ON RejonID = Knt_RegionCRM
+                                                                   WHERE TrN_Data3 BETWEEN @PSpDataOd AND @PSpDataDo AND TrN_ZwrNumer IN (
+                                                                           SELECT DISTINCT  TrN_GIDNumer
+                                                                           FROM CDN.PlanSprzedazyKnt (NOLOCK)
+                                                                           JOIN CDN.KntLinki (NOLOCK) ON (KnL_GroTyp = PSK_KntTyp AND KnL_GroNumer = PSK_KntNumer AND PSK_KntTyp = -32) OR (KnL_GIDTyp = PSK_KntTyp AND KnL_GIDNumer = PSK_KntNumer AND PSK_KntTyp = 32)
+                                                                           JOIN CDN.KntKarty (NOLOCK) ON Knt_GIDNumer = KnL_GIDNumer
+                                                                           JOIN CDN.PlanSprzedazyTwr (NOLOCK) ON PST_PSPID = @PSPID
+                                                                           JOIN CDN.TwrLinki (NOLOCK) ON (TwL_GroTyp = PST_TwrTyp AND TwL_GroNumer = PST_TwrNumer AND PST_TwrTyp = -16) OR (TwL_GIDTyp = PST_TwrTyp AND TwL_GIDNumer = PST_TwrNumer AND PST_TwrTyp = 16)
+                                                                           JOIN CDN.PlanySprzedazyRejonyPodrz(@PSPID) ON RejonID = Knt_RegionCRM
+                                                                           JOIN CDN.TraNag (NOLOCK) ON TrN_KntNumer = KnL_GIDNumer AND TrN_Data3 BETWEEN @PSpDataOd AND @PSpDataDo AND TrN_Stan &lt;&gt; 6 AND TrN_GIDTyp IN (2033,2035,2037,2001,2005,2034) AND NOT (TrN_SpiTyp &lt;&gt; 0 AND TrN_SpiTyp = (TrN_GIDTyp)*(-1))
+                                                                           JOIN CDN.TraElem (NOLOCK) ON TrE_GIDNumer = TrN_GIDNumer AND TrE_TwrNumer = TwL_GIDNumer and Tre_TwrTyp=Twl_GidTyp 
+                                                                           WHERE PSK_PSpID = @PSPID
+                                                                           )
+                                                                   UNION ALL
+                                                                   SELECT B.TrN_GIDTyp , B.TrN_GIDNumer, B.TrN_ZwrTyp, B.TrN_ZwrNumer, E.RejonId,C.TrE_TwrNumer, C.TrE_KsiegowaNetto
+                                                                   FROM CTEDrzewo A
+                                                                   INNER JOIN CDN.TraNag B ON A.TrN_GIDNumer = B.TrN_ZwrNumer AND A.TrN_GIDTyp = B.TrN_ZwrTyp
+                                                                   JOIN CDN.TraElem C ON C.TrE_GIDNumer = B.TrN_GIDNumer AND A.TrE_TwrNumer = C.TrE_TwrNumer
+                                                                   JOIN CDN.KntKarty D (NOLOCK) ON D.Knt_GIDNumer = B.TrN_KntNumer
+                                                                   JOIN CDN.PlanySprzedazyRejonyPodrz(@PSPID) E ON E.RejonID = D.Knt_RegionCRM
+                                                                   WHERE B.TrN_Data3 BETWEEN @PSpDataOd AND @PSpDataDo AND B.TrN_GIDTyp IN(2041,2046,2009,2042,2045,2013)
+                                                           ) UPDATE @Wynik
+                                                           SET Ilosc += KorektaIlosc
+                                                           FROM @Wynik AS T1
+                                                                JOIN (SELECT RejonID, ISNULL(SUM(TrE_KsiegowaNetto),0) AS KorektaIlosc FROM (SELECT RejonID, TrE_KsiegowaNetto FROM CTEDrzewo  GROUP BY  TrN_GIDTyp ,TrN_GIDNumer, TrN_ZwrTyp, TrN_ZwrNumer, RejonId, TrE_TwrNumer,TrE_KsiegowaNetto)WYN  GROUP BY RejonID) Korekty ON Korekty.RejonID =T1.Rejon
+
+                                    END
+                           END
+                           ELSE
+                           BEGIN
+                                if @TypDaty = 1
+                                begin
+                                    INSERT @Wynik SELECT SUM(TrE_KsiegowaNetto),RejonID FROM
+                                           (
+                                                         SELECT TrE_KsiegowaNetto,RejonID
+                                                         FROM CDN.PlanSprzedazyKnt (NOLOCK)
+                                                         JOIN CDN.KntLinki (NOLOCK) ON (KnL_GroTyp = PSK_KntTyp AND KnL_GroNumer = PSK_KntNumer AND PSK_KntTyp = -32) OR (KnL_GIDTyp = PSK_KntTyp AND KnL_GIDNumer = PSK_KntNumer AND PSK_KntTyp = 32)
+                                                         JOIN CDN.KntKarty (NOLOCK) ON Knt_GIDNumer = KnL_GIDNumer
+                                                         JOIN CDN.PlanSprzedazyTwr (NOLOCK) ON PST_PSPID = @PSPID
+                                                         JOIN CDN.TwrLinki (NOLOCK) ON (TwL_GroTyp = PST_TwrTyp AND TwL_GroNumer = PST_TwrNumer AND PST_TwrTyp = -16) OR (TwL_GIDTyp = PST_TwrTyp AND TwL_GIDNumer = PST_TwrNumer AND PST_TwrTyp = 16)
+                                                         JOIN CDN.PlanySprzedazyRejonyPodrz(@PSPID) ON RejonID = Knt_RegionCRM
+                                                         JOIN CDN.TraNag (NOLOCK) ON TrN_KntNumer = KnL_GIDNumer AND TrN_Data2 BETWEEN @PSpDataOd AND @PSpDataDo AND TrN_Stan &lt;&gt; 6 AND TrN_GIDTyp IN (2033,2035,2037,2001,2005,2034,2041,2009,2042,2045,2013) AND NOT (TrN_SpiTyp &lt;&gt; 0 AND TrN_SpiTyp = (TrN_GIDTyp)*(-1))
+                                                         JOIN CDN.TraElem (NOLOCK) ON TrE_GIDNumer = TrN_GIDNumer AND TrE_TwrNumer = TwL_GIDNumer
+                                                         WHERE PSK_PSpID = @PSPID
+                                                         GROUP BY KnL_GIDNumer,TwL_GIDNumer,RejonID,TrE_GIDNumer,TrE_GIDLp,TrE_KsiegowaNetto
+                                           ) WYN
+                                           GROUP BY RejonID
+                                  END
+                                  ELSE
+                                  BEGIN
+                                        INSERT @Wynik SELECT SUM(TrE_KsiegowaNetto),RejonID FROM
+                                           (
+                                                         SELECT TrE_KsiegowaNetto,RejonID
+                                                         FROM CDN.PlanSprzedazyKnt (NOLOCK)
+                                                         JOIN CDN.KntLinki (NOLOCK) ON (KnL_GroTyp = PSK_KntTyp AND KnL_GroNumer = PSK_KntNumer AND PSK_KntTyp = -32) OR (KnL_GIDTyp = PSK_KntTyp AND KnL_GIDNumer = PSK_KntNumer AND PSK_KntTyp = 32)
+                                                         JOIN CDN.KntKarty (NOLOCK) ON Knt_GIDNumer = KnL_GIDNumer
+                                                         JOIN CDN.PlanSprzedazyTwr (NOLOCK) ON PST_PSPID = @PSPID
+                                                         JOIN CDN.TwrLinki (NOLOCK) ON (TwL_GroTyp = PST_TwrTyp AND TwL_GroNumer = PST_TwrNumer AND PST_TwrTyp = -16) OR (TwL_GIDTyp = PST_TwrTyp AND TwL_GIDNumer = PST_TwrNumer AND PST_TwrTyp = 16)
+                                                         JOIN CDN.PlanySprzedazyRejonyPodrz(@PSPID) ON RejonID = Knt_RegionCRM
+                                                         JOIN CDN.TraNag (NOLOCK) ON TrN_KntNumer = KnL_GIDNumer AND TrN_Data3 BETWEEN @PSpDataOd AND @PSpDataDo AND TrN_Stan &lt;&gt; 6 AND TrN_GIDTyp IN (2033,2035,2037,2001,2005,2034,2041,2009,2042,2045,2013) AND NOT (TrN_SpiTyp &lt;&gt; 0 AND TrN_SpiTyp = (TrN_GIDTyp)*(-1))
+                                                         JOIN CDN.TraElem (NOLOCK) ON TrE_GIDNumer = TrN_GIDNumer AND TrE_TwrNumer = TwL_GIDNumer
+                                                         WHERE PSK_PSpID = @PSPID
+                                                         GROUP BY KnL_GIDNumer,TwL_GIDNumer,RejonID,TrE_GIDNumer,TrE_GIDLp,TrE_KsiegowaNetto
+                                           ) WYN
+                                           GROUP BY RejonID
+                                  END
+                        END
+                         END
+                  END
+        RETURN
+END
+
+
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

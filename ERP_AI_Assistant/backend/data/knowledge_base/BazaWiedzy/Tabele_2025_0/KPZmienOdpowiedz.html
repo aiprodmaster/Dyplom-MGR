@@ -1,0 +1,323 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="KPZmienOdpowiedz"></A><PRE>
+          <FONT SIZE="2"><I>/* KPZmienOdpowiedz */</I><BR>
+CREATE PROCEDURE CDN.KPZmienOdpowiedz
+(
+	@p_KPE_Id		INTEGER,			--Identyfikator rekordu
+	@p_Tryb			TINYINT,			--Tryb działania (0 - tylko update, xxx1b - sprawdź pytania warunkowe, xx1xb - sprawdź pytania alternatywne, x1xxb - dodawaj pytanie o cechę
+	@p_Odpowiedz	VARCHAR(100)=null,	--Odpowiedź na pytanie
+	@p_OdpTyp		SMALLINT=null,		--GidTyp odpowiedzi
+	@p_OdpFirma		INTEGER=null,		--GidFirma odpowiedzi
+	@p_OdpNumer		INTEGER=null,		--GidNumer odpowiedzi
+	@p_OdpLp		SMALLINT=null,		--GidLp odpowiedzi
+	@p_PokazBledy	TINYINT=1,			--Czy pokazywać błędy 
+	@Wynik			INTEGER OUTPUT
+	/*
+		0 : Operacja zakończona sukcesem (zwrócono ID nowej konfiguracji)
+		-120 : Wystąpił błąd podczas aktualizacji odpowiedzi.
+		-121 : Wystąpił błąd podczas usuwania odpowiedzi dla poprzedniej operacji alternatywnej.
+		Inne &lt;0	: Błąd z podrzędnej procedury/funkcji wywoływanej wewnątrz tej metody
+	*/			
+)
+AS
+BEGIN
+
+	DECLARE @KPNId INTEGER	
+	DECLARE @KPTId INTEGER
+	DECLARE @FirmaId INTEGER
+
+	DECLARE @ObiTyp		SMALLINT
+	DECLARE @ObiFirma	INTEGER
+	DECLARE @ObiNumer	INTEGER
+	DECLARE @ObiLp		SMALLINT
+	DECLARE @TypPytania	TINYINT
+	DECLARE @o_Odpowiedz	VARCHAR(100)
+	DECLARE @o_OdpTyp	SMALLINT	
+	DECLARE @o_OdpFirma	INTEGER	
+	DECLARE @o_OdpNumer	INTEGER	
+	DECLARE @o_OdpLp	SMALLINT
+	
+	/* Pobieranie wartości dla aktualnej odpowiedzi zapisane w bazie */
+	SELECT  @ObiTyp = KPE_ObiTyp,
+			@ObiFirma = KPE_ObiFirma,
+			@ObiNumer = KPE_ObiNumer,
+			@ObiLp = KPE_ObiLp,
+			@TypPytania = KPE_TypPytania,
+			@o_Odpowiedz = KPE_Odpowiedz,
+			@o_OdpTyp = KPE_OdpTyp,
+			@o_OdpFirma = KPE_OdpFirma,
+			@o_OdpNumer = KPE_OdpNumer,
+			@o_OdpLp = KPE_OdpLp,
+			@KPNId = KPN_Id,
+			@KPTId = KPN_KTPId,
+			@FirmaId = KPN_DokFirma
+	FROM CDN.KonfProdElem
+	JOIN CDN.KonfProdNag on KPN_Id=KPE_KPNId
+	WHERE KPE_Id=@p_KPE_Id
+
+	/* Początek transakcja */
+	DECLARE @TranCount INTEGER
+	SELECT @TranCount=@@TRANCOUNT;
+	IF @TranCount&gt;0 
+		SAVE TRANSACTION Tran_KPZmienOdpowiedz;
+	ELSE 
+		BEGIN TRANSACTION Tran_KPZmienOdpowiedz;
+
+	/* Aktualizacja odpowiedzi */
+	UPDATE CDN.KonfProdElem
+	SET 
+		KPE_Odpowiedz = IsNull(@p_Odpowiedz,KPE_Odpowiedz),
+		KPE_OdpTyp = IsNull(@p_OdpTyp,KPE_OdpTyp),
+		KPE_OdpFirma = IsNull(@p_OdpFirma,KPE_OdpFirma),
+		KPE_OdpNumer = IsNull(@p_OdpNumer,KPE_OdpNumer),
+		KPE_OdpLp = IsNull(@p_OdpLp,KPE_OdpLp)
+	WHERE KPE_Id=@p_KPE_Id
+
+	if @@error &lt;&gt; 0  
+	begin
+		IF XACT_STATE()&lt;&gt;0 rollback tran Tran_KPZmienOdpowiedz
+		if @p_PokazBledy=1
+			raiserror('Wystąpił błąd podczas aktualizacji odpowiedzi.', 16, 1)
+		set @Wynik = -120
+		return @Wynik
+	end
+
+	/* Jeśli nie tylko update */
+	IF @p_Tryb&gt;0
+		BEGIN
+
+		DECLARE @WynikProc INT
+
+		/* Jeśli to odpowiedź na pytanie warunkowe lub alternatywne */
+		IF @TypPytania in (3,4) 
+		BEGIN
+
+			DECLARE @tmpPTCId INTEGER
+			select @tmpPTCId = case when @TypPytania=4 then @o_OdpNumer else @ObiNumer end
+
+			/* Jeśli pytanie o operację warunkową i nowa odpowiedź 'nie' lub pytanie o operację alternatywną to kasujemy poprzednie odpowiedzi dla usuwanej gałęzi */
+			IF (@TypPytania=3 and (@p_Odpowiedz like 'nie' or @p_Odpowiedz like '&lt;brak&gt;')  and @o_Odpowiedz like 'tak') OR (@TypPytania=4)
+			BEGIN
+				DECLARE @SciezkaLp VARCHAR(max)
+				select @SciezkaLp=SciezkaLp from CDN.KPZwrocDrzewoOperacjiKTP(@KPTId) where Id=@tmpPTCId
+		
+				delete E
+				from CDN.KonfProdElem E
+				left join CDN.ProdTechnologiaZasoby Z on KPE_ObiTyp=14342 and KPE_ObiNumer=PTZ_Id
+				 outer apply CDN.KPZwrocDrzewoOperacjiKTP(@KPTId) D 
+				where KPE_KPNId=@KPNId and KPE_TypPytania&gt;2 and ((KPE_ObiTyp=14341 and KPE_ObiNumer=D.Id) or (KPE_ObiTyp=14342 and Z.PTZ_TechnologiaCzynnosc=D.Id))
+				 and SciezkaLp like @SciezkaLp+'%' and KPE_Id&lt;&gt;@p_KPE_Id
+
+				if @@error &lt;&gt; 0  
+				begin
+					IF XACT_STATE()&lt;&gt;0 rollback tran Tran_KPZmienOdpowiedz
+					if @p_PokazBledy=1
+						raiserror('Wystąpił błąd podczas usuwania odpowiedzi dla poprzedniej operacji alternatywnej.', 16, 1)
+					set @Wynik = -121
+					return @Wynik
+				end
+			END
+		
+			DECLARE @TypOperacjiKTP TINYINT
+			DECLARE @GrupaOperacjiKTP INTEGER
+			DECLARE @WarunekOperacjiKTP VARCHAR(4096)
+
+			select @tmpPTCId = case when @TypPytania=4 then @p_OdpNumer else @ObiNumer end
+
+			IF @tmpPTCId&gt; 0 
+			BEGIN 
+				SELECT @TypOperacjiKTP=PTC_TypOperacjiKTP, @GrupaOperacjiKTP=PTC_GrupaOperacjiKTP, @WarunekOperacjiKTP=PTC_WarunekOperacjiKTP
+				FROM CDN.ProdTechnologiaCzynnosci
+				WHERE PTC_Id=@tmpPTCId
+
+				/* Jeśli pytanie o operację warunkową i nowa odpowiedź 'tak' lub pytanie o operację alternatywną to dodaje parametry i nową gałąz operacji dla nowej odpowiedzi */
+				IF (@TypPytania=3 and @p_Odpowiedz like 'tak' and (@o_Odpowiedz like 'nie' or @o_Odpowiedz like '&lt;brak&gt;')) OR (@TypPytania=4 and (@p_Odpowiedz not like '') and (@p_Odpowiedz not like '&lt;brak&gt;'))
+				BEGIN					
+					SET @WynikProc = 0
+
+					EXEC CDN.KPDodajPytaniaDlaOperacji @p_KPNId=@KPNId, @p_KTPId=@KPTId, @p_PTCId=@tmpPTCId, @p_TypOperacjiKTP=@TypOperacjiKTP, @p_GrupaOperacjiKTP=@GrupaOperacjiKTP,
+						@p_WarunekOperacjiKTP=@WarunekOperacjiKTP, @p_FirmaId=@FirmaId, @p_KopiaKPNId=null, @p_PominPytOWystapienie=1, @p_PokazBledy=@p_PokazBledy, @Wynik=@WynikProc OUTPUT
+
+					if @WynikProc&lt;0 
+					begin
+						IF XACT_STATE()&lt;&gt;0 rollback tran Tran_KPZmienOdpowiedz
+						set @Wynik = @WynikProc
+						return @Wynik
+					end
+
+				END
+			END
+
+		END --IF @TypPytania in (4,5)
+		ELSE
+			IF @TypPytania=7
+			BEGIN
+				delete E
+				from CDN.KonfProdElem E
+				where KPE_KPNId=@KPNId and KPE_ObiTyp=@ObiTyp and KPE_ObiNumer=@ObiNumer and KPE_TypPytania=8
+
+				if (@p_OdpTyp&gt;0 or @p_OdpNumer&gt;0)
+				begin
+
+					SET @WynikProc = 0
+
+					EXEC CDN.KPDodajPytanieOCeche @p_KPNId=@KPNId, @p_KTPId=@KPTId, @p_PTZId=@ObiNumer, @p_FirmaId=@FirmaId, @p_TwrTyp=@p_OdpTyp, @p_TwrNumer=@p_OdpNumer, @p_PokazBledy=@p_PokazBledy, @Wynik=@WynikProc OUTPUT
+
+					if @WynikProc&lt;0 
+					begin
+						IF XACT_STATE()&lt;&gt;0 rollback tran Tran_KPZmienOdpowiedz
+						set @Wynik = @WynikProc
+						return @Wynik
+					end
+				end
+
+			END
+
+		/* BEGIN	-- Sprawdzenie pytań z warunkiem SQL */
+
+		DECLARE @t_WarunekSQL	VARCHAR(4096)
+		DECLARE @t_ObiTyp				SMALLINT
+		DECLARE @t_ObiNumer				INTEGER
+		DECLARE @t_Odpowiedz			VARCHAR(100)
+		DECLARE @t_KPEId				INTEGER
+		DECLARE @t_TwXTyp				SMALLINT
+		DECLARE @t_TwXNumer				INTEGER
+
+		/**************  BEGIN C1_KPZmienOdpowiedz **************/
+		DECLARE C1_KPZmienOdpowiedz CURSOR LOCAL FAST_FORWARD FOR
+			SELECT ObiTyp, ObiNumer, case when ObiTyp=14341 then PTC_WarunekOperacjiKTP else PTT_WarunekWystapienia end, Odpowiedz, Id, IsNUll(PTT_TwXTyp,0) TwXTyp, IsNull(PTT_TwXNumer,0) TwXNumer
+			FROM CDN.KPListaPytan(@KPNId,@KPTId,2) 
+			LEFT JOIN CDN.ProdTechnologiaCzynnosci ON ObiTyp=14341 AND ObiNumer=PTC_Id
+			LEFT JOIN CDN.ProdTechnologiaZasobyTwX on ObiTyp=14342 AND ObiNumer=PTT_PTZId
+			WHERE 
+				-- Tylko pytania następne
+				Lp &gt; (select Lp from CDN.KPListaPytan(@KPNId,@KPTId,2) where Id=@p_KPE_Id) 
+				AND (
+					-- Pytania o operacje warunkowe
+					(TypPytania=3 and PTC_TypOperacjiKTP=2 and PTC_WarunekOperacjiKTP is not null and PTC_WarunekOperacjiKTP &lt;&gt;'')
+					OR
+					-- Pytania o surowce warunkową
+					(TypPytania=7 and PTT_WarunekWystapienia is not null and PTT_WarunekWystapienia &lt;&gt;'')
+					OR
+					-- Cecha Materiału
+					(TypPytania=8 and PTT_WarunekWystapienia is not null and PTT_WarunekWystapienia &lt;&gt;'')
+				)
+			ORDER BY Lp
+
+		OPEN C1_KPZmienOdpowiedz;
+		FETCH NEXT FROM C1_KPZmienOdpowiedz INTO @t_ObiTyp,@t_ObiNumer,@t_WarunekSQL,@t_Odpowiedz,@t_KPEId,@t_TwXTyp,@t_TwXNumer
+		WHILE @@fetch_status = 0
+		BEGIN
+				
+			EXEC CDN.KPSprawdzWarunek @p_Warunek=@t_WarunekSQL,@p_KPNId=@KPNId,@p_ObiTyp=@t_ObiTyp,@p_ObiFirma=@FirmaId,@p_ObiNumer=@t_ObiNumer,@p_ObiLp=0,@p_PokazBledy=@p_PokazBledy,@Wynik=@WynikProc out
+
+			if @WynikProc&lt;0 
+			begin
+				CLOSE C1_KPZmienOdpowiedz;
+				DEALLOCATE C1_KPZmienOdpowiedz;
+				IF XACT_STATE()&lt;&gt;0 rollback tran Tran_KPZmienOdpowiedz
+				set @Wynik = @WynikProc
+				return @Wynik
+			end
+			else
+			begin
+				if (@t_ObiTyp=14341 and ((@WynikProc=0 and (@t_Odpowiedz&lt;&gt;'Nie' and @t_Odpowiedz&lt;&gt;'0')) or (@WynikProc=1 and (@t_Odpowiedz&lt;&gt;'Tak' and @t_Odpowiedz&lt;&gt;'1'))))
+				begin
+					select @t_Odpowiedz = case @WynikProc when 0 then 'Nie' when 1 then 'Tak' else '&lt;Brak&gt;' end 
+
+					EXEC CDN.KPZmienOdpowiedz @p_KPE_Id=@t_KPEId, @p_Tryb=@p_Tryb, @p_Odpowiedz=@t_Odpowiedz, @p_OdpTyp=null, @p_OdpFirma=null, @p_OdpNumer=null,@p_OdpLp=null,@p_PokazBledy=@p_PokazBledy,@Wynik=@WynikProc out
+					if @WynikProc&lt;0 
+					begin
+						CLOSE C1_KPZmienOdpowiedz;
+						DEALLOCATE C1_KPZmienOdpowiedz;
+						IF XACT_STATE()&lt;&gt;0 rollback tran Tran_KPZmienOdpowiedz
+						set @Wynik = @WynikProc
+						return @Wynik
+					end
+
+					-- Kończymy analize, pozostałe pytania zostaną sprawdzone dzięki rekursji
+					BREAK	
+				end
+				else if @t_ObiTyp=14342
+				begin
+					If @WynikProc = 1
+						Begin
+							
+							begin
+								--select @t_Odpowiedz = Twr_Kod from CDN.TwrKarty
+								SELECT TOP 1 @t_Odpowiedz=TwG_Kod FROM CDN.TwrGrupy WHERE TwG_GIDTyp=@t_TwXTyp AND TwG_GIDNumer=@t_TwXNumer
+								if @t_Odpowiedz&lt;&gt;(select KPE_Odpowiedz from CDN.KonfProdElem where KPE_Id=@t_KPEId)
+								begin
+									EXEC CDN.KPZmienOdpowiedz @p_KPE_Id=@t_KPEId, @p_Tryb=@p_Tryb, @p_Odpowiedz=@t_Odpowiedz, @p_OdpTyp=@t_TwXTyp, @p_OdpFirma=@FirmaId, @p_OdpNumer=@t_TwXNumer,@p_OdpLp=0,@p_PokazBledy=@p_PokazBledy,@Wynik=@WynikProc out
+									if @WynikProc&lt;0 
+									begin
+										CLOSE C1_KPZmienOdpowiedz;
+										DEALLOCATE C1_KPZmienOdpowiedz;
+										IF XACT_STATE()&lt;&gt;0 rollback tran Tran_KPZmienOdpowiedz
+										set @Wynik = @WynikProc
+										return @Wynik
+									end
+
+									-- Kończymy analize, pozostałe pytania zostaną sprawdzone dzięki rekursji
+									BREAK
+								end
+							end
+
+						End
+					Else
+						Begin --  @WynikProc = 0
+							-- jeśli warunek nie spełniony a pozycja była wcześniej odpowiedzią na to pytanie
+							if exists(select * from CDN.KonfProdElem where KPE_Id=@t_KPEId and KPE_OdpTyp=@t_TwXTyp and KPE_OdpNumer=@t_TwXNumer)
+							begin
+								EXEC CDN.KPZmienOdpowiedz @p_KPE_Id=@t_KPEId, @p_Tryb=@p_Tryb, @p_Odpowiedz='&lt;Brak&gt;', @p_OdpTyp=0, @p_OdpFirma=0, @p_OdpNumer=0,@p_OdpLp=0,@p_PokazBledy=@p_PokazBledy,@Wynik=@WynikProc out
+								if @WynikProc&lt;0 
+								begin
+									CLOSE C1_KPZmienOdpowiedz;
+									DEALLOCATE C1_KPZmienOdpowiedz;
+									IF XACT_STATE()&lt;&gt;0 rollback tran Tran_KPZmienOdpowiedz
+									set @Wynik = @WynikProc
+									return @Wynik
+								end
+
+								-- Kończymy analize, pozostałe pytania zostaną sprawdzone dzięki rekursji
+								BREAK
+							end
+								
+						End
+				end				
+			end
+
+			FETCH NEXT FROM C1_KPZmienOdpowiedz INTO @t_ObiTyp,@t_ObiNumer,@t_WarunekSQL,@t_Odpowiedz,@t_KPEId,@t_TwXTyp,@t_TwXNumer
+		END -- WHILE @@fetch_status = 0
+		CLOSE C1_KPZmienOdpowiedz;
+		DEALLOCATE C1_KPZmienOdpowiedz;
+		/**************  END C1_KPDodajPytaniaDlaOperacji **************/
+
+		/* END		-- Sprawdzenie pytań z warunkiem SQL */
+
+
+	END -- Jeśli nie tylko update
+
+	IF @TranCount=0 COMMIT TRAN Tran_KPPrzypiszKTP;
+	/* Koniec transakcja */
+
+    --OK:
+	SET @Wynik = 0
+    RETURN @Wynik
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

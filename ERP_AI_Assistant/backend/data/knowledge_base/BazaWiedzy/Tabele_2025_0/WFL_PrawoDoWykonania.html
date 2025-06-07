@@ -1,0 +1,421 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="WFL_PrawoDoWykonania"></A><PRE>
+          <FONT SIZE="2"><I>/* WFL_PrawoDoWykonania */</I><BR>
+Create function CDN.WFL_PrawoDoWykonania(
+@TypProcesu integer,  -- typ procesu
+@OBITyp smallint,  -- identyfikator obiektu, na którym chcemy wykonać akcję
+@OBINumer integer,
+@Zadanie integer,  -- identyfikator zadania na którym chcemy wykonać akcję
+@AkcjaDoWykonania integer,  -- identyfikator definicji zadania
+@KluczowaDoWykonania integer, -- identyfikaotr akcji kluczowe
+@ParametrKluczowej varchar(1024), -- parametr akcji kluczowej,
+@KluczowaInicjujacaProces smallint, -- czy akcaj kluczowa może zainicjowac proces
+@PrcTyp smallint,
+@PrcNumer integer,
+@P_DataWSekundach integer)
+returns integer  -- czy jest prawo
+as
+begin
+        DECLARE @datawdniach integer
+        Declare @lZwrot integer
+        Set @datawdniach = @p_DataWSekundach/86400 + 69035
+
+        if (@Zadanie=0) -- analiza dla obiektu
+        BEGIN
+                if not exists(  Select WFP_ID
+                                From cdn.Wf_procesy with (nolock) join cdn.wf_defprocesy with (nolock) on wfp_WDPID = WDP_ID
+                                Where WFP_DataZamkniecia=0 and WFP_OBITyp=@OBITyp and WFP_OBINumer =@OBINumer and WDP_TypObiektu = @TypProcesu and @OBITyp&lt;&gt;0)
+                Begin
+
+                        if (@KluczowaInicjujacaProces=0)
+                        begin
+                                set @lZwrot = 1
+                        end
+                        else
+                        begin
+    --  jeśli nie istnieje  definicja, która zawiera kluczową do wykonania inicjującą proces to mamy prawo
+                                if not exists(Select * from cdn.WF_DefProcesy with (nolock)
+                                              join CDN.WF_DefAkcje with (NOLOCK) on WDP_ID = WDA_WDPID
+                                                                                and (WDA_KLUCZOWA = @KluczowaDoWykonania or isnull(@KluczowaDoWykonania,0)=0)
+                                              where WDP_TypObiektu = @TypProcesu and WDP_Stan &lt;&gt; 0)
+                                begin
+                                        set @lZwrot = 1
+                                end
+                                else
+        -- sprawdzam czy istnieje potencjalne zadanie w definicji procesu przypięte do status START
+                                begin
+                                        set @lZwrot = 0
+                                        if(len(@ParametrKluczowej)=0)
+                                                select top 1 @lZwrot = wdz_id
+                                                from cdn.wf_defzadania with (NOLOCK)
+                                                join cdn.wf_DefOpiekun with (NOLOCK) on wdz_id=wdo_wdzid
+                                                join CDN.WF_DefAkcje with (NOLOCK) on WDZ_WDAID = WDA_ID
+                                                join CDN.WF_DEFProcesy with (NOLOCK) on WDZ_WdPID = WDP_ID and WDP_STAN&lt;&gt;0
+                                                where (WDA_KLuczowa = @KluczowaDoWykonania or WDZ_ID = @AkcjaDoWykonania)
+                                                        and WDP_TypObiektu = @TypProcesu
+                                                        and WDZ_WDSID = -1 -- status start
+                                                        and CDN.WFL_JestOpiekunemPracownika (@PrcTyp,@PrcNumer,WDO_OPITyp, WDO_OPINumer, @datawdniach, @datawdniach,0)&lt;&gt;0
+                                        else
+                                                select top 1 @lZwrot = wdz_id
+                                                from cdn.wf_defzadania with (NOLOCK)
+                                                join cdn.wf_DefOpiekun with (NOLOCK) on wdz_id=wdo_wdzid
+                                                join CDN.WF_DefAkcje with (NOLOCK) on WDZ_WDAID = WDA_ID
+                                                join CDN.WF_DEFProcesy with (NOLOCK) on WDZ_WdPID = WDP_ID and WDP_STAN&lt;&gt;0
+                                                where (WDA_KLuczowa = @KluczowaDoWykonania or WDZ_ID = @AkcjaDoWykonania)
+                                                        and (','+WDA_Parametry+',') like rtrim(@ParametrKLuczowej)
+                                                        and WDP_TypObiektu = @TypProcesu
+                                                        and WDZ_WDSID = -1 -- status start
+                                                        and CDN.WFL_JestOpiekunemPracownika (@PrcTyp,@PrcNumer,WDO_OPITyp, WDO_OPINumer, @datawdniach, @datawdniach,0)&lt;&gt;0
+
+                                        if @lZwrot = 0 and @KluczowaDoWykonania &lt;&gt; 0
+                                        begin
+                                         --czy akcja jest w słowniku akcji definicji procesu niezwiązana z żadny
+                                         -- z tym, że (wyjątek poniżej)
+                                         -- jeśli istnieje taka akcja na liśćie akcji procesu, ale związana jest z jakąś czynnością wykonywaną przez innego opiekuna to nie mam praw
+                                        if exists(select * from cdn.wf_defprocesy with (nolock)
+                                                join cdn.wf_defakcje with (nolock) on wda_wdpid = wdp_id
+                                                left join CDN.WF_DefZadania with (nolock) on WDZ_WDAID =WDA_ID and wdz_wdpid = WDA_WDPID
+                                                where wdp_typobiektu = @TypProcesu and wdp_stan &lt;&gt; 0
+                                                and wda_kluczowa = @KluczowaDoWykonania
+                                                and isnull(WDZ_ID,0)&lt;&gt;0 )
+                                                select @lzwrot = 0
+                                        else
+                                                begin
+                                                --czy akcja jest w słowniku akcji definicji procesu niezwiązana z żadny
+                                                if exists(select * from cdn.wf_defprocesy with (nolock)
+                                                        join cdn.wf_defakcje with (nolock) on wda_wdpid = wdp_id
+                                                        where wdp_typobiektu = @TypProcesu and wdp_stan &lt;&gt; 0
+                                                        and wda_kluczowa = @KluczowaDoWykonania )
+                                                        set @lZwrot = 1
+                                                else
+                                                        select @lZwrot = isnull(max(WDP_DozwoloneInneAkcje),1) from cdn.wf_defprocesy with (nolock)
+                                                        where wdp_typobiektu = @TypProcesu and wdp_stan &lt;&gt; 0
+                                                end
+                                        end
+                                end
+                        end
+                End
+                -- brak aktywnych definicji procesu dla obiektu
+                else if not exists(Select WFP_ID
+                                From cdn.Wf_procesy with (nolock)
+                                join cdn.wf_defprocesy with (nolock) on wfp_WDPID = WDP_ID
+                                Where WFP_DataZamkniecia=0 and WFP_OBITyp=@OBITyp and WFP_OBINumer =@OBINumer
+                                        and WDP_TypObiektu = @TypProcesu and @OBITyp&lt;&gt;0 and WDP_STAN&lt;&gt;0)
+
+                                set @lZwrot = 1
+                else
+                Begin
+                        set @lZwrot = 0
+                        if(len(@ParametrKluczowej)=0)
+                                select top 1 @lZwrot = wfz_id
+                                from cdn.wf_Zadania with (nolock)
+                                join cdn.wf_defzadania with (NOLOCK) on wfz_WDSid = wdz_wdsid
+                                left outer join cdn.wf_DefOpiekun with (NOLOCK) on wdz_id=wdo_wdzid
+                                join CDN.WF_DefAkcje with (NOLOCK) on WDZ_WDAID = WDA_ID
+                                join CDN.WF_Procesy with (nolock) on WFZ_WFPID = WFP_ID
+                                join CDN.WF_DEFProcesy with (NOLOCK) on WDZ_WdPID = WDP_ID and WDP_STAN&lt;&gt;0
+                                where WFZ_DataZamkniecia=0 and WFP_DataZamkniecia=0  -- aktywne zadanie i aktywny proces
+                                and (WDA_KLuczowa = @KluczowaDoWykonania or WDZ_ID = @AkcjaDoWykonania)
+                                and WFP_OBITyp=@OBITyp
+                                and WFP_OBINumer =@OBINumer
+                                and ( CDN.WFL_JestOpiekunemPracownika (@PrcTyp,@PrcNumer,WDO_OPITyp, WDO_OPINumer, @datawdniach, @datawdniach,0)&lt;&gt;0
+                                   or CDN.WFL_JestOpiekunemPracownika (@PrcTyp,@PrcNumer,WFZ_OPITyp, WFZ_OPINumer, @datawdniach, @datawdniach,0)&lt;&gt;0 )
+                        else
+                                select top 1 @lZwrot = wfz_id
+                                from cdn.wf_Zadania with (nolock)
+                                join cdn.wf_defzadania with (NOLOCK) on wfz_WDSid = wdz_wdsid
+                                left outer join cdn.wf_DefOpiekun with (NOLOCK) on wdz_id=wdo_wdzid
+                                join CDN.WF_DefAkcje with (NOLOCK) on WDZ_WDAID = WDA_ID
+                                join CDN.WF_Procesy with (nolock) on WFZ_WFPID = WFP_ID
+                                join CDN.WF_DEFProcesy with (NOLOCK) on WDZ_WdPID = WDP_ID and WDP_STAN&lt;&gt;0
+                                where WFZ_DataZamkniecia=0 and WFP_DataZamkniecia=0  -- aktywne zadanie i aktywny proces
+                                and (WDA_KLuczowa = @KluczowaDoWykonania or WDZ_ID = @AkcjaDoWykonania)
+                                and WFP_OBITyp=@OBITyp
+                                and WFP_OBINumer =@OBINumer
+                                and (','+WDA_Parametry+',') like rtrim(@ParametrKLuczowej)
+                                and ( CDN.WFL_JestOpiekunemPracownika (@PrcTyp,@PrcNumer,WDO_OPITyp, WDO_OPINumer, @datawdniach, @datawdniach,0)&lt;&gt;0
+                                   or CDN.WFL_JestOpiekunemPracownika (@PrcTyp,@PrcNumer,WFZ_OPITyp, WFZ_OPINumer, @datawdniach, @datawdniach,0)&lt;&gt;0 )
+
+                        if @lZwrot = 0 and @KluczowaDoWykonania &lt;&gt; 0
+                        begin
+                                if exists(select * from cdn.wf_defprocesy with (nolock)
+                                    join cdn.wf_defakcje with (nolock) on wda_wdpid = wdp_id
+                                    left join cdn.wf_defzadania with (nolock) on wdz_wdaid = wda_id and wdz_wdpid = wdp_id
+                                    join cdn.wf_procesy with (nolock) on wdp_id = wfp_wdpid and WFP_DataZamkniecia=0 and WFP_OBITyp=@OBITyp and WFP_OBINumer=@OBINumer
+                                    where wdp_typobiektu = @TypProcesu and wdp_stan &lt;&gt; 0 and wda_kluczowa = @KluczowaDoWykonania
+                                        and isnull(wdz_id,0)&lt;&gt;0)
+                                        select @lzwrot = 0
+                                else
+                                begin
+                                if exists(select * from cdn.wf_defprocesy with (nolock)
+                                          join cdn.wf_defakcje with (nolock) on wda_wdpid = wdp_id
+                                          left join cdn.wf_defzadania with (nolock) on wdz_wdaid = wda_id and wdz_wdpid = wdp_id
+                                          join cdn.wf_procesy with (nolock) on wdp_id = wfp_wdpid and WFP_DataZamkniecia=0 and WFP_OBITyp=@OBITyp and WFP_OBINumer=@OBINumer
+                                          where wdp_typobiektu = @TypProcesu and wdp_stan &lt;&gt; 0 and wda_kluczowa = @KluczowaDoWykonania and wdz_id is null)
+
+                                        set @lZwrot = 1
+                                else
+                                        select @lZwrot = isnull(max(WDP_DozwoloneInneAkcje),0) from cdn.wf_defprocesy with (nolock)
+                                        join cdn.wf_procesy with (nolock) on wdp_id = wfp_wdpid and WFP_DataZamkniecia=0 and WFP_OBITyp=@OBITyp and WFP_OBINumer=@OBINumer
+                                        left outer join cdn.wf_defakcje with (nolock) on wda_wdpid = wdp_id and wda_kluczowa = @KluczowaDoWykonania
+                                        where wdp_typobiektu = @TypProcesu and wdp_stan &lt;&gt; 0 and wda_id is null
+                                end
+                        end
+                End
+        END
+        else if not exists ( Select *
+                          from cdn.wf_zadania with (nolock)
+                          join cdn.wf_procesy with (nolock) on WFZ_WFPID = WFP_ID
+                          join CDN.WF_DEFPROCESY with (nolock) on WDP_ID = WFP_WDPID and WDP_STAN&lt;&gt;0
+                          where WFZ_ID = @Zadanie)
+                                set @lZwrot = 1
+        else
+        BEGIN
+                if(len(@ParametrKluczowej)=0)
+                        select top 1 @lZwrot = wfz_id
+                        from cdn.wf_Zadania with (nolock)
+                        join cdn.wf_defzadania with (NOLOCK) on wfz_WDSid = wdz_wdsid
+                        left outer join cdn.wf_DefOpiekun with (NOLOCK) on wdz_id=wdo_wdzid
+                        join CDN.WF_DefAkcje with (NOLOCK) on WDZ_WDAID = WDA_ID
+                        join CDN.WF_Procesy with (nolock) on WFZ_WFPID = WFP_ID
+                        where WFZ_DataZamkniecia=0 and WFP_DataZamkniecia=0  -- aktywne zadanie i aktywny proces
+                                and (WDA_KLuczowa = @KluczowaDoWykonania or WDZ_WDAID = @AkcjaDoWykonania)
+                                and WFZ_ID = @Zadanie
+                                and ( CDN.WFL_JestOpiekunemPracownika (@PrcTyp,@PrcNumer,WDO_OPITyp, WDO_OPINumer, @datawdniach, @datawdniach,0)&lt;&gt;0
+                                   or CDN.WFL_JestOpiekunemPracownika (@PrcTyp,@PrcNumer,WFZ_OPITyp, WFZ_OPINumer, @datawdniach, @datawdniach,0)&lt;&gt;0 )
+                else
+                        select top 1 @lZwrot = wfz_id
+                        from cdn.wf_Zadania with (nolock)
+                        join cdn.wf_defzadania with (NOLOCK) on wfz_WDSid = wdz_wdsid
+                        left outer join cdn.wf_DefOpiekun with (NOLOCK) on wdz_id=wdo_wdzid
+                        join CDN.WF_DefAkcje with (NOLOCK) on WDZ_WDAID = WDA_ID
+                        join CDN.WF_Procesy with (nolock) on WFZ_WFPID = WFP_ID
+                        where WFZ_DataZamkniecia=0 and WFP_DataZamkniecia=0  -- aktywne zadanie i aktywny proces
+                                and (WDA_KLuczowa = @KluczowaDoWykonania or WDZ_WDAID = @AkcjaDoWykonania)
+                                and WFZ_ID = @Zadanie and (','+WDA_Parametry+',') like rtrim(@ParametrKLuczowej)
+                                and ( CDN.WFL_JestOpiekunemPracownika (@PrcTyp,@PrcNumer,WDO_OPITyp, WDO_OPINumer, @datawdniach, @datawdniach,0)&lt;&gt;0
+                               or CDN.WFL_JestOpiekunemPracownika (@PrcTyp,@PrcNumer,WFZ_OPITyp, WFZ_OPINumer, @datawdniach, @datawdniach,0)&lt;&gt;0 )
+        END
+
+        return isnull(@lZwrot,0)
+
+end
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="WFL_PrawoDoWykonaniaEx"></A><PRE>
+          <FONT SIZE="2"><I>/* WFL_PrawoDoWykonaniaEx */</I><BR>
+Create function CDN.WFL_PrawoDoWykonaniaEx(
+@TypProcesu integer,  -- typ procesu
+@OBITyp smallint,  -- identyfikator obiektu, na którym chcemy wykonać akcję
+@OBINumer integer,
+@Zadanie integer,  -- identyfikator zadania na którym chcemy wykonać akcję
+@AkcjaDoWykonania integer,  -- identyfikator definicji zadania
+@KluczowaDoWykonania integer, -- identyfikaotr akcji kluczowe
+@ParametrKluczowej varchar(1024), -- parametr akcji kluczowej,
+@KluczowaInicjujacaProces smallint, -- czy akcaj kluczowa może zainicjowac proces
+@PrcTyp smallint,
+@PrcNumer integer, 
+@P_DataWSekundach integer,
+@FrSId integer = 0) --identyfikator centrum operatora, TFS 233768
+returns integer  -- czy jest prawo
+as
+begin
+	declare @datawdniach integer
+	declare @lZwrot integer
+	set @datawdniach = @p_DataWSekundach/86400 + 69035
+
+	if (@Zadanie=0) -- analiza dla obiektu
+	begin
+		-- najpierw sprawdzamy czy istnieje aktywny proces związany z danym obiektem
+		if not exists(select WFP_ID 
+				from cdn.Wf_procesy with (nolock) join cdn.wf_defprocesy with (nolock) on wfp_WDPID = WDP_ID
+				where WFP_DataZamkniecia=0 and WFP_OBITyp=@OBITyp and WFP_OBINumer =@OBINumer and WDP_TypObiektu = @TypProcesu and @OBITyp&lt;&gt;0)
+		begin
+			--  jeśli nie istnieje  definicja, która zawiera kluczową do wykonania inicjującą proces to mamy prawo
+            if not exists(select WDP_ID from cdn.WF_DefProcesy with (nolock)
+                          join CDN.WF_DefAkcje with (NOLOCK) on WDP_ID = WDA_WDPID and (WDA_KLUCZOWA = @KluczowaDoWykonania or isnull(@KluczowaDoWykonania,0)=0)
+                          where WDP_TypObiektu = @TypProcesu and WDP_Stan &lt;&gt; 0)
+            begin
+                set @lZwrot = 1
+            end
+            else
+			-- sprawdzam czy istnieje potencjalne zadanie w definicji procesu przypięte do status START
+            begin
+                set @lZwrot = 0
+				if(len(@ParametrKluczowej)=0)					
+					select top 1 @lZwrot = wdz_id 
+					from cdn.wf_defzadania with (NOLOCK) 
+					join cdn.wf_DefOpiekun with (NOLOCK) on wdz_id=wdo_wdzid
+					join CDN.WF_DefAkcje with (NOLOCK) on WDZ_WDAID = WDA_ID
+					join CDN.WF_DEFProcesy with (NOLOCK) on WDZ_WdPID = WDP_ID and WDP_STAN&lt;&gt;0
+					where (WDA_KLuczowa = @KluczowaDoWykonania or WDZ_ID = @AkcjaDoWykonania)
+						and WDP_TypObiektu = @TypProcesu
+						and WDZ_WDSID = -1 -- status start
+						and CDN.WFL_JestOpiekunemPracownika (@PrcTyp,@PrcNumer,WDO_OPITyp, WDO_OPINumer, @datawdniach, @datawdniach, @FrSId)&lt;&gt;0 -- TFS 233768 						
+				else
+					select top 1 @lZwrot = wdz_id 
+					from cdn.wf_defzadania with (NOLOCK) 
+					join cdn.wf_DefOpiekun with (NOLOCK) on wdz_id=wdo_wdzid
+					join CDN.WF_DefAkcje with (NOLOCK) on WDZ_WDAID = WDA_ID
+					join CDN.WF_DEFProcesy with (NOLOCK) on WDZ_WdPID = WDP_ID and WDP_STAN&lt;&gt;0
+					where (WDA_KLuczowa = @KluczowaDoWykonania or WDZ_ID = @AkcjaDoWykonania) 
+						and (','+WDA_Parametry+',') like rtrim(@ParametrKLuczowej) 
+						and WDP_TypObiektu = @TypProcesu
+						and WDZ_WDSID = -1 -- status start
+						and CDN.WFL_JestOpiekunemPracownika (@PrcTyp,@PrcNumer,WDO_OPITyp, WDO_OPINumer, @datawdniach, @datawdniach, @FrSId)&lt;&gt;0 -- TFS 233768 
+					
+				if @lZwrot = 0 and @KluczowaDoWykonania &lt;&gt; 0
+				begin
+                --czy akcja jest w słowniku akcji definicji procesu niezwiązana z żadny
+			    -- z tym, że (wyjątek poniżej)
+			    -- jeśli istnieje taka akcja na liśćie akcji procesu, ale związana jest z jakąś czynnością wykonywaną przez innego opiekuna to nie mam praw
+				if exists(select WDP_Id from cdn.wf_defprocesy with (nolock)
+						join cdn.wf_defakcje with (nolock) on wda_wdpid = wdp_id
+					 	left join CDN.WF_DefZadania with (nolock) on WDZ_WDAID =WDA_ID and wdz_wdpid = WDA_WDPID
+                        where wdp_typobiektu = @TypProcesu and wdp_stan &lt;&gt; 0 
+							and wda_kluczowa = @KluczowaDoWykonania 
+							and isnull(WDZ_ID,0)&lt;&gt;0 )
+					select @lzwrot = 0
+				else	
+					begin
+					--czy akcja jest w słowniku akcji definicji procesu niezwiązana z żadny
+					if exists(select WDP_Id from cdn.wf_defprocesy with (nolock)
+							join cdn.wf_defakcje with (nolock) on wda_wdpid = wdp_id
+							where wdp_typobiektu = @TypProcesu and wdp_stan &lt;&gt; 0 
+								and wda_kluczowa = @KluczowaDoWykonania )
+	                    set @lZwrot = 1
+					else
+						select @lZwrot = isnull(max(WDP_DozwoloneInneAkcje),1) from cdn.wf_defprocesy with (nolock)
+						where wdp_typobiektu = @TypProcesu and wdp_stan &lt;&gt; 0
+					end
+				end
+			end
+		End
+		-- brak aktywnych definicji procesu dla obiektu
+		else if not exists(Select WFP_ID 
+							From cdn.Wf_procesy with (nolock)
+							join cdn.wf_defprocesy with (nolock) on wfp_WDPID = WDP_ID
+							Where WFP_DataZamkniecia=0 and WFP_OBITyp=@OBITyp and WFP_OBINumer =@OBINumer
+								and WDP_TypObiektu = @TypProcesu and @OBITyp&lt;&gt;0 and WDP_STAN&lt;&gt;0)
+					
+			set @lZwrot = 1
+		else				
+		Begin
+			set @lZwrot = 0		
+			if(len(@ParametrKluczowej)=0)					
+				select top 1 @lZwrot = wfz_id 
+				from cdn.wf_Zadania with (nolock)
+				join cdn.wf_defzadania with (NOLOCK) on wfz_WDSid = wdz_wdsid 
+				left outer join cdn.wf_DefOpiekun with (NOLOCK) on wdz_id=wdo_wdzid
+				join CDN.WF_DefAkcje with (NOLOCK) on WDZ_WDAID = WDA_ID
+				join CDN.WF_Procesy with (nolock) on WFZ_WFPID = WFP_ID
+				join CDN.WF_DEFProcesy with (NOLOCK) on WDZ_WdPID = WDP_ID and WDP_STAN&lt;&gt;0
+				where WFZ_DataZamkniecia=0 and WFP_DataZamkniecia=0  -- aktywne zadanie i aktywny proces
+					and (WDA_KLuczowa = @KluczowaDoWykonania or WDZ_ID = @AkcjaDoWykonania)
+					and WFP_OBITyp=@OBITyp 
+					and WFP_OBINumer =@OBINumer
+					and ( CDN.WFL_JestOpiekunemPracownika (@PrcTyp,@PrcNumer,WDO_OPITyp, WDO_OPINumer, @datawdniach, @datawdniach, @FrSId)&lt;&gt;0 -- TFS 233768 
+						or CDN.WFL_JestOpiekunemPracownika (@PrcTyp,@PrcNumer,WFZ_OPITyp, WFZ_OPINumer, @datawdniach, @datawdniach, @FrSId)&lt;&gt;0 ) -- TFS 233768
+			else
+				select top 1 @lZwrot = wfz_id 
+				from cdn.wf_Zadania with (nolock)
+				join cdn.wf_defzadania with (NOLOCK) on wfz_WDSid = wdz_wdsid 
+				left outer join cdn.wf_DefOpiekun with (NOLOCK) on wdz_id=wdo_wdzid
+				join CDN.WF_DefAkcje with (NOLOCK) on WDZ_WDAID = WDA_ID
+				join CDN.WF_Procesy with (nolock) on WFZ_WFPID = WFP_ID
+				join CDN.WF_DEFProcesy with (NOLOCK) on WDZ_WdPID = WDP_ID and WDP_STAN&lt;&gt;0
+				where WFZ_DataZamkniecia=0 and WFP_DataZamkniecia=0  -- aktywne zadanie i aktywny proces
+					and (WDA_KLuczowa = @KluczowaDoWykonania or WDZ_ID = @AkcjaDoWykonania)
+					and WFP_OBITyp=@OBITyp 
+					and WFP_OBINumer =@OBINumer 
+					and (','+WDA_Parametry+',') like rtrim(@ParametrKLuczowej) 
+					and ( CDN.WFL_JestOpiekunemPracownika (@PrcTyp,@PrcNumer,WDO_OPITyp, WDO_OPINumer, @datawdniach, @datawdniach, @FrSId)&lt;&gt;0 --TFS 233768
+						or CDN.WFL_JestOpiekunemPracownika (@PrcTyp,@PrcNumer,WFZ_OPITyp, WFZ_OPINumer, @datawdniach, @datawdniach, @FrSId)&lt;&gt;0 ) --TFS 233768
+				   
+			if @lZwrot = 0 and @KluczowaDoWykonania &lt;&gt; 0
+			begin
+				if exists(select WDP_ID from cdn.wf_defprocesy with (nolock)
+						join cdn.wf_defakcje with (nolock) on wda_wdpid = wdp_id
+                        left join cdn.wf_defzadania with (nolock) on wdz_wdaid = wda_id and wdz_wdpid = wdp_id
+                        join cdn.wf_procesy with (nolock) on wdp_id = wfp_wdpid and WFP_DataZamkniecia=0 and WFP_OBITyp=@OBITyp and WFP_OBINumer=@OBINumer
+                        where wdp_typobiektu = @TypProcesu and wdp_stan &lt;&gt; 0 and wda_kluczowa = @KluczowaDoWykonania 
+							and isnull(wdz_id,0)&lt;&gt;0)
+					select @lzwrot = 0
+				else
+				begin	
+				if exists(select WDP_ID from cdn.wf_defprocesy with (nolock)
+							join cdn.wf_defakcje with (nolock) on wda_wdpid = wdp_id
+							left join cdn.wf_defzadania with (nolock) on wdz_wdaid = wda_id and wdz_wdpid = wdp_id
+							join cdn.wf_procesy with (nolock) on wdp_id = wfp_wdpid and WFP_DataZamkniecia=0 and WFP_OBITyp=@OBITyp and WFP_OBINumer=@OBINumer
+							where wdp_typobiektu = @TypProcesu and wdp_stan &lt;&gt; 0 and wda_kluczowa = @KluczowaDoWykonania and wdz_id is null)
+										
+					set @lZwrot = 1
+				else
+					select @lZwrot = isnull(max(WDP_DozwoloneInneAkcje),0) from cdn.wf_defprocesy with (nolock) 
+									join cdn.wf_procesy with (nolock) on wdp_id = wfp_wdpid and WFP_DataZamkniecia=0 and WFP_OBITyp=@OBITyp and WFP_OBINumer=@OBINumer
+									left outer join cdn.wf_defakcje with (nolock) on wda_wdpid = wdp_id and wda_kluczowa = @KluczowaDoWykonania
+									where wdp_typobiektu = @TypProcesu and wdp_stan &lt;&gt; 0 and wda_id is null
+				end
+			end					   
+		End
+	END
+	-- brak aktywnych definicji procesu dla zadania @zadanie
+	else if not exists ( Select WFZ_ID 
+						from cdn.wf_zadania with (nolock)
+						join cdn.wf_procesy with (nolock) on WFZ_WFPID = WFP_ID 
+						join CDN.WF_DEFPROCESY with (nolock) on WDP_ID = WFP_WDPID and WDP_STAN&lt;&gt;0			  
+						where WFZ_ID = @Zadanie)
+		set @lZwrot = 1		
+	else
+	BEGIN
+		if(len(@ParametrKluczowej)=0)					
+			select top 1 @lZwrot = wfz_id 
+			from cdn.wf_Zadania 
+			join cdn.wf_defzadania with (NOLOCK) on wfz_WDSid = wdz_wdsid 
+			left outer join cdn.wf_DefOpiekun with (NOLOCK) on wdz_id=wdo_wdzid
+			join CDN.WF_DefAkcje with (NOLOCK) on WDZ_WDAID = WDA_ID
+			join CDN.WF_Procesy with (nolock) on WFZ_WFPID = WFP_ID
+			where WFZ_DataZamkniecia=0 and WFP_DataZamkniecia=0  -- aktywne zadanie i aktywny proces
+				and (WDA_KLuczowa = @KluczowaDoWykonania or WDZ_WDAID = @AkcjaDoWykonania)
+				and WFZ_ID = @Zadanie
+				and ( CDN.WFL_JestOpiekunemPracownika (@PrcTyp,@PrcNumer,WDO_OPITyp, WDO_OPINumer, @datawdniach, @datawdniach, @FrSId)&lt;&gt;0 -- TFS 233768
+				   or CDN.WFL_JestOpiekunemPracownika (@PrcTyp,@PrcNumer,WFZ_OPITyp, WFZ_OPINumer, @datawdniach, @datawdniach, @FrSId)&lt;&gt;0 ) -- TFS 233768
+		else
+			select top 1 @lZwrot = wfz_id 
+			from cdn.wf_Zadania with (nolock)
+			join cdn.wf_defzadania with (NOLOCK) on wfz_WDSid = wdz_wdsid 
+			left outer join cdn.wf_DefOpiekun with (NOLOCK) on wdz_id=wdo_wdzid
+			join CDN.WF_DefAkcje with (NOLOCK) on WDZ_WDAID = WDA_ID
+			join CDN.WF_Procesy with (nolock) on WFZ_WFPID = WFP_ID
+			where WFZ_DataZamkniecia=0 and WFP_DataZamkniecia=0  -- aktywne zadanie i aktywny proces
+				and (WDA_KLuczowa = @KluczowaDoWykonania or WDZ_WDAID = @AkcjaDoWykonania)
+				and WFZ_ID = @Zadanie and (','+WDA_Parametry+',') like rtrim(@ParametrKLuczowej) 
+				and ( CDN.WFL_JestOpiekunemPracownika (@PrcTyp,@PrcNumer,WDO_OPITyp, WDO_OPINumer, @datawdniach, @datawdniach, @FrSId)&lt;&gt;0 -- TFS 233768
+			       or CDN.WFL_JestOpiekunemPracownika (@PrcTyp,@PrcNumer,WFZ_OPITyp, WFZ_OPINumer, @datawdniach, @datawdniach, @FrSId)&lt;&gt;0 ) -- TFS 233768
+	END
+
+
+	return isnull(@lZwrot,0)
+
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

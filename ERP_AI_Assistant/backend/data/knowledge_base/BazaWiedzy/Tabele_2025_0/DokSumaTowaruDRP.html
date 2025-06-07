@@ -1,0 +1,769 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="DokSumaTowaruDRP"></A><PRE>
+          <FONT SIZE="2"><I>/* DokSumaTowaruDRP */</I><BR>
+CREATE    function CDN.DokSumaTowaruDRP(
+@p_gt smallint,
+@p_gf integer,
+@p_gn integer,
+@p_typ integer,
+@p_ZeroweSpr integer,
+@p_NiePotwierdzone integer,
+@p_DataPoczatkowa integer,
+@p_DataKoncowa integer,
+@p_DataBiezaca integer,
+@p_ZakresZamowien integer,
+@p_MagFirma integer = 0,
+@p_MagNumer integer = 0,
+@p_NrSerii varchar(5) = '*****',
+@p_FrsId integer,
+@p_FrsIdW integer,
+@p_TypDok integer,
+@p_ZrdTyp integer,
+@p_ZrdNumer integer,
+@p_FrsIDZrd integer,
+@p_TypDokZrd integer
+)
+
+
+Returns  varchar(128)
+AS
+BEGIN
+  declare @retval varchar(128);
+  declare @opuscic integer;
+  declare @iloscSpr Decimal(28,4);
+  declare @iloscRez Decimal(28,4);
+  declare @ZnakZero varchar(1);
+  declare @statusUsluga integer;
+  declare @ZakresRezReczna integer;
+  declare @ZakresRezAutomat integer;
+  declare @ZakresZam integer;
+  declare @JestNumerSerii integer;
+  declare @lTypRez smallint;
+  declare @lRezWsz smallint;
+
+
+  set @lRezWsz = 0  -- ver3.2
+  set @lTypRez = 1
+  if (@p_MagNumer &lt;&gt; 0)
+    begin
+        set @p_ZrdTyp = 0
+        set @p_ZrdNumer = 0
+        set @p_TypDokZrd = 0
+        set @p_FrsIDZrd = 0
+    end
+
+
+ -- ustalenie zakresu rezerwacji wewnetrzna, zewnetrzna
+  if(@p_ZakresZamowien = 1)   -- zewnetrzne
+    begin
+      set @ZakresRezReczna = 10;
+      set @ZakresRezAutomat = 9;
+      set @ZakresZam              =4;
+    end;
+  else  -- wewnetrzne
+    begin
+      set @ZakresRezReczna = 9;
+      set @ZakresRezAutomat =  5;
+      set @ZakresZam              = 8;
+    end;
+
+
+  -- rozroznienie obiektow, ktore nie maja stanow
+  if(@p_typ=0 or @p_typ=3 or @p_typ=4 or @p_typ=6 or @p_typ is null)
+    begin
+      set @ZnakZero='-';
+      set @statusUsluga=1;
+    end;
+  else
+    begin
+      set @ZnakZero='0';
+      set @statusUsluga=0;
+    end;
+
+   if(@statusUsluga=0)      -- jest to towar (nie np usluga) dla ktorej stany mają sens
+    begin
+       set @opuscic=0;
+
+        if (@p_MagNumer=0) -- wszystkie
+               set @IloscSpr = (select sum(TwZ_IlSpr)
+                    from cdn.TwrZasoby
+                    where TwZ_TwrTyp=@p_gt and TwZ_TwrFirma=@p_gf and TwZ_TwrNumer=@p_gn
+                    and Cdn.DokSprawdzDostepnyMagazyn(@p_FrSID,@p_FrSIDW,@p_typDok, @p_ZrdTyp, @p_ZrdNumer, @p_FrsIDZrd, @p_TypDokZrd, TwZ_MagTyp, TwZ_MAgNumer,0)&gt;0);
+        else
+          if (@p_MagNumer&gt;0) -- wybrany
+               set @IloscSpr = (select sum(TwZ_IlSpr)
+                    from cdn.TwrZasoby
+                    where TwZ_TwrTyp=@p_gt and TwZ_TwrFirma=@p_gf and TwZ_TwrNumer=@p_gn
+                        and TwZ_MagNumer = @p_MagNumer);
+          else -- tabela wybor
+               set @IloscSpr = (select sum(TwZ_IlSpr)
+                    from cdn.TwrZasoby -- , cdn.MagWybor
+                    where TwZ_TwrTyp=@p_gt and TwZ_TwrFirma=@p_gf and TwZ_TwrNumer=@p_gn
+                        --and TwZ_MagNumer = MgW_MagNumer
+                        and exists (Select MgW_MagNumer from cdn.magwybor
+                                where  MgW_SesjaID=-@p_MagFirma and MgW_Watek=-@p_MagNumer and TwZ_MagNumer = MgW_MagNumer)
+                        );
+
+           set @iloscSpr=IsNull(@iloscSpr,0) ;
+
+   if(@p_NrSerii &lt;&gt; '*****')
+        set @JestNumerSerii = 1
+   else
+        set @JestNumerSerii = 0
+
+        if @p_MagNumer&gt;0
+                begin
+                if (@lRezWsz &gt; 0)  -- ver3.2
+                     if @p_NiePotwierdzone = 0
+                        if @JestNumerSerii = 1
+                             if  @p_ZakresZamowien = 0
+                                set @IloscRez =
+                                  (select IsNull(sum(Rez_Ilosc-Rez_Zrealizowano),0)  -- ilosc zarezerwowana minus zrealizowane
+                                     from cdn.Rezerwacje join cdn.zamnag on (Rez_zrdtyp = ZaN_gidtyp AND  rez_zrdfirma = zaN_gidfirma  AND  Rez_zrdnumer = ZaN_gidnumer ), CDN.RezMagazyny
+                                     where rez_gidtyp=2576
+                                     and rez_twrtyp=@p_gt and rez_twrfirma=@p_gf and rez_twrnumer=@p_gn
+                                     and Rez_dataWaznosci&gt;=@p_DataBiezaca      -- data waznosci wieksza niz dzis
+                                     and Rez_DataRealizacji &gt;= @p_DataPoczatkowa
+                                                                 and Rez_DataRealizacji &lt;= @p_DataKoncowa
+
+                                     and rez_aktywna=1
+                                     --and Rez_MagTyp=208 and Rez_MagFirma=@p_MagFirma
+                                     --and Rez_MagNumer=@p_MagNumer
+                                     and Rez_GIDNumer = ReM_RezNumer
+                                     and ReM_RezTyp = Rez_GIDTyp
+                                     and ReM_MagNumer=@p_MagNumer
+                                     and ZaN_ZamSeria = @P_NrSerii
+                                     and ZaN_Stan &gt;= 3 and ZaN_Stan &lt;&gt; 4--TFS 78118/2013.5.0/21.05.2013/ŁM
+                                     and Rez_Ilosc&lt;&gt;0 );  -- aby nie brac pod uwage anulowanych zamowien
+                             else
+                                set @IloscRez =
+                                  (select IsNull(sum(Rez_Ilosc-Rez_Zrealizowano),0)  -- ilosc zarezerwowana minus zrealizowane
+                                     from cdn.Rezerwacje join cdn.zamnag on (Rez_zrdtyp = ZaN_gidtyp AND  rez_zrdfirma = zaN_gidfirma  AND  Rez_zrdnumer = ZaN_gidnumer ), CDN.RezMagazyny
+                                     where rez_gidtyp=2576
+                                    and Rez_twrtyp=@p_gt and rez_twrfirma=@p_gf and rez_twrnumer=@p_gn
+                                and Rez_DataRealizacji &gt;= @p_DataPoczatkowa and Rez_DataRealizacji &lt;= @p_DataKoncowa
+                                    and Rez_DataWaznosci&gt;=@p_DataBiezaca      -- data waznosci wieksza niz dzis
+
+                       --            and Rez_Typ = @lTypRez
+                                    and Rez_Aktywna=1
+                        --           and (Rez_Zrodlo = @ZakresRezReczna or Rez_Zrodlo = @ZakresRezAutomat)
+                                   and ( Rez_Zrodlo = @ZakresRezAutomat)
+        --                           and Rez_MagTyp=208 and Rez_MagFirma=@p_MagFirma
+        --                           and Rez_MagNumer=@p_MagNumer
+                                     and Rez_GIDNumer = ReM_RezNumer
+                                     and ReM_RezTyp = Rez_GIDTyp
+                                     and ReM_MagNumer=@p_MagNumer
+                                   and ZaN_ZamSeria = @P_NrSerii
+                                     and ZaN_Stan &gt;= 3 and ZaN_Stan &lt;&gt; 4--TFS 78118/2013.5.0/21.05.2013/ŁM
+                                   and Rez_Ilosc&lt;&gt;0) ; -- aby nie brac pod uwage anulowanych zamowien
+                        else  -- @JestNumerSerii = 0
+                             if  @p_ZakresZamowien = 0
+                                set @IloscRez =
+                                  (select IsNull(sum(Rez_Ilosc-Rez_Zrealizowano),0)  -- ilosc zarezerwowana minus zrealizowane
+                                     from cdn.Rezerwacje join cdn.zamnag on (Rez_zrdtyp = ZaN_gidtyp AND  rez_zrdfirma = zaN_gidfirma  AND  Rez_zrdnumer = ZaN_gidnumer ), cdn.RezMagazyny                                     
+                                     where rez_gidtyp=2576
+                                     and rez_twrtyp=@p_gt and rez_twrfirma=@p_gf and rez_twrnumer=@p_gn
+                                     and Rez_DataRealizacji &gt;= @p_DataPoczatkowa and Rez_DataRealizacji &lt;= @p_DataKoncowa
+                                     and Rez_dataWaznosci&gt;=@p_DataBiezaca      -- data waznosci wieksza niz dzis
+                                     and Rez_ZrdTyp=960 -- tylko zamówienia
+                                     and rez_aktywna=1
+        --                             and Rez_MagTyp=208 and Rez_MagFirma=@p_MagFirma
+        --                             and Rez_MagNumer=@p_MagNumer
+                                     and Rez_GIDNumer = ReM_RezNumer
+                                     and ReM_RezTyp = Rez_GIDTyp
+                                     and ReM_MagNumer=@p_MagNumer
+                                     and ZaN_Stan &gt;= 3 and ZaN_Stan &lt;&gt; 4--TFS 78118/2013.5.0/21.05.2013/ŁM
+                                     and Rez_Ilosc&lt;&gt;0);  -- aby nie brac pod uwage anulowanych zamowien
+                             else
+                                 set @IloscRez =
+                                  (select IsNull(sum(Rez_Ilosc-Rez_Zrealizowano),0)  -- ilosc zarezerwowana minus zrealizowane
+                                     from cdn.Rezerwacje join cdn.zamnag on (Rez_zrdtyp = ZaN_gidtyp AND  rez_zrdfirma = zaN_gidfirma  AND  Rez_zrdnumer = ZaN_gidnumer ), cdn.RezMagazyny
+                                     where rez_gidtyp=2576
+                                    and Rez_twrtyp=@p_gt and rez_twrfirma=@p_gf and rez_twrnumer=@p_gn
+                                and Rez_DataRealizacji &gt;= @p_DataPoczatkowa and Rez_DataRealizacji &lt;= @p_DataKoncowa
+                                    and Rez_DataWaznosci&gt;=@p_DataBiezaca      -- data waznosci wieksza niz dzis
+                                    and Rez_ZrdTyp=960 -- tylko zamówienia
+                                    and Rez_Aktywna=1
+                        --           and (Rez_Zrodlo = @ZakresRezReczna or Rez_Zrodlo = @ZakresRezAutomat)
+                                   and ( Rez_Zrodlo = @ZakresRezAutomat)
+        --                           and Rez_MagTyp=208 and Rez_MagFirma=@p_MagFirma
+        --                           and Rez_MagNumer=@p_MagNumer
+                                     and Rez_GIDNumer = ReM_RezNumer
+                                     and ReM_RezTyp = Rez_GIDTyp
+                                     and ReM_MagNumer=@p_MagNumer
+                                     and ZaN_Stan &gt;= 3 and ZaN_Stan &lt;&gt; 4--TFS 78118/2013.5.0/21.05.2013/ŁM
+                                   and Rez_Ilosc&lt;&gt;0) ; -- aby nie brac pod uwage anulowanych zamowien
+                     else  --niepotwierdzone = 1
+                       if  @p_ZakresZamowien = 0
+                           set @IloscRez =
+                           (select SUM(CASE WHEN (Rez_Zrealizowano IS NULL and ZaN_Stan&lt;&gt; 5) THEN ZaE_Ilosc ELSE (Rez_Ilosc - REZ_Zrealizowano) END)
+                            from cdn.ZamElem join cdn.ZamNag on (zae_GidTyp = zan_GidTyp and zae_GIDFirma = zan_GidFirma and zae_GIDNumer = zan_GidNumer) LEFT OUTER JOIN
+                                   cdn.Rezerwacje ON (Rez_zrdtyp = ZaE_gidtyp AND  rez_zrdfirma = zae_gidfirma  AND  Rez_zrdnumer = ZaE_gidnumer AND Rez_zrdlp = zae_GIDlp)
+                            where ZaE_TwrTyp = @p_gt and ZaE_twrfirma=@p_gf and ZaE_twrnumer=@p_gn and
+                                                                        (case when      Rez_GIDTyp is not null and
+                                                                                                Rez_DataRealizacji &gt;= @p_DataPoczatkowa and
+                                                                                                Rez_DataRealizacji &lt;= @p_DataKoncowa    then 1
+                                                                                when    Rez_GIDTyp is  null and
+                                                                    ZaN_DataRealizacji &gt;= @p_DataPoczatkowa and
+                                                                                ZaN_DataRealizacji &lt;= @p_DataKoncowa and
+                                                                                                Zan_DataWaznosci &gt;= @p_dataBiezaca then 1
+                                                                                else 0
+                                                                        end )=1
+                                                                 and ZaN_Stan &gt;=2 and ZaN_Stan&lt;=5 and Zan_ZamTyp = 1280
+                                     and ZaN_DataRealizacji &gt;=@p_DataPoczatkowa and ZaN_DataRealizacji &lt;=@p_DataKoncowa and ZaN_DataWaznosci &gt;=@p_dataBiezaca --TID:143581
+                                     and (Rez_DataWaznosci&gt;=@p_databiezaca or Rez_datawaznosci is null)
+                                     and (rez_aktywna=1 or rez_aktywna is null)
+                                     and (Rez_GIDTyp is not null and
+                                            exists (select * from cdn.RezMagazyny
+                                                    where Rez_GIDTyp = Rem_RezTyp and Rez_GIDNumer = ReM_RezNumer and ReM_MagNumer = @p_MagNumer)
+                                           or Rez_GIDTyp is null and ZaE_MagFirma = @p_MagFirma and ZaE_MagNumer = @p_MagNumer
+                                          )
+                                     and ( @JestNumerSerii = 0 OR ZaN_ZamSeria = @P_NrSerii )
+                                     and (Rez_ilosc&lt;&gt;0 or Rez_ilosc is null)
+                                       );
+
+                       else
+                           set @IloscRez =
+                           (select SUM(CASE WHEN (Rez_Zrealizowano IS NULL and ZaN_Stan&lt;&gt; 5) THEN ZaE_Ilosc ELSE (Rez_Ilosc - REZ_Zrealizowano) END)
+                            from cdn.ZamElem join cdn.ZamNag on (zae_GidTyp = zan_GidTyp and zae_GIDFirma = zan_GidFirma and zae_GIDNumer = zan_GidNumer) LEFT OUTER JOIN
+                                   cdn.Rezerwacje ON (Rez_zrdtyp = ZaE_gidtyp AND  rez_zrdfirma = zae_gidfirma  AND  Rez_zrdnumer = ZaE_gidnumer AND Rez_zrdlp = zae_GIDlp)
+                            where ZaE_TwrTyp = @p_gt and ZaE_twrfirma=@p_gf and ZaE_twrnumer=@p_gn and
+                                                                (case when      Rez_GIDTyp is not null and
+                                                                                                Rez_DataRealizacji &gt;= @p_DataPoczatkowa and
+                                                                                                Rez_DataRealizacji &lt;= @p_DataKoncowa    then 1
+                                                                                when    Rez_GIDTyp is  null and
+                                                                    ZaN_DataRealizacji &gt;= @p_DataPoczatkowa and
+                                                                                ZaN_DataRealizacji &lt;= @p_DataKoncowa and
+                                                                                                Zan_DataWaznosci &gt;= @p_dataBiezaca then 1
+                                                                                else 0
+                                                                        end )=1
+                                 and ZaN_Rodzaj = (@ZakresZam)  and
+                                      ZaN_Stan &gt;=2 and ZaN_Stan&lt;=5 and Zan_ZamTyp = 1280
+                                    and ZaN_DataRealizacji &gt;=@p_DataPoczatkowa and ZaN_DataRealizacji &lt;=@p_DataKoncowa and ZaN_DataWaznosci &gt;=@p_dataBiezaca --TID:143581
+                                     and (Rez_DataWaznosci&gt;=@p_databiezaca or Rez_datawaznosci is null)
+                                     and (rez_aktywna=1 or rez_aktywna is null)
+                                     and (Rez_GIDTyp is not null and
+                                            exists (select * from cdn.RezMagazyny
+                                                    where Rez_GIDTyp = Rem_RezTyp and Rez_GIDNumer = ReM_RezNumer and ReM_MagNumer = @p_MagNumer)
+                                           or Rez_GIDTyp is null and ZaE_MagFirma = @p_MagFirma and ZaE_MagNumer = @p_MagNumer
+                                          )
+        --                             and Rez_Typ = @lTypRez
+        --                            and Rez_MagTyp=208 and Rez_MagFirma=@p_MagFirma
+        --                             and Rez_MagNumer=@p_MagNumer
+
+                                     and( @JestNumerSerii = 0 OR ZaN_ZamSeria = @P_NrSerii )
+                                     and (Rez_ilosc&lt;&gt;0 or Rez_ilosc is null)
+                                       );
+                else
+                -- @lRezWsz = 0  -- ver3.2
+                     if @p_NiePotwierdzone = 0
+                        if @JestNumerSerii = 1
+                             if  @p_ZakresZamowien = 0
+                                set @IloscRez =
+                                  (select IsNull(sum(Rez_Ilosc-Rez_Zrealizowano),0)  -- ilosc zarezerwowana minus zrealizowane
+                                     from cdn.Rezerwacje join cdn.zamnag on (Rez_zrdtyp = ZaN_gidtyp AND  rez_zrdfirma = zaN_gidfirma  AND  Rez_zrdnumer = ZaN_gidnumer )
+                                     where rez_gidtyp=2576
+                                     and rez_twrtyp=@p_gt and rez_twrfirma=@p_gf and rez_twrnumer=@p_gn
+                                     and Rez_DataRealizacji &gt;= @p_DataPoczatkowa and Rez_DataRealizacji &lt;= @p_DataKoncowa
+                                     and Rez_dataWaznosci&gt;=@p_DataBiezaca      -- data waznosci wieksza niz dzis
+
+                                     and rez_aktywna=1
+                                     --and Rez_MagTyp=208 and Rez_MagFirma=@p_MagFirma
+                                     --and Rez_MagNumer=@p_MagNumer
+                                     and ReZ_MagNumer=@p_MagNumer
+                                     and ZaN_ZamSeria = @P_NrSerii
+                                     and ZaN_Stan &gt;= 3 and ZaN_Stan &lt;&gt; 4--TFS 78118/2013.5.0/21.05.2013/ŁM
+                                     and Rez_Ilosc&lt;&gt;0 );  -- aby nie brac pod uwage anulowanych zamowien
+                             else
+                                set @IloscRez =
+                                  (select IsNull(sum(Rez_Ilosc-Rez_Zrealizowano),0)  -- ilosc zarezerwowana minus zrealizowane
+                                     from cdn.Rezerwacje join cdn.zamnag on (Rez_zrdtyp = ZaN_gidtyp AND  rez_zrdfirma = zaN_gidfirma  AND  Rez_zrdnumer = ZaN_gidnumer )
+                                     where rez_gidtyp=2576
+                                    and Rez_twrtyp=@p_gt and rez_twrfirma=@p_gf and rez_twrnumer=@p_gn
+                                and Rez_DataRealizacji &gt;= @p_DataPoczatkowa and Rez_DataRealizacji &lt;= @p_DataKoncowa
+                                    and Rez_DataWaznosci&gt;=@p_DataBiezaca      -- data waznosci wieksza niz dzis
+                                    and Rez_Aktywna=1
+                        --           and (Rez_Zrodlo = @ZakresRezReczna or Rez_Zrodlo = @ZakresRezAutomat)
+                                   and ( Rez_Zrodlo = @ZakresRezAutomat)
+        --                           and Rez_MagTyp=208 and Rez_MagFirma=@p_MagFirma
+        --                           and Rez_MagNumer=@p_MagNumer
+                                     and ReZ_MagNumer=@p_MagNumer
+                                   and ZaN_ZamSeria = @P_NrSerii
+                                     and ZaN_Stan &gt;= 3 and ZaN_Stan &lt;&gt; 4--TFS 78118/2013.5.0/21.05.2013/ŁM
+                                   and Rez_Ilosc&lt;&gt;0) ; -- aby nie brac pod uwage anulowanych zamowien
+                        else  -- @JestNumerSerii = 0
+                             if  @p_ZakresZamowien = 0
+                                set @IloscRez =
+                                  (select IsNull(sum(Rez_Ilosc-Rez_Zrealizowano),0)  -- ilosc zarezerwowana minus zrealizowane
+                                     from cdn.Rezerwacje
+                                     join cdn.zamnag on (Rez_zrdtyp = ZaN_gidtyp AND  rez_zrdfirma = zaN_gidfirma  AND  Rez_zrdnumer = ZaN_gidnumer )
+                                     where rez_gidtyp=2576
+                                     and rez_twrtyp=@p_gt and rez_twrfirma=@p_gf and rez_twrnumer=@p_gn
+                                     and Rez_DataRealizacji &gt;= @p_DataPoczatkowa and Rez_DataRealizacji &lt;= @p_DataKoncowa
+                                     and Rez_dataWaznosci&gt;=@p_DataBiezaca      -- data waznosci wieksza niz dzis
+                                     and Rez_ZrdTyp=960 -- tylko zamówienia
+                                     and rez_aktywna=1
+        --                             and Rez_MagTyp=208 and Rez_MagFirma=@p_MagFirma
+        --                             and Rez_MagNumer=@p_MagNumer
+                                     and ReZ_MagNumer=@p_MagNumer
+                                     and ZaN_Stan &gt;= 3 and ZaN_Stan &lt;&gt; 4--TFS 78118/2013.5.0/21.05.2013/ŁM
+                                     and Rez_Ilosc&lt;&gt;0);  -- aby nie brac pod uwage anulowanych zamowien
+                             else
+                                 set @IloscRez =
+                                  (select IsNull(sum(Rez_Ilosc-Rez_Zrealizowano),0)  -- ilosc zarezerwowana minus zrealizowane
+                                     from cdn.Rezerwacje
+                                     join cdn.zamnag on (Rez_zrdtyp = ZaN_gidtyp AND  rez_zrdfirma = zaN_gidfirma  AND  Rez_zrdnumer = ZaN_gidnumer )
+                                     where rez_gidtyp=2576
+                                    and Rez_twrtyp=@p_gt and rez_twrfirma=@p_gf and rez_twrnumer=@p_gn
+                                and Rez_DataRealizacji &gt;= @p_DataPoczatkowa and Rez_DataRealizacji &lt;= @p_DataKoncowa
+                                    and Rez_DataWaznosci&gt;=@p_DataBiezaca      -- data waznosci wieksza niz dzis
+                                    and Rez_ZrdTyp=960 -- tylko zamówienia
+                                    and Rez_Aktywna=1
+                        --           and (Rez_Zrodlo = @ZakresRezReczna or Rez_Zrodlo = @ZakresRezAutomat)
+                                   and ( Rez_Zrodlo = @ZakresRezAutomat)
+        --                           and Rez_MagTyp=208 and Rez_MagFirma=@p_MagFirma
+        --                           and Rez_MagNumer=@p_MagNumer
+                                     and ReZ_MagNumer=@p_MagNumer
+                                     and ZaN_Stan &gt;= 3 and ZaN_Stan &lt;&gt; 4--TFS 78118/2013.5.0/21.05.2013/ŁM
+                                   and Rez_Ilosc&lt;&gt;0) ; -- aby nie brac pod uwage anulowanych zamowien
+                     else  --niepotwierdzone = 1
+                       if  @p_ZakresZamowien = 0
+                           set @IloscRez =
+                           (select SUM(CASE WHEN (Rez_Zrealizowano IS NULL and ZaN_Stan&lt;&gt; 5) THEN ZaE_Ilosc ELSE (Rez_Ilosc - REZ_Zrealizowano) END)
+                            from cdn.ZamElem join cdn.ZamNag on (zae_GidTyp = zan_GidTyp and zae_GIDFirma = zan_GidFirma and zae_GIDNumer = zan_GidNumer) LEFT OUTER JOIN
+                                   cdn.Rezerwacje ON (Rez_zrdtyp = ZaE_gidtyp AND  rez_zrdfirma = zae_gidfirma  AND  Rez_zrdnumer = ZaE_gidnumer AND Rez_zrdlp = zae_GIDlp)
+                            where ZaE_TwrTyp = @p_gt and ZaE_twrfirma=@p_gf and ZaE_twrnumer=@p_gn
+                                                                and
+                                                                (case when      Rez_GIDTyp is not null and
+                                                                                                Rez_DataRealizacji &gt;= @p_DataPoczatkowa and
+                                                                                                Rez_DataRealizacji &lt;= @p_DataKoncowa    then 1
+                                                                                when    Rez_GIDTyp is  null and
+                                                                    ZaN_DataRealizacji &gt;= @p_DataPoczatkowa and
+                                                                                ZaN_DataRealizacji &lt;= @p_DataKoncowa and
+                                                                                                Zan_DataWaznosci &gt;= @p_dataBiezaca then 1
+                                                                                else 0
+                                                                        end )=1
+                                     and ZaN_Stan &gt;=2 and ZaN_Stan&lt;=5 and Zan_ZamTyp = 1280
+                                     and ZaN_DataRealizacji &gt;=@p_DataPoczatkowa and ZaN_DataRealizacji &lt;=@p_DataKoncowa and ZaN_DataWaznosci &gt;=@p_dataBiezaca --TID:143581
+                                     and (Rez_DataWaznosci&gt;=@p_databiezaca or Rez_datawaznosci is null)
+                                     and (rez_aktywna=1 or rez_aktywna is null)
+                                     and (Rez_GIDTyp is not null and Rez_MagNumer=@p_MagNumer
+                                           or Rez_GIDTyp is null and ZaE_MagFirma = @p_MagFirma and ZaE_MagNumer = @p_MagNumer
+                                          )
+                                     and ( @JestNumerSerii = 0 OR ZaN_ZamSeria = @P_NrSerii )
+                                     and ((Rez_ilosc&lt;&gt;0 AND NOT(ZaN_Rodzaj = 8 AND Rez_Zrodlo=5 AND Rez_GIDTyp = 2576 AND ZaN_ZaMTyp=1280)) or Rez_ilosc is null) --TID:135612
+                                       );
+
+                       else
+                           set @IloscRez =
+                           (select SUM(CASE WHEN (Rez_Zrealizowano IS NULL and ZaN_Stan&lt;&gt; 5) THEN ZaE_Ilosc ELSE (Rez_Ilosc - REZ_Zrealizowano) END)
+                            from cdn.ZamElem join cdn.ZamNag on (zae_GidTyp = zan_GidTyp and zae_GIDFirma = zan_GidFirma and zae_GIDNumer = zan_GidNumer) LEFT OUTER JOIN
+                                   cdn.Rezerwacje ON (Rez_zrdtyp = ZaE_gidtyp AND  rez_zrdfirma = zae_gidfirma  AND  Rez_zrdnumer = ZaE_gidnumer AND Rez_zrdlp = zae_GIDlp)
+                            where ZaE_TwrTyp = @p_gt and ZaE_twrfirma=@p_gf and ZaE_twrnumer=@p_gn
+                                                                        and
+                                                                        (case when      Rez_GIDTyp is not null and
+                                                                                                Rez_DataRealizacji &gt;= @p_DataPoczatkowa and
+                                                                                                Rez_DataRealizacji &lt;= @p_DataKoncowa    then 1
+                                                                                when    Rez_GIDTyp is  null and
+                                                                    ZaN_DataRealizacji &gt;= @p_DataPoczatkowa and
+                                                                                ZaN_DataRealizacji &lt;= @p_DataKoncowa and
+                                                                                                Zan_DataWaznosci &gt;= @p_dataBiezaca then 1
+                                                                                else 0
+                                                                        end )=1
+
+                                         and
+                                      ZaN_Rodzaj = (@ZakresZam)  and
+                                      ZaN_Stan &gt;=2 and ZaN_Stan&lt;=5 and Zan_ZamTyp = 1280
+                                     and ZaN_DataRealizacji &gt;=@p_DataPoczatkowa and ZaN_DataRealizacji &lt;=@p_DataKoncowa and ZaN_DataWaznosci &gt;=@p_dataBiezaca --TID:143581
+                                     and (Rez_DataWaznosci&gt;=@p_databiezaca or Rez_datawaznosci is null)
+                                     and (rez_aktywna=1 or rez_aktywna is null)
+
+                                     and (Rez_GIDTyp is not null and Rez_MagNumer=@p_MagNumer
+                                           or Rez_GIDTyp is null and ZaE_MagFirma = @p_MagFirma and ZaE_MagNumer = @p_MagNumer
+                                          )
+        --                             and Rez_Typ = @lTypRez
+        --                            and Rez_MagTyp=208 and Rez_MagFirma=@p_MagFirma
+        --                             and Rez_MagNumer=@p_MagNumer
+
+                                     and( @JestNumerSerii = 0 OR ZaN_ZamSeria = @P_NrSerii )
+                                     and ((Rez_ilosc&lt;&gt;0 AND NOT(ZaN_Rodzaj = 8 AND Rez_Zrodlo=5 AND Rez_GIDTyp = 2576 AND ZaN_ZaMTyp=1280)) or Rez_ilosc is null) --TID:135612
+                                       );
+                end;
+        else
+            if(@p_MagNumer=0)  --                    ze wszystkich magazynow
+                    if @p_NiePotwierdzone = 0
+                        if @JestNumerSerii = 1
+                              if  @p_ZakresZamowien = 0
+                                set @IloscRez =
+                                    (select IsNull(sum(Rez_Ilosc-Rez_Zrealizowano),0)  -- ilosc zarezerwowana minus zrealizowane
+                                     from cdn.Rezerwacje join cdn.zamnag on (Rez_zrdtyp = ZaN_gidtyp AND  rez_zrdfirma = zaN_gidfirma  AND  Rez_zrdnumer = ZaN_gidnumer )
+                                     where rez_gidtyp=2576
+                                     and rez_twrtyp=@p_gt and rez_twrfirma=@p_gf and rez_twrnumer=@p_gn
+                                         and Rez_DataRealizacji &gt;= @p_DataPoczatkowa and Rez_DataRealizacji &lt;= @p_DataKoncowa
+                                     and Rez_dataWaznosci&gt;=@p_DataBiezaca      -- data waznosci wieksza niz dzis
+                                     and rez_aktywna=1
+                                     AND( @p_MagFirma &gt;=0 OR ( Rez_MagFirma = (- @p_MagFirma) AND Rez_MagNumer=0)   )    -- ewentualni globalne
+                                     and ZaN_ZamSeria = @P_NrSerii
+                                     and ZaN_Stan &gt;= 3 and ZaN_Stan &lt;&gt; 4--TFS 78118/2013.5.0/21.05.2013/ŁM
+                                     and Rez_Ilosc&lt;&gt;0
+                                     and exists ( select *
+                                            from cdn.Rezmagazyny, CDN.DokDostepneMagazyny(@p_FrSID,@p_FrSIDW,@p_TypDok, @p_ZrdTyp, @p_ZrdNumer, @p_FrsIDZrd, @p_TypDokZrd)
+                                            where   ReZ_GIDNumer = ReM_RezNumer
+                                            and ReM_RezTyp=Rez_GIDTyp
+                                            and ReM_MagNumer = Mag_GIDNumer
+                                            )
+                                    );  -- aby nie brac pod uwage anulowanych zamowien
+                                else
+                                 set @IloscRez =
+                                    (select IsNull(sum(Rez_Ilosc-Rez_Zrealizowano),0)  -- ilosc zarezerwowana minus zrealizowane
+                                     from cdn.Rezerwacje join cdn.zamnag on (Rez_zrdtyp = ZaN_gidtyp AND  rez_zrdfirma = zaN_gidfirma  AND  Rez_zrdnumer = ZaN_gidnumer )
+                                     where rez_gidtyp=2576
+                                     and Rez_twrtyp=@p_gt and rez_twrfirma=@p_gf and rez_twrnumer=@p_gn
+                                         and Rez_DataRealizacji &gt;= @p_DataPoczatkowa and Rez_DataRealizacji &lt;= @p_DataKoncowa
+                                    and Rez_DataWaznosci&gt;=@p_DataBiezaca      -- data waznosci wieksza niz dzis
+                                    and Rez_Aktywna=1
+                        --           and (Rez_Zrodlo = @ZakresRezReczna or Rez_Zrodlo = @ZakresRezAutomat)
+                                    and ( Rez_Zrodlo = @ZakresRezAutomat)
+                                    AND( @p_MagFirma &gt;=0 OR ( Rez_MagFirma = (- @p_MagFirma) AND Rez_MagNumer=0)   )    -- ewentualni globalne
+                                    and ZaN_ZamSeria = @P_NrSerii
+                                     and ZaN_Stan &gt;= 3 and ZaN_Stan &lt;&gt; 4--TFS 78118/2013.5.0/21.05.2013/ŁM
+                                    and Rez_Ilosc&lt;&gt;0
+                                    and exists ( select *
+                                            from cdn.Rezmagazyny, CDN.DokDostepneMagazyny(@p_FrSID,@p_FrSIDW,@p_TypDok, @p_ZrdTyp, @p_ZrdNumer, @p_FrsIDZrd, @p_TypDokZrd)
+                                            where   ReZ_GIDNumer = ReM_RezNumer
+                                                and ReM_RezTyp=Rez_GIDTyp
+                                                and ReM_MagNumer = Mag_GIDNumer
+                                                )
+                                    ) ; -- aby nie brac pod uwage anulowanych zamowien
+                        else  -- brak numeru serii
+                              if  @p_ZakresZamowien = 0
+                                set @IloscRez =
+                                    (select IsNull(sum(Rez_Ilosc-Rez_Zrealizowano),0)  -- ilosc zarezerwowana minus zrealizowane
+                                     from cdn.Rezerwacje
+                                     join cdn.zamnag on (Rez_zrdtyp = ZaN_gidtyp AND  rez_zrdfirma = zaN_gidfirma  AND  Rez_zrdnumer = ZaN_gidnumer )
+                                     where rez_gidtyp=2576
+                                     and rez_twrtyp=@p_gt and rez_twrfirma=@p_gf and rez_twrnumer=@p_gn
+                                         and Rez_DataRealizacji &gt;= @p_DataPoczatkowa and Rez_DataRealizacji &lt;= @p_DataKoncowa
+                                     and Rez_dataWaznosci&gt;=@p_DataBiezaca      -- data waznosci wieksza niz dzis
+                                     and Rez_ZrdTyp=960 -- tylko zamówienia
+                                     and rez_aktywna=1
+                                     AND( @p_MagFirma &gt;=0 OR ( Rez_MagFirma = (- @p_MagFirma) AND Rez_MagNumer=0)   )    -- ewentualni globalne
+                                     and Rez_Ilosc&lt;&gt;0
+                                     and ZaN_Stan &gt;= 3 and ZaN_Stan &lt;&gt; 4--TFS 78118/2013.5.0/21.05.2013/ŁM
+                                     and exists ( select *
+                                        from cdn.Rezmagazyny, CDN.DokDostepneMagazyny(@p_FrSID,@p_FrSIDW,@p_TypDok, @p_ZrdTyp, @p_ZrdNumer, @p_FrsIDZrd, @p_TypDokZrd)
+                                        where   ReZ_GIDNumer = ReM_RezNumer
+                                        and ReM_RezTyp=Rez_GIDTyp
+                                        and ReM_MagNumer = Mag_GIDNumer
+                                                )
+                                    );  -- aby nie brac pod uwage anulowanych zamowien
+                              else
+                                 set @IloscRez =
+                                    (select IsNull(sum(Rez_Ilosc-Rez_Zrealizowano),0)  -- ilosc zarezerwowana minus zrealizowane
+                                     from cdn.Rezerwacje
+                                     join cdn.zamnag on (Rez_zrdtyp = ZaN_gidtyp AND  rez_zrdfirma = zaN_gidfirma  AND  Rez_zrdnumer = ZaN_gidnumer )
+                                     where rez_gidtyp=2576
+                                    and Rez_twrtyp=@p_gt and rez_twrfirma=@p_gf and rez_twrnumer=@p_gn
+                                        and Rez_DataRealizacji &gt;= @p_DataPoczatkowa and Rez_DataRealizacji &lt;= @p_DataKoncowa
+                                    and Rez_DataWaznosci&gt;=@p_DataBiezaca      -- data waznosci wieksza niz dzis
+                                    and Rez_ZrdTyp=960 -- tylko zamówienia
+                                    and Rez_Aktywna=1
+                                    and ZaN_Stan &gt;= 3 and ZaN_Stan &lt;&gt; 4--TFS 78118/2013.5.0/21.05.2013/ŁM
+                        --           and (Rez_Zrodlo = @ZakresRezReczna or Rez_Zrodlo = @ZakresRezAutomat)
+                                    and ( Rez_Zrodlo = @ZakresRezAutomat)
+                                    AND( @p_MagFirma &gt;=0 OR ( Rez_MagFirma = (- @p_MagFirma) AND Rez_MagNumer=0)   )    -- ewentualni globalne
+                                    and Rez_Ilosc&lt;&gt;0
+                                    and exists ( select *
+                                        from cdn.Rezmagazyny, CDN.DokDostepneMagazyny(@p_FrSID,@p_FrSIDW,@p_TypDok, @p_ZrdTyp, @p_ZrdNumer, @p_FrsIDZrd, @p_TypDokZrd)
+                                        where   ReZ_GIDNumer = ReM_RezNumer
+                                            and ReM_RezTyp=Rez_GIDTyp
+                                            and ReM_MagNumer = Mag_GIDNumer
+                                                )
+                                    ) ; -- aby nie brac pod uwage anulowanych zamowien
+                    else  -- niepotwierdzone
+                         if  @p_ZakresZamowien = 0
+                           set @IloscRez =
+                                (select SUM(CASE WHEN (Rez_Zrealizowano IS NULL and ZaN_Stan&lt;&gt; 5) THEN ZaE_Ilosc ELSE (Rez_Ilosc - REZ_Zrealizowano) END)
+                                from cdn.ZamElem join cdn.ZamNag on (zae_GidTyp = zan_GidTyp and zae_GIDFirma = zan_GidFirma and zae_GIDNumer = zan_GidNumer) LEFT OUTER JOIN
+                                   cdn.Rezerwacje ON (Rez_zrdtyp = ZaE_gidtyp AND  rez_zrdfirma = zae_gidfirma  AND  Rez_zrdnumer = ZaE_gidnumer AND Rez_zrdlp = zae_GIDlp)
+                                where ZaE_TwrTyp = @p_gt and ZaE_twrfirma=@p_gf and ZaE_twrnumer=@p_gn and
+                                                                        (case when      Rez_GIDTyp is not null and
+                                                                                                Rez_DataRealizacji &gt;= @p_DataPoczatkowa and
+                                                                                                Rez_DataRealizacji &lt;= @p_DataKoncowa    then 1
+                                                                                when    Rez_GIDTyp is  null and
+                                                                    ZaN_DataRealizacji &gt;= @p_DataPoczatkowa and
+                                                                                ZaN_DataRealizacji &lt;= @p_DataKoncowa and
+                                                                                                Zan_DataWaznosci &gt;= @p_dataBiezaca then 1
+                                                                                else 0
+                                                                        end )=1
+                                                                                and
+                                      ZaN_Stan &gt;=2 and ZaN_Stan&lt;=5 and Zan_ZamTyp = 1280
+                                     and ZaN_DataRealizacji &gt;=@p_DataPoczatkowa and ZaN_DataRealizacji &lt;=@p_DataKoncowa and ZaN_DataWaznosci &gt;=@p_dataBiezaca --TID:143581
+                                     and (Rez_DataWaznosci&gt;=@p_databiezaca or Rez_datawaznosci is null)
+                                     and ((rez_aktywna=1 AND NOT(ZaN_Rodzaj = 8 AND Rez_Zrodlo=5 AND Rez_GIDTyp = 2576 AND ZaN_ZaMTyp=1280)) or rez_aktywna is null) --TID:135612
+                                    AND( @p_MagFirma &gt;=0
+                                            OR ( Rez_MagFirma is null or Rez_MagFirma = (- @p_MagFirma) AND Rez_MagNumer=0)
+                                        )    -- ewentualni globalne
+                                     and( @JestNumerSerii = 0 OR ZaN_ZamSeria = @P_NrSerii )
+                                     and (Rez_ilosc&lt;&gt;0 or Rez_ilosc is null)
+                                     and (Rez_GIDTyp is  null or  exists ( select *
+                                                                            from cdn.Rezmagazyny, CDN.DokDostepneMagazyny(@p_FrSID,@p_FrSIDW,@p_TypDok, @p_ZrdTyp, @p_ZrdNumer, @p_FrsIDZrd, @p_TypDokZrd)
+                                                                            where   ReZ_GIDNumer = ReM_RezNumer
+                                                                            and ReM_RezTyp=Rez_GIDTyp
+                                                                            and ReM_MagNumer = Mag_GIDNumer
+                                                                        )
+                                        )
+                                      );
+
+                       else
+                           set @IloscRez =
+                           (select SUM(CASE WHEN (Rez_Zrealizowano IS NULL and ZaN_Stan&lt;&gt; 5) THEN ZaE_Ilosc ELSE (Rez_Ilosc - REZ_Zrealizowano) END)
+                            from cdn.ZamElem join cdn.ZamNag on (zae_GidTyp = zan_GidTyp and zae_GIDFirma = zan_GidFirma and zae_GIDNumer = zan_GidNumer) LEFT OUTER JOIN
+                                   cdn.Rezerwacje ON (Rez_zrdtyp = ZaE_gidtyp AND  rez_zrdfirma = zae_gidfirma  AND  Rez_zrdnumer = ZaE_gidnumer AND Rez_zrdlp = zae_GIDlp)
+                            where ZaE_TwrTyp = @p_gt and ZaE_twrfirma=@p_gf and ZaE_twrnumer=@p_gn and
+                                                                        (case when      Rez_GIDTyp is not null and
+                                                                                                Rez_DataRealizacji &gt;= @p_DataPoczatkowa and
+                                                                                                Rez_DataRealizacji &lt;= @p_DataKoncowa    then 1
+                                                                                when    Rez_GIDTyp is  null and
+                                                                    ZaN_DataRealizacji &gt;= @p_DataPoczatkowa and
+                                                                                ZaN_DataRealizacji &lt;= @p_DataKoncowa and
+                                                                                                Zan_DataWaznosci &gt;= @p_dataBiezaca then 1
+                                                                                else 0
+                                                                        end )=1
+                                                                         and
+                                      ZaN_Rodzaj = (@ZakresZam)  and
+                                      ZaN_Stan &gt;=2 and ZaN_Stan&lt;=5 and Zan_ZamTyp = 1280
+                                     and ZaN_DataRealizacji &gt;=@p_DataPoczatkowa and ZaN_DataRealizacji &lt;=@p_DataKoncowa and ZaN_DataWaznosci &gt;=@p_dataBiezaca --TID:143581
+                                     and (Rez_DataWaznosci&gt;=@p_databiezaca or Rez_datawaznosci is null)
+                                     and (rez_aktywna=1 or rez_aktywna is null)
+                                    AND( @p_MagFirma &gt;=0
+                                            OR ( Rez_MagFirma is null or Rez_MagFirma = (- @p_MagFirma) AND Rez_MagNumer=0)
+                                        )    -- ewentualni globalne
+                                     and( @JestNumerSerii = 0 OR ZaN_ZamSeria = @P_NrSerii )
+                                     and ((Rez_ilosc&lt;&gt;0 AND NOT(ZaN_Rodzaj = 8 AND Rez_Zrodlo=5 AND Rez_GIDTyp = 2576 AND ZaN_ZaMTyp=1280)) or Rez_ilosc is null) --TID:135612
+                                     and (Rez_GIDTyp is  null or  exists ( select *
+                                                                            from cdn.Rezmagazyny, CDN.DokDostepneMagazyny(@p_FrSID,@p_FrSIDW,@p_TypDok, @p_ZrdTyp, @p_ZrdNumer, @p_FrsIDZrd, @p_TypDokZrd)
+                                                                            where   ReZ_GIDNumer = ReM_RezNumer
+                                                                            and ReM_RezTyp=Rez_GIDTyp
+                                                                            and ReM_MagNumer = Mag_GIDNumer
+                                                                        )
+                                        )
+                                       );
+
+
+            else --                Informacja o magazynach w tabeli pomocniczej
+                    if @p_NiePotwierdzone = 0
+                        if @JestNumerSerii = 1
+                              if  @p_ZakresZamowien = 0
+                                set @IloscRez =
+                                  (select IsNull(sum(Rez_Ilosc-Rez_Zrealizowano),0)  -- ilosc zarezerwowana minus zrealizowane
+                                     from cdn.Rezerwacje join cdn.zamnag on (Rez_zrdtyp = ZaN_gidtyp AND  rez_zrdfirma = zaN_gidfirma  AND  Rez_zrdnumer = ZaN_gidnumer )
+                                                                                                --                              cdn.MagWybor,
+                                                                --                                                              cdn.RezMagazyny
+                                     where rez_gidtyp=2576
+                                     and rez_twrtyp=@p_gt and rez_twrfirma=@p_gf and rez_twrnumer=@p_gn
+                                         and Rez_DataRealizacji &gt;= @p_DataPoczatkowa and Rez_DataRealizacji &lt;= @p_DataKoncowa
+                                     and Rez_dataWaznosci&gt;=@p_DataBiezaca      -- data waznosci wieksza niz dzis
+                                     and rez_aktywna=1
+                                     -- and rez_MagTyp=208 and rez_MagFirma=MgW_MagFirma and rez_MagNumer=MgW_MagNumer
+                                     -- and MgW_SesjaID=-@p_MagFirma and MgW_Watek=-@p_MagNumer
+                                     --and Rez_GIDNumer = ReM_RezNumer
+                                     --and ReM_RezTyp = Rez_GIDTyp
+                                     --and ReM_MagNumer=@p_MagNumer
+                                     and ZaN_ZamSeria = @P_NrSerii
+                                     and ZaN_Stan &gt;= 3 and ZaN_Stan &lt;&gt; 4--TFS 78118/2013.5.0/21.05.2013/ŁM
+                                     and Rez_Ilosc&lt;&gt;0
+                                                                         and exists ( select * from
+                                                                                                cdn.Rezmagazyny
+                                                                                                join cdn.MagWybor on ReM_MagTyp=208 and ReM_MagNumer=MgW_MagNumer
+                                                                                                where
+                                                                                                Rez_GIDTyp=ReM_RezTyp and ReZ_GIDNumer=ReM_RezNumer and
+                                                                                                MgW_SesjaID=-@p_MagFirma and MgW_Watek=-@p_MagNumer )
+
+                                     );  -- aby nie brac pod uwage anulowanych zamowien
+                             else
+                                 set @IloscRez =
+                                  (select IsNull(sum(Rez_Ilosc-Rez_Zrealizowano),0)  -- ilosc zarezerwowana minus zrealizowane
+                                     from cdn.Rezerwacje join cdn.zamnag on (Rez_zrdtyp = ZaN_gidtyp AND  rez_zrdfirma = zaN_gidfirma  AND  Rez_zrdnumer = ZaN_gidnumer )
+                                     --,cdn.MagWybor, cdn.rezmagazyny
+                                     where rez_gidtyp=2576
+                                    and Rez_twrtyp=@p_gt and rez_twrfirma=@p_gf and rez_twrnumer=@p_gn
+                                         and Rez_DataRealizacji &gt;= @p_DataPoczatkowa and Rez_DataRealizacji &lt;= @p_DataKoncowa
+                                    and Rez_DataWaznosci&gt;=@p_DataBiezaca      -- data waznosci wieksza niz dzis
+                                    and Rez_Aktywna=1
+                        --           and (Rez_Zrodlo = @ZakresRezReczna or Rez_Zrodlo = @ZakresRezAutomat)
+                                   and ( Rez_Zrodlo = @ZakresRezAutomat)
+                                   --   and rez_MagTyp=208 and rez_MagFirma=MgW_MagFirma and rez_MagNumer=MgW_MagNumer
+                                   --   and MgW_SesjaID=-@p_MagFirma and MgW_Watek=-@p_MagNumer
+                                   --  and Rez_GIDNumer = ReM_RezNumer
+                                   --  and ReM_RezTyp = Rez_GIDTyp
+                                   --  and ReM_MagNumer=@p_MagNumer
+                                     and ZaN_ZamSeria = @P_NrSerii
+                                     and ZaN_Stan &gt;= 3 and ZaN_Stan &lt;&gt; 4--TFS 78118/2013.5.0/21.05.2013/ŁM
+                                   and Rez_Ilosc&lt;&gt;0
+                                                                         and exists ( select * from
+                                                                                                cdn.Rezmagazyny
+                                                                                                join cdn.MagWybor on ReM_MagTyp=208 and ReM_MagNumer=MgW_MagNumer
+                                                                                                where
+                                                                                                Rez_GIDTyp=ReM_RezTyp and ReZ_GIDNumer=ReM_RezNumer and
+                                                                                                MgW_SesjaID=-@p_MagFirma and MgW_Watek=-@p_MagNumer )
+
+                                   ) ; -- aby nie brac pod uwage anulowanych zamowien
+                        else
+                              if  @p_ZakresZamowien = 0
+                                set @IloscRez =
+                                  (select IsNull(sum(Rez_Ilosc-Rez_Zrealizowano),0)  -- ilosc zarezerwowana minus zrealizowane
+                                     from cdn.Rezerwacje --,cdn.MagWybor, cdn.rezmagazyny
+                                     join cdn.zamnag on (Rez_zrdtyp = ZaN_gidtyp AND  rez_zrdfirma = zaN_gidfirma  AND  Rez_zrdnumer = ZaN_gidnumer )
+                                     where rez_gidtyp=2576
+                                     and rez_twrtyp=@p_gt and rez_twrfirma=@p_gf and rez_twrnumer=@p_gn
+                                         and Rez_DataRealizacji &gt;= @p_DataPoczatkowa and Rez_DataRealizacji &lt;= @p_DataKoncowa
+                                     and Rez_dataWaznosci&gt;=@p_DataBiezaca      -- data waznosci wieksza niz dzis
+                                     and Rez_ZrdTyp=960 -- tylko zamówienia
+                                     and rez_aktywna=1
+                                     --and Rez_GIDNumer = ReM_RezNumer
+                                     --and ReM_RezTyp = Rez_GIDTyp
+                                     --and ReM_MagNumer=@p_MagNumer
+                                     --and rez_MagTyp=208 and rez_MagFirma=MgW_MagFirma and rez_MagNumer=MgW_MagNumer
+                                     -- and MgW_SesjaID=-@p_MagFirma and MgW_Watek=-@p_MagNumer
+                                     and Rez_Ilosc&lt;&gt;0
+                                     and ZaN_Stan &gt;= 3 and ZaN_Stan &lt;&gt; 4--TFS 78118/2013.5.0/21.05.2013/ŁM
+                                                                         and exists ( select * from
+                                                                                                cdn.Rezmagazyny
+                                                                                                join cdn.MagWybor on ReM_MagTyp=208 and ReM_MagNumer=MgW_MagNumer
+                                                                                                where
+                                                                                                Rez_GIDTyp=ReM_RezTyp and ReZ_GIDNumer=ReM_RezNumer and
+                                                                                                MgW_SesjaID=-@p_MagFirma and MgW_Watek=-@p_MagNumer )
+                                     );  -- aby nie brac pod uwage anulowanych zamowien
+                             else
+                                 set @IloscRez =
+                                  (select IsNull(sum(Rez_Ilosc-Rez_Zrealizowano),0)  -- ilosc zarezerwowana minus zrealizowane
+                                     from cdn.Rezerwacje --,cdn.MagWybor, cdn.rezmagazyny
+                                     join cdn.zamnag on (Rez_zrdtyp = ZaN_gidtyp AND  rez_zrdfirma = zaN_gidfirma  AND  Rez_zrdnumer = ZaN_gidnumer )
+                                     where rez_gidtyp=2576
+                                    and Rez_twrtyp=@p_gt and rez_twrfirma=@p_gf and rez_twrnumer=@p_gn
+                                         and Rez_DataRealizacji &gt;= @p_DataPoczatkowa and Rez_DataRealizacji &lt;= @p_DataKoncowa
+                                    and Rez_DataWaznosci&gt;=@p_DataBiezaca      -- data waznosci wieksza niz dzis
+                                    and Rez_ZrdTyp=960 -- tylko zamówienia
+                                    and Rez_Aktywna=1
+                        --           and (Rez_Zrodlo = @ZakresRezReczna or Rez_Zrodlo = @ZakresRezAutomat)
+                                   and ( Rez_Zrodlo = @ZakresRezAutomat)
+                                   --   and rez_MagTyp=208 and rez_MagFirma=MgW_MagFirma and rez_MagNumer=MgW_MagNumer
+                                  --   and Rez_GIDNumer = ReM_RezNumer
+                                  --   and ReM_RezTyp = Rez_GIDTyp
+                                  --   and ReM_MagNumer=@p_MagNumer
+                                  --    and MgW_SesjaID=-@p_MagFirma and MgW_Watek=-@p_MagNumer
+                                   and Rez_Ilosc&lt;&gt;0
+                                     and ZaN_Stan &gt;= 3 and ZaN_Stan &lt;&gt; 4--TFS 78118/2013.5.0/21.05.2013/ŁM
+                                                                         and exists ( select * from
+                                                                                                cdn.Rezmagazyny
+                                                                                                join cdn.MagWybor on ReM_MagTyp=208 and ReM_MagNumer=MgW_MagNumer
+                                                                                                where
+                                                                                                Rez_GIDTyp=ReM_RezTyp and ReZ_GIDNumer=ReM_RezNumer and
+                                                                                                MgW_SesjaID=-@p_MagFirma and MgW_Watek=-@p_MagNumer )
+                                   ) ; -- aby nie brac pod uwage anulowanych zamowien
+
+                     else
+                       if  @p_ZakresZamowien = 0
+                           set @IloscRez =
+                           (select SUM(CASE WHEN (Rez_Zrealizowano IS NULL and ZaN_Stan&lt;&gt; 5) THEN ZaE_Ilosc ELSE (Rez_Ilosc - REZ_Zrealizowano) END)
+                            from cdn.ZamElem join cdn.ZamNag on (zae_GidTyp = zan_GidTyp and zae_GIDFirma = zan_GidFirma and zae_GIDNumer = zan_GidNumer) LEFT OUTER JOIN
+                                   cdn.Rezerwacje ON (Rez_zrdtyp = ZaE_gidtyp AND  rez_zrdfirma = zae_gidfirma  AND  Rez_zrdnumer = ZaE_gidnumer AND Rez_zrdlp = zae_GIDlp) ,cdn.MagWybor
+                                where ZaE_TwrTyp = @p_gt and ZaE_twrfirma=@p_gf and ZaE_twrnumer=@p_gn and
+                                                                        (case when      Rez_GIDTyp is not null and
+                                                                                                Rez_DataRealizacji &gt;= @p_DataPoczatkowa and
+                                                                                                Rez_DataRealizacji &lt;= @p_DataKoncowa    then 1
+                                                                                when    Rez_GIDTyp is  null and
+                                                                    ZaN_DataRealizacji &gt;= @p_DataPoczatkowa and
+                                                                                ZaN_DataRealizacji &lt;= @p_DataKoncowa and
+                                                                                                Zan_DataWaznosci &gt;= @p_dataBiezaca then 1
+                                                                                else 0
+                                                                        end )=1
+                                                                         and
+                                      ZaN_Stan &gt;=2 and ZaN_Stan&lt;=5 and Zan_ZamTyp = 1280
+                                     and ZaN_DataRealizacji &gt;=@p_DataPoczatkowa and ZaN_DataRealizacji &lt;=@p_DataKoncowa and ZaN_DataWaznosci &gt;=@p_dataBiezaca --TID:143581
+                                     and (Rez_DataWaznosci&gt;=@p_databiezaca or Rez_datawaznosci is null)
+                                     and ((rez_aktywna=1  AND NOT(ZaN_Rodzaj = 8 AND Rez_Zrodlo=5 AND Rez_GIDTyp = 2576 AND ZaN_ZaMTyp=1280)) or rez_aktywna is null) --TID:135612
+                                     and (Rez_GIDTyp is not null and
+                                          exists (select * from cdn.RezMagazyny
+                                                  where  Rez_GIDTyp = Rem_RezTyp
+                                                        and Rez_GIDNumer = ReM_RezNumer
+                                                        and ReM_MagNumer = MgW_MagNumer )
+                                          or Rez_GIDTyp is null and ZaE_MagTyp=208 and ZaE_MagNumer=MgW_MagNumer
+                                          )
+                                     and MgW_SesjaID=-@p_MagFirma and MgW_Watek=-@p_MagNumer
+                                     and( @JestNumerSerii = 0 OR ZaN_ZamSeria = @P_NrSerii )
+                                     and (Rez_ilosc&lt;&gt;0 or Rez_ilosc is null)
+                                       );
+                       else
+                           set @IloscRez =
+                           (select SUM(CASE WHEN (Rez_Zrealizowano IS NULL and ZaN_Stan&lt;&gt; 5) THEN ZaE_Ilosc ELSE (Rez_Ilosc - REZ_Zrealizowano) END)
+                            from cdn.ZamElem join cdn.ZamNag on (zae_GidTyp = zan_GidTyp and zae_GIDFirma = zan_GidFirma and zae_GIDNumer = zan_GidNumer) LEFT OUTER JOIN
+                                   cdn.Rezerwacje ON (Rez_zrdtyp = ZaE_gidtyp AND  rez_zrdfirma = zae_gidfirma  AND  Rez_zrdnumer = ZaE_gidnumer AND Rez_zrdlp = zae_GIDlp) ,cdn.MagWybor
+                            where ZaE_TwrTyp = @p_gt and ZaE_twrfirma=@p_gf and ZaE_twrnumer=@p_gn and
+                                                                        (case when      Rez_GIDTyp is not null and
+                                                                                                Rez_DataRealizacji &gt;= @p_DataPoczatkowa and
+                                                                                                Rez_DataRealizacji &lt;= @p_DataKoncowa    then 1
+                                                                                when    Rez_GIDTyp is  null and
+                                                                    ZaN_DataRealizacji &gt;= @p_DataPoczatkowa and
+                                                                                ZaN_DataRealizacji &lt;= @p_DataKoncowa and
+                                                                                                Zan_DataWaznosci &gt;= @p_dataBiezaca then 1
+                                                                                else 0
+                                                                        end )=1
+                                                                         and
+                                     ZaN_Rodzaj = (@ZakresZam)  and
+                                     ZaN_Stan &gt;=2 and ZaN_Stan&lt;=5 and Zan_ZamTyp = 1280
+                                    and ZaN_DataRealizacji &gt;=@p_DataPoczatkowa and ZaN_DataRealizacji &lt;=@p_DataKoncowa and ZaN_DataWaznosci &gt;=@p_dataBiezaca --TID:143581
+                                     and ZaN_DataRealizacji &gt;=@p_DataPoczatkowa and ZaN_DataRealizacji &lt;=@p_DataKoncowa and ZaN_DataWaznosci &gt;=@p_dataBiezaca --TID:143581
+                                     and (Rez_DataWaznosci&gt;=@p_databiezaca or Rez_datawaznosci is null)
+                                     and ((rez_aktywna=1 AND NOT(ZaN_Rodzaj = 8 AND Rez_Zrodlo=5 AND Rez_GIDTyp = 2576 AND ZaN_ZaMTyp=1280)) or rez_aktywna is null) --TID:135612
+                                     and (Rez_GIDTyp is not null and
+                                          exists (select * from cdn.RezMagazyny
+                                                  where  Rez_GIDTyp = Rem_RezTyp
+                                                        and Rez_GIDNumer = ReM_RezNumer
+                                                        and ReM_MagNumer = MgW_MagNumer )
+                                          or Rez_GIDTyp is null and ZaE_MagTyp=208 and ZaE_MagNumer=MgW_MagNumer
+                                          )
+                                      and MgW_SesjaID=-@p_MagFirma and MgW_Watek=-@p_MagNumer
+                                     and( @JestNumerSerii = 0 OR ZaN_ZamSeria = @P_NrSerii )
+                                     and (Rez_ilosc&lt;&gt;0 or Rez_ilosc is null)
+                                       );
+
+
+     end
+
+  else                           -- towar ma specjalny status (usluga/koszt...)
+    begin
+      set @opuscic=1;
+    end;
+   --
+    if(@opuscic=0)  --       nie opuszczamy tego towaru - pobranie ceny i waluty
+    begin
+    -- podstawienie obliczonych ilosci
+    if (@statusUsluga=0)
+        set @retval=cast(@iloscSpr as varchar(28))+':'+cast(@iloscRez as varchar(28));
+      else
+        set @retval=@ZnakZero+':'+@ZnakZero;
+    end;
+  else
+    -- jest to opuszczony stan zerowy funkcja zwraca null
+  set @retval=null
+  ;
+   return @retval;
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

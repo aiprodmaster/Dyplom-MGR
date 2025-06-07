@@ -1,0 +1,109 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="KPPrzepiszZeWskazanego"></A><PRE>
+          <FONT SIZE="2"><I>/* KPPrzepiszZeWskazanego */</I><BR>
+CREATE PROCEDURE CDN.KPPrzepiszZeWskazanego
+(
+	@p_KPNId		INTEGER,		--Identyfikator aktualnej konfiguracji produktu 
+	@p_WskId		INTEGER,		--Identyfikator konfiguracji produktu z której przepisujemy odpowiedzi, produkt, bądź technologie.
+	@p_Tryb			TINYINT,		--Tryb: xx1b - przepisz odpowiedzi, x1xb - przepisz produkt i technologie.
+	@p_PokazBledy	TINYINT=1,		--Czy pokazywać błędy 
+	@Wynik			INTEGER OUTPUT
+	/*
+		0 : Operacja zakończona sukcesem
+		-130 : Wystąpił błąd podczas przepisywania produktu i technologii.
+		Inne &lt;0: Błąd z podrzędnej procedury/funkcji wywoływanej wewnątrz tej metody
+	*/			
+)
+AS
+BEGIN
+
+	IF @p_Tryb&amp;1=1 -- xx1b - przepisz odpowiedzi
+	BEGIN
+		DECLARE @KPE_Id INTEGER			
+		DECLARE @KPE_Odpowiedz VARCHAR(100)
+		DECLARE @KPE_OdpTyp SMALLINT
+		DECLARE @KPE_OdpFirma INTEGER
+		DECLARE @KPE_OdpNumer INTEGER
+		DECLARE @KPE_OdpLp SMALLINT
+
+		/**************************************************************/
+		/**************  BEGIN C1_KPPrzepiszZeWskazanego **************/
+		
+		DECLARE C1_KPPrzepiszZeWskazanego CURSOR LOCAL FAST_FORWARD FOR
+		SELECT Akt.KPE_Id
+			  ,Wsk.KPE_Odpowiedz
+			  ,Wsk.KPE_OdpTyp
+			  ,Wsk.KPE_OdpFirma
+			  ,Wsk.KPE_OdpNumer
+			  ,Wsk.KPE_OdpLp
+		  FROM CDN.KonfProdElem Akt
+		  JOIN CDN.KonfProdElem Wsk ON Wsk.KPE_KPNId=@p_WskId and Wsk.KPE_ObiTyp=Akt.KPE_ObiTyp and Wsk.KPE_ObiNumer=Akt.KPE_ObiNumer and Wsk.KPE_ObiLp=Akt.KPE_ObiLp and Wsk.KPE_TypPytania=Akt.KPE_TypPytania and Wsk.KPE_AtkId=Akt.KPE_AtkId
+		  WHERE Akt.KPE_KPNId=@p_KPNId
+
+		OPEN C1_KPPrzepiszZeWskazanego;
+		FETCH NEXT FROM C1_KPPrzepiszZeWskazanego INTO @KPE_Id, @KPE_Odpowiedz, @KPE_OdpTyp, @KPE_OdpFirma, @KPE_OdpNumer, @KPE_OdpLp
+		WHILE @@fetch_status = 0
+		BEGIN
+			DECLARE @WynikProc INT
+			SET @WynikProc = 0
+
+			EXEC CDN.KPZmienOdpowiedz @p_KPE_Id=@KPE_Id, @p_Tryb=7, @p_Odpowiedz=@KPE_Odpowiedz, @p_OdpTyp=@KPE_OdpTyp, @p_OdpFirma=@KPE_OdpFirma, @p_OdpNumer=@KPE_OdpNumer, @p_OdpLp=@KPE_OdpLp, @p_PokazBledy=@p_PokazBledy, @Wynik=@WynikProc OUTPUT
+
+			if @WynikProc&lt;0 
+			begin
+				CLOSE C1_KPPrzepiszZeWskazanego;
+				DEALLOCATE C1_KPPrzepiszZeWskazanego;
+				set @Wynik = @WynikProc
+				return @Wynik
+			end
+			FETCH NEXT FROM C1_KPPrzepiszZeWskazanego INTO @KPE_Id, @KPE_Odpowiedz, @KPE_OdpTyp, @KPE_OdpFirma, @KPE_OdpNumer, @KPE_OdpLp
+
+		END -- WHILE @@fetch_status = 0
+		CLOSE C1_KPPrzepiszZeWskazanego;
+		DEALLOCATE C1_KPPrzepiszZeWskazanego;
+
+		/**************  END C1_KPPrzepiszZeWskazanego **************/
+		/************************************************************/
+	END -- xx1b - przepisz odpowiedzi
+
+	IF @p_Tryb&amp;2=2 -- x1xb - przepisz produkt i technologie
+	BEGIN
+		UPDATE Akt		
+		SET Akt.KPN_PrdTyp=Wsk.KPN_PrdTyp, Akt.KPN_PrdNumer=Wsk.KPN_PrdNumer, Akt.KPN_PTEId=Wsk.KPN_PTEId
+		FROM CDN.KonfProdNag Akt
+		JOIN CDN.KonfProdNag Wsk on Wsk.KPN_Id=@p_WskId
+		WHERE Akt.KPN_Id=@p_KPNId
+
+		if @@error &lt;&gt; 0  
+		begin
+			if @p_PokazBledy=1
+				raiserror('Wystąpił błąd podczas przepisywania produktu i technologii.', 16, 1)
+			set @Wynik = -130
+			return @Wynik
+		end
+
+	END -- x1xb - przepisz produkt i technologie
+
+	--IF @p_Tryb&amp;4=4 -- 1xxb
+	--BEGIN
+	--END -- 1xxb
+
+	set @Wynik = 0
+    return @Wynik
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

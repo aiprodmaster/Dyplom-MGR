@@ -1,0 +1,102 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="ProdUstawKosztTechNaProcesach"></A><PRE>
+          <FONT SIZE="2"><I>/* ProdUstawKosztTechNaProcesach */</I><BR>
+CREATE PROCEDURE CDN.ProdUstawKosztTechNaProcesach
+(
+	@PZLId INTEGER,@PZLDataW INTEGER	
+)
+AS
+BEGIN
+	DECLARE @SlwId INT = 0
+
+	SELECT @SlwId = ISNULL(SLW_Id,0)
+	FROM CDN.Slowniki WHERE SLW_Kategoria='Koszty produkcji' and SLW_WartoscS = 'Technologia'  
+
+
+	declare @KwotyProc table (PPCId INT, Kwota DECIMAL(15,4))
+
+	INSERT INTO @KwotyProc(PPCId,Kwota)
+	SELECT PPC_Id,(CDN.Prod_WartoscAtr(PTE_StawkaStala,PTE_StawkaStalaAtr,14340,PTE_Id,Terminy.Termin,PPC_Id) + 
+	CDN.ProdIloscAtr(PPC_Ilosc,PTE_StawkaIlosc,PTE_StawkaIloscAtr,4,0,PTE_StawkaIloscM,0,14340,PTE_Id,Terminy.Termin,PPC_Id) 
+		+ CDN.Prod_WartoscAtr(PTE_StawkaCzas,PTE_StawkaCzasAtr,14340,PTE_Id,Terminy.Termin,PPC_Id) * Terminy.CzasR / case when PTE_StawkaCzasM&gt;0 then PTE_StawkaCzasM else 1 end ) 
+	FROM
+	(
+	SELECT PPC_Id,PPC_Ilosc,PPC_Technologia,isnull(min(PCZ_TerminRozpoczecia), -@PZLDataW) Termin, isnull(1.0 *SUM(PCT_CzasRozliczeniowy),0) CzasR
+	FROM CDN.ProdProcesy
+	LEFT JOIN CDN.ProdCzynnosci ON PCZ_Proces = PPC_Id AND PCZ_Realizuje&gt; 0
+	LEFT JOIN cdn.prodczynnosciTerminy ON PCT_Czynnosc = PCZ_Id 
+	WHERE PPC_Zlecenie = @PZLId
+	GROUP BY PPC_Id,PPC_Ilosc,PPC_Technologia
+	) Terminy
+	JOIN CDN.ProdTechnologia ON PTE_Id = Terminy.PPC_Technologia
+
+
+	declare @KosztyProc TABLE(PPCId int, Kwota DECIMAL(11,4), PKOId INT)
+
+	INSERT INTO @KosztyProc
+	select KW.PPCId, KW.Kwota, ISNULL(max(ISNULL(PKO_Id,0)),0) PKOId  
+	from @KwotyProc KW 
+	LEFT JOIN CDN.ProdKosztyElem ON PKE_ObiNumer = KW.PPCId AND PKE_ObiTyp = 14344
+	LEFT join CDN.ProdKoszty on PKE_PKOID = PKO_Id AND PKO_Kategoria = @SlwId
+	group by KW.PPCId,KW.Kwota
+
+	delete from CDN.ProdKoszty where PKO_ID in (SELECT PKOId FROM @KosztyProc WHERE Kwota = 0)
+
+	update CDN.ProdProcesy set PPC_Koszt = Kwota
+	FROM @KosztyProc where PPC_ID = PPCId
+
+	DECLARE @PKODodane table(PKOId INT, Kwota DECIMAL(21,2))
+	DECLARE @KosztyProcesow TABLE(PKOId INT,PPCId INT, Kwota DECIMAL(21,2))
+
+	UPDATE CDN.ProdKoszty SET PKO_Kwota = Kwota
+	OUTPUT inserted.PKO_Id, inserted.PKO_Kwota INTO @PKODodane(PKOId,Kwota)
+	FROM @KosztyProc
+	WHERE Kwota &gt; 0 AND PKO_Id = PKOId
+
+	update CDN.ProdKosztyElem set PKE_Kwota=Kwota 
+	OUTPUT inserted.PKE_PKOId, inserted.PKE_ObiNumer, inserted.PKE_Kwota INTO @KosztyProcesow(PKOId,PPCId,Kwota)
+	FROM @KosztyProc
+	WHERE Kwota &gt; 0 AND PKE_PKOId = PKOId and PKE_ObiTyp=14344 
+
+	DECLARE @PPCId INT, @Kwota DECIMAL(11,4)
+
+	declare koszty_cursor cursor fast_forward for
+	SELECT PPCId,Kwota
+	FROM @KosztyProc
+	WHERE PKOId = 0 AND Kwota &gt; 0
+
+	open koszty_cursor
+	fetch next from koszty_cursor into @PPCId, @Kwota
+	while @@FETCH_STATUS = 0
+	begin
+		insert into CDN.ProdKoszty(PKO_Kwota, PKO_Kategoria,PKO_Klucz, PKO_ZrdTyp, PKO_ZrdNumer, PKO_ZrdLP,PKO_Wyrazenie,PKO_Podrzedny,PKO_DataPrzypisania, PKO_Opis,
+		PKO_SQLZrodlo,PKO_SQLKlucz,PKO_SQLWarunek,PKO_PWKId)    
+		select @Kwota, @SlwId ,1,0,0,0,'',0, DATEDIFF(d,'18001228',GETDATE()) ,'','','','',0     
+	
+		insert into CDN.ProdKosztyElem(PKE_PkoId, PKE_ObiTyp, PKE_ObiNumer, PKE_Kwota)    
+		OUTPUT inserted.PKE_PKOId, inserted.PKE_ObiNumer, inserted.PKE_Kwota INTO @KosztyProcesow(PKOId,PPCId,Kwota)
+		values(SCOPE_IDENTITY(),14344,@PPCId,@Kwota)   
+
+		fetch next from koszty_cursor into @PPCId, @Kwota
+	end
+	close koszty_cursor 
+	deallocate koszty_cursor
+
+	SELECT * FROM @KosztyProcesow
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

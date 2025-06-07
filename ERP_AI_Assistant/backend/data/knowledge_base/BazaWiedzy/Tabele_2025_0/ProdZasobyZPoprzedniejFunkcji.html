@@ -1,0 +1,177 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="ProdZasobyZPoprzedniejFunkcji"></A><PRE>
+          <FONT SIZE="2"><I>/* ProdZasobyZPoprzedniejFunkcji */</I><BR>
+CREATE PROCEDURE CDN.ProdZasobyZPoprzedniejFunkcji @PTCId int, @Proces int
+AS
+BEGIN
+	DECLARE @TechnologiaCzynnosc int
+	DECLARE @Licznik int
+	DECLARE @Obiekt int
+	DECLARE @Funkcja int
+	DECLARE @PoprzedniaFunkcja int
+	DECLARE @PoprzedniaTechnologiaCzynnosc int
+	DECLARE @LiczbaPotrzebnychObiektow int
+	DECLARE @ID int
+	DECLARE @PZLId int
+	
+	declare @TechnologiaCzynnoscTable table (TechnologiaCzynnosc int)
+	declare @TechnologiaFunkcje table (FunkcjaID int, LiczbaPotrzebnychObiektow int)
+	
+	SET NOCOUNT ON
+	
+	--select wyciągający funkcje dla aktualnie planowanej czynności i mającej kontynuację pracy ustawioną na TAK
+	insert into @TechnologiaFunkcje
+	select PTF_Funkcja, PTF_LiczbaObiektow from cdn.prodtechnologiaczynnosci
+	join cdn.prodtechnologiafunkcje on ptf_technologiaczynnosc = ptc_id
+	where ptc_id = @PTCId and ptf_kontynuacjapracy = 1
+	
+	--jeśli nie ma żadnej funkcji z kontynuacją pracy nie ma sensu nic więcej robić
+	if not exists(select * from @TechnologiaFunkcje)
+	begin
+		SET NOCOUNT OFF
+		return
+	end
+	
+	select @PZLId = ppc_zlecenie from cdn.prodprocesy where ppc_id = abs(@Proces)
+	
+	--drop'y na wszelki wypadek
+	if object_id('tempdb..#obiektyfunkcje') is not null
+		drop table #ObiektyFunkcje
+	/*if object_id('tempdb..#ObiektyFunkcjeWynik') is not null		
+		drop table #ObiektyFunkcjeWynik*/
+
+	--tworzenie tabel tymczasowych
+	CREATE TABLE #ObiektyFunkcje
+	(
+		Id int IDENTITY(1,1) PRIMARY KEY not null,
+		TechnologiaCzynnosc int,
+		Obiekt int,
+		Funkcja int,
+	)
+	
+	/*CREATE TABLE #ObiektyFunkcjeWynik
+	(
+		Id int,
+		TechnologiaCzynnosc int,
+		Obiekt int,
+		Funkcja int,
+		LiczbaPotrzebnychObiektow int			--liczba potrzebnych obiektów z funkcji aktualnie planowanej, potrzebne do stwierdzenia czy wyciąć grupę
+	)	*/
+
+	set @Licznik = 0
+	set @TechnologiaCzynnosc = 0
+	
+	--pętla idąca od bieżącej czynności planowanej w "górę" drzewka technologii
+	--poprzednie czynności są znajdowane za pomocą powiązania z półproduktem między czynnościami
+	while @Licznik &lt;= 1000	--zabezpieczenie przed zapętleniem
+	begin
+		if(@Proces &gt; 0)						--przy planowaniu "w przód"
+			insert into #ObiektyFunkcje
+			output inserted.TechnologiaCzynnosc			--wykorzystanie jednej z rzadziej używanych funkcjonalności sql server (przynajmniej przez nas), po insert w zmiennej tabelarycznej @TechnologiaCzynnoscTable mamy wartości z inserta do #ObiektyFunkcje
+			into @TechnologiaCzynnoscTable
+				select B.ptz_technologiaczynnosc,pco_obiekt,pco_funkcja
+				from cdn.prodtechnologiaczynnosci 
+				join cdn.prodtechnologiazasoby A on A.ptz_technologiaczynnosc = ptc_id
+				left join cdn.prodtechnologiafunkcje AF on AF.ptf_technologiaczynnosc = A.ptz_technologiaczynnosc and AF.ptf_kontynuacjapracy = 1
+				join cdn.prodtechnologiazasoby B on B.ptz_id = A.ptz_technologiazasob
+				join cdn.prodczynnosci on pcz_technologiaczynnosc = B.ptz_technologiaczynnosc
+				join cdn.prodprocesy on ppc_id = pcz_proces and ppc_zlecenie = @PZLId		--aby pobrać zasoby z innych procesów zaplanowanych na tym samym zleceniu
+				left join cdn.prodtechnologiafunkcje BF on BF.ptf_technologiaczynnosc = B.ptz_technologiaczynnosc and BF.ptf_kontynuacjapracy = 1
+				left join cdn.prodczynnosciobiekty on pco_czynnosc = pcz_id
+				left join cdn.prodobiekty on pob_id = pco_obiekt
+				left join cdn.prodfunkcje on pfu_id = pco_funkcja
+				where ptc_id = @PTCId and A.ptz_typzasobu = 1
+				group by pco_funkcja,pco_obiekt,BF.ptf_kontynuacjapracy,B.ptz_technologiaczynnosc,pfu_kod,pob_kod
+	    else							--przy planowaniu "wstecz"
+			insert into #ObiektyFunkcje
+			output inserted.TechnologiaCzynnosc			--wykorzystanie jednej z rzadziej używanych funkcjonalności sql server (przynajmniej przez nas), po insert w zmiennej tabelarycznej @TechnologiaCzynnoscTable mamy wartości z inserta do #ObiektyFunkcje
+			into @TechnologiaCzynnoscTable	    
+				select B.ptz_technologiaczynnosc,pco_obiekt,pco_funkcja
+				from cdn.prodtechnologiaczynnosci 
+				join cdn.prodtechnologiazasoby A on A.ptz_technologiaczynnosc = ptc_id
+				left join cdn.prodtechnologiafunkcje AF on AF.ptf_technologiaczynnosc = A.ptz_technologiaczynnosc and AF.ptf_kontynuacjapracy = 1
+				join cdn.prodtechnologiazasoby B on B.ptz_technologiazasob = A.ptz_id
+				join cdn.prodczynnosci on pcz_technologiaczynnosc = B.ptz_technologiaczynnosc
+				join cdn.prodprocesy on ppc_id = pcz_proces and ppc_zlecenie = @PZLId		--aby pobrać zasoby z innych procesów zaplanowanych na tym samym zleceniu
+				left join cdn.prodtechnologiafunkcje BF on BF.ptf_technologiaczynnosc = B.ptz_technologiaczynnosc and BF.ptf_kontynuacjapracy = 1
+				left join cdn.prodczynnosciobiekty on pco_czynnosc = pcz_id
+				left join cdn.prodobiekty on pob_id = pco_obiekt
+				left join cdn.prodfunkcje on pfu_id = pco_funkcja
+				where ptc_id = @PTCId and A.ptz_typzasobu = 0
+				group by pco_funkcja,pco_obiekt,BF.ptf_kontynuacjapracy,B.ptz_technologiaczynnosc,pfu_kod,pob_kod	    
+		
+		--wyciągamy wartość TechnologiaCzynnosc aby przejść do poprzedniej czynności lub przerwać pętlę	
+		select top 1 @TechnologiaCzynnosc = TechnologiaCzynnosc from @TechnologiaCzynnoscTable
+		
+		if(@TechnologiaCzynnosc is null or isnull(@TechnologiaCzynnosc,0) = @PTCId) 
+			break
+		else
+			set @PTCId = @TechnologiaCzynnosc
+		
+		delete from @TechnologiaCzynnoscTable
+		
+		set @Licznik = @Licznik + 1		--zabezpieczenie przed zapętleniem
+	end
+
+	--analiza danych z tabeli #ObiektyFunkcje
+	set @PoprzedniaFunkcja = 0
+	set @PoprzedniaTechnologiaCzynnosc = 0
+
+	declare obiekty cursor for
+		select Id, TechnologiaCzynnosc, Obiekt, Funkcja, LiczbaPotrzebnychObiektow from #ObiektyFunkcje 
+		join @TechnologiaFunkcje on Funkcja = FunkcjaID
+		join cdn.prodobiektyfunkcje on pof_funkcja = funkcja and pof_obiekt = obiekt AND POF_Widocznosc IN (2,3)	--tym joinem wycinamy obiekty podrzędne, do planowania należy przekazać tylko obiekty najwyższego poziomu
+		where pof_id = pof_grupa
+		order by id
+		
+	open obiekty
+	fetch next from obiekty into @ID, @TechnologiaCzynnosc, @Obiekt, @Funkcja, @LiczbaPotrzebnychObiektow	--ponowne wykorzystanie zmiennej @TechnologiaCzynnosc w kursorze
+
+	--za zadanie mamy wybranie zasobów z ostatniej zaplanowanej czynności wykorzystującej daną funkcję, dane wynikowe w tabeli @ObiektyFunkcjeWynik
+	while @@FETCH_STATUS =0
+	begin
+		if @Funkcja &lt;&gt; @PoprzedniaFunkcja
+		begin
+			set @PoprzedniaFunkcja = @Funkcja
+			set @PoprzedniaTechnologiaCzynnosc = @TechnologiaCzynnosc
+		end
+		
+		if @Funkcja = @PoprzedniaFunkcja and @PoprzedniaTechnologiaCzynnosc &lt;&gt; @TechnologiaCzynnosc
+			fetch next from obiekty into @ID,@TechnologiaCzynnosc, @Obiekt, @Funkcja, @LiczbaPotrzebnychObiektow
+		else
+		begin
+			insert into #ObiektyFunkcjeWynik
+			select @ID,@TechnologiaCzynnosc, @Obiekt, @Funkcja, @LiczbaPotrzebnychObiektow
+			
+			fetch next from obiekty into @ID,@TechnologiaCzynnosc, @Obiekt, @Funkcja, @LiczbaPotrzebnychObiektow
+		end
+	end
+
+	close obiekty
+	deallocate obiekty
+
+	SET NOCOUNT OFF
+	
+	--zwrócenie wyniku
+	--select Obiekt, Funkcja, LiczbaPotrzebnychObiektow, COUNT(*) over(partition by Funkcja) LiczbaZnalezionychObi from #ObiektyFunkcjeWynik
+	
+	--drop'y tabel
+	drop table #ObiektyFunkcje
+	--drop table #ObiektyFunkcjeWynik
+end
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

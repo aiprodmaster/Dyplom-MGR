@@ -1,0 +1,489 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="XLCRMRaporty_DodajNowy"></A><PRE>
+          <FONT SIZE="2"><I>/* XLCRMRaporty_DodajNowy */</I><BR>
+CREATE PROCEDURE CDN.XLCRMRaporty_DodajNowy
+(
+/* ==========================================================================================
+	SQL API: Procedura serwerowa do dodawania raportów obecności towarów lub raportów towarów konkurencji 
+
+	Dla uproszczenia założono, że jeżeli w systemie zewnętrznym zostanie wystawiony element wzorca wizyty handlowa,
+	to w trakcie wystawiania jej przez API nie ma potrzeby kontrolowania uprawnień do obiektów, z których ona korzysta.
+	
+	Parametry wejściowe: 
+   ========================================================================================== */
+	@OpeNumer				INT,				-- GidNumer operatora, który wykonuje tą operacje
+	@Typ					TINYINT,			-- 0 - Raport obecności, 1 - Raport konkurencji
+	@Kod					VARCHAR(40),		-- Kod raportu
+	@Nazwa					VARCHAR(255),		-- Nazwa raportu
+	@Ilosc					TINYINT=NULL,		-- 0 - Niewymagana, 1 - Wymagana
+	@Cena					TINYINT=NULL,		-- 0 - Niewymagana, 1 - Wymagana
+	@Ekspozycja				TINYINT=NULL,		-- 0 - Niewymagana, 1 - Wymagana
+	@Facing					TINYINT=NULL,		-- 0 - Niewymagana, 1 - Wymagana
+	@Dostawca				TINYINT=NULL,		-- 0 - Niewymagana, 1 - Wymagana
+	@Archiwalny				TINYINT=NULL,		-- Czy raport archwiwalny
+	@Oddzialowy				TINYINT=NULL,		-- Czy raport został wysłany do oddziału
+	@TwrElem				TINYINT=NULL		-- Czy pozwalać na dodawanie towarów do elementu wizyty
+/* ==========================================================================================
+	Return:
+	 0 : Operacja zakończona sukcesem (zwrócono ID nowego raportu)
+	-1 : Nie powiodło się dodawanie wpisu do tabeli CDN.CRMRaportyDef
+	-2 : Podany operator nie występuje w bazie
+   ========================================================================================== */   	
+)
+AS
+BEGIN
+
+    DECLARE @CRDId INT
+	DECLARE @TimeStamp INT
+    SET @TimeStamp = DATEDIFF(s,'19900101',GETDATE())
+
+	INSERT INTO CDN.CRMRaportyDef
+           (CRD_Typ
+           ,CRD_Kod
+           ,CRD_Nazwa
+           ,CRD_Ilosc
+           ,CRD_Cena
+           ,CRD_Ekspozycja
+           ,CRD_Facing
+           ,CRD_Dostawca
+           ,CRD_CzasUtworzenia
+           ,CRD_CzasModyfikacji
+           ,CRD_CzasModyfikacjiC
+           ,CRD_CzasArchiwizacji
+           ,CRD_Oddzialowy
+           ,CRD_OpeNumerU
+           ,CRD_OpeNumerM
+           ,CRD_OpeNumerA
+           ,CRD_TwrElem)
+	SELECT
+           @Typ
+           ,@Kod
+           ,@Nazwa
+           ,IsNull(@Ilosc,0)
+           ,IsNull(@Cena,0)
+           ,IsNull(@Ekspozycja,0)
+           ,IsNull(@Facing,0)
+           ,IsNull(@Dostawca,0)
+           ,@TimeStamp
+           ,@TimeStamp
+           ,@TimeStamp
+           ,CASE WHEN ISNULL(@Archiwalny,0)=0 THEN 0 ELSE @TimeStamp END
+           ,IsNull(@Oddzialowy,0)
+           ,@OpeNumer
+           ,@OpeNumer
+           ,CASE WHEN ISNULL(@Archiwalny,0)=0 THEN 0 ELSE @OpeNumer END
+           ,IsNull(@TwrElem,0)
+	FROM CDN.OpeKarty
+	WHERE Ope_GIDNumer=@OpeNumer
+
+
+	IF @@ROWCOUNT=0 BEGIN
+
+		IF NOT EXISTS(SELECT * FROM CDN.OpeKarty WHERE Ope_GIDNumer=@OpeNumer) BEGIN
+			RAISERROR ('Podany operator nie występuje w bazie.', 16, 1)
+			RETURN -2
+		END				
+			
+		-- inny powód błędu:						
+		RAISERROR ('Nie powiodło się dodawanie wpisu do tabeli CDN.CRMRaportyDef.', 16, 1)
+		RETURN -1
+	END
+	
+	--OK:
+	SET @CRDId = scope_identity()
+
+	--Atrybuty automatyczne:
+	INSERT INTO CDN.Atrybuty(Atr_ObiTyp,Atr_ObiFirma,Atr_ObiNumer,Atr_ObiLp,Atr_ObiSubLp
+							,Atr_AtkId,Atr_Wartosc,Atr_AtrTyp,Atr_AtrFirma,Atr_AtrNumer,Atr_AtrLp,Atr_AtrSubLp,Atr_OptimaId)
+	SELECT 4184,CDN.GIDFirma(),@CRDId,0,0,Atk_Id,'',0,0,0,0,0,0
+	FROM CDN.AtrybutyKlasy
+	JOIN CDN.AtrybutyObiekty ON AtO_AtKId=AtK_ID
+	WHERE AtK_Automat=1 AND AtO_GIDTyp=4184 AND AtO_Element=1
+		                    
+	--OK:
+	RETURN @CRDId
+	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="XLCRMRaporty_Modyfikuj"></A><PRE>
+          <FONT SIZE="2"><I>/* XLCRMRaporty_Modyfikuj */</I><BR>
+CREATE PROCEDURE CDN.XLCRMRaporty_Modyfikuj
+(
+/* ==========================================================================================
+	SQL API: Procedura serwerowa do modyfikacji raportów obecności towarów lub raportów towarów konkurencji 
+
+	Dla uproszczenia założono, że jeżeli w systemie zewnętrznym zostanie wystawiony element wzorca wizyty handlowa,
+	to w trakcie wystawiania jej przez API nie ma potrzeby kontrolowania uprawnień do obiektów, z których ona korzysta.
+	
+	Parametry wejściowe: 
+   ========================================================================================== */
+	@CRDId					INT,				-- identyfikator raportu
+	@OpeNumer				INT,				-- GidNumer operatora, który wykonuje tą operacje
+	@Kod					VARCHAR(40),		-- Kod raportu
+	@Nazwa					VARCHAR(255),		-- Nazwa raportu
+	@Ilosc					TINYINT=NULL,		-- 0 - Niewymagana, 1 - Wymagana
+	@Cena					TINYINT=NULL,		-- 0 - Niewymagana, 1 - Wymagana
+	@Ekspozycja				TINYINT=NULL,		-- 0 - Niewymagana, 1 - Wymagana
+	@Facing					TINYINT=NULL,		-- 0 - Niewymagana, 1 - Wymagana
+	@Dostawca				TINYINT=NULL,		-- 0 - Niewymagana, 1 - Wymagana
+	@Archiwalny				TINYINT=NULL,		-- Czy raport archwiwalny
+	@Oddzialowy				TINYINT=NULL,		-- Czy raport został wysłany do oddziału
+	@TwrElem				TINYINT=NULL		-- Czy pozwalać na dodawanie towarów do elementu wizyty
+/* ==========================================================================================
+	Return:
+	 0 : Operacja zakończona sukcesem
+	-1 : Nie powiodła się modyfikacja wpisu do tabeli CDN.CRMRaportyDef
+	-2 : Podany operator nie występuje w bazie
+	-3 : Nie istnieje wpis w tabeli CDN.CRMRaportyDef o podanych identyfkatorze
+   ========================================================================================== */   	
+)
+AS
+BEGIN
+
+	DECLARE @TimeStamp INT
+    SET @TimeStamp = DATEDIFF(s,'19900101',GETDATE())
+
+  	UPDATE CRD
+	SET
+		CRD_Kod = IsNull(@Kod,CRD_Kod)
+		,CRD_Nazwa = IsNull(@Nazwa,CRD_Nazwa)
+		,CRD_Ilosc = IsNull(@Ilosc,CRD_Ilosc)
+		,CRD_Cena = IsNull(@Cena,CRD_Cena)
+		,CRD_Ekspozycja = IsNull(@Ekspozycja,CRD_Ekspozycja)
+		,CRD_Facing = IsNull(@Facing,CRD_Facing)
+		,CRD_Dostawca = IsNull(@Dostawca,CRD_Dostawca)
+		,CRD_CzasModyfikacji = @TimeStamp
+		,CRD_CzasModyfikacjiC = @TimeStamp
+		,CRD_CzasArchiwizacji =case when @Archiwalny is null then CRD.CRD_CzasArchiwizacji else (case when @Archiwalny=0 then 0 else @TimeStamp end) end
+		,CRD_Oddzialowy = IsNull(@Oddzialowy,CRD_Oddzialowy)
+		,CRD_OpeNumerU = @OpeNumer
+		,CRD_OpeNumerM = @OpeNumer
+		,CRD_OpeNumerA  =case when @Archiwalny is null then CRD.CRD_OpeNumerA else (case when @Archiwalny=0 then 0 else @OpeNumer end) end
+		,CRD_TwrElem = IsNull(@TwrElem,CRD_TwrElem)
+	FROM cdn.CRMRaportyDef as CRD 
+	JOIN CDN.OpeKarty ON Ope_GIDNumer=@OpeNumer
+	WHERE CRD_Id=@CRDId
+
+	IF @@ERROR&lt;&gt;0 BEGIN
+
+		IF NOT EXISTS(SELECT * FROM CDN.OpeKarty WHERE Ope_GIDNumer=@OpeNumer) BEGIN
+			RAISERROR ('Podany operator nie występuje w bazie.', 16, 1)
+			RETURN -2
+		END				
+			
+		IF NOT EXISTS(SELECT * FROM CDN.CRMRaportyDef WHERE CRD_Id=@CRDId) BEGIN 
+			RAISERROR ('Nie istnieje wpis w tabeli CDN.CRMRaportyDef o podanych identyfkatorze.', 16, 1)
+			RETURN -3
+		END	
+
+		-- inny powód błędu:						
+		RAISERROR ('Nie powiodła się modyfikacja wpisu do tabeli CDN.CRMRaportyDef.', 16, 1)
+		RETURN -1
+	END
+		                    
+	--OK:
+	RETURN 0
+	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="XLCRMRaporty_Usun"></A><PRE>
+          <FONT SIZE="2"><I>/* XLCRMRaporty_Usun */</I><BR>
+CREATE PROCEDURE CDN.XLCRMRaporty_Usun
+(
+/* ==========================================================================================
+	SQL API: Procedura serwerowa do usuwania raportów obecności towarów lub raportów towarów konkurencji 
+
+	Dla uproszczenia założono, że jeżeli w systemie zewnętrznym zostanie wystawiony element wzorca wizyty handlowa,
+	to w trakcie wystawiania jej przez API nie ma potrzeby kontrolowania uprawnień do obiektów, z których ona korzysta.
+	
+	Parametry wejściowe: 
+   ========================================================================================== */
+	@CRDId					INT,				-- identyfikator raportu
+	@OpeNumer				INT					-- GidNumer operatora, który wykonuje tą operacje
+/* ==========================================================================================
+	Return:
+	 0 : Operacja zakończona sukcesem 
+	-1 : Nie powiodło się dodawanie wpisu do tabeli CDN.CRMRaportyDef
+	-2 : Ten raport jest już wykorzystywany na wizycie handlowej bądź wzorcu
+	-3 : Nie istnieje wpis w tabeli CDN.CRMRaportyDef o podanych identyfkatorze
+   ========================================================================================== */   	
+)
+AS
+BEGIN
+
+	IF NOT EXISTS(SELECT * FROM CDN.CRMWizytyElemObiekty WHERE CWO_ObiTyp=4184 AND CWO_ObiLp=0 AND CWO_ObiNumer=@CRDId) BEGIN 
+		RAISERROR ('Ten raport jest już wykorzystywany na wizycie handlowej bądź wzorcu.', 16, 1)
+		RETURN -2
+	END	
+
+	DELETE FROM CDN.CRMRaportyDef
+	WHERE CRD_Id=@CRDId
+
+	IF @@ROWCOUNT=0 BEGIN
+
+		IF NOT EXISTS(SELECT * FROM CDN.CRMRaportyDef WHERE CRD_Id=@CRDId) BEGIN 
+			RAISERROR ('Nie istnieje wpis w tabeli CDN.CRMRaportyDef o podanych identyfkatorze.', 16, 1)
+			RETURN -3
+		END			
+			
+		-- inny powód błędu:						
+		RAISERROR ('Nie powiodło się dodawanie wpisu do tabeli CDN.CRMRaportyDef.', 16, 1)
+		RETURN -1
+	END
+		                    
+	--OK:
+	RETURN 0
+	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="XLCRMRaporty_DodajKolumne"></A><PRE>
+          <FONT SIZE="2"><I>/* XLCRMRaporty_DodajKolumne */</I><BR>
+CREATE PROCEDURE CDN.XLCRMRaporty_DodajKolumne
+(
+/* ==========================================================================================
+	SQL API: Procedura serwerowa do dodawania kolumny do raportów obecności towarów lub raportów towarów konkurencji  
+
+	Dla uproszczenia założono, że jeżeli w systemie zewnętrznym zostanie zmodyfikowany element wzorca wizyty handlowa,
+	to w trakcie modyfikacji jej przez API nie ma potrzeby kontrolowania uprawnień do obiektów, z których ona korzysta.
+	
+	Parametry wejściowe: 
+   ========================================================================================== */
+	@CRDId					INT,				-- identyfikator raportu
+	@OpeNumer				INT,				-- GidNumer operatora, który wykonuje tą operacje
+	@AtKID					INT,				-- ID definicji klasy atrybutów
+	@Pozycja				SMALLINT=null,		-- Pozycja na liście
+	@Wymagana				TINYINT=null		-- Czy kolumna jest wymagana
+/* ==========================================================================================
+	Return:
+	 0 : Operacja zakończona sukcesem
+	-1 : Nie powiodło się modyfikacja w tabeli CDN.CRMWizytyDokTwr
+	-2 : Istnieje już kolumna o podanej pozycji
+	-3 : Podany raport nie występuje w bazie
+	-4 : Podana klasa atrybutów nie występuje w bazie
+   ========================================================================================== */   	
+)
+AS
+BEGIN
+
+	IF @Pozycja is not null and exists(SELECT * FROM CDN.CRMRaportyKolumny WHERE CRK_CRDId=@CRDId AND CRK_Pozycja=@Pozycja) BEGIN
+		RAISERROR('Istnieje już kolumna o podanej pozycji.',16,1)		
+		RETURN -2
+	END ELSE IF @Pozycja is null BEGIN
+		SELECT @Pozycja=IsNull((select max(CRK_Pozycja) FROM CDN.CRMRaportyKolumny WHERE CRK_CRDId=@CRDId),0)+1
+	END
+
+	INSERT INTO CDN.CRMRaportyKolumny
+           (CRK_CRDId
+           ,CRK_AtKID
+           ,CRK_Pozycja
+           ,CRK_Wymagana)
+	SELECT @CRDId
+           ,@AtKID
+           ,@Pozycja
+           ,@Wymagana
+
+	IF @@ROWCOUNT=0 BEGIN
+
+		IF NOT EXISTS(SELECT * FROM CDN.CRMRaportyDef WHERE CRD_Id=@CRDId) BEGIN 
+			RAISERROR ('Podany raport nie występuje w bazie.', 16, 1)
+			RETURN -3
+		END
+		IF NOT EXISTS(SELECT * FROM CDN.AtrybutyKlasy WHERE AtK_ID=@AtKID) BEGIN 
+			RAISERROR ('Podana klasa atrybutów nie występuje w bazie.', 16, 1)
+			RETURN -4
+		END
+
+		RAISERROR ('Nie powiodło się dodawanie wpisów do tabeli CDN.CRMWizytyDokTwr.', 16, 1)
+		RETURN -1
+	END
+	RETURN 0
+	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="XLCRMRaporty_UsunKolumne"></A><PRE>
+          <FONT SIZE="2"><I>/* XLCRMRaporty_UsunKolumne */</I><BR>
+CREATE PROCEDURE CDN.XLCRMRaporty_UsunKolumne
+(
+/* ==========================================================================================
+	SQL API: Procedura serwerowa do odłączenia kolumny z raportów obecności towarów lub raportów towarów konkurencji  
+
+	Dla uproszczenia założono, że jeżeli w systemie zewnętrznym zostanie zmodyfikowany element wzorca wizyty handlowa,
+	to w trakcie modyfikacji jej przez API nie ma potrzeby kontrolowania uprawnień do obiektów, z których ona korzysta.
+	
+	Parametry wejściowe: 
+   ========================================================================================== */
+	@OpeNumer				INT,				-- GidNumer operatora, który wykonuje tą operacje
+	@ListaKolumn			CDN.NumerTableType readonly	-- Lista identyfikatorów kolumn z tabeli CRMRaportyKolumny
+/* ==========================================================================================
+	Return:
+	 0 : Operacja zakończona sukcesem
+	-1 : Nie powiodło się usuwanie wpisów z tabeli CDN.CRMRaportyKolumny
+	-2 : Podany element nie jest elementem rodzaju: Dokumenty
+	-3 : Nie przekazano towarów do odłączenia
+   ========================================================================================== */   	
+)
+AS
+BEGIN
+
+	IF (SELECT COUNT(*) FROM @ListaKolumn) = 0 BEGIN
+		RAISERROR('Nie przekazano kolumn do odłączenia.',16,1)		
+		RETURN -3	
+	END
+
+	DELETE CDN.CRMRaportyKolumny
+    WHERE CRK_Id in (SELECT Numer FROM @ListaKolumn)
+
+	IF @@ERROR&lt;&gt;0 OR @@ROWCOUNT=0 BEGIN
+		RAISERROR ('Nie powiodło się usuwanie wpisów z tabeli CDN.CRMRaportyKolumny.', 16, 1)
+		RETURN -1
+	END
+
+	RETURN 0
+	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="XLCRMRaporty_PrzypiszTowary"></A><PRE>
+          <FONT SIZE="2"><I>/* XLCRMRaporty_PrzypiszTowary */</I><BR>
+CREATE PROCEDURE CDN.XLCRMRaporty_PrzypiszTowary
+(
+/* ==========================================================================================
+	SQL API: Procedura serwerowa do przypisywania towarów do raportu obecności towarów lub raport towarów konkurencji
+
+	Dla uproszczenia założono, że jeżeli w systemie zewnętrznym zostanie zmodyfikowany element wzorca wizyty handlowa,
+	to w trakcie modyfikacji jej przez API nie ma potrzeby kontrolowania uprawnień do obiektów, z których ona korzysta.
+	
+	Parametry wejściowe: 
+   ========================================================================================== */
+	@CRDId					INT,				-- Identyfikator raportu
+	@OpeNumer				INT,				-- GidNumer operatora, który wykonuje tą operacje
+	@ListaTowarow			CDN.NumerTableType readonly -- lista towarów
+/* ==========================================================================================
+	Return:
+	 0 : Operacja zakończona sukcesem
+	-1 : Nie powiodło się dodawanie wpisów do tabeli CDN.CRMRaportyTwr
+	-2 : Podany raport nie występuje w bazie
+	-3 : Nie przekazano towarów do dodania
+   ========================================================================================== */   	
+)
+AS
+BEGIN
+
+	IF (SELECT COUNT(*) FROM @ListaTowarow) = 0 BEGIN
+		RAISERROR('Nie przekazano towarów do dodania.',16,1)		
+		RETURN -3	
+	END
+
+	INSERT INTO CDN.CRMRaportyTwr
+           (CRT_CRDId
+           ,CRT_TwrNumer)
+	SELECT @CRDId
+           ,Numer--CRT_TwrNumer
+	FROM @ListaTowarow
+	JOIN CDN.TwrKarty ON Twr_GIDNumer=Numer
+
+	IF @@ROWCOUNT=0 BEGIN
+		IF NOT EXISTS(SELECT * FROM CDN.CRMRaportyDef WHERE CRD_ID=@CRDId) BEGIN 
+			RAISERROR ('Podany raport nie występuje w bazie.', 16, 1)
+			RETURN -2
+		END
+
+		RAISERROR ('Nie powiodło się dodawanie wpisów do tabeli CDN.CRMRaportyTwr.', 16, 1)
+		RETURN -1
+	END
+
+	RETURN 0
+	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="XLCRMRaporty_OdlaczTowary"></A><PRE>
+          <FONT SIZE="2"><I>/* XLCRMRaporty_OdlaczTowary */</I><BR>
+CREATE PROCEDURE CDN.XLCRMRaporty_OdlaczTowary
+(
+/* ==========================================================================================
+	SQL API: Procedura serwerowa do odłączenia towarów do raportu obecności towarów lub raport towarów konkurencji
+
+	Dla uproszczenia założono, że jeżeli w systemie zewnętrznym zostanie zmodyfikowany element wzorca wizyty handlowa,
+	to w trakcie modyfikacji jej przez API nie ma potrzeby kontrolowania uprawnień do obiektów, z których ona korzysta.
+	
+	Parametry wejściowe: 
+   ========================================================================================== */
+	@CRDId					INT,				-- Identyfikator raportu
+	@OpeNumer				INT,				-- GidNumer operatora, który wykonuje tą operacje
+	@ListaTowarow			CDN.NumerTableType readonly -- lista towarów
+/* ==========================================================================================
+	Return:
+	 0 : Operacja zakończona sukcesem
+	-1 : Nie powiodło się usuwanie wpisów z tabeli CDN.CRMRaportyTwr
+	-2 : Podany raport nie występuje w bazie
+	-3 : Nie przekazano towarów do odłączenia
+   ========================================================================================== */   	
+)
+AS
+BEGIN
+
+	IF (SELECT COUNT(*) FROM @ListaTowarow) = 0 BEGIN
+		RAISERROR('Nie przekazano towarów do odłączenia.',16,1)		
+		RETURN -3	
+	END
+
+	DELETE CDN.CRMRaportyTwr
+    WHERE CRT_CRDId=@CRDId AND CRT_TwrNumer in (SELECT Numer FROM @ListaTowarow JOIN CDN.TwrKarty ON Twr_GIDNumer=Numer)
+
+	IF @@ERROR&lt;&gt;0 OR @@ROWCOUNT=0 BEGIN
+		IF NOT EXISTS(SELECT * FROM CDN.CRMRaportyDef WHERE CRD_ID=@CRDId) BEGIN 
+			RAISERROR ('Podany raport nie występuje w bazie.', 16, 1)
+			RETURN -2
+		END
+		RAISERROR ('Nie powiodło się usuwanie wpisów z tabeli CDN.CRMRaportyTwr.', 16, 1)
+		RETURN -1
+	END
+
+	RETURN 0
+	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

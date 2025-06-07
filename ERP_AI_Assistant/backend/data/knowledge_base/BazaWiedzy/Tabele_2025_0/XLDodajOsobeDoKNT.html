@@ -1,0 +1,207 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[XLDodajOsobeDoKNT]"></A><PRE>
+          <FONT SIZE="2"><I>/* [XLDodajOsobeDoKNT] */</I><BR>
+CREATE PROCEDURE [CDN].[XLDodajOsobeDoKNT]
+
+
+@KntNumer                       int output,
+@Nazwa                          varchar(40), -- imię i nazwisko osoby
+@KntAkronim                     varchar(20),
+
+
+
+@Upowazniona            tinyint = NULL,
+@UpowaznionaZam         tinyint = NULL,
+@Dzial                          varchar(40) = NULL,
+@Stanowisko                     varchar(40) = NULL,
+@Tytul                          varchar(40) = NULL,
+@Telefon                        varchar(30) = NULL,
+@EMail                          varchar(255) = NULL,
+@HasloChk                       varchar(2) = NULL,
+@HasloOsoby                     varchar(11) = NULL,
+@Notatki                        varchar(1024) = NULL,
+@RolaDecyzyjna          int = NULL,
+@Fax                            varchar(30) = NULL,
+@TelefonK                       varchar(30) = NULL,
+@UpoDoK                         smallint = NULL,
+@Archiwalny                     tinyint = NULL,
+@IgnorujBledy           tinyint = NULL
+
+
+AS
+
+
+declare @KntFirma               int
+declare @KntLp                  smallint
+declare @Pozycja                smallint
+declare @SlwId                                  int
+declare @StanowiskoId                   int
+declare @TimeStampNow                   int
+
+
+SET NOCOUNT ON
+
+
+select @KntFirma = FrS_GidFirma from cdn.FrmStruktura where FrS_Id = 1
+
+
+BEGIN TRAN
+
+
+if @KntNumer is null or not exists(select * from cdn.KntKarty where Knt_GidNumer = @KntNumer and Knt_Archiwalny = 0)
+        begin
+                if @KntAkronim is null or not exists(select * from cdn.KntKarty where Knt_Akronim = @KntAkronim and Knt_Archiwalny = 0)
+                        begin
+                                rollback tran
+                                if @IgnorujBledy is null
+                                        raiserror('Nie znaleziono kontrahenta - (-1)',16,1)
+                                return -1
+                        end
+                else
+                        select @KntNumer = Knt_GidNumer from cdn.KntKarty where Knt_Akronim = @KntAkronim
+        end
+
+
+
+if @Nazwa is null or ltrim(@Nazwa) = ''
+        begin
+                rollback tran
+                if @IgnorujBledy is null
+                        raiserror('Nie podano imienia i nazwiska osoby - (-2)',16,1)
+                return -2
+        end
+else
+        if exists(select * from cdn.KntOsoby where KnS_Nazwa=@Nazwa and KnS_KntNumer=@KntNumer)
+                begin
+                        rollback tran
+                        if @IgnorujBledy is null
+                                raiserror('Osoba o danym imieniu i nazwisku jest już dodana do kontrahenta - (-3)',16,1)
+                        return -3
+                end
+
+
+if @RolaDecyzyjna is null or not exists(select * from CDN.SlownikiStruktura join CDN.Slowniki on
+SLW_SLSId = SLS_Id where SLS_Predefiniowany = 15 and Slw_ID = @RolaDecyzyjna) --e_sls_RoleDecyzyjne     EQUATE(15)
+        set @RolaDecyzyjna = 0
+
+
+
+set @Stanowisko = ltrim(@Stanowisko)
+if @Stanowisko is null or not exists(select * from CDN.SlownikiStruktura join CDN.Slowniki on
+SLW_SLSId = SLS_Id where SLS_Predefiniowany = 17 and Slw_WartoscS = @Stanowisko) --e_sls_Stanowiska EQUATE(17)
+        --set @Stanowisko = '' TID:176536
+        select @StanowiskoId = isnull(SLS_Id,0) from CDN.SlownikiStruktura where SLS_Predefiniowany=17
+        select @SlwId = isnull(max(SLW_ID),0)+1 from CDN.Slowniki with (nolock)
+        select @TimeStampNow = DATEDIFF(S,'19900101',GETDATE())
+        if @StanowiskoId &gt; 0
+                begin
+                        INSERT INTO [CDN].[Slowniki]([SLW_ID],[SLW_Predefiniowany],[SLW_Kategoria],[SLW_WartoscS],[SLW_WartoscS1],[SLW_WartoscS2],[SLW_Nazwa],[SLW_WartoscN1],[SLW_WartoscN2],[SLW_WartoscN3],[SLW_WartoscN4],[SLW_WartoscL1],[SLW_WartoscL2],[SLW_Konto],[SLW_Aktywny],[SLW_Domyslny],[SLW_OptimaId],[SLW_WartoscL3],[SLW_SLSId],[SLW_CzasModyfikacji])VALUES(@SlwId,0,'Stanowiska',@Stanowisko,'','','',0,0,0,0,0,0,'',1,0,0,0,@StanowiskoId,@TimeStampNow)
+                        if @@error &lt;&gt; 0
+                                begin
+                                                ROLLBACK TRAN
+                                                if @IgnorujBledy is null
+                                                                RAISERROR ('Błąd podczas dodawania stanowiska - (-4)', 16, 1)
+                                                return -33
+                                end
+                end
+else -- by były odpowiednie wielkości liter
+        select @Stanowisko = SLW_WartoscS from CDN.SlownikiStruktura join CDN.Slowniki on SLW_SLSId = SLS_Id where SLS_Predefiniowany = 17 and Slw_WartoscS = @Stanowisko
+
+
+if @Upowazniona is null or @Upowazniona not in (0,1)
+        set @Upowazniona = 0
+
+if @UpowaznionaZam is null or @UpowaznionaZam not in (0,1)
+        set @UpowaznionaZam = 0
+
+if @Archiwalny is null or @Archiwalny not in (0,1)
+        set @Archiwalny = 0
+
+if @UpoDoK is null or @UpoDoK not in (0,1)
+        set @UpoDoK = 0
+
+
+
+select @KntLp = isnull(max(KnS_KntLp),0) + 1, @Pozycja = isnull(max(KnS_Pozycja),0) + 1 from cdn.KntOsoby where KnS_KntNumer = @KntNumer and KnS_KntTyp=32
+
+
+
+insert into cdn.KntOsoby(
+KnS_KntTyp,
+KnS_KntFirma,
+KnS_KntNumer,
+KnS_KntLp,
+KnS_Upowazniona,
+KnS_UpowaznionaZam,
+KnS_Dzial,
+KnS_Stanowisko,
+KnS_Tytul,
+KnS_Nazwa,
+KnS_Telefon,
+KnS_EMail,
+KnS_HasloChk,
+KnS_HasloOsoby,
+KnS_Notatki,
+KnS_RolaDecyzyjna,
+KnS_Fax,
+KnS_TelefonK,
+KnS_UpoDoK,
+KnS_Archiwalny,
+KnS_Pozycja,
+KnS_CzasModyfikacji
+)values(
+32, --KnS_KntTyp,
+@KntFirma, --KnS_KntFirma,
+@KntNumer, --KnS_KntNumer
+@KntLp, --KnS_KntLp
+@Upowazniona, --KnS_Upowazniona,
+@UpowaznionaZam, --KnS_UpowaznionaZam,
+isnull(@Dzial,''), --KnS_Dzial
+@Stanowisko, --KnS_Stanowisko
+isnull(@Tytul,''), --KnS_Tytul
+@Nazwa, --KnS_Nazwa
+isnull(@Telefon,''), --KnS_Telefon
+isnull(@EMail,''), --KnS_EMail
+isnull(@HasloChk,''), --KnS_HasloChk
+isnull(@HasloOsoby,''), --KnS_HasloOsoby
+isnull(@Notatki,''), --KnS_Notatki
+@RolaDecyzyjna, --KnS_RolaDecyzyjna
+isnull(@Fax,''), --KnS_Fax
+isnull(@TelefonK,''), --KnS_TelefonK
+@UpoDoK, --KnS_UpoDoK
+@Archiwalny, --KnS_Archiwalny
+@Pozycja, --KnS_Pozycja
+DATEDIFF(S,'19900101',GETDATE())--KnS_CzasModyfikacji
+)
+
+if @@error &lt;&gt; 0
+        begin
+                ROLLBACK TRAN
+                if @IgnorujBledy is null
+                        RAISERROR ('Błąd podczas dodawania osoby do kontrahneta - (-33)', 16, 1)
+                return -33
+        end
+
+
+COMMIT TRAN
+
+select KntLp = @KntLp, KntNumer = @KntNumer, KntTyp = 32, KntFirma = @KntFirma
+
+SET NOCOUNT OFF
+RETURN @KntLp
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

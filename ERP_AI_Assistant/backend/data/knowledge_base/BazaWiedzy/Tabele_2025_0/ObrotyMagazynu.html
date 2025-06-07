@@ -1,0 +1,183 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="ObrotyMagazynu"></A><PRE>
+          <FONT SIZE="2"><I>/* ObrotyMagazynu */</I><BR>
+CREATE  PROCEDURE CDN.ObrotyMagazynu(@DataOd int, @DataDo int, @Korekty int, @CDN_MagSesja int, @CDN_MagWatek int, @CDN_Filtr varchar(2048))
+AS 
+DECLARE @MAGTyp SMALLINT
+SET NOCOUNT ON
+
+SET @MAGTyp = 208
+
+CREATE TABLE #TmpTwrKarty
+(
+	GIDNumer int
+	PRIMARY KEY(GIDNumer) 
+)
+ 
+IF IsNull(@CDN_Filtr,'')=''
+  EXEC (N'Insert Into #TmpTwrKarty Select TwrKarty.Twr_GIDNumer FROM CDN.TwrKarty TwrKarty WHERE TwrKarty.Twr_Typ in (1,2)');
+Else
+  EXEC (N'Insert Into #TmpTwrKarty Select TwrKarty.Twr_GIDNumer FROM CDN.TwrKarty TwrKarty WHERE TwrKarty.Twr_Typ in (1,2) AND ' + @CDN_Filtr)
+
+SET NOCOUNT OFF
+
+SELECT 
+IsNull(BO.Ilosc,0) As BOIlosc, 
+IsNull(BO.Wartosc,0) As BOWartosc, 
+IsNull(Przychod.Ilosc,0) As PrzychodIlosc, 
+IsNull(Przychod.Wartosc,0) As PrzychodWartosc, 
+IsNull(Rozchod.Ilosc,0) As RozchodIlosc, 
+IsNull(Rozchod.Wartosc,0) As RozchodWartosc, 
+rtrim(COALESCE(BO.Twr_Kod,Przychod.Twr_Kod,Rozchod.Twr_Kod)) As Twr_Kod, 
+rtrim(COALESCE(BO.Twr_Nazwa,Przychod.Twr_Nazwa,Rozchod.Twr_Nazwa)) As Twr_Nazwa, 
+rtrim(COALESCE(BO.Twr_Jm,Przychod.Twr_Jm,Rozchod.Twr_Jm))  As Twr_Jm 
+FROM 
+( 
+  SELECT 
+  Twr_Kod, Twr_Nazwa, Twr_Jm, 
+  ISNULL(SUM(CDN.TrSIlosc(TrS_Ilosc,TrN_GIDTyp,TrN_GIDNumer,TrS_GIDLp,TrS_SubGIDLp,TrS_ZwrTyp,TrN_Stan)),0) AS Ilosc,
+  ISNULL(SUM(CDN.TrSKsiegowa(TrS_KosztKsiegowy,TrS_Ilosc,TrN_GIDTyp,TrN_GIDNumer,TrS_GIDLp,TrS_SubGIDLp,TrS_ZwrTyp,TrN_Stan,TrN_ZmodyfikowanoZasob)),0) AS Wartosc
+  FROM 
+  #TmpTwrKarty 
+  JOIN CDN.TwrKarty ON Twr_GIDNumer=GIDNumer 
+  JOIN CDN.TraElem ON Twr_GIDNumer=TrE_TwrNumer 
+  JOIN CDN.TraSElem ON TrS_GIDNumer=TrE_GIDNumer AND TrS_GIDLp=TrE_GIDLp AND TrS_MagTyp=@MAGTyp
+  JOIN CDN.MagWybor ON TrS_MagNumer=MgW_MagNumer AND MgW_SesjaID=@CDN_MagSesja AND MgW_Watek=@CDN_MagWatek
+  JOIN CDN.TraNag ON TrN_GIDNumer=TrE_GIDNumer 
+    WHERE Trn_DataMag &lt; @DataOd and   
+  (TrN_Stan &gt;= 3 or 
+	(TrN_Stan &lt; 3 and 
+	  (trn_gidtyp = 1616 or 
+		((CDN.CzyPrzychod(trn_gidtyp) = 0 AND trn_gidtyp &amp; 8 = 0 OR trn_gidtyp &amp; 8 &gt; 0 AND CDN.CzyPrzychod(trn_gidtyp-8) = 0) and Tre_Ilosc &gt;0) or 
+		((CDN.CzyPrzychod(trn_gidtyp) = 1 AND trn_gidtyp &amp; 8 = 0 OR trn_gidtyp &amp; 8 &gt; 0 AND CDN.CzyPrzychod(trn_gidtyp-8) = 1) and Tre_Ilosc &lt;0)
+	  )
+	)
+  )
+  GROUP BY Twr_Kod, Twr_Nazwa, Twr_Jm 
+) As Bo 
+FULL JOIN 
+( 
+  SELECT
+  Twr_Kod, Twr_Nazwa, Twr_Jm,
+  SUM(CASE WHEN @Korekty=0 THEN
+        CASE WHEN Trn_GIDTyp in (2041,2008,2009,1624,2042,2045,2013,2044) THEN CASE WHEN Trn_Stan&lt;3 and not(Trn_Gidtyp = 1624 and trs_Ilosc &gt; 0) THEN 0 when Trn_Stan&lt;3 and (Trn_Gidtyp = 1624 and trs_Ilosc &gt; 0) then 0-Trs_Ilosc  ELSE 0-Trs_Ilosc END -- Dokumenty rozchodowe - korekty
+             WHEN Trn_GIDTyp in (1520,1521,1489,1490,1617,2002,1604) THEN CASE WHEN Trn_Stan&lt;3 THEN 0 ELSE Trs_Ilosc END -- Dokumenty przychodowe
+             WHEN Trn_TrnTyp=7 THEN
+               CASE WHEN Trn_Stan&lt;3 and Trs_SubGidLp&lt;=0 THEN 0 ELSE
+                   CASE WHEN Trs_SubGidLp&gt;0 THEN
+                       CASE WHEN Trs_Ilosc&gt;0 THEN 0 ELSE Trs_Ilosc END ELSE
+                           CASE WHEN Trs_Ilosc&lt;0 THEN 0-Trs_Ilosc ELSE 0 END END END
+        END 
+      ELSE
+        CASE WHEN Trn_GIDTyp in (1520,1521,1489,1490,1617,2002,1604) THEN CASE WHEN Trn_Stan&lt;3 THEN 0 ELSE Trs_Ilosc END -- Dokumenty przychodowe
+             WHEN Trn_GIDTyp in (1528,1529,1497,1498,1625,2010) THEN Trs_Ilosc -- Dokumenty przychodowe - korekty
+             WHEN Trn_TrnTyp=7 THEN
+               CASE WHEN Trn_Stan&lt;3 and Trs_SubGidLp&lt;=0 THEN 0 ELSE
+                   CASE WHEN Trs_SubGidLp&gt;0 THEN
+                       CASE WHEN Trs_Ilosc&gt;0 THEN 0 ELSE Trs_Ilosc END ELSE
+                           CASE WHEN Trs_Ilosc&lt;0 THEN 0-Trs_Ilosc ELSE 0 END END END
+        END
+      END ) As Ilosc,
+  SUM(CASE WHEN @Korekty=0 THEN
+        CASE WHEN Trn_GIDTyp in (2041,2008,2009,1624,2042,2045,2013,2044) THEN CASE WHEN Trn_Stan&lt;3  and not(Trn_Gidtyp = 1624 and trs_Ilosc &gt; 0) THEN 0 when Trn_Stan&lt;3 and (Trn_Gidtyp = 1624 and trs_Ilosc &gt; 0) then 0-Trs_KosztKsiegowy ELSE 0-Trs_KosztKsiegowy END -- Dokumenty rozchodowe - korekty
+             WHEN Trn_GIDTyp in (1520,1521,1489,1490,1617,2002,1604,1232) THEN CASE WHEN Trn_Stan&lt;3 THEN 0 ELSE Trs_KosztKsiegowy END -- Dokumenty przychodowe
+             WHEN Trn_TrnTyp=7 THEN
+               CASE WHEN Trn_Stan&lt;3 and Trs_SubGidLp&lt;=0 THEN 0 ELSE
+                   CASE WHEN Trs_SubGidLp&gt;0 THEN
+                       CASE WHEN Trs_Ilosc&gt;0 THEN 0 ELSE Trs_KosztKsiegowy END ELSE
+                           CASE WHEN Trs_Ilosc&lt;0 THEN 0-Trs_KosztKsiegowy ELSE 0 END END END
+        END 
+      ELSE
+        CASE WHEN Trn_GIDTyp in (1520,1521,1489,1490,1617,2002,1604,1232) THEN CASE WHEN Trn_Stan&lt;3 THEN 0 ELSE Trs_KosztKsiegowy END -- Dokumenty przychodowe
+             WHEN Trn_GIDTyp in (1528,1529,1497,1498,1625,2010) THEN Trs_KosztKsiegowy -- Dokumenty przychodowe - korekty
+             WHEN Trn_TrnTyp=7 THEN
+                 CASE WHEN Trn_Stan&lt;3 and Trs_SubGidLp&lt;=0 THEN 0 ELSE
+                   CASE WHEN Trs_SubGidLp&gt;0 THEN
+                       CASE WHEN Trs_Ilosc&gt;0 THEN 0 ELSE Trs_KosztKsiegowy END ELSE
+                           CASE WHEN Trs_Ilosc&lt;0 THEN 0-Trs_KosztKsiegowy ELSE 0 END END END
+        END 
+      END ) As Wartosc
+  FROM 
+  #TmpTwrKarty 
+  JOIN CDN.TwrKarty ON Twr_GIDNumer=GIDNumer 
+  JOIN CDN.TraElem ON Twr_GIDNumer=TrE_TwrNumer 
+  JOIN CDN.TraSElem ON TrS_GIDNumer=TrE_GIDNumer AND TrS_GIDLp=TrE_GIDLp AND TrS_MagTyp=@MAGTyp
+  JOIN CDN.MagWybor ON TrS_MagNumer=MgW_MagNumer AND MgW_SesjaID=@CDN_MagSesja AND MgW_Watek=@CDN_MagWatek
+  JOIN CDN.TraNag ON TrN_GIDNumer=TrE_GIDNumer 
+  WHERE Trn_DataMag BETWEEN @DataOd AND @DataDo 
+  GROUP BY Twr_Kod, Twr_Nazwa, Twr_Jm 
+) As Przychod ON BO.Twr_Kod=Przychod.Twr_Kod 
+FULL JOIN 
+( 
+  SELECT
+  Twr_Kod, Twr_Nazwa, Twr_Jm,
+  SUM(CASE WHEN @Korekty=0 THEN
+        CASE WHEN Trn_GIDTyp in (2033,2001,2000,1616,2034,2037,2005,2036,1603) THEN Trs_Ilosc  -- Dokumenty rozchodowe
+             WHEN Trn_GIDTyp in (1528,1529,1497,1498,1625,2010) THEN 0-Trs_Ilosc -- Dokumenty przychodowe - korekty
+             WHEN Trn_TrnTyp=19 THEN 0
+             WHEN Trn_TrnTyp=7 THEN
+               CASE WHEN Trn_Stan&lt;3 and Trs_SubGidLp&lt;=0 THEN 0 ELSE
+                   CASE WHEN Trs_SubGidLp&gt;0 THEN
+                       CASE WHEN Trs_Ilosc&gt;0 THEN Trs_Ilosc ELSE 0 END ELSE
+                          CASE WHEN Trs_Ilosc&lt;0 THEN 0 ELSE 0-Trs_Ilosc END END END
+        END
+      ELSE
+        CASE WHEN Trn_GIDTyp in (2033,2001,2000,1616,2034,2037,2005,2036,1603) THEN Trs_Ilosc  -- Dokumenty rozchodowe
+             WHEN Trn_GIDTyp in (2041,2009,2008,1624,2042,2045,2013,2044) THEN CASE WHEN Trn_Stan&lt;3 THEN 0 ELSE Trs_Ilosc END -- Dokumenty rozchodowe - korekty
+             WHEN Trn_TrnTyp=19 THEN 0
+             WHEN Trn_TrnTyp=7 THEN
+               CASE WHEN Trn_Stan&lt;3 and Trs_SubGidLp&lt;=0 THEN 0 ELSE
+                   CASE WHEN Trs_SubGidLp&gt;0 THEN
+                       CASE WHEN Trs_Ilosc&gt;0 THEN Trs_Ilosc ELSE 0 END ELSE
+                          CASE WHEN Trs_Ilosc&lt;0 THEN 0 ELSE 0-Trs_Ilosc END END END
+        END
+      END ) As Ilosc,
+  SUM(CASE WHEN @Korekty=0 THEN
+        CASE WHEN Trn_GIDTyp in (2033,2001,2000,1616,2034,2037,2005,2036,1603) THEN Trs_KosztKsiegowy  -- Dokumenty rozchodowe
+             WHEN Trn_GIDTyp in (1528,1529,1497,1498,1625,2010) THEN 0-Trs_KosztKsiegowy -- Dokumenty przychodowe - korekty
+             WHEN Trn_GIDTyp=2003 THEN Trs_KosztKsiegowy --Korekta kosztow
+             WHEN Trn_GIDTyp=2004 AND TrN_ZmodyfikowanoZasob=1 THEN Trs_KosztKsiegowy  --Deprecjacja
+             WHEN Trn_TrnTyp=7 THEN
+               CASE WHEN Trn_Stan&lt;3 and Trs_SubGidLp&lt;=0 THEN 0 ELSE
+                 CASE WHEN Trs_SubGidLp&gt;0 THEN
+                   CASE WHEN Trs_Ilosc&gt;0 THEN Trs_KosztKsiegowy ELSE 0 END ELSE
+                     CASE WHEN Trs_Ilosc&lt;0 THEN 0 ELSE 0-Trs_KosztKsiegowy END END END
+        END
+      ELSE
+        CASE WHEN Trn_GIDTyp in (2033,2001,2000,1616,2034,2037,2005,2036,1603) THEN Trs_KosztKsiegowy  -- Dokumenty rozchodowe
+             WHEN Trn_GIDTyp in (2041,2009,2008,1624,2042,2045,2013,2044) THEN CASE WHEN Trn_Stan&lt;3 THEN 0 ELSE Trs_KosztKsiegowy END -- Dokumenty rozchodowe - korekty
+             WHEN Trn_GIDTyp=2003 THEN Trs_KosztKsiegowy --Korekta kosztow
+             WHEN Trn_GIDTyp=2004 AND TrN_ZmodyfikowanoZasob=1 THEN Trs_KosztKsiegowy  --Deprecjacja
+             WHEN Trn_TrnTyp=7 THEN
+               CASE WHEN Trn_Stan&lt;3 and Trs_SubGidLp&lt;=0 THEN 0 ELSE
+                 CASE WHEN Trs_SubGidLp&gt;0 THEN
+                   CASE WHEN Trs_Ilosc&gt;0 THEN Trs_KosztKsiegowy ELSE 0 END ELSE
+                     CASE WHEN Trs_Ilosc&lt;0 THEN 0 ELSE 0-Trs_KosztKsiegowy END END END
+        END
+      END ) As Wartosc
+  FROM 
+  #TmpTwrKarty 
+  JOIN CDN.TwrKarty ON Twr_GIDNumer=GIDNumer 
+  JOIN CDN.TraElem ON Twr_GIDNumer=TrE_TwrNumer 
+  JOIN CDN.TraSElem ON TrS_GIDNumer=TrE_GIDNumer AND TrS_GIDLp=TrE_GIDLp AND TrS_MagTyp=@MAGTyp
+  JOIN CDN.MagWybor ON TrS_MagNumer=MgW_MagNumer AND MgW_SesjaID=@CDN_MagSesja AND MgW_Watek=@CDN_MagWatek
+  JOIN CDN.TraNag ON TrN_GIDNumer=TrE_GIDNumer 
+  WHERE Trn_DataMag BETWEEN @DataOd AND @DataDo
+  GROUP BY Twr_Kod, Twr_Nazwa, Twr_Jm 
+) As Rozchod ON COALESCE(BO.Twr_Kod,Przychod.Twr_Kod)=Rozchod.Twr_Kod 
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

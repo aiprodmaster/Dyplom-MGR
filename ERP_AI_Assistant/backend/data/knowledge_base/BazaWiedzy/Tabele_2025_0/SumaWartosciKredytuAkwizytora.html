@@ -1,0 +1,94 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="SumaWartosciKredytuAkwizytora"></A><PRE>
+          <FONT SIZE="2"><I>/* SumaWartosciKredytuAkwizytora */</I><BR>
+CREATE FUNCTION CDN.SumaWartosciKredytuAkwizytora (
+	@p_frsid INT
+	, @p_timestamp INT
+	, @p_akwNumer INT
+	, @p_UwzglDokBezPlat TINYINT
+	, @p_UwzglZam TINYINT
+	)
+	-- Funkcja zwraca sume wartosci nierozliczonych płatności
+	--
+	-- Format wyniku:
+	-- Wartosc
+	--
+	-- Wersja 3.1   29.09.2003  Nomad
+	-- Wersja 9.0   12.11.2008  MF
+	--dodane parametry
+	--@p_UwzglDokBezPlat
+	--@p_UwzglZam
+	--usunięty parametr
+	--@p_akwFirma
+	--
+	-- Parametry:
+	-- @p_frsid				frsid dokumentów w których chcemy szukać wartosci
+	-- @p_timestamp			teraźniejszy timestamp
+	-- @p_akwNumer			Numer akwizytora dla którego liczymy wartość kredytu
+	-- @p_UwzglDokBezPlat	Czy uwzględniać dokumenty bez płatności (WZ, WZK, PZ, PZK)
+	-- @p_UwzglZam			Czy uwzględniać rezerwacje
+RETURNS VARCHAR(255)
+AS
+BEGIN
+	DECLARE @retval VARCHAR(255);
+	DECLARE @platnosci DECIMAL(28, 4);
+	DECLARE @DokBezPlatnosci DECIMAL(28, 4);
+	DECLARE @Rezerwacje DECIMAL(28, 4);
+
+	-- policzenie płatności
+	SELECT @platnosci = SUM(sumaplatnosci)
+	FROM (
+		SELECT SUM(CASE TrP_Typ
+					WHEN 1
+						THEN - TrP_Pozostaje
+					ELSE TrP_Pozostaje
+					END) * ISNULL((
+					SELECT TOP 1 WaE_KursL / WaE_KursM
+					FROM CDN.WalElem
+					WHERE WaE_Symbol = TrP_Waluta
+						AND WaE_Lp = TrP_NrKursu
+						AND WaE_KursTS &lt;= @p_timestamp
+					ORDER BY - WaE_KursTS
+					), 1) AS sumaplatnosci
+		FROM CDN.TraPlat
+		INNER JOIN CDN.TraNag ON TrN_GIDTyp = TrP_GIDTyp
+			AND TrN_GIDNumer = TrP_GIDNumer
+		LEFT JOIN CDN.ZamNag ON TrN_ZaNNumer = ZaN_GIDNumer
+			AND TrN_ZaNTyp = ZaN_GIDTyp
+		WHERE TrP_AkwTyp = 32
+			AND TrP_AkwNumer = @p_akwnumer
+			AND TrP_Rozliczona = 0
+			AND TrN_FrSID = @p_FrSID
+			AND ISNULL(ZaN_LimitKredytowy, 0) = 0
+		GROUP BY TrP_Waluta
+			, TrP_NrKursu
+		) AS res
+
+	-- policzenie płatności z dokumentów nie generujących płatności (WZ, WZK, PZ, PZK)
+	IF (@p_UwzglDokBezPlat &gt; 0)
+		SELECT @DokBezPlatnosci = CDN.SumaDokBezPlatnosci(@p_akwNumer, @p_FrSID, 1, 0, default)
+
+	-- policzenie rezerwacji
+	IF (@p_UwzglZam &gt; 0)
+		SELECT @Rezerwacje = CDN.LimitKontrahentaZRezerwacji(2576, @p_timestamp, 32, @p_akwNumer, 960, 1, @p_FrSID, 0, default)
+
+	SET @retval = isnull(@platnosci, 0) + isnull(@DokBezPlatnosci, 0) + isnull(@Rezerwacje, 0)
+
+	RETURN @retval
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

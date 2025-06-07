@@ -1,0 +1,412 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="Kasowanie procedury PotwierdzenieSaldaFlex"></A><PRE>
+          <FONT SIZE="2" DISABLED="True"><I>/* Kasowanie procedury PotwierdzenieSaldaFlex */</I><BR>
+IF EXISTS (SELECT name FROM sysobjects WHERE name = 'PotwierdzenieSaldaFlex' AND type = 'P')
+  drop procedure cdn.PotwierdzenieSaldaFlex
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Tworzenie procedury PotwierdzenieSaldaFlex"></A><PRE>
+          <FONT SIZE="2"><I>/* Tworzenie procedury PotwierdzenieSaldaFlex */</I><BR>
+
+
+CREATE PROCEDURE CDN.PotwierdzenieSaldaFlex
+		@KontrahentOD varchar(20),
+		@KontrahentDO varchar(20),
+		@KntStatus INT , 
+		@p_KontoOD varchar(50),
+		@p_KontoDO varchar(50),
+		@p_Data int,
+		@p_Waluta varchar(5),
+		@p_SaldaZerowe smallint, 
+		@p_KontaBezObrotu smallint
+AS 
+/* Opis Parametrow 
+@KontrahentOD	- poczatek zakresu kontrahentow (akronim)
+@KontrahentDO	- koniec zakresu kontrahentow (akronim)
+@KntStatus		- status kontrahenta: 1=dostawca, 2=odbiorca, inne=wszyscy
+@p_KontoOD		- poczatek zakresu kont - numer konta
+@p_KontoDO		- koniec zakresu kont - numer konta
+@p_Data		- na jaki dzien wyliczamy saldo
+@p_Waluta		- waluta
+@p_SaldaZerowe	- czy pokazywac salda zerowe (0 - nie /1 -tylko /2-wszystkie)
+@p_KontaBezObrotu	- czy pokazywac konta bez obrotow (dekretow) - 0/1
+*/
+DECLARE @MaskaStatusu INT;
+DECLARE @Waluta		VARCHAR(5);
+DECLARE @WalutaSys	VARCHAR(5);
+DECLARE @Data		DATETIME;
+declare @OkresID 	INT
+
+
+
+select 
+	@OkresID = Okr_ID
+from cdn.Okresy
+where Okr_Poczatek &lt;= @p_Data and Okr_Koniec &gt;= @p_Data
+
+
+
+if isnull(@OkresID,0) = 0 
+	SET @OkresID = 0
+
+
+
+IF upper(ltrim(rtrim(@p_KontoOD))) = '-BRAK-'
+	SET @p_KontoOD = ''
+else
+begin
+	select 
+		@p_KontoOD = KKS_KontoOrd
+	from cdn.Konta
+	where KKS_OkresID = @OkresID and KKS_Konto = @p_KontoOD
+end
+
+
+IF upper(ltrim(rtrim(@p_KontoDO))) = '-BRAK-'
+	SET @p_KontoDO = ''
+else
+begin
+	select 
+		@p_KontoDO = KKS_KontoOrd
+	from cdn.Konta
+	where KKS_OkresID = @OkresID and KKS_Konto = @p_KontoDO
+end
+
+
+
+/*
+Ponizszy warunek obsluguje nam szersze dzialanie warunku BETWEEN - np gdy wybierzemy zakres kont od 230 do 234 to 
+ZOSTANA uwzględnione wszytskie konta typu 234-xxxxxx co poprzednio bylo by niewzględnione (ostatnie konto to byloby 233-xxxxx)
+*/
+IF @p_KontoDO &lt;&gt; '' 
+	SET @p_KontoDO = rtrim(@p_KontoDO) + ' ' + replicate('ż',50)
+
+/*ustalamy datę w formacie datetime*/
+SET @Data    = dateadd(day,@p_Data,convert(datetime,'18001228'));
+
+SET @Waluta  = rtrim(@p_Waluta);
+-- Pobranie waluty systemowej
+SELECT @WalutaSys = Kon_Wartosc FROM CDN.Konfig WHERE Kon_Numer=211;
+IF LTrim(@Waluta)=''
+   SET @Waluta = @WalutaSys
+
+/*ustalamy odpowiednia maskę bitowa statusu kontrahenta*/
+SELECT @MaskaStatusu = CASE @KntStatus WHEN 1 THEN 8 WHEN  2 THEN 16 ELSE 24 END  
+
+/*teraz wyliczamy konta, ktore bierzemy do analizy - zbieramy je tez w tabeli tymczasowej*/
+create table #KontaDoPotwierdzenia(
+Konto varchar(50) COLLATE Polish_CI_AS, 
+KontoOrd varchar(50) COLLATE Polish_CI_AS, 
+GidNumer	INT, 
+KntTyp	INT, 
+KntNumer	INT
+)
+
+/*najpier wrzucamy konta wyliczone z kontrahentow*/
+IF @KontrahentOD&lt;&gt;'' AND @KontrahentDO&lt;&gt;''
+ BEGIN 
+  /*dodajemy konta kontrahenta do tabeli tymczasowej - specjalnie nia ma "union ALL"*/
+  INSERT #KontaDoPotwierdzenia (Konto, KontoOrd, GIDNumer,KntTyp, KntNumer)
+		SELECT  KKS_Konto, KKS_KontoOrd, KKS_GIDNumer,Knt_GidTyp, Knt_Gidnumer
+		FROM CDN.KntKarty 
+			 JOIN CDN.KntKonta ON KNT_GidTyp=KKT_KntTyp AND KNT_GidNumer=KKT_KntNumer and KKT_OkresID = @OkresID
+			 JOIN CDN.Konta ON KKT_KKSNumer = KKS_GIDNumer and KKS_OkresID = @OkresID
+		WHERE 	KNT_Akronim BETWEEN @KontrahentOD AND @KontrahentDO 
+				And ((KNT_Typ &amp; @MaskaStatusu)&gt;0 OR ( @KntStatus Not In(1,2) AND Knt_Typ=0))
+				AND KKS_Analityka=1 
+		UNION 
+		SELECT KKS_Konto, KKS_KontoOrd, KKS_GIDNumer,Knt_GidTyp, Knt_Gidnumer
+		FROM CDN.KNTKarty JOIN CDN.Konta ON KKS_KntTyp=Knt_GidTyp AND KKS_KntNumer=Knt_GidNumer 
+		WHERE KKS_OkresID = @OkresID
+				AND (KNT_Akronim BETWEEN @KontrahentOD AND @KontrahentDO) 
+				And ((KNT_Typ &amp; @MaskaStatusu)&gt;0 OR ( @KntStatus Not In(1,2) AND Knt_Typ=0))
+				AND KKS_Analityka=1 AND KKS_Rozrachunkowe&lt;&gt;0
+  
+   /*teraz jesli mamy podane konta to filtrujemy wg zadanego zakresu kont*/	
+   IF @p_KontoOD&lt;&gt;'' OR @p_KontoDO&lt;&gt;'' 
+		BEGIN 
+			DELETE FROM #KontaDoPotwierdzenia 
+			WHERE NOT (KontoOrd BETWEEN @p_KontoOD AND @P_KontoDO)
+		END
+ END 
+ELSE 
+ /*jak nie podano zakresu kontrahentow to dodajemy wylacznie konta z podanego zakresu*/	
+ BEGIN  
+	 INSERT #KontaDoPotwierdzenia (Konto, KontoOrd, GidNumer,KntTyp, KntNumer)		
+	 SELECT 
+			max(KKS_Konto), 
+			max(KKS_KontoOrd), 
+			KKS_GidNumer,
+			max(COALESCE(KNTKKS.KNt_GidTyp,KNTKKT.Knt_GidTyp,0)),
+			max(COALESCE(KNTKKS.KNt_GidNumer,KNTKKT.Knt_Gidnumer,0))
+	 FROM CDN.Konta
+		  left join cdn.kntkarty KNTKKS 
+			ON KNTKKS.Knt_GidTyp=KKS_KntTyp AND KNTKKS.Knt_GidNumer=KKS_KntNumer AND  KKS_KntNumer&lt;&gt;0
+		  Left JOIN cdn.KntKonta KKT
+			on KKS_GIDNumer = KKT_KKSNumer and KKT_OkresID = @OkresID
+		  left JOIN CDN.KntKarty KNTKKT 
+			ON KNTKKT.Knt_GidTyp=KKT.KKT_KntTyp AND KNTKKT.Knt_GidNumer=KKt.KKT_KntNumer AND  KKt.KKT_KntNumer&lt;&gt;0
+	 WHERE KKS_OkresID = @OkresID
+		AND (KKS_KontoOrd BETWEEN @p_KontoOD AND @P_KontoDO)
+		AND KKS_Analityka=1 AND KKS_Rozrachunkowe&lt;&gt;0 
+	 GROUP BY KKS_GidNumer
+ END 	
+
+/*!!!!!!!!!!!!!!tabela tymczasowa na wyniki  potwierdzenia salda!!!!!!!!!!!!!!*/
+CREATE TABLE #TmpPotwierdzenie
+(
+  KKS_Konto		varchar(50) COLLATE Polish_CI_AS, 
+  KntTyp		integer, 
+  KntNumer		integer, 
+  KKSNumer		integer,
+  DokumentZrodlowy	varchar(40) COLLATE Polish_CI_AS,
+  DataWystDokZrodl	integer,
+  DZKRmNumer		integer,
+  DTBufor		varchar(5) COLLATE Polish_CI_AS,
+  DTDziennik		varchar(5) COLLATE Polish_CI_AS,
+  DTGidLp		integer,
+  DTDzien		smallint,
+  DTMiesiac		smallint,
+  DTRok			smallint,
+  DTKwota		decimal(15,2),
+  KwotaPozostala_DT	decimal(15,2),
+  KwotaPozostala_CT	decimal(15,2),
+  KntAkronim  		varchar(20) COLLATE Polish_CI_AS,
+  KntNazwa1		varchar(50) COLLATE Polish_CI_AS,
+  KntNazwa2		varchar(50) COLLATE Polish_CI_AS,
+  KntNazwa3		varchar(250) COLLATE Polish_CI_AS,
+  KntKodP		varchar(10) COLLATE Polish_CI_AS,
+  KntMiasto		varchar(30) COLLATE Polish_CI_AS,
+  KntUlica		varchar(30) COLLATE Polish_CI_AS,
+  KntAdres		varchar(30) COLLATE Polish_CI_AS,
+  DZKOkrSymbol	varchar(10) COLLATE Polish_CI_AS,
+  NumerDekretu	varchar(50) COLLATE Polish_CI_AS
+)
+/*!!!!!!!!!!!!!!wlaściwe liczenie potwierdzenia salda!!!!!!!!!!!!!!*/
+INSERT #TmpPotwierdzenie
+(
+  KKS_Konto, KntTyp, KntNumer, KKSNumer, DokumentZrodlowy, DataWystDokZrodl, DZKRmNumer, DTBufor,
+  DTDziennik, DTGidLp, DTDzien, DTMiesiac, DTRok, DTKwota, KwotaPozostala_DT, KwotaPozostala_CT,
+  KntAkronim, KntNazwa1, KntNazwa2, KntNazwa3, KntKodP, KntMiasto, KntUlica, KntAdres, DZKOkrSymbol, NumerDekretu
+)
+SELECT
+Salda.KKS_Konto, 
+Salda.KntTyp, 
+Salda.KntNumer, 
+Salda.KKSNumer,
+Salda.DokumentZrodlowy,
+Salda.DataWystDokZrodl,
+Salda.DZKRmNumer,
+Salda.DTBufor,
+Salda.DTDziennik,
+Salda.DTGidLp,
+Salda.DTDzien,
+Salda.DTMiesiac,
+Salda.DTRok,
+Salda.DTKwota,
+Salda.KwotaPozostala_DT,
+Salda.KwotaPozostala_CT,
+PODV_Akronim  As KntAkronim,
+IsNull(PODV_Nazwa1,'') As	KntNazwa1,
+IsNull(PODV_Nazwa2,'') As	KntNazwa2,
+IsNull(PODV_Nazwa3,'') As	KntNazwa3,
+IsNull(PODV_KodP,'00-000') As	KntKodP,
+IsNull(PODV_Miasto,'') As	KntMiasto,
+IsNull(PODV_Ulica,'')  As	KntUlica,
+IsNull(PODV_Adres,'')  As	KntAdres,
+Salda.DZKOkrSymbol,
+CDN.NumerDekretu(Salda.DTBufor, Salda.DTDziennik, Salda.DTRok, Salda.DTMiesiac, Salda.DZKRmNumer, Salda.DTGidLp,0, Salda.DZKOkrSymbol) NumerDekretu
+FROM
+(
+	  SELECT
+	  MAX(a.Konto) 		as KKS_Konto, 
+	  MAX(a.KntTyp) 	as KntTyp, 
+	  MAX(a.KntNumer) 	as KntNumer, 
+	  MAX(a.GIDNumer)       As KKSNumer,
+	
+	  MAX(DEL_DokumentZrodlowy) As DokumentZrodlowy,
+	  MAX(DEL_DataWyst)         As DataWystDokZrodl,
+	
+	  MAX(DZK_RmNumer)          As DZKRmNumer,
+	  MAX(DT_Bufor)             As DTBufor,
+	  MAX(DT_Dziennik)          As DTDziennik,
+	  MAX(DT_GidLp)             As DTGidLp,
+	  MAX(DT_Dzien)             As DTDzien,
+	  MAX(DT_Miesiac)           As DTMiesiac,
+	  MAX(DT_Rok)               As DTRok,
+	  DT_Kwota                  As DTKwota,
+
+
+	sign(DT_Kwota)*(
+	case when DT_DC = 1 then 
+		abs(DT_Kwota) -
+		sum(case when @Waluta=@WalutaSys THEN isNull(R2_KwotaSys,0) ELSE isNull(R2_KwotaWal1,0) END)
+	else
+		0
+	end)
+	As KwotaPozostala_DT,
+
+
+	sign(DT_Kwota)*(
+	case when DT_DC = 2 then 
+		abs(DT_Kwota) -
+		sum(case when @Waluta=@WalutaSys THEN isNull(R2_KwotaSys,0) ELSE isNull(R2_KwotaWal1,0) END)
+	else
+		0
+	end)
+	As KwotaPozostala_CT,
+
+	MAX(DZK_OkrSymbol) as DZKOkrSymbol
+	
+	  FROM #KontaDoPotwierdzenia a
+			join cdn.KontaNastLinki
+				on a.GIDNumer = KLI_NastNumer
+	 		JOIN CDN.Dekrety
+				on KLI_PoprzNumer = DT_KKSNumer 
+				and @p_Data &gt;= DT_DataDekr and not (DT_KorektaBO = 1 and DT_Rozliczony=0 AND DT_NieRozliczony=0)
+				and DT_Waluta = @Waluta	
+	  		JOIN CDN.DziennikElem 
+				ON DEL_GIDNumer=DT_GIDNumer AND DEL_GIDLp=DT_GIDLp
+	  		JOIN CDN.Dziennik 
+				on DEL_GidNumer = DZK_GIDNUMER
+		  	LEFT OUTER JOIN 
+				(SELECT R2_Dekret1Numer as R2_DekretNumer, 
+					R2_Dekret1Lp as R2_DekretLp, 
+					R2_Dekret1DC as R2_DekretDC,
+					R2_DataRozrachunku, 
+					R2_KwotaSys, 
+					R2_KwotaWal1, 
+					R2_KwotaWal2, 
+					R2_Waluta1 AS R2_Waluta,
+					1 as StronaRozl
+				FROM CDN.Rozliczenia
+				where R2_DataRozrachunku &lt;= @p_Data
+			  	UNION ALL 
+				SELECT R2_Dekret2Numer as R2_DekretNumer, 
+					R2_Dekret2Lp as R2_DekretLp, 
+					R2_Dekret2DC as R2_DekretDC, 
+					R2_DataRozrachunku, 
+					R2_KwotaSys, 
+					R2_KwotaWal1, 
+					R2_KwotaWal2, 
+					R2_Waluta2 AS R2_Waluta,
+					2 as StronaRozl
+				FROM CDN.Rozliczenia
+				where R2_DataRozrachunku &lt;= @p_Data
+			  	) AS ROZ 
+					ON R2_DekretNumer=DT_GIDNumer AND R2_DekretLp=DT_GIDLp AND R2_DekretDC=DT_DC 
+					AND (R2_Waluta=DT_Waluta OR DT_Waluta=@WalutaSys) 
+	GROUP BY DT_GIDNumer, DT_GIDLp, DT_DC, DT_WalutaObca, DT_Kwota
+	) Salda 
+	LEFT OUTER JOIN CDN.PodmiotyView ON PODV_GIDTyp=SALDA.KntTyp AND PODV_GIDNumer=SALDA.KntNumer
+WHERE 
+( (@p_SaldaZerowe=0 AND ABS(ISNULL(KwotaPozostala_DT,0))+ABS(ISNULL(KwotaPozostala_CT,0))&gt;0 ) OR
+ -- (@p_SaldaZerowe=1 AND ABS(ISNULL(KwotaPozostala_DT,0))+ABS(ISNULL(KwotaPozostala_CT,0))=0 ) OR 
+   @p_SaldaZerowe=1 OR
+   @p_SaldaZerowe=2 
+)
+
+
+
+if ( @p_SaldaZerowe &gt; 0 AND @p_KontaBezObrotu=1)
+begin
+	/*!!!!!!!!!!!!!!uzupelniamy o dane kontrahentow bez dekretow lub calkowicie rozliczonych!!!!!!!!!!!!!!*/
+	INSERT #TmpPotwierdzenie
+	(
+	  KKS_Konto, KntTyp, KntNumer, KKSNumer, DokumentZrodlowy, DataWystDokZrodl, DZKRmNumer, DTBufor,
+	  DTDziennik, DTGidLp, DTDzien, DTMiesiac, DTRok, DTKwota, KwotaPozostala_DT, KwotaPozostala_CT,
+	  KntAkronim, KntNazwa1, KntNazwa2, KntNazwa3, KntKodP, KntMiasto, KntUlica, KntAdres, DZKOkrSymbol, NumerDekretu
+	)
+	  SELECT
+	  max(#KontaDoPotwierdzenia.Konto) as KKS_Konto, 
+	  max(#KontaDoPotwierdzenia.KntTyp) as KntTyp, 
+	  max(#KontaDoPotwierdzenia.KntNumer) as KntNumer, 
+	  NULL  As KKSNumer,
+	  NULL  As DokumentZrodlowy,
+	  NULL  As DataWystDokZrodl,
+	  NULL  As DZKRmNumer,
+	  NULL  As DTBufor,
+	  NULL  As DTDziennik,
+	  NULL  As DTGidLp,
+	  NULL  As DTDzien,
+	  NULL  As DTMiesiac,
+	  NULL  As DTRok,
+	  NULL  As DTKwota,
+	  NULL  AS KwotaPozostala_DT,
+	  NULL  AS KwotaPozostala_CT,
+	  max(PODV_Akronim)  As KntAkronim,
+	  max(IsNull(PODV_Nazwa1,'')) 		As KntNazwa1,
+	  max(IsNull(PODV_Nazwa2,'')) 		As KntNazwa2,
+	  max(IsNull(PODV_Nazwa3,'')) 		As KntNazwa3,
+	  max(IsNull(PODV_KodP,'00-000')) 	As KntKodP,
+	  max(IsNull(PODV_Miasto,'')) 		As KntMiasto,
+	  max(IsNull(PODV_Ulica,''))  		As KntUlica,
+	  max(IsNull(PODV_Adres,''))  		As KntAdres,
+	  NULL  As DZKOkrSymbol,
+	  NULL  As NumerDekretu
+	
+	  FROM #KontaDoPotwierdzenia
+				join cdn.KontaNastLinki
+					on GIDNumer = KLI_NastNumer
+				left join #TmpPotwierdzenie
+					on GIDNumer = KKSNumer
+		 		left JOIN CDN.Dekrety
+					on KLI_PoprzNumer = DT_KKSNumer 
+					and @p_Data &gt;= DT_DataDekr and not (DT_KorektaBO = 1 and DT_Rozliczony=0 AND DT_NieRozliczony=0)
+					and DT_Waluta = @Waluta	
+				LEFT JOIN CDN.PodmiotyView 
+					ON PODV_GIDTyp=#KontaDoPotwierdzenia.KntTyp AND PODV_GIDNumer=#KontaDoPotwierdzenia.KntNumer
+	  WHERE 
+	  /*bierzemy tych kontrahentow ktorzy nie maja dekretow */ 
+	  (DT_GidNumer Is NULL and #TmpPotwierdzenie.KKSNumer is null)
+end
+
+
+/*!!!!!!!!!!!!!!no i zwracamy gotowy recordset!!!!!!!!!!!!!!*/
+if @p_SaldaZerowe = 1 --tylko zerowe
+	Select a.* 
+	from #TmpPotwierdzenie a
+	where a.KKSNumer in (select b.KKSNumer
+				from #TmpPotwierdzenie b
+				group by b.KKSNumer
+				having sum(b.KwotaPozostala_DT) = 0 and sum(b.KwotaPozostala_CT) = 0)		
+	ORDER BY 1;
+else
+	Select * from #TmpPotwierdzenie
+	ORDER BY 1;
+
+
+
+
+drop table #TmpPotwierdzenie
+drop table #KontaDoPotwierdzenia
+
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="Przyznanie praw do procedury PotwierdzenieSaldaFlex"></A><PRE>
+          <FONT SIZE="2"><I>/* Przyznanie praw do procedury PotwierdzenieSaldaFlex */</I><BR>
+GRANT EXECUTE ON CDN.PotwierdzenieSaldaFlex TO CDNRaport
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

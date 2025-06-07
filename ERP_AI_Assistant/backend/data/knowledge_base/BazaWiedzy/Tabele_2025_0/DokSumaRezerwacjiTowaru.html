@@ -1,0 +1,343 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="DokSumaRezerwacjiTowaru"></A><PRE>
+          <FONT SIZE="2"><I>/* DokSumaRezerwacjiTowaru */</I><BR>
+CREATE      function CDN.DokSumaRezerwacjiTowaru(
+@p_gn        int, 
+@p_typ       int, 
+@p_data_pocz int, 
+@p_data_kon  int, 
+@p_MagFirma  int, 
+@p_MagNumer  int, 
+@p_biezacadata int, 
+@p_FrsId     int, 
+@p_FrsIdW    int, 
+@p_TypDok    int, 
+@p_ZrdTyp    int, 
+@p_ZrdNumer  int, 
+@p_FrsIDZrd  int, 
+@p_TypDokZrd int,
+@p_DokBufor  int
+) 
+ 
+Returns varchar(240) 
+AS 
+BEGIN 
+  declare @retval              varchar(120);  
+  declare @IloscRezZak         varchar(20); -- ilości zamówione
+  declare @IloscRezProdZak     varchar(20); 
+  declare @IloscRez            varchar(20); -- ilości zarezerwonane
+  declare @IloscRezProd        varchar(20); 
+  declare @IloscRezSerwis      varchar(20); 
+  declare @IloscRezRemont      varchar(20); 
+ 
+  declare @IloscRezZakMag      varchar(20); -- ilości zamówione magazyn
+  declare @IloscRezProdZakMag  varchar(20); 
+  declare @IloscRezMag         varchar(20); -- ilości zarezerwonane magazyn
+  declare @IloscRezProdMag     varchar(20); 
+  declare @IloscRezSerwisMag   varchar(20); 
+  declare @IloscRezRemontMag   varchar(20); 
+ 
+  declare @ZnakZero            varchar(1); 
+  declare @statusUsluga        integer; 
+  declare @lTypRez             smallint; 
+  declare @lRezWsz             smallint; 
+ 
+  set @lTypRez = 1 
+ 
+  if (@p_MagNumer &lt;&gt; 0) 
+    begin 
+        set @p_ZrdTyp = 0 
+        set @p_ZrdNumer = 0 
+        set @p_TypDokZrd = 0 
+        set @p_FrsIDZrd = 0 
+    end 
+ 
+ 
+  -- rozroznienie obiektow, ktore nie maja stanow 
+  if(@p_typ=0 or @p_typ=3 or @p_typ=4 or @p_typ=6 or @p_typ is null) 
+    begin 
+      set @ZnakZero='-'; 
+      set @statusUsluga=1; 
+    end; 
+  else 
+    begin 
+      set @ZnakZero='0'; 
+      set @statusUsluga=0; 
+    end; 
+ 
+  -- dla obiektow dla ktorych stan na sens 
+  IF(@statusUsluga=1) 
+	BEGIN
+    set @retval = IsNull(@IloscRezZak,@ZnakZero)+':'+IsNull(@IloscRezProdZak,@ZnakZero)+':'+IsNull(@IloscRez,@ZnakZero)+':'+IsNull(@IloscRezProd,@ZnakZero)+':'+IsNull(@IloscRezSerwis,@ZnakZero)+':'+IsNull(@IloscRezRemont,@ZnakZero); 
+    set @retval = @retval+':'+IsNull(@IloscRezZakMag,@ZnakZero)+':'+IsNull(@IloscRezProdZakMag,@ZnakZero)+':'+IsNull(@IloscRezMag,@ZnakZero)+':'+IsNull(@IloscRezProdMag,@ZnakZero)+':'+IsNull(@IloscRezSerwisMag,@ZnakZero)+':'+IsNull(@IloscRezRemontMag,@ZnakZero); 
+    return @retval; 
+  END
+
+      -- pobranie ilosci zarezerwowanych u nas przez odbiorcow 
+  IF(@p_MagNumer&gt;0)    --  z konkretnego magazynu
+  BEGIN
+      (select
+      @IloscRez    = sum(case when Rez_ZrdTyp in(960,2576) then Rez_Ilosc-CASE @p_DokBufor WHEN 1 THEN Rez_Zrealizowano ELSE 0 END Else 0 end), 
+      @IloscRezMag = sum(case when Rez_ZrdTyp in(960,2576) then Rez_Ilosc-CASE @p_DokBufor WHEN 1 THEN Rez_Zrealizowano ELSE 0 END-Rez_IloscMag else 0 end), 
+      @IloscRezProd    = sum(case when Rez_ZrdTyp in(4192,4208,14345,14346) then Rez_Ilosc-CASE @p_DokBufor WHEN 1 THEN Rez_Zrealizowano ELSE 0 END Else 0 end), 
+      @IloscRezProdMag = sum(case when Rez_ZrdTyp in(4192,4208,14345,14346) then Rez_Ilosc-CASE @p_DokBufor WHEN 1 THEN Rez_Zrealizowano ELSE 0 END-Rez_IloscMag else 0 end) 
+      FROM cdn.Rezerwacje
+      WHERE
+      Rez_GIDTyp=2576 and Rez_ZrdTyp in (960,2576,4192,4208,14345,14346) and Rez_aktywna=1 and Rez_Typ = @lTypRez and Rez_Ilosc&lt;&gt;0 and
+      Rez_TwrNumer=@p_gn and ReZ_MagNumer=@p_MagNumer and 
+      Rez_DataRealizacji between @p_data_pocz and @p_data_kon and Rez_DataWaznosci&gt;=@p_biezacadata); 
+      --(case when Rez_DstNumer&lt;&gt;0 then 1 when Rez_DstNumer=0 and Rez_DataAktywacji &lt;= @p_biezacadata then 1 else 0 end )= 1     
+
+      (select
+      @IloscRezSerwis    = sum(case when ZRN_GIDTyp=4345 then Rez_Ilosc-CASE @p_DokBufor WHEN 1 THEN Rez_Zrealizowano ELSE 0 END Else 0 end), 
+      @IloscRezSerwisMag = sum(case when ZRN_GIDTyp=4345 then Rez_Ilosc-CASE @p_DokBufor WHEN 1 THEN Rez_Zrealizowano ELSE 0 END-Rez_IloscMag else 0 end), 
+      @IloscRezRemont    = sum(case when ZRN_GIDTyp=4346 then Rez_Ilosc-CASE @p_DokBufor WHEN 1 THEN Rez_Zrealizowano ELSE 0 END Else 0 end), 
+      @IloscRezRemontMag = sum(case when ZRN_GIDTyp=4346 then Rez_Ilosc-CASE @p_DokBufor WHEN 1 THEN Rez_Zrealizowano ELSE 0 END-Rez_IloscMag else 0 end) 
+      from CDN.Rezerwacje
+      join cdn.zrnmaterialy on rez_zrdtyp=zrm_gidtyp and rez_zrdnumer=zrm_gidnumer
+      join cdn.zlcremnag on zrn_gidtyp=zrm_zrntyp and zrn_gidnumer=zrm_zrnnumer
+      where
+      Rez_gidtyp=2576 and ZRN_GIDTyp in (4345,4346) and Rez_aktywna=1 and Rez_Typ=@lTypRez and Rez_Ilosc&lt;&gt;0 and
+      Rez_TwrNumer=@p_gn and ReZ_MagNumer=@p_MagNumer and 
+      Rez_DataRealizacji between @p_data_pocz and @p_data_kon and Rez_DataWaznosci&gt;=@p_biezacadata);
+      --(case when Rez_DstNumer&lt;&gt;0 then 1 when Rez_DstNumer=0 and Rez_DataAktywacji &lt;= @p_biezacadata then 1 else 0 end )= 1     and
+  END
+  ELSE
+  BEGIN
+    IF(@p_MagNumer=0)  --                    ze wszystkich magazynow lub globalnych
+		BEGIN
+      IF(@p_MagFirma&lt;0)
+      BEGIN
+          (select
+           @IloscRez    = sum(case when Rez_ZrdTyp in(960,2576) then Rez_Ilosc-CASE @p_DokBufor WHEN 1 THEN Rez_Zrealizowano ELSE 0 END Else 0 end), 
+           @IloscRezMag = sum(case when Rez_ZrdTyp in(960,2576) then Rez_Ilosc-CASE @p_DokBufor WHEN 1 THEN Rez_Zrealizowano ELSE 0 END-Rez_IloscMag else 0 end), 
+           @IloscRezProd    = sum(case when Rez_ZrdTyp in(4192,4208) then Rez_Ilosc-CASE @p_DokBufor WHEN 1 THEN Rez_Zrealizowano ELSE 0 END Else 0 end), 
+           @IloscRezProdMag = sum(case when Rez_ZrdTyp in(4192,4208) then Rez_Ilosc-CASE @p_DokBufor WHEN 1 THEN Rez_Zrealizowano ELSE 0 END-Rez_IloscMag else 0 end)
+           from cdn.Rezerwacje
+           where
+           Rez_GIDTyp=2576 and Rez_ZrdTyp in (960,2576,4192,4208) and Rez_Typ = @lTypRez and Rez_Aktywna=1 and Rez_Ilosc&lt;&gt;0  and
+           Rez_twrnumer=@p_gn and 
+           Rez_DataRealizacji between @p_data_pocz and @p_data_kon and Rez_DataWaznosci&gt;=@p_biezacadata and
+           --(case when Rez_DstNumer&lt;&gt;0 then 1 when Rez_DstNumer=0 and Rez_DataAktywacji &lt;= @p_biezacadata then 1 else 0 end )= 1     and
+           (Rez_MagFirma=(- @p_MagFirma) AND Rez_MagNumer=0)); 
+
+          (select
+           @IloscRezSerwis    = sum(case when ZRN_GIDTyp=4345 then Rez_Ilosc-CASE @p_DokBufor WHEN 1 THEN Rez_Zrealizowano ELSE 0 END Else 0 end), 
+           @IloscRezSerwisMag = sum(case when ZRN_GIDTyp=4345 then Rez_Ilosc-CASE @p_DokBufor WHEN 1 THEN Rez_Zrealizowano ELSE 0 END-Rez_IloscMag else 0 end), 
+           @IloscRezRemont    = sum(case when ZRN_GIDTyp=4346 then Rez_Ilosc-CASE @p_DokBufor WHEN 1 THEN Rez_Zrealizowano ELSE 0 END Else 0 end), 
+           @IloscRezRemontMag = sum(case when ZRN_GIDTyp=4346 then Rez_Ilosc-CASE @p_DokBufor WHEN 1 THEN Rez_Zrealizowano ELSE 0 END-Rez_IloscMag else 0 end) 
+           from CDN.Rezerwacje 
+           join cdn.zrnmaterialy on rez_zrdtyp = zrm_gidtyp and rez_zrdnumer = zrm_gidnumer 
+           join cdn.zlcremnag on zrn_gidtyp = zrm_zrntyp and zrn_gidnumer = zrm_zrnnumer 
+           where
+           Rez_gidtyp=2576 and ZRN_GIDTyp in (4345,4346) and Rez_Typ = @lTypRez and Rez_Aktywna=1 and Rez_Ilosc&lt;&gt;0 and
+           rez_twrnumer=@p_gn and 
+           Rez_DataRealizacji between @p_data_pocz and @p_data_kon and Rez_DataWaznosci&gt;=@p_biezacadata and 
+           --(case when Rez_DstNumer&lt;&gt;0 then 1 when Rez_DstNumer=0 and Rez_DataAktywacji &lt;= @p_biezacadata then 1 else 0 end )= 1     and
+           (Rez_MagFirma=(- @p_MagFirma) AND Rez_MagNumer=0));
+      END
+      ELSE
+      BEGIN
+          (select
+          @IloscRez    = sum(case when Rez_ZrdTyp in(960,2576) then Rez_Ilosc-CASE @p_DokBufor WHEN 1 THEN Rez_Zrealizowano ELSE 0 END Else 0 end), 
+          @IloscRezMag = sum(case when Rez_ZrdTyp in(960,2576) then Rez_Ilosc-CASE @p_DokBufor WHEN 1 THEN Rez_Zrealizowano ELSE 0 END-Rez_IloscMag else 0 end), 
+          @IloscRezProd    = sum(case when Rez_ZrdTyp in(4192,4208,14345,14346) then Rez_Ilosc-CASE @p_DokBufor WHEN 1 THEN Rez_Zrealizowano ELSE 0 END Else 0 end), 
+          @IloscRezProdMag = sum(case when Rez_ZrdTyp in(4192,4208,14345,14346) then Rez_Ilosc-CASE @p_DokBufor WHEN 1 THEN Rez_Zrealizowano ELSE 0 END-Rez_IloscMag else 0 end) 
+          from cdn.Rezerwacje
+          where
+          Rez_GIDTyp=2576 and Rez_ZrdTyp in (960,2576,4192,4208,14345,14346) and 
+          rez_twrnumer=@p_gn and 
+          Rez_DataRealizacji between @p_data_pocz and @p_data_kon and 
+          Rez_DataWaznosci&gt;=@p_biezacadata and 
+          --(case when Rez_DstNumer&lt;&gt;0 then 1 when Rez_DstNumer=0 and Rez_DataAktywacji &lt;= @p_biezacadata then 1 else 0 end )= 1	 and
+          Rez_Typ = @lTypRez and Rez_Aktywna=1 and Rez_Ilosc&lt;&gt;0 and -- aby nie brac pod uwage anulowanych zamowien 
+          exists ( select * from 
+                   cdn.Rezmagazyny 
+                   JOIN CDN.DokDostepneMagazyny(@p_FrSID,@p_FrSIDW,@p_TypDok, @p_ZrdTyp, @p_ZrdNumer, @p_FrsIDZrd, @p_TypDokZrd) ON 
+                   ReM_MagNumer=Mag_GIDNumer and (Mag_Wewnetrzny IS NULL OR Mag_Wewnetrzny = 0 ) 
+                   where 
+                   Rez_GIDTyp=ReM_RezTyp and ReZ_GIDNumer=ReM_RezNumer)
+                 );
+ 
+         (select
+          @IloscRezSerwis    = sum(case when ZRN_GIDTyp=4345 then Rez_Ilosc-CASE @p_DokBufor WHEN 1 THEN Rez_Zrealizowano ELSE 0 END Else 0 end),
+          @IloscRezSerwisMag = sum(case when ZRN_GIDTyp=4345 then Rez_Ilosc-CASE @p_DokBufor WHEN 1 THEN Rez_Zrealizowano ELSE 0 END-Rez_IloscMag else 0 end), 
+          @IloscRezRemont    = sum(case when ZRN_GIDTyp=4346 then Rez_Ilosc-CASE @p_DokBufor WHEN 1 THEN Rez_Zrealizowano ELSE 0 END Else 0 end), 
+          @IloscRezRemontMag = sum(case when ZRN_GIDTyp=4346 then Rez_Ilosc-CASE @p_DokBufor WHEN 1 THEN Rez_Zrealizowano ELSE 0 END-Rez_IloscMag else 0 end) 
+          from CDN.Rezerwacje 
+          join cdn.zrnmaterialy on rez_zrdtyp = zrm_gidtyp and rez_zrdnumer = zrm_gidnumer 
+          join cdn.zlcremnag on zrn_gidtyp = zrm_zrntyp and zrn_gidnumer = zrm_zrnnumer 
+          where
+          Rez_gidtyp=2576 and ZRN_GIDTyp in (4345,4346) and 
+          rez_twrnumer=@p_gn and 
+          Rez_DataRealizacji between @p_data_pocz and @p_data_kon and 
+          Rez_DataWaznosci&gt;=@p_biezacadata and     -- data waznosci &gt; dzis 
+          --(case when Rez_DstNumer&lt;&gt;0 then 1 when Rez_DstNumer=0 and Rez_DataAktywacji &lt;= @p_biezacadata then 1 else 0 end )= 1	 and
+          Rez_Typ=@lTypRez and Rez_Aktywna=1 and Rez_Ilosc&lt;&gt;0 and -- aby nie brac pod uwage anulowanych zamowien 
+          exists ( select * from 
+                   cdn.Rezmagazyny 
+                   JOIN CDN.DokDostepneMagazyny(@p_FrSID,@p_FrSIDW,@p_TypDok, @p_ZrdTyp, @p_ZrdNumer, @p_FrsIDZrd, @p_TypDokZrd) ON 
+                   ReM_MagNumer=Mag_GIDNumer and (Mag_Wewnetrzny IS NULL OR Mag_Wewnetrzny = 0 ) 
+                   where 
+                   Rez_GIDTyp=ReM_RezTyp and ReZ_GIDNumer=ReM_RezNumer )
+                 );
+      END; --IF(@p_MagFirma&lt;0) ;
+    END
+    ELSE
+    BEGIN
+        (select
+        @IloscRez    = sum(case when Rez_ZrdTyp in(960,2576) then Rez_Ilosc-CASE @p_DokBufor WHEN 1 THEN Rez_Zrealizowano ELSE 0 END Else 0 end), 
+        @IloscRezMag = sum(case when Rez_ZrdTyp in(960,2576) then Rez_Ilosc-CASE @p_DokBufor WHEN 1 THEN Rez_Zrealizowano ELSE 0 END-Rez_IloscMag else 0 end), 
+        @IloscRezProd    = sum(case when Rez_ZrdTyp in(4192,4208,14345,14346) then Rez_Ilosc-CASE @p_DokBufor WHEN 1 THEN Rez_Zrealizowano ELSE 0 END Else 0 end), 
+        @IloscRezProdMag = sum(case when Rez_ZrdTyp in(4192,4208,14345,14346) then Rez_Ilosc-CASE @p_DokBufor WHEN 1 THEN Rez_Zrealizowano ELSE 0 END-Rez_IloscMag else 0 end)
+        from cdn.Rezerwacje
+        where
+        Rez_GIDTyp=2576 and Rez_ZrdTyp in (960,2576,4192,4208,14345,14346) and 
+        rez_twrnumer=@p_gn and 
+        Rez_DataRealizacji between @p_data_pocz and @p_data_kon and
+        Rez_DataWaznosci&gt;=@p_biezacadata and     -- data waznosci &gt; dzis 
+        --(case when Rez_DstNumer&lt;&gt;0 then 1 when Rez_DstNumer=0 and Rez_DataAktywacji &lt;= @p_biezacadata then 1 else 0 end )= 1     and
+        Rez_Typ = @lTypRez and Rez_Aktywna=1 and Rez_Ilosc&lt;&gt;0 and -- aby nie brac pod uwage anulowanych zamowien 
+        exists ( select * from 
+                 cdn.Rezmagazyny 
+					       join cdn.MagWybor on ReM_MagTyp=208 and ReM_MagNumer=MgW_MagNumer 
+                 where 
+                 Rez_GIDTyp=ReM_RezTyp and ReZ_GIDNumer=ReM_RezNumer and
+						     MgW_SesjaID=-@p_MagFirma and MgW_Watek=-@p_MagNumer )
+        );
+
+       (select
+        @IloscRezSerwis    = sum(case when ZRN_GIDTyp=4345 then Rez_Ilosc-CASE @p_DokBufor WHEN 1 THEN Rez_Zrealizowano ELSE 0 END Else 0 end), 
+        @IloscRezSerwisMag = sum(case when ZRN_GIDTyp=4345 then Rez_Ilosc-CASE @p_DokBufor WHEN 1 THEN Rez_Zrealizowano ELSE 0 END-Rez_IloscMag else 0 end), 
+        @IloscRezRemont    = sum(case when ZRN_GIDTyp=4346 then Rez_Ilosc-CASE @p_DokBufor WHEN 1 THEN Rez_Zrealizowano ELSE 0 END Else 0 end), 
+        @IloscRezRemontMag = sum(case when ZRN_GIDTyp=4346 then Rez_Ilosc-CASE @p_DokBufor WHEN 1 THEN Rez_Zrealizowano ELSE 0 END-Rez_IloscMag else 0 end) 
+        from CDN.Rezerwacje 
+        join cdn.zrnmaterialy on rez_zrdtyp = zrm_gidtyp and rez_zrdnumer = zrm_gidnumer 
+        join cdn.zlcremnag on zrn_gidtyp = zrm_zrntyp and zrn_gidnumer = zrm_zrnnumer 
+        where
+        Rez_gidtyp=2576 and ZRN_GIDTyp in (4345,4346) and 
+        rez_twrnumer=@p_gn and 
+        Rez_DataRealizacji between @p_data_pocz and @p_data_kon and 
+        Rez_DataWaznosci&gt;=@p_biezacadata and     -- data waznosci &gt; dzis 
+        --(case when Rez_DstNumer&lt;&gt;0 then 1 when Rez_DstNumer=0 and Rez_DataAktywacji &lt;= @p_biezacadata then 1 else 0 end )= 1     and
+        Rez_Typ = @lTypRez and Rez_Aktywna=1 and Rez_Ilosc&lt;&gt;0 and -- aby nie brac pod uwage anulowanych zamowien 
+        exists ( select * from 
+                 cdn.Rezmagazyny 
+					       join cdn.MagWybor on ReM_MagTyp=208 and ReM_MagNumer=MgW_MagNumer 
+                 where 
+                 Rez_GIDTyp=ReM_RezTyp and ReZ_GIDNumer=ReM_RezNumer and
+						     MgW_SesjaID=-@p_MagFirma and MgW_Watek=-@p_MagNumer )
+        )
+    END -- IF(@p_MagNumer=0)
+  END -- IF(@p_MagNumer&gt;0)
+
+
+  IF(@p_MagNumer&gt;0)    -- z konkretnego magazynu
+  BEGIN
+      (select
+      @IloscRezZak        = sum(case when Rez_ZrdTyp in(960,2592) then Rez_Ilosc Else 0 end), 
+      @IloscRezZakMag     = sum(case when Rez_ZrdTyp in(960,2592) then Rez_Ilosc-Rez_IloscMag else 0 end), 
+      @IloscRezProdZak    = sum(case when Rez_ZrdTyp in(4192,4208,14345,14346) then Rez_Ilosc Else 0 end), 
+      @IloscRezProdZakMag = sum(case when Rez_ZrdTyp in(4192,4208,14345,14346) then Rez_Ilosc-Rez_IloscMag else 0 end)
+      from cdn.Rezerwacje
+      join cdn.RezMagazyny on Rez_GIDTyp=ReM_RezTyp and Rez_GIDNumer=ReM_RezNumer and ReM_MagNumer=@p_MagNumer 
+      where
+      Rez_GIDTyp=2592 and Rez_ZrdTyp in (960,2592,4192,4208,14345,14346) and 
+      rez_twrnumer=@p_gn and 
+      Rez_DataRealizacji&gt;=@p_data_pocz and Rez_DataRealizacji&lt;=@p_data_kon and 
+      Rez_DataWaznosci&gt;=@p_biezacadata and     -- data waznosci &gt; dzis 
+      --(case when Rez_DstNumer&lt;&gt;0 then 1 when Rez_DstNumer=0 and Rez_DataAktywacji &lt;= @p_biezacadata then 1 else 0 end )= 1	 and
+      --Rez_DataAktywacji&lt;=@p_biezacadata and-- dataAktywacji &gt; dzis
+      Rez_Typ = @lTypRez and rez_aktywna=1 and Rez_Ilosc&lt;&gt;0);  -- aby nie brac pod uwage anulowanych zamowien 
+  END;
+  ELSE
+  BEGIN
+    IF(@p_MagNumer=0)  --                    ze wszystkich magazynow 
+    BEGIN
+      IF(@p_MagFirma &lt;0) 
+      BEGIN
+          (select
+          @IloscRezZak        = sum(case when Rez_ZrdTyp in(960,2592) then Rez_Ilosc Else 0 end), 
+          @IloscRezZakMag     = sum(case when Rez_ZrdTyp in(960,2592) then Rez_Ilosc-Rez_IloscMag else 0 end), 
+          @IloscRezProdZak    = sum(case when Rez_ZrdTyp in(4192,4208,14345,14346) then Rez_Ilosc Else 0 end), 
+          @IloscRezProdZakMag = sum(case when Rez_ZrdTyp in(4192,4208,14345,14346) then Rez_Ilosc-Rez_IloscMag else 0 end)
+          from cdn.Rezerwacje
+          where
+          Rez_GIDTyp=2592 and Rez_ZrdTyp in (960,2592,4192,4208,14345,14346) and 
+          rez_twrnumer=@p_gn and 
+          Rez_DataRealizacji&gt;=@p_data_pocz and Rez_DataRealizacji&lt;=@p_data_kon and
+          Rez_DataWaznosci&gt;=@p_biezacadata and     -- data waznosci &gt; dzis
+          --(case when Rez_DstNumer&lt;&gt;0 then 1 when Rez_DstNumer=0 and Rez_DataAktywacji &lt;= @p_biezacadata then 1 else 0 end )= 1	 and
+          --Rez_DataAktywacji&lt;=@p_biezacadata and -- dataAktywacji &gt; dzis
+          Rez_Typ = @lTypRez and rez_aktywna=1 and Rez_Ilosc&lt;&gt;0 and  -- aby nie brac pod uwage anulowanych zamowien
+          ((Rez_MagFirma=(- @p_MagFirma) AND Rez_MagNumer=0) ));    -- ewentualni globalne
+      END
+      ELSE
+      BEGIN
+          (select
+          @IloscRezZak        = sum(case when Rez_ZrdTyp in(960,2592) then Rez_Ilosc Else 0 end), 
+          @IloscRezZakMag     = sum(case when Rez_ZrdTyp in(960,2592) then Rez_Ilosc-Rez_IloscMag else 0 end), 
+          @IloscRezProdZak    = sum(case when Rez_ZrdTyp in(4192,4208,14345,14346) then Rez_Ilosc Else 0 end), 
+          @IloscRezProdZakMag = sum(case when Rez_ZrdTyp in(4192,4208,14345,14346) then Rez_Ilosc-Rez_IloscMag else 0 end)
+          from cdn.Rezerwacje
+          where
+          Rez_GIDTyp=2592 and Rez_ZrdTyp in (960,2592,4192,4208,14345,14346) and 
+          rez_twrnumer=@p_gn and 
+          Rez_DataRealizacji&gt;=@p_data_pocz and Rez_DataRealizacji&lt;=@p_data_kon and 
+          Rez_DataWaznosci&gt;=@p_biezacadata and     -- data waznosci &gt; dzis 
+          --(case when Rez_DstNumer&lt;&gt;0 then 1 when Rez_DstNumer=0 and Rez_DataAktywacji &lt;= @p_biezacadata then 1 else 0 end )= 1	 and
+          --Rez_DataAktywacji&lt;=@p_biezacadata and -- dataAktywacji &gt; dzis
+          Rez_Typ = @lTypRez and rez_aktywna=1 and Rez_Ilosc&lt;&gt;0 and  -- aby nie brac pod uwage anulowanych zamowien 
+          exists ( select * from 
+                          cdn.RezMagazyny 
+                          join CDN.DokDostepneMagazyny(@p_FrSID,@p_FrSIDW,@p_TypDok, @p_ZrdTyp, @p_ZrdNumer, @p_FrsIDZrd, @p_TypDokZrd) ON ReM_MagNumer=Mag_GIDNumer 
+                          where   Rez_GIDTyp=ReM_RezTyp and ReZ_GIDNumer=ReM_RezNumer )
+          );
+      END; -- IF(@p_MagFirma &lt;0) 
+    END
+    ELSE --                Informacja o magazynach w tabeli pomocniczej
+    BEGIN
+        (select
+         @IloscRezZak        = sum(case when Rez_ZrdTyp in(960,2592) then Rez_Ilosc Else 0 end), 
+         @IloscRezZakMag     = sum(case when Rez_ZrdTyp in(960,2592) then Rez_Ilosc-Rez_IloscMag else 0 end), 
+         @IloscRezProdZak    = sum(case when Rez_ZrdTyp in(4192,4208,14345,14346) then Rez_Ilosc Else 0 end), 
+         @IloscRezProdZakMag = sum(case when Rez_ZrdTyp in(4192,4208,14345,14346) then Rez_Ilosc-Rez_IloscMag else 0 end)
+         from cdn.Rezerwacje
+         where
+         Rez_GIDTyp=2592 and Rez_ZrdTyp in (960,2592,4192,4208,14345,14346) and 
+         rez_twrnumer=@p_gn and 
+         Rez_DataRealizacji&gt;=@p_data_pocz and Rez_DataRealizacji&lt;=@p_data_kon and 
+         Rez_DataWaznosci&gt;=@p_biezacadata and     -- data waznosci &gt; dzis 
+         --(case when Rez_DstNumer&lt;&gt;0 then 1 when Rez_DstNumer=0 and Rez_DataAktywacji &lt;= @p_biezacadata then 1 else 0 end )= 1     and
+         Rez_Typ = @lTypRez and rez_aktywna=1 and Rez_Ilosc&lt;&gt;0 and -- aby nie brac pod uwage anulowanych zamowien
+         exists ( select * from 
+                 cdn.Rezmagazyny 
+					       join cdn.MagWybor on ReM_MagTyp=208 and ReM_MagNumer=MgW_MagNumer 
+                 where 
+                 Rez_GIDTyp=ReM_RezTyp and ReZ_GIDNumer=ReM_RezNumer and
+						     MgW_SesjaID=-@p_MagFirma and MgW_Watek=-@p_MagNumer )
+         )
+    END -- IF(@p_MagNumer=0)
+  END; --IF(@p_MagNumer&gt;0)
+ 
+  -- podstawienie wartosci zerowych zamiast NULL 
+  set @retval = IsNull(@IloscRezZak,@ZnakZero)+':'+IsNull(@IloscRezProdZak,@ZnakZero)+':'+IsNull(@IloscRez,@ZnakZero)+':'+IsNull(@IloscRezProd,@ZnakZero)+':'+IsNull(@IloscRezSerwis,@ZnakZero)+':'+IsNull(@IloscRezRemont,@ZnakZero); 
+  set @retval = @retval+':'+IsNull(@IloscRezZakMag,@ZnakZero)+':'+IsNull(@IloscRezProdZakMag,@ZnakZero)+':'+IsNull(@IloscRezMag,@ZnakZero)+':'+IsNull(@IloscRezProdMag,@ZnakZero)+':'+IsNull(@IloscRezSerwisMag,@ZnakZero)+':'+IsNull(@IloscRezRemontMag,@ZnakZero); 
+  return @retval; 
+END 
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

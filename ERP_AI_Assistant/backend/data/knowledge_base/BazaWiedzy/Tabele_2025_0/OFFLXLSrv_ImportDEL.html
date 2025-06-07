@@ -1,0 +1,184 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="OFFLXLSrv_ImportDEL"></A><PRE>
+          <FONT SIZE="2"><I>/* OFFLXLSrv_ImportDEL */</I><BR>
+CREATE PROCEDURE CDN.OFFLXLSrv_ImportDEL
+ @ID	INT		  -- ID oddziału	
+,@xml	TEXT
+,@LogID	INT = -1  -- ID loga synchronizacji 
+
+AS
+	RAISERROR('Procedura OFFLXLSrv_ImportDEL nie jest obługiwana na MSSQL 2000',16,1)
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+<DIV CLASS="TextInfo">
+      <P><A name="OFFLXLSrv_ImportDEL"></A><PRE>
+          <FONT SIZE="2"><I>/* OFFLXLSrv_ImportDEL */</I><BR>
+CREATE PROCEDURE CDN.OFFLXLSrv_ImportDEL
+ @ID INT          -- ID oddziału
+,@xml XML
+,@LogID INT = -1  -- ID loga synchronizacji
+
+AS
+SET NOCOUNT ON
+DECLARE @Opis			VARCHAR(512)
+		,@GIDTyp		INT
+		,@GIDNumer		INT
+		,@OddGIDTyp		INT
+		,@OddGIDNumer	INT		
+		,@index			INT
+        ,@max_index     INT
+        ,@ok_index      INT
+        ,@buffer_size	INT
+        ,@xml_buffer    XML
+        ,@xml_tmp       XML
+        ,@xml_child     XML
+		,@Archiwizacja	SMALLINT
+
+SET @xml = @xml.query('/DELI/DEL')
+
+SELECT  @index = 0,
+        @ok_index = 0,
+        @max_index = CAST(CAST(@xml.query ('count(DEL)') AS VARCHAR(20)) AS INT),
+        @buffer_size = 200
+
+SELECT @Opis = 'Usuwanie obiektów'
+
+WHILE @index &lt; @max_index
+        BEGIN
+            SET XACT_ABORT OFF;
+
+                BEGIN TRY
+                        BEGIN TRANSACTION;
+                        SET @Archiwizacja = 0
+                        IF @index % @buffer_size = 0
+                                SET @xml_buffer = ( SELECT @xml.query('DEL[position()&gt; sql:variable("@index") and position() &lt;= sql:variable("@index") + sql:variable("@buffer_size") ] ')  )
+						SET @xml_tmp = ( SELECT @xml_buffer.query('DEL[position()= (sql:variable("@index") mod sql:variable("@buffer_size")) + 1 ] ')  )
+
+						SELECT   @GIDTyp = RLN.Attribute.value('@GidTyp','SMALLINT')
+								,@GIDNumer = RLN.Attribute.value('@GidNumer','INT')
+								,@OddGIDTyp = RLN.Attribute.value('@ObiektTyp','SMALLINT')
+								,@OddGIDNumer = RLN.Attribute.value('@ObiektID','INT')
+						FROM @xml_tmp.nodes('DEL') AS RLN(Attribute)
+
+						IF @GIDTyp in (864, 896) -- Usuwanie adresow
+						BEGIN
+							-- czy adres byl juz wykorzystany, kontrolowane poprzez trigger KntAdresy_DeleteHandler
+							BEGIN TRY
+								delete cdn.KntAdresy where KnA_GIDTyp = @GIDTyp and kna_gidnumer = @GIDNumer
+								-- Jesli udalo sie wykasowac, to powstal automatycznie wpis do cdn.PicoUsuniete, dla oddzialu z ktorego przyszlo trzeba zmienic wpis na Stan=3
+								IF @@ROWCOUNT &gt; 0
+								BEGIN
+									UPDATE CDN.PicoUsuniete SET PcU_Stan=3 WHERE PcU_PcKId=@ID and PcU_ObiTyp=@GIDTyp and PcU_ObiNumer=@GIDNumer
+								END
+								ELSE
+								BEGIN
+									-- Nie udalo sie wykasowac bo adresu juz nie bylo, czyli ponownie zaczytano taki sam plik z Retail, trzeba dodac wpis do PicoUsuniete zeby poszlo potwierdzenie
+									INSERT INTO cdn.PicoUsuniete (PcU_PcKId, PcU_ObiTyp, PcU_ObiNumer, PcU_ObiektTyp, PcU_ObiektID, PcU_TSUsuniecia, PcU_Stan)
+										values(@ID, @GIDTyp, @GIDNumer, @OddGIDTyp, @OddGIDNumer, DATEDIFF(s,convert(datetime,'1990-01-01',120),getdate()),3)
+								END
+							END TRY
+							BEGIN CATCH
+								IF ERROR_NUMBER()=50000 -- przerwane przez trigger
+								BEGIN
+									ROLLBACK TRANSACTION;
+									SET @Archiwizacja = 1
+								END
+							END CATCH
+						END						
+
+						IF @Archiwizacja = 0
+						BEGIN
+							COMMIT TRANSACTION;
+							SET @ok_index = @ok_index + 1
+						END	
+
+						BEGIN TRANSACTION
+						IF @GIDTyp = -7690 -- Usuwanie należności/zobowiązań z preliminarza
+						BEGIN
+							BEGIN TRY
+								delete cdn.Preliminarz where PRL_GIDNumer = @GIDNumer and PRL_ZewnetrznyID=@OddGIDNumer
+								-- Jesli udalo sie wykasowac, to powstal automatycznie wpis do cdn.PicoUsuniete, dla oddzialu z ktorego przyszlo trzeba zmienic wpis na Stan=3
+								IF @@ROWCOUNT &gt; 0
+								BEGIN
+									UPDATE CDN.PicoUsuniete SET PcU_Stan=3 WHERE PcU_PcKId=@ID and PcU_ObiTyp=@GIDTyp and PcU_ObiNumer=@GIDNumer
+								END
+								ELSE
+								BEGIN
+									-- Nie udalo sie wykasowac bo wpisu juz nie bylo, czyli ponownie zaczytano taki sam plik z Retail, trzeba dodac wpis do PicoUsuniete zeby poszlo potwierdzenie
+									INSERT INTO cdn.PicoUsuniete (PcU_PcKId, PcU_ObiTyp, PcU_ObiNumer, PcU_ObiektTyp, PcU_ObiektID, PcU_TSUsuniecia, PcU_Stan)
+										values(@ID, @GIDTyp, @GIDNumer, @OddGIDTyp, @OddGIDNumer, DATEDIFF(s,convert(datetime,'1990-01-01',120),getdate()),3)
+								END
+							END TRY
+							BEGIN CATCH
+								IF ERROR_NUMBER()=50000 -- przerwane przez trigger
+								BEGIN
+									ROLLBACK TRANSACTION;
+									SET @Archiwizacja = 1
+								END
+							END CATCH
+						END						
+
+						IF @Archiwizacja = 0
+						BEGIN
+							COMMIT TRANSACTION;
+							SET @ok_index = @ok_index + 1
+						END						
+						
+                END TRY
+
+                BEGIN CATCH
+                        IF XACT_STATE() &lt;&gt; 0
+                                ROLLBACK TRANSACTION;
+
+                        SELECT @Opis = 'Błąd podczas usuwania obiektów: ' + CDN.Log_SzczegolyBledu(ERROR_NUMBER(),ERROR_PROCEDURE(),ERROR_LINE(),ERROR_MESSAGE())
+                        EXEC CDN.Log_Dopisz @LogID, @Opis, 2
+
+                END CATCH
+                
+				IF @Archiwizacja = 1
+				-- Nie mozna było usunąć więc archiwizacja
+				BEGIN TRY
+					BEGIN TRANSACTION;
+					update cdn.KntAdresy set KnA_DataArc=DATEDIFF(s,convert(datetime,'1990-01-01',120),getdate())
+						 where KnA_GIDTyp = @GIDTyp and kna_gidnumer = @GIDNumer
+					INSERT INTO cdn.PicoUsuniete (PcU_PcKId, PcU_ObiTyp, PcU_ObiNumer, PcU_ObiektTyp, PcU_ObiektID, PcU_TSUsuniecia, PcU_Stan)
+						values(@ID, @GIDTyp, @GIDNumer, @OddGIDTyp, @OddGIDNumer, DATEDIFF(s,convert(datetime,'1990-01-01',120),getdate()),3)
+					COMMIT TRANSACTION
+				 END TRY
+				 BEGIN CATCH
+						IF XACT_STATE() &lt;&gt; 0
+								ROLLBACK TRANSACTION;
+				 END CATCH                
+
+                SET @index = @index + 1
+        END
+
+
+
+
+
+
+SET NOCOUNT OFF
+
+SELECT @Opis = 'Ilość usunietych obiektów: '  + CAST(@ok_index AS NVARCHAR(10)) + ' z ' + CAST(@max_index AS NVARCHAR(10))
+EXEC CDN.Log_Dopisz @LogID, @Opis, 0
+EXEC CDN.Log_ZamknijPoziom @LogID
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

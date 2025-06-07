@@ -1,0 +1,138 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="XLZapiszSlownik"></A><PRE>
+          <FONT SIZE="2"><I>/* XLZapiszSlownik */</I><BR>
+CREATE PROCEDURE CDN.XLZapiszSlownik
+(
+/* ==========================================================================================
+	SQL API: Procedura serwerowa do zapisu wartości słownika kategorii	
+
+	Dla uproszczenia założono, że jeżeli w systemie zewnętrznym zostanie zapisana wartość słownika kategorii,
+	to w trakcie zapisu jej przez API nie ma potrzeby kontrolowania uprawnień do obiektów, z których ona korzysta
+
+	Procedura aktualnie umożliwia dodanie/aktualizacje wartości słownikowych w następujących predefiniowanych kategoriach:
+	
+	SLSPredefinowany	- Nazwa kategorii
+
+	37					- Marki samochodów (SLW_WartoscS - wartość, SLW_Aktywny - aktywny)
+	40					- Rodzaje przejazdów (SLW_WartoscS - wartość, SLW_Nazwa - nazwa, SLW_WartoscS1 - nazwa cd, SLW_WartoscL1 - typy przejazdu, SLW_Domyslny - domyslny, SLW_Aktywny - aktywny)
+	58					- Rodzaje ankiety (SLW_WartoscS - wartość, SLW_Nazwa - nazwa, SLW_Aktywny - aktywny)
+	81					- Grupy pytań (SLW_WartoscS - wartość, SLW_Nazwa - nazwa, SLW_wartoscN1 - waga, SLW_Aktywny - aktywny)
+	96					- Typy wizyty (SLW_WartoscS - wartość, SLW_Nazwa - nazwa, SLW_WartoscL1 - kolor tekstu niezaznaczonego, SLW_WartoscL2 - kolor tekstu zaznaczonego, SLW_Aktywny - aktywny)
+	97					- Typy elementów wizyty (SLW_WartoscS - wartość, SLW_Aktywny - aktywny)
+	100					- Powód niewykonania elementu wizyty (SLW_WartoscS - wartość, SLW_Aktywny - aktywny)
+	120					- Ekspozycje towarów (SLW_WartoscS - wartość, SLW_Aktywny - aktywny)
+
+	Parametry wejściowe: 
+   ========================================================================================== */
+	@Id INT = NULL,					-- Identyfikator rekordu
+	@SLSPredefiniowany INT,			-- Numer predefiniowany kategorii, do której należy słownik
+
+	@WartoscS VARCHAR(255),			-- Wartość znakowa słownika
+	@Nazwa VARCHAR(512) = NULL,		-- Nazwa słownika
+	@Aktywny TINYINT = NULL,		-- Czy słownik aktywny
+	@Domyslny TINYINT = NULL,		-- Czy słownik domyślny dla kategorii
+	@WartoscS1 VARCHAR(512) = NULL,	-- Wartość znakowa słownika
+	@WartoscL1 INT = NULL,			-- Wartość całkowita słownika
+	@WartoscL2 INT = NULL,			-- Wartość całkowita słownika
+	@WartoscN1 DECIMAL(15,4) = NULL-- Wartość numeryczna słownika
+
+/* ==========================================================================================
+	Return:
+	&gt;0 : Operacja zakończona sukcesem (zwrócono Id słownika)
+	-1 : Nie powiodła się modyfikacja w tabeli CDN.Slowniki
+	-2 : Wystąpił błąd podczas zapisu słownika kategorii. Błędne parametry.
+	-3 : Wystąpił błąd podczas zapisu słownika kategorii. Próba zmiany kategorii słownika lub wartości w słowniku predefiniowanym. 
+   ========================================================================================== */
+)
+AS
+BEGIN
+
+	declare @Blad INT = 0,
+			@SLSId INT = NULL, 
+			@Kategoria VARCHAR(40) = ''
+
+	select @Blad = case 
+					when @SLSPredefiniowany = 81 then case when isnull(@WartoscN1,0) between -100 and 100 then 0 else -2 end
+					when @SLSPredefiniowany = 40 then case when isnull(@WartoscL1,1) between 1 and 4 then 0 else -2 end
+					when @SLSPredefiniowany in (37, 58, 96, 97, 100, 120) then 0
+					else -2 end
+
+	if @Blad &lt; 0 
+	begin
+		raiserror('Wystąpił błąd podczas zapisu słownika kategorii. Błędne parametry.', 16, 1)
+		return @Blad
+	end
+	
+	select @SLSId = SLS_Id, @Kategoria = SLS_Nazwa from cdn.SlownikiStruktura where SLS_Predefiniowany = @SLSPredefiniowany
+
+	select @SLSId = SLS_Id, 
+			@Kategoria = SLS_Nazwa,
+			@Blad = case when SLS_Predefiniowany = @SLSPredefiniowany and (SLW_WartoscS = @WartoscS or SLW_Predefiniowany = 0) then 0 else -3 end 
+	from cdn.Slowniki
+	join cdn.SlownikiStruktura on SLW_SLSId = SLS_Id
+	where SLW_ID = isnull(@Id, 0)
+
+	if @Blad &lt; 0 
+	begin
+		raiserror('Wystąpił błąd podczas zapisu słownika kategorii. Próba zmiany kategorii słownika lub wartości w słowniku predefiniowanym.', 16, 1)
+		return @Blad
+	end
+
+	select @Id = case when isnull(@Id, 0) = 0 then isnull(max(SLW_Id),0)+1 else @Id end from cdn.Slowniki
+
+	merge cdn.Slowniki as target
+	using (select @Id) as source (Id) on target.SLW_Id = source.Id
+	when matched then
+		update set SLW_WartoscS = case SLW_Predefiniowany when 0 then @WartoscS else SLW_WartoscS end,
+					SLW_Nazwa = case 
+									when @SLSPredefiniowany in (40, 58, 81, 96) then isnull(@Nazwa,SLW_Nazwa)
+									else SLW_Nazwa end,
+					SLW_Aktywny = isnull(@Aktywny, SLW_Aktywny),
+					SLW_Domyslny = case 
+										when @SLSPredefiniowany = 40 then isnull(@Domyslny, SLW_Domyslny)
+										else SLW_Domyslny end,
+					SLW_WartoscS1 = case 
+										when @SLSPredefiniowany = 40 then isnull(@WartoscS1, SLW_WartoscS1)
+										else SLW_WartoscS1 end,
+					SLW_WartoscL1 = case when @SLSPredefiniowany in (40, 96) then isnull(@WartoscL1, SLW_WartoscL1) else SLW_WartoscL1 end,
+					SLW_WartoscL2 = case when @SLSPredefiniowany = 96 then isnull(@WartoscL2, SLW_WartoscL2) else SLW_WartoscL2 end,
+					SLW_WartoscN1 = case when @SLSPredefiniowany = 81 then isnull(@WartoscN1, SLW_WartoscN1) else SLW_WartoscN1 end,
+					SLW_CzasModyfikacji = DATEDIFF(s,'19900101',GETDATE())
+	when not matched by target then
+		insert (SLW_Id,SLW_Predefiniowany, SLW_Kategoria, SLW_WartoscS, SLW_WartoscS1, SLW_WartoscS2, SLW_WartoscS3, SLW_WartoscS4, SLW_Nazwa, 
+				SLW_WartoscN1, SLW_WartoscN2, SLW_WartoscN3, SLW_WartoscN4, 
+				SLW_WartoscL1, SLW_WartoscL2, SLW_WartoscL3, SLW_WartoscL4, SLW_WartoscL5,
+				SLW_Konto, SLW_Aktywny, SLW_Domyslny, SLW_Archiwalny, SLW_CzasModyfikacji, 
+				SLW_OptimaId, SLW_SLSId, SLW_WersjaZrodlo, SLW_WersjaNr)
+		values (@Id,0, @Kategoria, @WartoscS, isnull(@WartoscS1,''), '', '', '', isnull(@Nazwa,''),
+				isnull(@WartoscN1, 0), 0, 0, 0,
+				isnull(@WartoscL1, case when @SLSPredefiniowany = 96 then -1 else 0 end), isnull(@WartoscL2, case when @SLSPredefiniowany = 96 then -1 else 0 end), 0, 0, 0,
+				'', isnull(@Aktywny, 1), isnull(@Domyslny, 0), 0, DATEDIFF(s,'19900101',GETDATE()),
+				0, @SLSId, @Id, 1);	
+
+	if @@ROWCOUNT = 0
+	begin		
+		raiserror ('Nie powiódł się zapis słownika kategorii.', 16, 1);
+		return -1
+	end
+
+	--OK:
+	RETURN @Id
+	
+END
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>

@@ -1,0 +1,67 @@
+﻿<HTML>
+  <HEAD>
+    <META http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=windows-1250">
+    <META NAME="Author" CONTENT="Comarch S.A.">
+    <LINK rel="stylesheet" type="text/css" href="Style/doc.css">
+    <TITLE>Skrypt SQL</TITLE>
+  </HEAD>
+  <BODY>
+<DIV CLASS="TextInfo">
+      <P><A name="[SekOpiekunowieNastepnegoZadania]"></A><PRE>
+          <FONT SIZE="2"><I>/* [SekOpiekunowieNastepnegoZadania] */</I><BR>
+CREATE procedure [CDN].[SekOpiekunowieNastepnegoZadania] 
+@p_WDZID int,                -- identyfikator czynnosci 
+@p_DokGidTyp int,       -- gid typ dokumentu sek
+@p_DokGidNumer int,          -- gid numer dokumentu sek
+@p_PrcGidNumer int = 0, -- gid numer pracownika
+@p_OpeGidNumer int = 0  -- gid numer opiekuna
+AS
+declare @stat int, @ret int
+declare @OpiekunSQL as nvarchar(max);
+declare @WFPID int
+
+set @OpiekunSQL = '';
+
+CREATE TABLE #tbl_statusykoncowe(tsk_status integer,tsk_lp smallint)
+exec CDN.WFL_SzukajStatusKoncowy @p_WDZID, @p_DokGidTyp, @p_DokGidNumer, 944, @p_PrcGidNumer, @p_OpeGidNumer, 0, 1, @stat output, @ret output
+
+set @OpiekunSQL = isnull((select top  1  WDZ_OpiekunSQL  from 
+#tbl_statusykoncowe
+join CDN.WF_DefStatusy on WDS_Id=tsk_status
+join CDN.WF_DefZadania on WDZ_WDSId=WDS_Id
+join CDN.WF_DefAkcje on WDA_Id=WDZ_WDAId),'')
+
+create table #opiekunowie(OpiTyp int, OpiNumer int)
+
+insert into #opiekunowie(OpiTyp,OpiNumer)
+select distinct WDO_OpiTyp, WDO_OpiNumer from #tbl_statusykoncowe
+join CDN.WF_DefStatusy on WDS_Id=tsk_status
+join CDN.WF_DefZadania on WDZ_WDSId=WDS_Id
+join CDN.WF_DefAkcje on WDA_Id=WDZ_WDAId
+join CDN.WF_DefOpiekun on WDO_WDZId=WDZ_Id
+
+If @OpiekunSQL &lt;&gt; ''		--dodajemy ew opiekunów dynamicznych
+begin
+	select @WFPID = WFP_ID 
+	from cdn.WF_Procesy
+	join cdn.SekDokumenty on SDD_Id=WFP_OBINumer and WFP_OBITyp in (14451,14452,14453) 
+	where SDD_Id = @p_DokGidNumer
+	  
+	Set @OpiekunSQL = 'insert into #opiekunowie (OpiTyp,OpiNumer) select OpiTyp, OpiNumer from ('+ @OpiekunSQL+') O'
+	exec sp_executesql  @opiekunsql, N'@WFPID int', @WFPID = @WFPID
+end
+
+select distinct * from #opiekunowie
+ if object_id('tempdb..#tbl_statusykoncowe') is not null
+	DROP TABLE #tbl_statusykoncowe
+	
+ if object_id('tempdb..#opiekunowie') is not null
+	DROP TABLE #opiekunowie
+</FONT>
+        </PRE>
+      </P>
+      <HR>
+    </DIV>
+</BODY>
+</HTML>
