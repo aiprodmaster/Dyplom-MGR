@@ -101,6 +101,7 @@ class HybridSearchEngine:
         )
         self.document_embeddings = None
         self.documents = []
+        self.metadatas = []
         self.tfidf_matrix = None
         self.is_fitted = False
         
@@ -571,6 +572,9 @@ class ContextCompressor:
         # Krok 4: Skonstruuj final context
         primary_context, supporting_context = self._build_final_context(summarized_context)
         
+        # Krok 5: ULEPSZENIE - Deduplikuj i rankuj źródła
+        deduplicated_sources = self._deduplicate_and_rank_sources(unique_results)
+        
         original_length = sum(len(r.content) for r in search_results)
         final_length = len(primary_context) + len(supporting_context)
         compression_ratio = final_length / original_length if original_length > 0 else 1.0
@@ -578,7 +582,7 @@ class ContextCompressor:
         return ContextBundle(
             primary_context=primary_context,
             supporting_context=supporting_context,
-            sources=[r.source for r in unique_results],
+            sources=deduplicated_sources,
             confidence_scores=[r.combined_score for r in unique_results],
             context_length=final_length,
             compression_ratio=compression_ratio
@@ -696,6 +700,25 @@ class ContextCompressor:
                 break
         
         return primary_context.strip(), supporting_context.strip()
+    
+    def _deduplicate_and_rank_sources(self, results: List[SearchResult]) -> List[str]:
+        """Deduplikuje i rankuje źródła według relevantności"""
+        source_scores = {}
+        
+        for result in results:
+            source = result.source
+            if source and source != 'unknown':  # Pomiń puste źródła
+                if source in source_scores:
+                    # Weź najwyższy score dla tego źródła
+                    source_scores[source] = max(source_scores[source], result.combined_score)
+                else:
+                    source_scores[source] = result.combined_score
+        
+        # Sortuj według score (od najwyższego)
+        sorted_sources = sorted(source_scores.items(), key=lambda x: x[1], reverse=True)
+        
+        # Zwróć tylko nazwy źródeł (bez score)
+        return [source for source, score in sorted_sources[:8]]  # Max 8 źródeł
 
 # ============================================================================
 # RESPONSE GENERATOR
@@ -756,21 +779,16 @@ class AdvancedResponseGenerator:
         """Generuje odpowiedź wieloetapową dla złożonych zapytań"""
         
         reasoning_steps = []
-        intermediate_results = []
         
         # Krok 1: Dekompozycja zapytania
-        decomposed_queries = self._decompose_complex_query(query_analysis.original_query)
-        reasoning_steps.append(f"Podzieliłem zapytanie na {len(decomposed_queries)} części")
+        reasoning_steps.append("Analizuję złożone zapytanie")
         
-        # Krok 2: Odpowiedz na każdą część
-        for i, sub_query in enumerate(decomposed_queries):
-            sub_result = self._answer_sub_query(sub_query, context_bundle)
-            intermediate_results.append(sub_result)
-            reasoning_steps.append(f"Część {i+1}: {sub_query[:50]}...")
+        # Krok 2: Złożona analiza kontekstu
+        reasoning_steps.append("Przeszukuję bazę wiedzy ERP")
         
         # Krok 3: Syntetyzuj finalną odpowiedź
-        final_answer = self._synthesize_multi_step_answer(query_analysis, intermediate_results, context_bundle)
-        reasoning_steps.append("Połączyłem odpowiedzi w spójną całość")
+        final_answer = self._synthesize_complex_answer(query_analysis, context_bundle)
+        reasoning_steps.append("Tworzę kompleksową odpowiedź")
         
         # Walidacja
         validation_score = self._validate_response(final_answer, query_analysis, context_bundle)
@@ -786,71 +804,12 @@ class AdvancedResponseGenerator:
             factual_consistency=validation_score
         )
     
-    def _decompose_complex_query(self, query: str) -> List[str]:
-        """Dekompozycja złożonego zapytania"""
+    def _synthesize_complex_answer(self, query_analysis: QueryAnalysis, context_bundle: ContextBundle) -> str:
+        """Syntetyzuje złożoną odpowiedź"""
         try:
-            system_prompt = """Podziel złożone zapytanie o ERP na prostsze podpytania.
-Zwróć listę JSON: ["podpytanie1", "podpytanie2", ...]
-Maksymalnie 4 podpytania."""
-
-            message = self.claude_client.messages.create(
-                model="claude-3-haiku-20240307",
-                max_tokens=300,
-                system=system_prompt,
-                messages=[{"role": "user", "content": f"Podziel zapytanie: {query}"}]
-            )
-            
-            response_text = message.content[0].text.strip()
-            try:
-                sub_queries = json.loads(response_text)
-                return sub_queries if isinstance(sub_queries, list) else [query]
-            except json.JSONDecodeError:
-                # Fallback - podziel po przecinkach lub "i"
-                parts = re.split(r'[,;]|\bi\b|\boraz\b', query)
-                return [part.strip() for part in parts if len(part.strip()) > 10][:4]
-                
-        except Exception as e:
-            logger.warning(f"Błąd dekompozycji zapytania: {e}")
-            return [query]
-    
-    def _answer_sub_query(self, sub_query: str, context_bundle: ContextBundle) -> str:
-        """Odpowiada na pojedyncze podpytanie"""
-        try:
-            relevant_context = self._find_relevant_context_for_subquery(sub_query, context_bundle)
-            
-            system_prompt = "Odpowiedz krótko i konkretnie na podpytanie na podstawie kontekstu ERP."
-            
-            message = self.claude_client.messages.create(
-                model="claude-3-haiku-20240307",
-                max_tokens=200,
-                system=system_prompt,
-                messages=[{
-                    "role": "user", 
-                    "content": f"KONTEKST: {relevant_context}\n\nPYTANIE: {sub_query}"
-                }]
-            )
-            
-            return message.content[0].text.strip()
-            
-        except Exception as e:
-            logger.warning(f"Błąd odpowiedzi na podpytanie: {e}")
-            return f"Nie mogę odpowiedzieć na: {sub_query}"
-    
-    def _find_relevant_context_for_subquery(self, sub_query: str, context_bundle: ContextBundle) -> str:
-        """Znajduje najlepszy kontekst dla podpytania"""
-        # Prosta heurystyka - weź pierwszy fragment primary context
-        context_parts = context_bundle.primary_context.split('\n\n')
-        if context_parts:
-            return context_parts[0][:500]
-        return context_bundle.primary_context[:500]
-    
-    def _synthesize_multi_step_answer(self, query_analysis: QueryAnalysis, intermediate_results: List[str], context_bundle: ContextBundle) -> str:
-        """Syntetyzuje finalną odpowiedź z wyników pośrednich"""
-        try:
-            combined_results = "\n".join([f"• {result}" for result in intermediate_results])
-            
-            system_prompt = """Stwórz spójną, profesjonalną odpowiedź łącząc wyniki analizy wieloetapowej.
-Zachowaj styl eksperta ERP o imieniu Marcin."""
+            system_prompt = """Jesteś AI LUKAS, ekspertem systemów ERP o imieniu LUKAS. 
+Tworzysz profesjonalne, szczegółowe odpowiedzi dla konsultantów ERP.
+Styl: naturalny, rozmowny ale profesjonalny."""
 
             message = self.claude_client.messages.create(
                 model=self.config.CLAUDE_MODEL,
@@ -858,14 +817,11 @@ Zachowaj styl eksperta ERP o imieniu Marcin."""
                 system=system_prompt,
                 messages=[{
                     "role": "user", 
-                    "content": f"""ORYGINALNE PYTANIE: {query_analysis.original_query}
+                    "content": f"""KONTEKST ERP: {context_bundle.primary_context}
 
-WYNIKI ANALIZY:
-{combined_results}
+PYTANIE: {query_analysis.original_query}
 
-DODATKOWY KONTEKST: {context_bundle.primary_context[:500]}
-
-Napisz spójną odpowiedź łączącą wszystkie elementy."""
+Napisz profesjonalną odpowiedź jako ekspert ERP."""
                 }]
             )
             
@@ -873,15 +829,15 @@ Napisz spójną odpowiedź łączącą wszystkie elementy."""
             
         except Exception as e:
             logger.error(f"Błąd syntezy odpowiedzi: {e}")
-            return "Przepraszam, wystąpił błąd podczas przetwarzania złożonego zapytania."
+            return "Wystąpił błąd podczas przetwarzania złożonego zapytania."
     
     def _build_system_prompt(self, query_analysis: QueryAnalysis) -> str:
         """Buduje system prompt dostosowany do intencji"""
         
-        base_prompt = """Jesteś Marcin, przyjazny ekspert ds. systemów ERP z wieloletnim doświadczeniem jako architekt IT.
+        base_prompt = """Jesteś AI LUKAS, przyjazny ekspert ds. systemów ERP z wieloletnim doświadczeniem.
 
-Odpowiadaj naturalnie i płynnie:
-- Wykorzystuj dostarczony kontekst z bazy wiedzy
+Odpowiadaj naturalnie:
+- Wykorzystuj kontekst z bazy wiedzy  
 - Pisz po polsku w sposób rozmowny ale profesjonalny
 - Bez nadmiernego formatowania markdown
 - Jak prawdziwa rozmowa z ekspertem"""
@@ -899,7 +855,7 @@ Odpowiadaj naturalnie i płynnie:
         if intent_addition:
             base_prompt += f"\n\n{intent_addition}"
         
-        base_prompt += "\n\nNa końcu dodaj dyskretnie: 🔗 Marcin - Architekt IT | 🎯 [confidence]% | 📚 Źródła: [lista]"
+        base_prompt += "\n\nNa końcu dodaj: 🔗 AI LUKAS - Ekspert ERP | 🎯 Confidence: [%] | 📚 Źródła: [lista]"
         
         return base_prompt
     
@@ -909,14 +865,10 @@ Odpowiadaj naturalnie i płynnie:
         prompt_parts = []
         
         if context_bundle.primary_context:
-            prompt_parts.append(f"KONTEKST GŁÓWNY:\n{context_bundle.primary_context}")
-        
-        if context_bundle.supporting_context:
-            prompt_parts.append(f"KONTEKST DODATKOWY:\n{context_bundle.supporting_context}")
+            prompt_parts.append(f"KONTEKST: {context_bundle.primary_context}")
         
         prompt_parts.extend([
             f"INTENCJA: {query_analysis.intent}",
-            f"SŁOWA KLUCZOWE: {', '.join(query_analysis.keywords)}",
             f"PYTANIE: {query_analysis.original_query}"
         ])
         
@@ -937,22 +889,13 @@ Odpowiadaj naturalnie i płynnie:
         keyword_overlap = len(query_words.intersection(answer_words)) / len(query_words) if query_words else 0.5
         validation_factors.append(keyword_overlap)
         
-        # 3. Użycie kontekstu (sprawdź czy odpowiedź korzysta z dostarczonych informacji)
+        # 3. Użycie kontekstu
         if context_bundle.primary_context:
             context_words = set(context_bundle.primary_context.lower().split())
             context_usage = len(answer_words.intersection(context_words)) / len(context_words) if context_words else 0.3
-            validation_factors.append(min(1.0, context_usage * 5))  # Scale up
+            validation_factors.append(min(1.0, context_usage * 5))
         else:
             validation_factors.append(0.5)
-        
-        # 4. Struktura odpowiedzi (sprawdź czy ma sens)
-        structure_score = 0.8 if len(re.findall(r'[.!?]', answer)) >= 2 else 0.5
-        validation_factors.append(structure_score)
-        
-        # 5. Specyfika ERP (sprawdź czy zawiera terminy branżowe)
-        erp_terms = {'erp', 'system', 'moduł', 'konfiguracja', 'funkcja', 'dokument', 'proces'}
-        erp_usage = len(erp_terms.intersection(answer_words)) / len(erp_terms)
-        validation_factors.append(erp_usage)
         
         return sum(validation_factors) / len(validation_factors)
     
@@ -961,42 +904,16 @@ Odpowiadaj naturalnie i płynnie:
         if not context_bundle.confidence_scores:
             return 0.5
         
-        # Średnia z confidence scores
-        avg_confidence = sum(context_bundle.confidence_scores) / len(context_bundle.confidence_scores)
-        
-        # Bonus za kompresję (lepsze wykorzystanie kontekstu)
-        compression_bonus = min(0.2, (1 - context_bundle.compression_ratio) * 0.5)
-        
-        return min(1.0, avg_confidence + compression_bonus)
+        return sum(context_bundle.confidence_scores) / len(context_bundle.confidence_scores)
     
     def _calculate_completeness(self, answer: str, query_analysis: QueryAnalysis) -> float:
         """Oblicza kompletność odpowiedzi"""
         
-        completeness_factors = []
-        
-        # 1. Długość vs złożoność zapytania
+        # Bazowa kompletność oparta na długości vs złożoność
         expected_length = 100 + (query_analysis.complexity_score * 200)
         length_ratio = min(1.0, len(answer) / expected_length)
-        completeness_factors.append(length_ratio)
         
-        # 2. Pokrycie aspektów zapytania
-        if query_analysis.entities:
-            entity_texts = [e['text'].lower() for e in query_analysis.entities]
-            answer_lower = answer.lower()
-            entity_coverage = sum(1 for entity in entity_texts if entity in answer_lower) / len(entity_texts)
-            completeness_factors.append(entity_coverage)
-        else:
-            completeness_factors.append(0.7)
-        
-        # 3. Struktura odpowiedzi dla złożonych zapytań
-        if query_analysis.complexity_score > 0.7:
-            # Złożone zapytania powinny mieć strukturę
-            has_structure = bool(re.search(r'\n|[0-9]+\.|•|→', answer))
-            completeness_factors.append(1.0 if has_structure else 0.6)
-        else:
-            completeness_factors.append(0.8)
-        
-        return sum(completeness_factors) / len(completeness_factors)
+        return length_ratio
     
     def _generate_fallback_response(self, query_analysis: QueryAnalysis) -> AdvancedResponse:
         """Generuje fallback odpowiedź w przypadku błędu"""

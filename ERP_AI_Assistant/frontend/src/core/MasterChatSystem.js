@@ -98,11 +98,14 @@ class MasterChatSystem {
             // Phase 5: Services activation
             await this.startServices();
             
-            // Phase 6: Event listeners setup
-            await this.setupEventListeners();
-            
-            // Phase 7: Health checks and validation
-            await this.performHealthChecks();
+        // Phase 6: Event listeners setup
+        await this.setupEventListeners();
+        
+        // Phase 7: Initialize smart scrolling
+        this.initializeSmartScrolling();
+        
+        // Phase 8: Health checks and validation
+        await this.performHealthChecks();
             
             // Mark as initialized
             this.initialized = true;
@@ -768,22 +771,109 @@ class MasterChatSystem {
     }
 
     /**
-     * Przewija do dołu obszaru wiadomości
+     * Inteligentne zarządzanie przewijaniem czatu
      */
-    scrollToBottom() {
-        const messagesContent = document.getElementById('messagesContent');
-        if (messagesContent) {
-            setTimeout(() => {
+    scrollToBottom(force = false) {
+        const messagesContent = document.getElementById('messagesContent') || 
+                               document.getElementById('chat-messages-advanced') ||
+                               document.querySelector('.messages-container');
+        
+        if (!messagesContent) return;
+        
+        // Sprawdź czy użytkownik przewija ręcznie w górę
+        const threshold = 100; // 100px od dołu
+        const isAtBottom = messagesContent.scrollHeight - messagesContent.clientHeight - messagesContent.scrollTop <= threshold;
+        
+        // Przewijaj tylko jeśli użytkownik jest blisko dołu lub wymuszone
+        if (isAtBottom || force || this.stateManager.getState('chat.autoScroll') !== false) {
+            // Użyj smooth scroll jeśli dostępne
+            if (messagesContent.style.scrollBehavior === 'smooth' || force) {
+                messagesContent.scrollTo({
+                    top: messagesContent.scrollHeight,
+                    behavior: 'smooth'
+                });
+            } else {
                 messagesContent.scrollTop = messagesContent.scrollHeight;
-            }, 100);
+            }
+            
+            // Oznacz że auto-scroll jest aktywny
+            this.stateManager.setState('chat.autoScroll', true);
         }
     }
 
     /**
-     * Pokazuje wskaźnik pisania
+     * Inicjalizuje inteligentne zarządzanie scrollem
+     */
+    initializeSmartScrolling() {
+        const messagesContent = document.getElementById('messagesContent') || 
+                               document.getElementById('chat-messages-advanced') ||
+                               document.querySelector('.messages-container');
+        
+        if (!messagesContent) return;
+        
+        // Listener do wykrywania ręcznego przewijania
+        let scrollTimeout;
+        messagesContent.addEventListener('scroll', () => {
+            clearTimeout(scrollTimeout);
+            
+            scrollTimeout = setTimeout(() => {
+                const threshold = 100;
+                const isAtBottom = messagesContent.scrollHeight - messagesContent.clientHeight - messagesContent.scrollTop <= threshold;
+                
+                // Jeśli użytkownik przewinął w górę, zatrzymaj auto-scroll
+                if (!isAtBottom) {
+                    this.stateManager.setState('chat.autoScroll', false);
+                } else {
+                    // Jeśli użytkownik wrócił na dół, wznów auto-scroll
+                    this.stateManager.setState('chat.autoScroll', true);
+                }
+            }, 150);
+        });
+        
+        // Obsługa resize okna
+        window.addEventListener('resize', () => {
+            if (this.stateManager.getState('chat.autoScroll') !== false) {
+                setTimeout(() => this.scrollToBottom(true), 100);
+            }
+        });
+        
+        console.log('✅ Smart scrolling initialized');
+    }
+
+    /**
+     * Przewija do dołu podczas pisania odpowiedzi AI
+     */
+    scrollDuringTyping() {
+        const messagesContent = document.getElementById('messagesContent') || 
+                               document.getElementById('chat-messages-advanced') ||
+                               document.querySelector('.messages-container');
+        
+        if (!messagesContent) return;
+        
+        // Sprawdź czy auto-scroll jest włączony
+        if (this.stateManager.getState('chat.autoScroll') !== false) {
+            // Płynne przewijanie podczas pisania
+            const targetScroll = messagesContent.scrollHeight;
+            const currentScroll = messagesContent.scrollTop;
+            const distance = targetScroll - currentScroll;
+            
+            if (distance > 10) {
+                messagesContent.scrollTo({
+                    top: targetScroll,
+                    behavior: 'smooth'
+                });
+            }
+        }
+    }
+
+    /**
+     * Pokazuje wskaźnik pisania z inteligentnym przewijaniem
      */
     showTypingIndicator() {
-        const messagesContent = document.getElementById('messagesContent');
+        const messagesContent = document.getElementById('messagesContent') || 
+                               document.getElementById('chat-messages-advanced') ||
+                               document.querySelector('.messages-container');
+        
         if (!messagesContent) return null;
         
         const typingId = 'typing_' + Date.now();
@@ -795,7 +885,7 @@ class MasterChatSystem {
             <div class="ai-avatar">🤖</div>
             <div class="ai-bubble">
                 <div class="loading-indicator">
-                    <span>Marcin analizuje pytanie</span>
+                    <span>AI LUKAS analizuje pytanie</span>
                     <div class="loading-dots">
                         <div class="loading-dot"></div>
                         <div class="loading-dot"></div>
@@ -806,18 +896,68 @@ class MasterChatSystem {
         `;
         
         messagesContent.appendChild(typingElement);
-        this.scrollToBottom();
+        
+        // Smooth scroll po dodaniu typing indicator
+        this.scrollToBottom(true);
+        
+        // Dodaj obserwator zmian w typing indicator
+        this.setupTypingObserver(typingElement);
         
         return typingId;
     }
 
     /**
-     * Usuwa wskaźnik pisania
+     * Konfiguruje obserwator typing indicator dla płynnego przewijania
+     */
+    setupTypingObserver(typingElement) {
+        if (!typingElement) return;
+        
+        // MutationObserver dla zmian w typing element
+        const observer = new MutationObserver(() => {
+            // Przewijaj podczas animacji typing indicator
+            this.scrollDuringTyping();
+        });
+        
+        // Obserwuj zmiany w treści loading dots
+        observer.observe(typingElement, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            attributeFilter: ['class', 'style']
+        });
+        
+        // Zapisz observer do późniejszego czyszczenia
+        typingElement._scrollObserver = observer;
+        
+        // Interval dla płynnego przewijania podczas pisania
+        const scrollInterval = setInterval(() => {
+            if (document.getElementById(typingElement.id)) {
+                this.scrollDuringTyping();
+            } else {
+                clearInterval(scrollInterval);
+            }
+        }, 200);
+        
+        typingElement._scrollInterval = scrollInterval;
+    }
+
+    /**
+     * Usuwa wskaźnik pisania z czyszczeniem obserwatorów
      */
     removeTypingIndicator(typingId) {
         if (typingId) {
             const typingElement = document.getElementById(typingId);
             if (typingElement) {
+                // Wyczyść obserwatory
+                if (typingElement._scrollObserver) {
+                    typingElement._scrollObserver.disconnect();
+                }
+                
+                if (typingElement._scrollInterval) {
+                    clearInterval(typingElement._scrollInterval);
+                }
+                
+                // Usuń element
                 typingElement.remove();
             }
         }

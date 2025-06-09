@@ -433,7 +433,7 @@
                 <div class="module-header">
                     <div class="module-icon">🎯</div>
                     <div class="module-info">
-                        <h3>Marcin - Asystent ERP</h3>
+                        <h3>AI LUKAS - Asystent ERP</h3>
                         <p>Główny chat z AI</p>
                     </div>
                 </div>
@@ -541,7 +541,7 @@
                     </ul>
                 </div>
                 <div class="module-actions">
-                    <a href="/system" class="btn btn-primary">
+                    <a href="system-management.html" class="btn btn-primary">
                         <i class="fas fa-cog"></i>
                         System Management
                     </a>
@@ -569,6 +569,14 @@
                     <i class="fas fa-heartbeat"></i>
                     Status systemu
                 </a>
+                <button onclick="restartApplication()" class="quick-btn" style="background: rgba(220, 38, 38, 0.1); border-color: rgba(220, 38, 38, 0.2); color: #dc2626;">
+                    <i class="fas fa-power-off"></i>
+                    Restart aplikacji
+                </button>
+                <button onclick="reloadConfiguration()" class="quick-btn" style="background: rgba(251, 146, 60, 0.1); border-color: rgba(251, 146, 60, 0.2); color: #ea580c;">
+                    <i class="fas fa-sync-alt"></i>
+                    Przeładuj konfigurację
+                </button>
                 <a href="/api/documents/status" class="quick-btn">
                     <i class="fas fa-database"></i>
                     Baza wiedzy
@@ -607,6 +615,207 @@
                 document.querySelector('.status-online').style.display = 'none';
             }
         }
+
+        // System Management Functions
+        async function restartApplication() {
+            if (!confirm('🔄 Czy na pewno chcesz zrestartować aplikację?\n\nAplikacja będzie niedostępna przez 5-10 sekund.')) {
+                return;
+            }
+
+            const button = event.target.closest('.quick-btn');
+            const originalText = button.innerHTML;
+            
+            try {
+                // Update button state
+                button.style.opacity = '0.6';
+                button.style.cursor = 'not-allowed';
+                button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Restartowanie...';
+                
+                const response = await fetch('/api/system/restart', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                const result = await response.json();
+                
+                if (result.status === 'success') {
+                    button.innerHTML = '<i class="fas fa-check"></i> Restart wysłany!';
+                    
+                    // Show notification
+                    showNotification('🔄 Restart aplikacji...', 'Aplikacja zostanie zrestartowana za chwilę. Odświeży się automatycznie.', 'info');
+                    
+                    // Wait a bit and then start checking if server is back online
+                    setTimeout(() => {
+                        checkServerRestart();
+                    }, 2000);
+                } else {
+                    throw new Error(result.message || 'Nieznany błąd');
+                }
+                
+            } catch (error) {
+                console.error('Błąd restartu:', error);
+                button.innerHTML = '<i class="fas fa-exclamation-triangle"></i> Błąd restartu';
+                showNotification('❌ Błąd restartu', `Nie udało się zrestartować aplikacji: ${error.message}`, 'error');
+                
+                // Restore button after error
+                setTimeout(() => {
+                    button.innerHTML = originalText;
+                    button.style.opacity = '1';
+                    button.style.cursor = 'pointer';
+                }, 3000);
+            }
+        }
+
+        async function reloadConfiguration() {
+            if (!confirm('🔧 Czy na pewno chcesz przeładować konfigurację?\n\nTo odświeży ustawienia bez restartu całej aplikacji.')) {
+                return;
+            }
+
+            const button = event.target.closest('.quick-btn');
+            const originalText = button.innerHTML;
+            
+            try {
+                // Update button state
+                button.style.opacity = '0.6';
+                button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Przeładowywanie...';
+                
+                const response = await fetch('/api/system/reload-config', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                const result = await response.json();
+                
+                if (result.status === 'success') {
+                    button.innerHTML = '<i class="fas fa-check"></i> Przeładowano!';
+                    showNotification('✅ Konfiguracja przeładowana', 'Ustawienia zostały pomyślnie odświeżone.', 'success');
+                    
+                    // Refresh system status
+                    setTimeout(() => {
+                        updateSystemStatus();
+                    }, 1000);
+                } else {
+                    throw new Error(result.message || 'Nieznany błąd');
+                }
+                
+            } catch (error) {
+                console.error('Błąd przeładowania:', error);
+                button.innerHTML = '<i class="fas fa-exclamation-triangle"></i> Błąd';
+                showNotification('❌ Błąd przeładowania', `Nie udało się przeładować konfiguracji: ${error.message}`, 'error');
+            }
+            
+            // Restore button
+            setTimeout(() => {
+                button.innerHTML = originalText;
+                button.style.opacity = '1';
+            }, 3000);
+        }
+
+        // Check if server is back online after restart
+        async function checkServerRestart() {
+            let attempts = 0;
+            const maxAttempts = 20; // 20 attempts * 1 second = 20 seconds max wait
+            
+            const checkInterval = setInterval(async () => {
+                attempts++;
+                
+                try {
+                    const response = await fetch('/api/health');
+                    const status = await response.json();
+                    
+                    if (status.status === 'online') {
+                        clearInterval(checkInterval);
+                        showNotification('✅ Aplikacja online!', 'Restart zakończony pomyślnie. Aplikacja jest ponownie dostępna.', 'success');
+                        
+                        // Refresh the page to get the latest version
+                        setTimeout(() => {
+                            window.location.reload();
+                        }, 1000);
+                    }
+                } catch (error) {
+                    // Server still down, continue checking
+                    if (attempts >= maxAttempts) {
+                        clearInterval(checkInterval);
+                        showNotification('⚠️ Restart w toku', 'Aplikacja nadal się restartuje. Odśwież stronę ręcznie za chwilę.', 'warning');
+                    }
+                }
+            }, 1000);
+        }
+
+        // Notification system
+        function showNotification(title, message, type = 'info') {
+            // Remove existing notifications
+            const existing = document.querySelector('.notification');
+            if (existing) {
+                existing.remove();
+            }
+
+            const notification = document.createElement('div');
+            notification.className = 'notification';
+            
+            const colors = {
+                'success': '#059669',
+                'error': '#dc2626', 
+                'warning': '#ea580c',
+                'info': '#1e40af'
+            };
+            
+            notification.style.cssText = `
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                background: white;
+                border: 2px solid ${colors[type]};
+                border-radius: 12px;
+                padding: 20px;
+                box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+                z-index: 10000;
+                max-width: 400px;
+                animation: slideIn 0.3s ease-out;
+            `;
+
+            notification.innerHTML = `
+                <div style="display: flex; align-items: flex-start; gap: 12px;">
+                    <div style="color: ${colors[type]}; font-size: 20px; margin-top: 2px;">
+                        ${type === 'success' ? '✅' : type === 'error' ? '❌' : type === 'warning' ? '⚠️' : 'ℹ️'}
+                    </div>
+                    <div style="flex: 1;">
+                        <h4 style="margin: 0 0 8px 0; color: ${colors[type]}; font-size: 16px;">${title}</h4>
+                        <p style="margin: 0; color: #64748b; font-size: 14px; line-height: 1.4;">${message}</p>
+                    </div>
+                    <button onclick="this.parentElement.parentElement.remove()" style="background: none; border: none; font-size: 18px; color: #64748b; cursor: pointer; padding: 0; margin-left: 8px;">×</button>
+                </div>
+            `;
+
+            document.body.appendChild(notification);
+
+            // Auto remove after 5 seconds
+            setTimeout(() => {
+                if (notification.parentElement) {
+                    notification.remove();
+                }
+            }, 5000);
+        }
+
+        // Add CSS animation for notifications
+        const style = document.createElement('style');
+        style.textContent = `
+            @keyframes slideIn {
+                from {
+                    transform: translateX(100%);
+                    opacity: 0;
+                }
+                to {
+                    transform: translateX(0);
+                    opacity: 1;
+                }
+            }
+        `;
+        document.head.appendChild(style);
 
         // Add smooth scroll for internal links
         document.querySelectorAll('a[href^="#"]').forEach(anchor => {

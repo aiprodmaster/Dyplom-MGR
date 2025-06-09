@@ -712,7 +712,7 @@ class UnifiedERPChat {
     }
 
     /**
-     * Wysłanie wiadomości - ulepszona wersja enterprise
+     * Wysłanie wiadomości - ulepszona wersja enterprise z STREAMING
      */
     async sendMessage() {
         const message = this.elements.chatInput.value.trim();
@@ -756,21 +756,29 @@ class UnifiedERPChat {
             rag_mode: this.config.ragMode
         });
 
+        // NOWA FUNKCJONALNOŚĆ: Sprawdź czy backend obsługuje streaming
+        const useStreaming = this.shouldUseStreaming();
+        
         try {
-            // Spróbuj backend z retry
-            const response = await this.sendMessageWithRetry(message);
-            this.stopProcessing();
-            this.addMessage(response.content, 'assistant', response.metadata);
-            
-            // Update performance metrics
-            this.updatePerformanceMetrics(Date.now() - startTime);
-            this.state.retryCount = 0;
-            
-            // Track successful response
-            this.analytics.track('message_response_success', {
-                response_time: Date.now() - startTime,
-                confidence: response.metadata?.confidence
-            });
+            if (useStreaming) {
+                // Streaming response
+                await this.sendMessageStreaming(message, startTime);
+            } else {
+                // Traditional response
+                const response = await this.sendMessageWithRetry(message);
+                this.stopProcessing();
+                this.addMessage(response.content, 'assistant', response.metadata);
+                
+                // Update performance metrics
+                this.updatePerformanceMetrics(Date.now() - startTime);
+                this.state.retryCount = 0;
+                
+                // Track successful response
+                this.analytics.track('message_response_success', {
+                    response_time: Date.now() - startTime,
+                    confidence: response.metadata?.confidence
+                });
+            }
             
         } catch (error) {
             console.error('Błąd wysyłania wiadomości:', error);
@@ -790,6 +798,228 @@ class UnifiedERPChat {
         
         // Auto-save po każdej wiadomości
         this.saveToLocalStorage();
+    }
+
+    /**
+     * STREAMING MESSAGE HANDLING - NOWA METODA
+     */
+    async sendMessageStreaming(message, startTime) {
+        let currentMessageElement = null;
+        let fullResponseText = '';
+        
+        // Utwórz placeholder dla streaming response
+        currentMessageElement = this.createStreamingMessagePlaceholder();
+        
+        const onChunk = (chunk, fullSoFar) => {
+            fullResponseText = fullSoFar;
+            this.updateStreamingMessage(currentMessageElement, fullResponseText);
+        };
+        
+        const onComplete = (data) => {
+            this.stopProcessing();
+            
+            // Finalize streaming message
+            this.finalizeStreamingMessage(currentMessageElement, data);
+            
+            // Update performance metrics
+            this.updatePerformanceMetrics(Date.now() - startTime);
+            this.state.retryCount = 0;
+            
+            // Track successful streaming response
+            this.analytics.track('streaming_response_success', {
+                response_time: Date.now() - startTime,
+                confidence: data.metadata?.confidence || data.enhanced_metadata?.confidence,
+                streaming: true
+            });
+        };
+        
+        const onError = (error) => {
+            this.stopProcessing();
+            this.removeStreamingMessage(currentMessageElement);
+            this.handleSendError(error, message);
+        };
+        
+        // Start streaming
+        await this.callStreamingAPI(message, onChunk, onComplete, onError);
+    }
+
+    /**
+     * STREAMING HELPER METHODS
+     */
+    shouldUseStreaming() {
+        // Użyj streaming jeśli backend połączony i Claude dostępny
+        return this.state.connectionStatus === 'connected' && 
+               this.ragConfig.useHybridSearch;
+    }
+    
+    createStreamingMessagePlaceholder() {
+        const messageContainer = this.elements.chatMessages;
+        if (!messageContainer) return null;
+
+        const messageElement = document.createElement('div');
+        messageElement.className = 'message assistant streaming';
+        messageElement.setAttribute('data-message-id', this.generateMessageId());
+
+        const timestamp = new Date().toLocaleTimeString('pl-PL', {
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+
+        messageElement.innerHTML = `
+            <div class="message-avatar">
+                <i class="fas fa-robot"></i>
+            </div>
+            <div class="message-bubble">
+                <div class="streaming-content">
+                    <span class="streaming-text"></span>
+                    <span class="streaming-cursor">|</span>
+                </div>
+                <div class="streaming-status">🔄 Generating...</div>
+            </div>
+            <div class="message-meta">
+                <span class="message-time">${timestamp}</span>
+            </div>
+        `;
+
+        messageContainer.appendChild(messageElement);
+        this.scrollToBottom();
+        return messageElement;
+    }
+    
+    updateStreamingMessage(messageElement, text) {
+        if (!messageElement) return;
+        
+        const textElement = messageElement.querySelector('.streaming-text');
+        if (textElement) {
+            textElement.innerHTML = this.formatMessageContent(text);
+        }
+        
+        this.scrollToBottom();
+    }
+    
+    finalizeStreamingMessage(messageElement, data) {
+        if (!messageElement) return;
+        
+        // Remove streaming classes and cursor
+        messageElement.classList.remove('streaming');
+        
+        const finalResponse = data.full_response || data.enhanced_metadata?.full_response || '';
+        const metadata = data.metadata || data.enhanced_metadata || {};
+        
+        // Update with final content
+        const bubble = messageElement.querySelector('.message-bubble');
+        if (bubble) {
+            bubble.innerHTML = `
+                ${this.formatMessageContent(finalResponse)}
+                ${this.createMetadataPanel(metadata)}
+            `;
+        }
+        
+        // Add message actions
+        const meta = messageElement.querySelector('.message-meta');
+        if (meta) {
+            const actionsHTML = `
+                <div class="message-actions">
+                    <button class="message-action-btn" onclick="unifiedChat.copyMessage('${this.escapeHtml(finalResponse)}')" title="Kopiuj">
+                        <i class="fas fa-copy"></i>
+                    </button>
+                    <button class="message-action-btn" onclick="unifiedChat.likeMessage(this)" title="Przydatne">
+                        <i class="fas fa-thumbs-up"></i>
+                    </button>
+                </div>
+            `;
+            meta.insertAdjacentHTML('beforeend', actionsHTML);
+        }
+        
+        // Update metrics
+        if (metadata) {
+            this.updateMetrics(metadata);
+        }
+        
+        this.scrollToBottom();
+    }
+    
+    removeStreamingMessage(messageElement) {
+        if (messageElement && messageElement.parentNode) {
+            messageElement.remove();
+        }
+    }
+    
+    updateStreamingStatus(statusMessage) {
+        const streamingElement = document.querySelector('.streaming .streaming-status');
+        if (streamingElement) {
+            streamingElement.textContent = `🔄 ${statusMessage}`;
+        }
+    }
+
+    /**
+     * STREAMING API CALLS - NOWA FUNKCJONALNOŚĆ
+     */
+    async callStreamingAPI(message, onChunk, onComplete, onError) {
+        const endpoint = this.config.ragMode === 'enhanced' ? '/api/enhanced-rag/stream' : '/api/chat/stream';
+        
+        const requestData = {
+            message: message,
+            session_id: this.state.sessionId,
+            use_rag: this.ragConfig.useHybridSearch,
+            rag_config: this.ragConfig
+        };
+
+        try {
+            // Start streaming request
+            const response = await fetch(`${this.config.backendUrl}${endpoint}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'text/event-stream',
+                    'Authorization': `Bearer ${this.getApiToken()}`
+                },
+                body: JSON.stringify(requestData)
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+
+            // Setup EventSource for Server-Sent Events
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n\n');
+                buffer = lines.pop(); // Keep incomplete line in buffer
+
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        try {
+                            const data = JSON.parse(line.slice(6));
+                            
+                            if (data.type === 'chunk') {
+                                onChunk(data.text, data.full_so_far);
+                            } else if (data.type === 'complete' || data.type === 'enhanced_complete') {
+                                onComplete(data);
+                                return;
+                            } else if (data.type === 'error') {
+                                onError(new Error(data.message));
+                                return;
+                            } else if (data.type === 'status' || data.type === 'thinking' || data.type === 'processing_step') {
+                                // Status updates
+                                this.updateStreamingStatus(data.message);
+                            }
+                        } catch (e) {
+                            console.warn('Failed to parse streaming data:', line);
+                        }
+                    }
+                }
+            }
+        } catch (error) {
+            onError(error);
+        }
     }
 
     /**

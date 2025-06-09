@@ -258,7 +258,7 @@ Content-Type: application/json
 **Odpowiedź:**
 ```json
 {
-  "response": "Na podstawie bazy wiedzy ERP:\n\nModuł CRM w Comarch ERP XL...\n\n🔗 Marcin - Architekt IT - techniczny i praktyczny\n🎯 Pewność odpowiedzi: 92%\n📚 Źródła: modul_crm, integracja_crm_erp\n🤖 Odpowiedź wzbogacona przez Claude AI",
+  "response": "Na podstawie bazy wiedzy ERP:\n\nModuł CRM w Comarch ERP XL...\n\n🔗 AI LUKAS - Architekt IT - techniczny i praktyczny\n🎯 Pewność odpowiedzi: 92%\n📚 Źródła: modul_crm, integracja_crm_erp\n🤖 Odpowiedź wzbogacona przez Claude AI",
   "confidence": 0.95,
   "sources": ["modul_crm", "integracja_crm_erp"],
   "intent": "pytanie o CRM",

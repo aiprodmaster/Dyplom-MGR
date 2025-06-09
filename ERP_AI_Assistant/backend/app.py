@@ -11,14 +11,17 @@ import json
 import sqlite3
 import logging
 import traceback
+import time
+import platform
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 from dataclasses import asdict
 
 # Flask & CORS
-from flask import Flask, request, jsonify, send_from_directory, render_template_string
+from flask import Flask, request, jsonify, send_from_directory, render_template_string, Response, stream_template
 from flask_cors import CORS
 from dotenv import load_dotenv
+import json
 
 # Importy naszych zaawansowanych serwisów
 try:
@@ -165,7 +168,7 @@ def home():
 
 @app.route('/chat')
 def chat():
-    """Chat z Marcinem - AI Assistant"""
+    """Chat z AI LUKAS - AI Assistant"""
     return send_from_directory('..', 'marcin-chat.html')
 
 @app.route('/chat-basic')
@@ -278,6 +281,235 @@ def models_status():
     except Exception as e:
         logger.error(f"[ERROR] Błąd status modeli: {e}")
         return jsonify({'error': str(e)}), 500
+
+# === STREAMING CHAT ENDPOINTS ===
+
+@app.route('/api/chat/stream', methods=['POST'])
+def stream_chat():
+    """Streaming chat z Server-Sent Events - NOWA FUNKCJONALNOŚĆ"""
+    try:
+        data = request.get_json()
+        if not data or 'message' not in data:
+            return jsonify({'error': 'Brak wiadomości'}), 400
+        
+        query = data['message']
+        session_id = data.get('session_id', 'default')
+        use_rag = data.get('use_rag', True)
+        
+        logger.info(f"[STREAM] Rozpoczynam streaming dla: {query[:50]}...")
+        
+        def generate_streaming_response():
+            """Generator dla Server-Sent Events"""
+            try:
+                # Wyślij event startowy
+                yield f"data: {json.dumps({'type': 'start', 'message': 'Rozpoczynam analizę...', 'timestamp': datetime.now().isoformat()})}\n\n"
+                
+                if use_rag and enhanced_rag:
+                    # Event: RAG processing
+                    yield f"data: {json.dumps({'type': 'status', 'message': 'Analizuję zapytanie i wyszukuję w bazie wiedzy...', 'stage': 'rag_search'})}\n\n"
+                    
+                    # Jeśli mamy Enhanced RAG, użyj go do kontekstu
+                    try:
+                        rag_response = enhanced_rag.process_query(query, session_id)
+                        context = rag_response.sources[:3] if rag_response.sources else []
+                        
+                        # Event: Znaleziono kontekst
+                        yield f"data: {json.dumps({'type': 'status', 'message': f'Znaleziono {len(context)} relevantnych źródeł', 'stage': 'context_found'})}\n\n"
+                        
+                        # Przygotuj enhanced prompt z kontekstem
+                        context_text = ""
+                        for i, source in enumerate(context):
+                            context_text += f"\n[Źródło {i+1}: {source.get('name', 'Unknown')}]\n{source.get('excerpt', '')}\n"
+                        
+                        prompt = f"""Jesteś ekspertem systemów ERP Comarch XL z dostępem do bazy wiedzy.
+
+KONTEKST Z BAZY WIEDZY:
+{context_text}
+
+ZAPYTANIE UŻYTKOWNIKA: {query}
+
+Odpowiedz profesjonalnie w języku polskim, wykorzystując informacje z kontekstu powyżej. Bądź konkretny i praktyczny."""
+                        
+                    except Exception as e:
+                        logger.warning(f"[STREAM] RAG error, falling back to basic: {e}")
+                        prompt = f"Jesteś ekspertem systemów ERP Comarch XL. Odpowiedz profesjonalnie w języku polskim: {query}"
+                        
+                else:
+                    # Event: Basic mode
+                    yield f"data: {json.dumps({'type': 'status', 'message': 'Przetwarzam zapytanie...', 'stage': 'processing'})}\n\n"
+                    prompt = f"Jesteś ekspertem systemów ERP Comarch XL. Odpowiedz profesjonalnie w języku polskim: {query}"
+                
+                # Event: Rozpoczynam generowanie
+                yield f"data: {json.dumps({'type': 'status', 'message': 'Generuję odpowiedź...', 'stage': 'generating'})}\n\n"
+                
+                if ai_service.claude_client:
+                    # Claude streaming API call
+                    try:
+                        # Event: AI thinking
+                        yield f"data: {json.dumps({'type': 'thinking', 'message': 'Claude AI analizuje...', 'stage': 'ai_thinking'})}\n\n"
+                        
+                        # Streaming Claude call
+                        stream = ai_service.claude_client.messages.create(
+                            model=Config.CLAUDE_MODEL,
+                            max_tokens=2048,
+                            temperature=0.3,
+                            messages=[{"role": "user", "content": prompt}],
+                            stream=True
+                        )
+                        
+                        full_response = ""
+                        for chunk in stream:
+                            if chunk.type == "content_block_delta":
+                                text_chunk = chunk.delta.text
+                                full_response += text_chunk
+                                
+                                # Event: Streaming text chunk
+                                yield f"data: {json.dumps({'type': 'chunk', 'text': text_chunk, 'full_so_far': full_response})}\n\n"
+                        
+                        # Event: Zakończenie
+                        confidence = 0.85 if use_rag else 0.75
+                        final_data = {
+                            'type': 'complete',
+                            'full_response': full_response,
+                            'metadata': {
+                                'confidence': confidence,
+                                'session_id': session_id,
+                                'use_rag': use_rag,
+                                'model': Config.CLAUDE_MODEL,
+                                'sources': len(context) if use_rag and 'context' in locals() else 0
+                            },
+                            'timestamp': datetime.now().isoformat()
+                        }
+                        yield f"data: {json.dumps(final_data)}\n\n"
+                        
+                    except Exception as e:
+                        logger.error(f"[STREAM] Claude API error: {e}")
+                        yield f"data: {json.dumps({'type': 'error', 'message': f'Błąd Claude API: {str(e)}'})}\n\n"
+                else:
+                    # Fallback - symulowane streaming
+                    fallback_response = f"Przepraszam, aktualnie działam w trybie ograniczonym. Twoje pytanie dotyczy: {query}\n\nAby uzyskać pełną funkcjonalność AI, skonfiguruj klucz Claude API."
+                    
+                    # Symuluj streaming po słowach
+                    words = fallback_response.split()
+                    current_text = ""
+                    
+                    for word in words:
+                        current_text += word + " "
+                        yield f"data: {json.dumps({'type': 'chunk', 'text': word + ' ', 'full_so_far': current_text})}\n\n"
+                        time.sleep(0.1)  # Symulacja opóźnienia
+                    
+                    # Event: Zakończenie fallback
+                    yield f"data: {json.dumps({'type': 'complete', 'full_response': current_text.strip(), 'metadata': {'confidence': 0.5, 'fallback': True}})}\n\n"
+                
+                # Event: Stream kończy się
+                yield f"data: {json.dumps({'type': 'end', 'message': 'Streaming zakończony'})}\n\n"
+                
+            except Exception as e:
+                logger.error(f"[STREAM ERROR] {e}")
+                yield f"data: {json.dumps({'type': 'error', 'message': f'Błąd streaming: {str(e)}'})}\n\n"
+        
+        # Zwróć streaming response
+        return Response(
+            generate_streaming_response(),
+            mimetype='text/event-stream',
+            headers={
+                'Cache-Control': 'no-cache',
+                'Connection': 'keep-alive',
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Headers': 'Content-Type',
+                'X-Accel-Buffering': 'no'  # Nginx optimization
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"[STREAM SETUP ERROR] {e}")
+        return jsonify({'error': f'Błąd konfiguracji streaming: {str(e)}'}), 500
+
+@app.route('/api/enhanced-rag/stream', methods=['POST'])
+def enhanced_rag_stream():
+    """Enhanced RAG v3.0 ze streaming"""
+    try:
+        data = request.get_json()
+        if not data or 'message' not in data:
+            return jsonify({'error': 'Brak wiadomości'}), 400
+        
+        query = data['message']
+        session_id = data.get('session_id', 'default')
+        
+        def generate_enhanced_streaming():
+            """Generator dla Enhanced RAG streaming"""
+            try:
+                yield f"data: {json.dumps({'type': 'start', 'message': 'Enhanced RAG v3.0 rozpoczęty...', 'timestamp': datetime.now().isoformat()})}\n\n"
+                
+                if not enhanced_rag:
+                    yield f"data: {json.dumps({'type': 'error', 'message': 'Enhanced RAG v3.0 niedostępny'})}\n\n"
+                    return
+                
+                # Event: Enhanced analysis
+                yield f"data: {json.dumps({'type': 'status', 'message': 'Multi-model reasoning w toku...', 'stage': 'enhanced_analysis'})}\n\n"
+                
+                # Przetwórz z Enhanced RAG
+                response = enhanced_rag.process_query(query, session_id)
+                
+                # Event: Processing steps
+                for i, step in enumerate(response.processing_steps):
+                    yield f"data: {json.dumps({'type': 'processing_step', 'step': i+1, 'message': step, 'total_steps': len(response.processing_steps)})}\n\n"
+                    time.sleep(0.2)  # Krótkie opóźnienie dla efektu
+                
+                # Event: Streaming odpowiedzi
+                yield f"data: {json.dumps({'type': 'status', 'message': 'Generuję enhanced response...', 'stage': 'generating'})}\n\n"
+                
+                # Symuluj streaming odpowiedzi (Enhanced RAG nie obsługuje native streaming)
+                words = response.answer.split()
+                current_text = ""
+                
+                for word in words:
+                    current_text += word + " "
+                    yield f"data: {json.dumps({'type': 'chunk', 'text': word + ' ', 'full_so_far': current_text})}\n\n"
+                    time.sleep(0.05)  # Szybsze streaming
+                
+                # Event: Enhanced completion
+                enhanced_data = {
+                    'type': 'enhanced_complete',
+                    'full_response': response.answer,
+                    'enhanced_metadata': {
+                        'confidence': response.confidence,
+                        'confidence_level': response.confidence_level.value,
+                        'validation_score': response.validation_score,
+                        'query_type': response.query_type.value,
+                        'citations_count': len(response.citations),
+                        'sources_count': len(response.sources),
+                        'fact_check_score': response.fact_check_score,
+                        'processing_time_ms': response.processing_time_ms,
+                        'models_used': response.models_used,
+                        'context_chunks_used': response.context_chunks_used,
+                        'suggested_followups': response.suggested_followups
+                    },
+                    'timestamp': datetime.now().isoformat()
+                }
+                yield f"data: {json.dumps(enhanced_data)}\n\n"
+                
+                # Event: End
+                yield f"data: {json.dumps({'type': 'end', 'message': 'Enhanced RAG streaming zakończony'})}\n\n"
+                
+            except Exception as e:
+                logger.error(f"[ENHANCED STREAM ERROR] {e}")
+                yield f"data: {json.dumps({'type': 'error', 'message': f'Enhanced RAG error: {str(e)}'})}\n\n"
+        
+        return Response(
+            generate_enhanced_streaming(),
+            mimetype='text/event-stream',
+            headers={
+                'Cache-Control': 'no-cache',
+                'Connection': 'keep-alive',
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Headers': 'Content-Type'
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"[ENHANCED STREAM SETUP ERROR] {e}")
+        return jsonify({'error': f'Enhanced streaming error: {str(e)}'}), 500
 
 # === ENHANCED RAG v3.0 CHAT ===
 
@@ -933,6 +1165,216 @@ def initialize_system():
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
+
+# === SYSTEM MANAGEMENT ===
+
+@app.route('/api/system/restart', methods=['POST'])
+def restart_application():
+    """Restart aplikacji z poziomu interfejsu webowego"""
+    try:
+        import threading
+        import sys
+        import os
+        
+        logger.info("[RESTART] Otrzymano żądanie restartu aplikacji z interfejsu webowego")
+        
+        def delayed_restart():
+            """Funkcja wykonująca restart z opóźnieniem"""
+            import time
+            time.sleep(1)  # Daj czas na wysłanie odpowiedzi
+            logger.info("[RESTART] Restartowanie aplikacji...")
+            
+            try:
+                # Metoda 1: Restart procesu Python
+                python = sys.executable
+                os.execl(python, python, *sys.argv)
+            except Exception as e:
+                logger.error(f"[RESTART ERROR] Błąd restartu: {e}")
+                # Fallback - force exit
+                os._exit(1)
+        
+        # Uruchom restart w osobnym wątku
+        restart_thread = threading.Thread(target=delayed_restart)
+        restart_thread.daemon = True
+        restart_thread.start()
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Aplikacja zostanie zrestartowana za chwilę...',
+            'restart_time': datetime.now().isoformat(),
+            'estimated_downtime': '5-10 sekund'
+        })
+        
+    except Exception as e:
+        logger.error(f"[RESTART ERROR] Błąd inicjowania restartu: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': f'Błąd restartu: {str(e)}',
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
+@app.route('/api/system/reload-config', methods=['POST', 'OPTIONS'])
+def reload_configuration():
+    """Przeładowanie konfiguracji bez pełnego restartu"""
+    # Handle preflight OPTIONS request
+    if request.method == 'OPTIONS':
+        response = jsonify({'status': 'ok'})
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
+        response.headers.add('Access-Control-Allow-Methods', 'POST, OPTIONS')
+        return response
+        
+    try:
+        logger.info("[RELOAD] Przeładowywanie konfiguracji...")
+        
+        # Przeładuj zmienne środowiskowe
+        load_dotenv(override=True)
+        
+        # Reinicjalizuj konfigurację
+        app.config.from_object(Config)
+        
+        result = {
+            'status': 'success',
+            'message': 'Konfiguracja została przeładowana',
+            'reloaded_components': [
+                'Environment variables',
+                'Flask configuration',
+                'API keys (if changed)'
+            ],
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        logger.info("[RELOAD] Konfiguracja przeładowana pomyślnie")
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"[RELOAD ERROR] Błąd przeładowania konfiguracji: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': f'Błąd przeładowania: {str(e)}',
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
+@app.route('/api/system/test', methods=['GET', 'POST'])
+def test_endpoint():
+    """Test endpoint to verify server updates"""
+    return jsonify({
+        'status': 'working', 
+        'message': 'Server updated successfully',
+        'timestamp': datetime.now().isoformat(),
+        'method': request.method
+    })
+
+@app.route('/api/system/status', methods=['GET'])
+def system_status():
+    """Rozszerzony status systemu z informacjami o zarządzaniu"""
+    try:
+        # Spróbuj użyć psutil jeśli dostępne
+        try:
+            import psutil
+            
+            # Informacje o procesie
+            process = psutil.Process()
+            
+            status = {
+                'system_info': {
+                    'platform': platform.platform(),
+                    'python_version': platform.python_version(),
+                    'process_id': os.getpid(),
+                    'process_memory': f"{process.memory_info().rss / 1024 / 1024:.1f} MB",
+                    'process_cpu': f"{process.cpu_percent():.1f}%",
+                    'uptime_seconds': time.time() - process.create_time()
+                },
+                'application_status': {
+                    'status': 'running',
+                    'version': '2.0.0-advanced',
+                    'debug_mode': app.debug,
+                    'config_loaded': True,
+                    'last_restart': 'N/A'
+                },
+                'services_status': {
+                    'claude_api': bool(ai_service.claude_client),
+                    'embeddings': bool(ai_service.sentence_model),
+                    'vector_db': bool(vector_service.collection),
+                    'advanced_rag': bool(advanced_rag),
+                    'enhanced_rag': bool(enhanced_rag),
+                    'sql_service': bool(sql_code_service),
+                    'document_loader': bool(document_loader)
+                },
+                'management_actions': {
+                    'restart_available': True,
+                    'config_reload_available': True,
+                    'log_level_change': True,
+                    'service_reinit': True
+                },
+                'timestamp': datetime.now().isoformat()
+            }
+            
+        except ImportError:
+            # Fallback bez psutil - biblioteka nie jest zainstalowana
+            logger.info("[INFO] psutil nie jest dostępny - używam podstawowych informacji")
+            
+            status = {
+                'system_info': {
+                    'platform': platform.platform(),
+                    'python_version': platform.python_version(),
+                    'process_id': os.getpid(),
+                    'process_memory': 'N/A (psutil required)',
+                    'process_cpu': 'N/A (psutil required)',
+                    'uptime_seconds': 'N/A (psutil required)'
+                },
+                'application_status': {
+                    'status': 'running',
+                    'version': '2.0.0-advanced',
+                    'debug_mode': app.debug,
+                    'config_loaded': True,
+                    'last_restart': 'N/A'
+                },
+                'services_status': {
+                    'claude_api': bool(ai_service.claude_client),
+                    'embeddings': bool(ai_service.sentence_model),
+                    'vector_db': bool(vector_service.collection),
+                    'advanced_rag': bool(advanced_rag),
+                    'enhanced_rag': bool(enhanced_rag),
+                    'sql_service': bool(sql_code_service),
+                    'document_loader': bool(document_loader)
+                },
+                'management_actions': {
+                    'restart_available': True,
+                    'config_reload_available': True,
+                    'log_level_change': True,
+                    'service_reinit': True
+                },
+                'timestamp': datetime.now().isoformat()
+            }
+        
+        return jsonify(status)
+        
+    except Exception as e:
+        logger.error(f"[ERROR] Błąd system status: {e}")
+        # Minimalny fallback w przypadku krytycznego błędu
+        return jsonify({
+            'system_info': {
+                'platform': 'Unknown',
+                'python_version': 'Unknown',
+                'process_id': os.getpid() if hasattr(os, 'getpid') else 'Unknown'
+            },
+            'application_status': {
+                'status': 'running',
+                'version': '2.0.0-advanced'
+            },
+            'services_status': {
+                'claude_api': bool(ai_service.claude_client),
+                'vector_db': bool(vector_service.collection),
+                'advanced_rag': bool(advanced_rag)
+            },
+            'management_actions': {
+                'restart_available': True,
+                'config_reload_available': True
+            },
+            'timestamp': datetime.now().isoformat(),
+            'error': str(e)
+        })
 
 # === ERROR HANDLERS ===
 

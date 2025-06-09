@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🤖 Marcin - ERP AI Assistant | Claude + RAG</title>
+    <title>🤖 AI LUKAS - ERP AI Assistant | Claude + RAG</title>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
         :root {
@@ -1027,7 +1027,7 @@
             <div class="assistant-profile">
                 <div class="mega-avatar">🤖</div>
                 <div class="profile-info">
-                    <h1>Marcin - Asystent ERP</h1>
+                    <h1>AI LUKAS - Asystent ERP</h1>
                     <div class="profile-status">
                         <span class="tech-stack">
                             <span class="tech-badge">Claude AI</span>
@@ -1243,7 +1243,7 @@
                     <span>Claude-3 Sonnet + ChromaDB</span>
                 </div>
                 <div class="typing-indicator" id="typingIndicator" style="display: none;">
-                    <span>Marcin pisze</span>
+                    <span>AI LUKAS pisze</span>
                     <div class="typing-dots">
                         <div class="typing-dot"></div>
                         <div class="typing-dot"></div>

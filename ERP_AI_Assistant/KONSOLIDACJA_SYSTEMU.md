@@ -7,7 +7,7 @@
 ```
 ERP_AI_Assistant/
 ├── 📊 dashboard.html          # GŁÓWNA STRONA - Hub wszystkich modułów
-├── 💬 index.html             # CHAT MODULE - Marcin AI Assistant  
+├── 💬 index.html             # CHAT MODULE - AI LUKAS AI Assistant
 ├── 💰 simulator-roi-complete.html    # ROI CALCULATOR
 ├── 🏭 digital-twin-advanced.html     # DIGITAL TWIN SIMULATOR
 └── ⚙️ backend/app.py         # DZIAŁAJĄCY BACKEND
@@ -15,7 +15,7 @@ ERP_AI_Assistant/
 
 ### **NAWIGACJA:**
 - **/** → `dashboard.html` (główna strona z przeglądem modułów)
-- **/chat** → `index.html` (chat z Marcinem)
+- **/chat** → `index.html` (chat z AI LUKAS)
 - **/roi** → `simulator-roi-complete.html` 
 - **/twin** → `digital-twin-advanced.html`
 
@@ -45,7 +45,7 @@ ERP_AI_Assistant/
 
 ### **Core System:**
 - ✅ `dashboard.html` - **Hub główny**
-- ✅ `index.html` - **Chat z Marcinem** (działający z backend)
+- ✅ `index.html` - **Chat z AI LUKAS** (działający z backend)
 - ✅ `backend/app.py` - **Backend API** (działający)
 
 ### **Funkcjonalne moduły:**
@@ -87,7 +87,7 @@ def chat():
 
 **Jeden spójny system z:**
 - 📊 **Dashboard** - przegląd wszystkich modułów
-- 💬 **AI Chat** - Marcin (Claude + RAG)  
+- 💬 **AI Chat** - AI LUKAS (Claude + RAG)
 - 💰 **ROI Calculator** - symulator zwrotu inwestycji
 - 🏭 **Digital Twin** - symulacja procesów ERP
 - ⚙️ **Backend API** - wszystkie serwisy AI

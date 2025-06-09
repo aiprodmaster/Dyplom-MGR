@@ -63,7 +63,7 @@
 ## 🎨 PROFESSIONAL USER INTERFACE
 
 ### ✅ **Główny interfejs** (professional-chat.html)
-- **Persona:** Marcin - Asystent ERP
+- **Persona:** AI LUKAS - Asystent ERP
 - **Theme:** Professional dark mode z gradientami
 - **Status display:** Claude AI + RAG + Comarch ERP XL
 - **KPI Dashboard:** KB 5 modułów, Pewność 92%
@@ -213,7 +213,7 @@ python ERP_AI_Assistant/test_professional_rag.py
 1. **Infrastruktura RAG** - Wszystkie komponenty profesjonalnie skonfigurowane
 2. **Baza wiedzy** - 20 dokumentów Comarch ERP zaindeksowanych
 3. **Zaawansowane funkcje** - Hybrid search, re-ranking, multi-step reasoning
-4. **Professional UI** - Nowoczesny interfejs z "Marcin - Asystent ERP"
+4. **Professional UI** - Nowoczesny interfejs z "AI LUKAS - Asystent ERP"
 5. **API Architecture** - Kompletne REST API z wszystkimi endpointami
 
 ### ⚠️ **OBECNE OGRANICZENIA:**
@@ -232,7 +232,7 @@ python ERP_AI_Assistant/test_professional_rag.py
 
 ## 📞 SUPPORT & MAINTENANCE
 
-**System Administrator:** Marcin - Architekt IT  
+**System Administrator:** AI LUKAS - Architekt IT
 **Technologies:** Claude-3.5 Sonnet + Advanced RAG + ChromaDB  
 **Status:** ✅ FULLY OPERATIONAL (modulo API limits)  
 **Next Review:** Po odnowieniu limitów Claude API  

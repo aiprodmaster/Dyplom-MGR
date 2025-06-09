@@ -126,7 +126,7 @@ class ProfessionalERPChat {
     showWelcomeMessage() {
         const welcomeMessage = {
             type: 'assistant',
-            content: `# 👋 Witaj! Jestem Marcin - Twój Asystent ERP
+            content: `# 👋 Witaj! Jestem AI LUKAS - Twój Asystent ERP
 
 🎯 **Specjalizuję się w:**
 - Konfiguracji systemów Comarch ERP XL
@@ -394,7 +394,7 @@ class ProfessionalERPChat {
             messages: this.messageHistory,
             system_info: {
                 version: '2.0',
-                agent: 'Marcin - Professional ERP Assistant'
+                agent: 'AI LUKAS - Professional ERP Assistant'
             }
         };
 

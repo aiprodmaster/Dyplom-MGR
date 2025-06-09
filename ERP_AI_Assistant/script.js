@@ -106,7 +106,7 @@ const ERPAssistant = {
             expertise: ["księgowość", "controlling", "finanse", "VAT", "sprawozdawczość"]
         },
         technical: {
-            name: "Marcin - Architekt IT",
+            name: "AI LUKAS - Architekt IT",
             avatar: "🔧",
             personality: "techniczny i praktyczny", 
             expertise: ["integracje", "API", "bazy danych", "infrastruktura", "bezpieczeństwo"]

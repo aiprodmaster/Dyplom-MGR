@@ -12,7 +12,7 @@
 ### **Frontend Architecture**
 ```
 📁 Frontend Layer
-├── 🎯 index.html                    # Główny chat (Marcin Asystent)
+├── 🎯 index.html                    # Główny chat (AI LUKAS Asystent)
 ├── 🔄 professional-chat.html       # DUPLIKAT - do usunięcia
 ├── 🔄 professional-chat-final.html # DUPLIKAT - do usunięcia
 ├── ⚛️ frontend/src/
