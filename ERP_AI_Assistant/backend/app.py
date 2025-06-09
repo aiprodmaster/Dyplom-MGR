@@ -1,1431 +1,425 @@
 #!/usr/bin/env python3
 """
 =================================================================================
-ERP AI ASSISTANT - ADVANCED BACKEND SERVER
-Zaawansowany backend wykorzystujący wszystkie komponenty systemu
+ERP AI ASSISTANT - SMART BACKEND WRAPPER
+Automatycznie używa Enhanced RAG v3.0 jeśli dostępny, lub fallback do basic
 =================================================================================
 """
 
 import os
-import json
-import sqlite3
+import sys
 import logging
-import traceback
-import time
-import platform
-from datetime import datetime, timedelta
-from typing import Dict, Any, List, Optional
-from dataclasses import asdict
+from pathlib import Path
 
-# Flask & CORS
-from flask import Flask, request, jsonify, send_from_directory, render_template_string, Response, stream_template
-from flask_cors import CORS
-from dotenv import load_dotenv
-import json
-
-# Importy naszych zaawansowanych serwisów
-try:
-    from advanced_rag_service import AdvancedRAGService, AdvancedResponse
-    from enhanced_rag_service_v3 import EnhancedRAGService, EnhancedResponse  # Nowy Enhanced RAG v3.0
-    from sql_code_service import SQLCodeService, SQLQueryResult, CodeAnalysisResult
-    from optimized_document_loader import OptimizedComarchDocumentLoader
-except ImportError as e:
-    print(f"[ERROR] Błąd importu serwisów: {e}")
-    print("[TIP] Upewnij się, że wszystkie zależności są zainstalowane")
-    # Fallback imports
-    AdvancedRAGService = None
-    EnhancedRAGService = None
-    SQLCodeService = None
-    OptimizedComarchDocumentLoader = None
+# Dodaj ścieżkę do current directory
+current_dir = Path(__file__).parent
+sys.path.append(str(current_dir))
 
 # Konfiguracja logowania
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('erp_assistant.log'),
-        logging.StreamHandler()
-    ]
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-# Załaduj zmienne środowiskowe
-load_dotenv()
-
-# Inicjalizacja Flask
-app = Flask(__name__)
-CORS(app, origins=["*"])  # Umożliwia zapytania z frontendu
-
-# Konfiguracja aplikacji
-class Config:
-    SECRET_KEY = os.getenv('SECRET_KEY', 'advanced-erp-ai-assistant-2025')
-    CLAUDE_MODEL = "claude-3-5-sonnet-20241022"
-    CLAUDE_HAIKU_MODEL = "claude-3-haiku-20240307"
-    MAX_TOKENS = 4096
-    ANTHROPIC_API_KEY = os.getenv('ANTHROPIC_API_KEY')
-    
-    # Konfiguracja RAG
-    EMBEDDING_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
-    VECTOR_DB_PATH = "chroma_db"
-    MAX_CONTEXT_LENGTH = 2000
-    
-    # Konfiguracja scraper
-    SCRAPER_USER_AGENT = "ERP AI Assistant Bot 1.0"
-    SCRAPER_DELAY = 1.0
-
-app.config.from_object(Config)
-
-# ============================================================================
-# INICJALIZACJA SERWISÓW
-# ============================================================================
-
-class AIService:
-    """Serwis AI z inicjalizacją modeli"""
-    def __init__(self, config):
-        self.config = config
-        self.claude_client = None
-        self.sentence_model = None
-        self._initialize()
-    
-    def _initialize(self):
-        """Inicjalizuje komponenty AI"""
-        try:
-            # Claude API
-            if self.config.ANTHROPIC_API_KEY:
-                import anthropic
-                self.claude_client = anthropic.Anthropic(api_key=self.config.ANTHROPIC_API_KEY)
-                logger.info("[OK] Claude API zainicjalizowane")
-            else:
-                logger.warning("[WARN] Brak klucza ANTHROPIC_API_KEY")
-            
-            # Sentence Transformers
-            from sentence_transformers import SentenceTransformer
-            self.sentence_model = SentenceTransformer(self.config.EMBEDDING_MODEL)
-            logger.info("[OK] Model embeddings załadowany")
-            
-        except Exception as e:
-            logger.error(f"[ERROR] Błąd inicjalizacji AI: {e}")
-
-class VectorService:
-    """Serwis bazy wektorowej"""
-    def __init__(self, config):
-        self.config = config
-        self.collection = None
-        self._initialize()
-    
-    def _initialize(self):
-        """Inicjalizuje ChromaDB"""
-        try:
-            import chromadb
-            from chromadb.config import Settings
-            
-            client = chromadb.PersistentClient(
-                path=self.config.VECTOR_DB_PATH,
-                settings=Settings(anonymized_telemetry=False)
-            )
-            
-            self.collection = client.get_or_create_collection(
-                name="erp_documents",
-                metadata={"description": "ERP Documentation Collection"}
-            )
-            logger.info("[OK] ChromaDB zainicjalizowane")
-            
-        except Exception as e:
-            logger.error(f"[ERROR] Błąd inicjalizacji ChromaDB: {e}")
-
-# Globalne serwisy
-ai_service = AIService(Config)
-vector_service = VectorService(Config)
-
-# Zaawansowane serwisy
-advanced_rag = None
-enhanced_rag = None  # Nowy Enhanced RAG v3.0
-sql_code_service = None
-document_loader = None
-
-# Inicjalizacja zaawansowanych serwisów
+# Próba importu Enhanced Application
 try:
-    if ai_service.claude_client and ai_service.sentence_model:
-        # Inicjalizuj oba systemy RAG
-        advanced_rag = AdvancedRAGService(Config, ai_service, vector_service)
-        enhanced_rag = EnhancedRAGService(Config, ai_service, vector_service)  # Enhanced RAG v3.0
-        sql_code_service = SQLCodeService(Config, ai_service)
-        document_loader = OptimizedComarchDocumentLoader()
-        logger.info("[OK] Wszystkie zaawansowane serwisy zainicjalizowane (włącznie z Enhanced RAG v3.0)")
-    else:
-        logger.warning("[WARN] Nie wszystkie serwisy mogły zostać zainicjalizowane")
-except Exception as e:
-    logger.error(f"[ERROR] Błąd inicjalizacji zaawansowanych serwisów: {e}")
+    from app_enhanced import EnhancedERPApplication, create_app
+    ENHANCED_AVAILABLE = True
+    logger.info("✅ Enhanced RAG v3.0 dostępny - przekierowuję do enhanced app")
+except ImportError as e:
+    logger.warning(f"⚠️ Enhanced RAG v3.0 niedostępny: {e}")
+    logger.info("📝 Używam podstawowej wersji aplikacji")
+    ENHANCED_AVAILABLE = False
 
-# ============================================================================
-# GŁÓWNE ENDPOINTY API
-# ============================================================================
+# === SMART WRAPPER LOGIC ===
 
-@app.route('/')
-def home():
-    """Główna strona - Dashboard hub"""
-    return send_from_directory('..', 'index.html')
-
-@app.route('/chat')
-def chat():
-    """Chat z AI LUKAS - AI Assistant"""
-    return send_from_directory('..', 'marcin-chat.html')
-
-@app.route('/chat-basic')
-def chat_basic():
-    """Podstawowy chat"""
-    return send_from_directory('..', 'professional-chat.html')
-
-@app.route('/roi')
-def roi_calculator():
-    """Kalkulator ROI"""
-    return send_from_directory('..', 'simulator-roi-complete.html')
-
-@app.route('/twin')
-def digital_twin():
-    """Digital Twin Simulator"""
-    return send_from_directory('..', 'digital-twin-advanced.html')
-
-@app.route('/system')
-def system_management():
-    """System Management Dashboard"""
-    return send_from_directory('..', 'system-management.html')
-
-@app.route('/<path:filename>')
-def serve_static(filename):
-    """Serwowanie plików statycznych"""
-    return send_from_directory('..', filename)
-
-# === ENDPOINTY STATUSOWE ===
-
-@app.route('/api/health', methods=['GET'])
-def health_check():
-    """Kompleksowy status zdrowia systemu"""
+if ENHANCED_AVAILABLE:
+    # Jeśli Enhanced RAG jest dostępny, użyj go
+    logger.info("🚀 Uruchamianie Enhanced ERP Application...")
+    
+    def main():
+        """Wrapper function dla Enhanced App"""
+        try:
+            app_instance = create_app()
+            app_instance.run()
+        except KeyboardInterrupt:
+            logger.info("⏹️ Enhanced ERP Application zatrzymana przez użytkownika")
+        except Exception as e:
+            logger.error(f"❌ Enhanced ERP Application error: {e}")
+    
+    # Expose the enhanced app instance for external imports
     try:
-        status = {
+        app_instance = create_app()
+        app = app_instance.app  # Expose Flask app
+        logger.info("✅ Enhanced Flask app instance ready")
+    except Exception as e:
+        logger.error(f"❌ Error creating enhanced app instance: {e}")
+        app = None
+
+else:
+    # Fallback do podstawowej wersji
+    logger.info("📱 Uruchamianie podstawowej wersji ERP Assistant...")
+    
+    from flask import Flask, request, jsonify, send_from_directory
+    from flask_cors import CORS
+    from dotenv import load_dotenv
+    from datetime import datetime, timedelta
+    
+    load_dotenv()
+    
+    # Podstawowa aplikacja Flask
+    app = Flask(__name__)
+    CORS(app, origins=["*"])
+    
+    @app.route('/')
+    def home():
+        """Główna strona"""
+        return send_from_directory('..', 'index.html')
+
+    @app.route('/<path:filename>')
+    def serve_static(filename):
+        """Serwowanie plików statycznych"""
+        return send_from_directory('..', filename)
+
+    @app.route('/api/health', methods=['GET'])
+    def health_check():
+        """Status zdrowia systemu - podstawowy"""
+        return jsonify({
             'status': 'online',
             'timestamp': datetime.now().isoformat(),
-            'version': '2.0.0-advanced',
-            'components': {
-                'claude_api': bool(ai_service.claude_client),
-                'embeddings': bool(ai_service.sentence_model),
-                'vector_db': bool(vector_service.collection),
-                'advanced_rag': bool(advanced_rag),
-                'sql_service': bool(sql_code_service),
-                'document_loader': bool(document_loader)
-            },
-            'metrics': {
-                'uptime': str(datetime.now()),
-                'memory_usage': 'N/A',
-                'active_sessions': 1
+            'version': '2.0.0-basic-fallback',
+            'mode': 'basic_fallback',
+            'message': 'Enhanced RAG v3.0 niedostępny - podstawowa wersja',
+            'erp_features': {
+                'module_analysis': True,
+                'implementation_roadmap': True,
+                'training_planning': True,
+                'migration_assessment': True,
+                'knowledge_support': False  # Brak Enhanced RAG
             }
-        }
-        
-        # Sprawdź czy RAG jest zainicjalizowany z dokumentami
-        if advanced_rag:
-            rag_metrics = advanced_rag.get_system_metrics()
-            status['rag_metrics'] = rag_metrics
-        
-        # Sprawdź bazę danych SQL
-        if sql_code_service:
-            try:
-                schema = sql_code_service.get_database_schema()
-                status['database_tables'] = len(schema)
-            except:
-                status['database_tables'] = 0
-        
-        return jsonify(status)
-        
-    except Exception as e:
-        logger.error(f"[ERROR] Błąd health check: {e}")
-        return jsonify({
-            'status': 'error',
-            'error': str(e),
-            'timestamp': datetime.now().isoformat()
-        }), 500
-
-@app.route('/api/models/status', methods=['GET'])
-def models_status():
-    """Status modeli AI"""
-    try:
-        status = {
-            'status': 'ready',
-            'models': {
-                'claude': {
-                    'status': 'available' if ai_service.claude_client else 'unavailable',
-                    'model': Config.CLAUDE_MODEL,
-                    'haiku_model': Config.CLAUDE_HAIKU_MODEL
-                },
-                'embeddings': {
-                    'status': 'loaded' if ai_service.sentence_model else 'unavailable',
-                    'model': Config.EMBEDDING_MODEL
-                },
-                'vector_db': {
-                    'status': 'connected' if vector_service.collection else 'unavailable',
-                    'path': Config.VECTOR_DB_PATH
-                }
-            },
-            'advanced_features': {
-                'hybrid_search': bool(advanced_rag),
-                'query_expansion': bool(advanced_rag),
-                're_ranking': bool(advanced_rag),
-                'context_compression': bool(advanced_rag),
-                'multi_step_reasoning': bool(advanced_rag),
-                'sql_analysis': bool(sql_code_service),
-                'code_execution': bool(sql_code_service)
-            }
-        }
-        
-        return jsonify(status)
-        
-    except Exception as e:
-        logger.error(f"[ERROR] Błąd status modeli: {e}")
-        return jsonify({'error': str(e)}), 500
-
-# === STREAMING CHAT ENDPOINTS ===
-
-@app.route('/api/chat/stream', methods=['POST'])
-def stream_chat():
-    """Streaming chat z Server-Sent Events - NOWA FUNKCJONALNOŚĆ"""
-    try:
-        data = request.get_json()
-        if not data or 'message' not in data:
-            return jsonify({'error': 'Brak wiadomości'}), 400
-        
-        query = data['message']
-        session_id = data.get('session_id', 'default')
-        use_rag = data.get('use_rag', True)
-        
-        logger.info(f"[STREAM] Rozpoczynam streaming dla: {query[:50]}...")
-        
-        def generate_streaming_response():
-            """Generator dla Server-Sent Events"""
-            try:
-                # Wyślij event startowy
-                yield f"data: {json.dumps({'type': 'start', 'message': 'Rozpoczynam analizę...', 'timestamp': datetime.now().isoformat()})}\n\n"
-                
-                if use_rag and enhanced_rag:
-                    # Event: RAG processing
-                    yield f"data: {json.dumps({'type': 'status', 'message': 'Analizuję zapytanie i wyszukuję w bazie wiedzy...', 'stage': 'rag_search'})}\n\n"
-                    
-                    # Jeśli mamy Enhanced RAG, użyj go do kontekstu
-                    try:
-                        rag_response = enhanced_rag.process_query(query, session_id)
-                        context = rag_response.sources[:3] if rag_response.sources else []
-                        
-                        # Event: Znaleziono kontekst
-                        yield f"data: {json.dumps({'type': 'status', 'message': f'Znaleziono {len(context)} relevantnych źródeł', 'stage': 'context_found'})}\n\n"
-                        
-                        # Przygotuj enhanced prompt z kontekstem
-                        context_text = ""
-                        for i, source in enumerate(context):
-                            context_text += f"\n[Źródło {i+1}: {source.get('name', 'Unknown')}]\n{source.get('excerpt', '')}\n"
-                        
-                        prompt = f"""Jesteś ekspertem systemów ERP Comarch XL z dostępem do bazy wiedzy.
-
-KONTEKST Z BAZY WIEDZY:
-{context_text}
-
-ZAPYTANIE UŻYTKOWNIKA: {query}
-
-Odpowiedz profesjonalnie w języku polskim, wykorzystując informacje z kontekstu powyżej. Bądź konkretny i praktyczny."""
-                        
-                    except Exception as e:
-                        logger.warning(f"[STREAM] RAG error, falling back to basic: {e}")
-                        prompt = f"Jesteś ekspertem systemów ERP Comarch XL. Odpowiedz profesjonalnie w języku polskim: {query}"
-                        
-                else:
-                    # Event: Basic mode
-                    yield f"data: {json.dumps({'type': 'status', 'message': 'Przetwarzam zapytanie...', 'stage': 'processing'})}\n\n"
-                    prompt = f"Jesteś ekspertem systemów ERP Comarch XL. Odpowiedz profesjonalnie w języku polskim: {query}"
-                
-                # Event: Rozpoczynam generowanie
-                yield f"data: {json.dumps({'type': 'status', 'message': 'Generuję odpowiedź...', 'stage': 'generating'})}\n\n"
-                
-                if ai_service.claude_client:
-                    # Claude streaming API call
-                    try:
-                        # Event: AI thinking
-                        yield f"data: {json.dumps({'type': 'thinking', 'message': 'Claude AI analizuje...', 'stage': 'ai_thinking'})}\n\n"
-                        
-                        # Streaming Claude call
-                        stream = ai_service.claude_client.messages.create(
-                            model=Config.CLAUDE_MODEL,
-                            max_tokens=2048,
-                            temperature=0.3,
-                            messages=[{"role": "user", "content": prompt}],
-                            stream=True
-                        )
-                        
-                        full_response = ""
-                        for chunk in stream:
-                            if chunk.type == "content_block_delta":
-                                text_chunk = chunk.delta.text
-                                full_response += text_chunk
-                                
-                                # Event: Streaming text chunk
-                                yield f"data: {json.dumps({'type': 'chunk', 'text': text_chunk, 'full_so_far': full_response})}\n\n"
-                        
-                        # Event: Zakończenie
-                        confidence = 0.85 if use_rag else 0.75
-                        final_data = {
-                            'type': 'complete',
-                            'full_response': full_response,
-                            'metadata': {
-                                'confidence': confidence,
-                                'session_id': session_id,
-                                'use_rag': use_rag,
-                                'model': Config.CLAUDE_MODEL,
-                                'sources': len(context) if use_rag and 'context' in locals() else 0
-                            },
-                            'timestamp': datetime.now().isoformat()
-                        }
-                        yield f"data: {json.dumps(final_data)}\n\n"
-                        
-                    except Exception as e:
-                        logger.error(f"[STREAM] Claude API error: {e}")
-                        yield f"data: {json.dumps({'type': 'error', 'message': f'Błąd Claude API: {str(e)}'})}\n\n"
-                else:
-                    # Fallback - symulowane streaming
-                    fallback_response = f"Przepraszam, aktualnie działam w trybie ograniczonym. Twoje pytanie dotyczy: {query}\n\nAby uzyskać pełną funkcjonalność AI, skonfiguruj klucz Claude API."
-                    
-                    # Symuluj streaming po słowach
-                    words = fallback_response.split()
-                    current_text = ""
-                    
-                    for word in words:
-                        current_text += word + " "
-                        yield f"data: {json.dumps({'type': 'chunk', 'text': word + ' ', 'full_so_far': current_text})}\n\n"
-                        time.sleep(0.1)  # Symulacja opóźnienia
-                    
-                    # Event: Zakończenie fallback
-                    yield f"data: {json.dumps({'type': 'complete', 'full_response': current_text.strip(), 'metadata': {'confidence': 0.5, 'fallback': True}})}\n\n"
-                
-                # Event: Stream kończy się
-                yield f"data: {json.dumps({'type': 'end', 'message': 'Streaming zakończony'})}\n\n"
-                
-            except Exception as e:
-                logger.error(f"[STREAM ERROR] {e}")
-                yield f"data: {json.dumps({'type': 'error', 'message': f'Błąd streaming: {str(e)}'})}\n\n"
-        
-        # Zwróć streaming response
-        return Response(
-            generate_streaming_response(),
-            mimetype='text/event-stream',
-            headers={
-                'Cache-Control': 'no-cache',
-                'Connection': 'keep-alive',
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Headers': 'Content-Type',
-                'X-Accel-Buffering': 'no'  # Nginx optimization
-            }
-        )
-        
-    except Exception as e:
-        logger.error(f"[STREAM SETUP ERROR] {e}")
-        return jsonify({'error': f'Błąd konfiguracji streaming: {str(e)}'}), 500
-
-@app.route('/api/enhanced-rag/stream', methods=['POST'])
-def enhanced_rag_stream():
-    """Enhanced RAG v3.0 ze streaming"""
-    try:
-        data = request.get_json()
-        if not data or 'message' not in data:
-            return jsonify({'error': 'Brak wiadomości'}), 400
-        
-        query = data['message']
-        session_id = data.get('session_id', 'default')
-        
-        def generate_enhanced_streaming():
-            """Generator dla Enhanced RAG streaming"""
-            try:
-                yield f"data: {json.dumps({'type': 'start', 'message': 'Enhanced RAG v3.0 rozpoczęty...', 'timestamp': datetime.now().isoformat()})}\n\n"
-                
-                if not enhanced_rag:
-                    yield f"data: {json.dumps({'type': 'error', 'message': 'Enhanced RAG v3.0 niedostępny'})}\n\n"
-                    return
-                
-                # Event: Enhanced analysis
-                yield f"data: {json.dumps({'type': 'status', 'message': 'Multi-model reasoning w toku...', 'stage': 'enhanced_analysis'})}\n\n"
-                
-                # Przetwórz z Enhanced RAG
-                response = enhanced_rag.process_query(query, session_id)
-                
-                # Event: Processing steps
-                for i, step in enumerate(response.processing_steps):
-                    yield f"data: {json.dumps({'type': 'processing_step', 'step': i+1, 'message': step, 'total_steps': len(response.processing_steps)})}\n\n"
-                    time.sleep(0.2)  # Krótkie opóźnienie dla efektu
-                
-                # Event: Streaming odpowiedzi
-                yield f"data: {json.dumps({'type': 'status', 'message': 'Generuję enhanced response...', 'stage': 'generating'})}\n\n"
-                
-                # Symuluj streaming odpowiedzi (Enhanced RAG nie obsługuje native streaming)
-                words = response.answer.split()
-                current_text = ""
-                
-                for word in words:
-                    current_text += word + " "
-                    yield f"data: {json.dumps({'type': 'chunk', 'text': word + ' ', 'full_so_far': current_text})}\n\n"
-                    time.sleep(0.05)  # Szybsze streaming
-                
-                # Event: Enhanced completion
-                enhanced_data = {
-                    'type': 'enhanced_complete',
-                    'full_response': response.answer,
-                    'enhanced_metadata': {
-                        'confidence': response.confidence,
-                        'confidence_level': response.confidence_level.value,
-                        'validation_score': response.validation_score,
-                        'query_type': response.query_type.value,
-                        'citations_count': len(response.citations),
-                        'sources_count': len(response.sources),
-                        'fact_check_score': response.fact_check_score,
-                        'processing_time_ms': response.processing_time_ms,
-                        'models_used': response.models_used,
-                        'context_chunks_used': response.context_chunks_used,
-                        'suggested_followups': response.suggested_followups
-                    },
-                    'timestamp': datetime.now().isoformat()
-                }
-                yield f"data: {json.dumps(enhanced_data)}\n\n"
-                
-                # Event: End
-                yield f"data: {json.dumps({'type': 'end', 'message': 'Enhanced RAG streaming zakończony'})}\n\n"
-                
-            except Exception as e:
-                logger.error(f"[ENHANCED STREAM ERROR] {e}")
-                yield f"data: {json.dumps({'type': 'error', 'message': f'Enhanced RAG error: {str(e)}'})}\n\n"
-        
-        return Response(
-            generate_enhanced_streaming(),
-            mimetype='text/event-stream',
-            headers={
-                'Cache-Control': 'no-cache',
-                'Connection': 'keep-alive',
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Headers': 'Content-Type'
-            }
-        )
-        
-    except Exception as e:
-        logger.error(f"[ENHANCED STREAM SETUP ERROR] {e}")
-        return jsonify({'error': f'Enhanced streaming error: {str(e)}'}), 500
-
-# === ENHANCED RAG v3.0 CHAT ===
-
-@app.route('/api/enhanced-rag/chat', methods=['POST'])
-def enhanced_rag_chat():
-    """Najnowocześniejszy chat z Enhanced RAG v3.0"""
-    try:
-        data = request.get_json()
-        if not data or 'message' not in data:
-            return jsonify({'error': 'Brak wiadomości'}), 400
-        
-        query = data['message']
-        session_id = data.get('session_id', 'default')
-        
-        logger.info(f"[AI] Przetwarzanie przez Enhanced RAG v3.0: {query[:50]}...")
-        
-        if enhanced_rag:
-            # Użyj Enhanced RAG v3.0
-            response = enhanced_rag.process_query(query, session_id)
-            
-            # Konwertuj EnhancedResponse do dict
-            response_dict = asdict(response)
-            
-            # Dodaj kompatybilność z frontendem
-            response_dict['response'] = response_dict['answer']  # alias
-            response_dict['processing_time'] = response_dict.get('processing_time_ms', 0)
-            
-            logger.info(f"[OK] Enhanced RAG v3.0 odpowiedział: confidence={response.confidence:.2f}, validation={response.validation_score:.2f}")
-            return jsonify(response_dict)
-            
-        else:
-            return jsonify({
-                'answer': f'Enhanced RAG v3.0 nie jest dostępny. Twoje pytanie: {query}',
-                'response': 'Enhanced RAG v3.0 unavailable',
-                'confidence': 0.3,
-                'sources': ['enhanced_rag_unavailable'],
-                'reasoning_chain': ['Enhanced RAG v3.0 not initialized'],
-                'validation_score': 0.3,
-                'session_id': session_id,
-                'error': 'Enhanced RAG v3.0 unavailable'
-            })
-        
-    except Exception as e:
-        logger.error(f"[ERROR] Błąd Enhanced RAG v3.0: {e}")
-        return jsonify({
-            'answer': f'Wystąpił błąd podczas przetwarzania Enhanced RAG v3.0. Szczegóły: {str(e)}',
-            'response': f'Error: {str(e)}',
-            'confidence': 0.1,
-            'sources': ['error_handler'],
-            'reasoning_chain': ['Error occurred'],
-            'validation_score': 0.1,
-            'error': str(e)
-        }), 500
-
-@app.route('/api/enhanced-rag/feedback', methods=['POST'])
-def enhanced_rag_feedback():
-    """Przekazuje feedback do Enhanced RAG v3.0 dla adaptacyjnego uczenia"""
-    try:
-        data = request.get_json()
-        if not data or 'session_id' not in data or 'query' not in data or 'feedback' not in data:
-            return jsonify({'error': 'Niepełne dane feedback'}), 400
-        
-        if not enhanced_rag:
-            return jsonify({'error': 'Enhanced RAG v3.0 niedostępny'}), 503
-        
-        enhanced_rag.provide_feedback(
-            session_id=data['session_id'],
-            query=data['query'], 
-            feedback=data['feedback']
-        )
-        
-        return jsonify({
-            'status': 'success',
-            'message': 'Feedback przekazany do Enhanced RAG v3.0',
-            'timestamp': datetime.now().isoformat()
         })
-        
-    except Exception as e:
-        logger.error(f"[ERROR] Błąd przekazywania feedback: {e}")
-        return jsonify({'error': str(e)}), 500
 
-@app.route('/api/enhanced-rag/metrics', methods=['GET'])
-def enhanced_rag_metrics():
-    """Pobiera rozszerzone metryki Enhanced RAG v3.0"""
-    try:
-        if not enhanced_rag:
-            return jsonify({'error': 'Enhanced RAG v3.0 niedostępny'}), 503
-        
-        metrics = enhanced_rag.get_enhanced_system_metrics()
-        return jsonify(metrics)
-        
-    except Exception as e:
-        logger.error(f"[ERROR] Błąd pobierania metryk Enhanced RAG: {e}")
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/enhanced-rag/initialize', methods=['POST'])
-def initialize_enhanced_rag():
-    """Inicjalizuje Enhanced RAG v3.0 z dokumentami"""
-    try:
-        if not enhanced_rag:
-            return jsonify({'error': 'Enhanced RAG v3.0 niedostępny'}), 503
-        
-        # Użyj tej samej ścieżki co dla advanced_rag
-        knowledge_base_path = "../BazaWiedzy/Tabele_2025_0"
-        documents = []
-        metadatas = []
-        
-        logger.info(f"[ENHANCED] Szukam dokumentów dla Enhanced RAG v3.0 w: {knowledge_base_path}")
-        
-        if os.path.exists(knowledge_base_path):
-            all_files = os.listdir(knowledge_base_path)
-            html_files = [f for f in all_files if f.endswith('.html')]
-            xml_files = [f for f in all_files if f.endswith('.xml')]
-            
-            logger.info(f"[ENHANCED] Znaleziono {len(html_files)} HTML + {len(xml_files)} XML = {len(html_files + xml_files)} plików")
-            
-            # Załaduj więcej plików dla Enhanced RAG
-            all_target_files = html_files[:30] + xml_files[:20]  # 50 plików łącznie
-            
-            for file in all_target_files:
-                try:
-                    file_path = os.path.join(knowledge_base_path, file)
-                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                        content = f.read()
-                        
-                        # Lepsze parsowanie dla Enhanced RAG
-                        if file.endswith('.html'):
-                            import re
-                            text_content = re.sub(r'<[^>]+>', ' ', content)
-                            text_content = re.sub(r'\s+', ' ', text_content).strip()
-                        else:  # XML
-                            import re
-                            # Zachowaj niektóre tagi XML jako kontekst
-                            text_content = re.sub(r'<(?!/)([^>]+)>', r'\1: ', content)  # Convert opening tags to labels
-                            text_content = re.sub(r'</[^>]+>', '', text_content)  # Remove closing tags
-                            text_content = re.sub(r'\s+', ' ', text_content).strip()
-                        
-                        if len(text_content) > 100:  # Wyższy próg dla Enhanced RAG
-                            # Inteligentniejsze dzielenie dla Enhanced RAG
-                            chunk_size = 2000  # Większe chunki dla lepszego kontekstu
-                            overlap = 200  # Overlap między chunkami
-                            
-                            chunks = []
-                            for i in range(0, len(text_content), chunk_size - overlap):
-                                chunk = text_content[i:i + chunk_size]
-                                if len(chunk.strip()) > 100:
-                                    chunks.append(chunk)
-                            
-                            for i, chunk in enumerate(chunks):
-                                documents.append(chunk)
-                                metadatas.append({
-                                    'source': file,
-                                    'chunk_id': f"{file}_enhanced_chunk_{i}",
-                                    'category': 'comarch_erp_enhanced',
-                                    'type': 'enhanced_processed',
-                                    'file_size': len(content),
-                                    'original_format': 'html' if file.endswith('.html') else 'xml',
-                                    'enhanced_rag_version': '3.0'
-                                })
-                    
-                    logger.info(f"[ENHANCED] Załadowano: {file} ({len(text_content)} znaków)")
-                        
-                except Exception as e:
-                    logger.warning(f"[ENHANCED WARN] Błąd ładowania {file}: {e}")
-        
-        if documents:
-            logger.info(f"[ENHANCED] Inicjalizuję Enhanced RAG v3.0 z {len(documents)} fragmentami...")
-            enhanced_rag.initialize_with_documents(documents, metadatas)
-            
-            result = {
-                'status': 'success',
-                'message': 'Enhanced RAG v3.0 został zainicjalizowany z rozszerzoną bazą wiedzy',
-                'documents_loaded': len(documents),
-                'source_files': len(set(m['source'] for m in metadatas)),
-                'enhanced_features': [
-                    'Multi-model reasoning',
-                    'Conversation context',
-                    'Advanced re-ranking',
-                    'Fact checking',
-                    'Citation generation',
-                    'Adaptive compression',
-                    'Follow-up suggestions'
-                ],
-                'timestamp': datetime.now().isoformat()
-            }
-            
-            logger.info(f"[ENHANCED] Enhanced RAG v3.0 zainicjalizowany: {len(documents)} fragmentów")
-            return jsonify(result)
-        else:
-            logger.error("[ENHANCED ERROR] Nie znaleziono dokumentów!")
-            return jsonify({
-                'status': 'error',
-                'message': 'Nie znaleziono dokumentów do załadowania',
-                'documents_loaded': 0,
-                'checked_path': knowledge_base_path
-            })
-        
-    except Exception as e:
-        logger.error(f"[ENHANCED ERROR] Błąd inicjalizacji Enhanced RAG v3.0: {e}")
-        return jsonify({'error': str(e)}), 500
-
-# === ZAAWANSOWANY RAG CHAT ===
-
-@app.route('/api/rag/chat', methods=['POST'])
-def advanced_rag_chat():
-    """Zaawansowany chat z pełnym RAG v2.0"""
-    try:
-        data = request.get_json()
-        if not data or 'message' not in data:
-            return jsonify({'error': 'Brak wiadomości'}), 400
-        
-        query = data['message']
-        session_id = data.get('session_id', 'default')
-        
-        logger.info(f"[AI] Przetwarzanie przez Advanced RAG: {query[:50]}...")
-        
-        if advanced_rag:
-            # Użyj pełnego zaawansowanego RAG
-            response = advanced_rag.process_query(query, session_id)
-            
-            # Konwertuj AdvancedResponse do dict
-            response_dict = asdict(response)
-            
-            # Dodaj kompatybilność z frontendem
-            response_dict['response'] = response_dict['answer']  # alias
-            response_dict['processing_time'] = response_dict.get('processing_time_ms', 0)
-            
-            logger.info(f"[OK] Advanced RAG odpowiedział: confidence={response.confidence:.2f}, validation={response.validation_score:.2f}")
-            return jsonify(response_dict)
-            
-        elif ai_service.claude_client:
-            # Fallback do basic Claude jeśli Advanced RAG nie działa
-            logger.warning("[WARN] Advanced RAG niedostępny - używam basic Claude")
-            
-            message = ai_service.claude_client.messages.create(
-                model=Config.CLAUDE_HAIKU_MODEL,
-                max_tokens=1024,
-                messages=[{
-                    "role": "user", 
-                    "content": f"Jesteś ekspertem systemów ERP Comarch XL. Odpowiedz profesjonalnie w języku polskim: {query}"
-                }]
-            )
-            
-            answer = message.content[0].text
-            
-            return jsonify({
-                'answer': answer,
-                'response': answer,
-                'confidence': 0.75,
-                'sources': ['claude_direct'],
-                'reasoning_steps': ['Basic Claude processing'],
-                'validation_score': 0.75,
-                'claude_model': Config.CLAUDE_HAIKU_MODEL,
-                'session_id': session_id,
-                'search_mode': 'basic',
-                'context_chunks': 0,
-                'processing_time_ms': 0,
-                'advanced_features': {
-                    'hybrid_search': False,
-                    'query_expansion': False,
-                    're_ranking': False,
-                    'context_compression': False,
-                    'claude_available': True
-                }
-            })
-        else:
-            # Ostatni fallback
-            return jsonify({
-                'answer': f'System inicjalizacji... Spróbuj ponownie za chwilę. Twoje pytanie: {query}',
-                'response': 'System initializing...',
-                'confidence': 0.3,
-                'sources': ['system_fallback'],
-                'reasoning_steps': ['System initialization'],
-                'validation_score': 0.3,
-                'claude_model': 'unavailable',
-                'session_id': session_id,
-                'error': 'Advanced RAG and Claude unavailable'
-            })
-        
-    except Exception as e:
-        logger.error(f"[ERROR] Błąd Advanced RAG: {e}")
-        return jsonify({
-            'answer': f'Wystąpił błąd podczas przetwarzania. Szczegóły: {str(e)}',
-            'response': f'Error: {str(e)}',
-            'confidence': 0.1,
-            'sources': ['error_handler'],
-            'reasoning_steps': ['Error occurred'],
-            'validation_score': 0.1,
-            'error': str(e)
-        }), 500
-
-# === SQL & CODE ANALYSIS ===
-
-@app.route('/api/sql/analyze', methods=['POST'])
-def analyze_sql():
-    """Analizuje zapytanie SQL"""
-    try:
-        data = request.get_json()
-        if not data or 'query' not in data:
-            return jsonify({'error': 'Brak zapytania SQL'}), 400
-        
-        if not sql_code_service:
-            return jsonify({'error': 'SQL service niedostępny'}), 503
-        
-        query = data['query']
-        result = sql_code_service.analyze_sql_query(query)
-        
-        # Konwertuj do dict
-        result_dict = asdict(result)
-        result_dict['timestamp'] = datetime.now().isoformat()
-        
-        logger.info(f"[OK] Analiza SQL: valid={result.is_valid}, safe={result.is_safe}")
-        return jsonify(result_dict)
-        
-    except Exception as e:
-        logger.error(f"[ERROR] Błąd analizy SQL: {e}")
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/sql/generate', methods=['POST'])
-def generate_sql():
-    """Generuje zapytanie SQL z opisu"""
-    try:
-        data = request.get_json()
-        if not data or 'description' not in data:
-            return jsonify({'error': 'Brak opisu zapytania'}), 400
-        
-        if not sql_code_service:
-            return jsonify({'error': 'SQL service niedostępny'}), 503
-        
-        description = data['description']
-        generated_query = sql_code_service.generate_sql_query(description)
-        
-        # Analizuj wygenerowane zapytanie
-        analysis = sql_code_service.analyze_sql_query(generated_query)
-        
-        result = {
-            'description': description,
-            'generated_query': generated_query,
-            'analysis': asdict(analysis),
-            'timestamp': datetime.now().isoformat()
-        }
-        
-        logger.info(f"[OK] Wygenerowano SQL dla: {description[:50]}...")
-        return jsonify(result)
-        
-    except Exception as e:
-        logger.error(f"[ERROR] Błąd generowania SQL: {e}")
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/code/analyze', methods=['POST'])
-def analyze_code():
-    """Analizuje kod programistyczny"""
-    try:
-        data = request.get_json()
-        if not data or 'code' not in data:
-            return jsonify({'error': 'Brak kodu do analizy'}), 400
-        
-        if not sql_code_service:
-            return jsonify({'error': 'Code service niedostępny'}), 503
-        
-        code = data['code']
-        language = data.get('language', None)
-        
-        result = sql_code_service.analyze_code(code, language)
-        
-        # Konwertuj do dict
-        result_dict = asdict(result)
-        result_dict['timestamp'] = datetime.now().isoformat()
-        
-        logger.info(f"[OK] Analiza kodu: language={result.language}, complexity={result.complexity_score}")
-        return jsonify(result_dict)
-        
-    except Exception as e:
-        logger.error(f"[ERROR] Błąd analizy kodu: {e}")
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/sql/schema', methods=['GET'])
-def get_database_schema():
-    """Zwraca schemat bazy danych"""
-    try:
-        if not sql_code_service:
-            return jsonify({'error': 'SQL service niedostępny'}), 503
-        
-        schema = sql_code_service.get_database_schema()
-        
-        result = {
-            'schema': schema,
-            'tables_count': len(schema),
-            'timestamp': datetime.now().isoformat()
-        }
-        
-        return jsonify(result)
-        
-    except Exception as e:
-        logger.error(f"[ERROR] Błąd pobierania schematu: {e}")
-        return jsonify({'error': str(e)}), 500
-
-# === DOCUMENT MANAGEMENT ===
-
-@app.route('/api/documents/upload', methods=['POST'])
-def upload_documents():
-    """Upload i indeksowanie dokumentów"""
-    try:
-        if not document_loader:
-            return jsonify({'error': 'Document loader niedostępny'}), 503
-        
-        # Symulacja uploadu dokumentów
-        result = {
-            'status': 'success',
-            'message': 'Dokumenty zostały przesłane i zindeksowane',
-            'processed_files': 0,
-            'indexed_chunks': 0,
-            'timestamp': datetime.now().isoformat()
-        }
-        
-        # Sprawdź czy są dokumenty w bazie wiedzy
-        knowledge_base_path = "../BazaWiedzy"
-        if os.path.exists(knowledge_base_path):
-            try:
-                documents_count = document_loader.load_documents_from_directory(knowledge_base_path)
-                result['processed_files'] = documents_count
-                result['indexed_chunks'] = documents_count * 5  # Szacunek
-                logger.info(f"[OK] Załadowano {documents_count} dokumentów")
-            except Exception as e:
-                logger.warning(f"[WARN] Błąd ładowania dokumentów: {e}")
-        
-        return jsonify(result)
-        
-    except Exception as e:
-        logger.error(f"[ERROR] Błąd upload dokumentów: {e}")
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/documents/status', methods=['GET'])
-def documents_status():
-    """Status systemu zarządzania dokumentami"""
-    try:
-        status = {
-            'total_documents': 0,
-            'indexed_chunks': 0,
-            'last_update': 'Nigdy',
-            'vector_db_size': 'N/A',
-            'available_categories': [],
-            'timestamp': datetime.now().isoformat()
-        }
-        
-        # Sprawdź ChromaDB
-        if vector_service.collection:
-            try:
-                count = vector_service.collection.count()
-                status['indexed_chunks'] = count
-                
-                # Sprawdź dokumenty w BazaWiedzy
-                knowledge_base_path = "../BazaWiedzy/Tabele_2025_0"
-                if os.path.exists(knowledge_base_path):
-                    files = [f for f in os.listdir(knowledge_base_path) if f.endswith(('.html', '.xml'))]
-                    status['total_documents'] = len(files)
-                    status['available_categories'] = ['AI_ChatERP', 'Tabele', 'Funkcje', 'Procedury']
-                    status['last_update'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                
-            except Exception as e:
-                logger.warning(f"[WARN] Błąd sprawdzania statusu dokumentów: {e}")
-        
-        return jsonify(status)
-        
-    except Exception as e:
-        logger.error(f"[ERROR] Błąd status dokumentów: {e}")
-        return jsonify({'error': str(e)}), 500
-
-
-# === CRM & BUSINESS INTELLIGENCE ===
-
-@app.route('/api/crm/dashboard', methods=['GET'])
-def crm_dashboard():
-    """Dashboard CRM z danymi biznesowymi"""
-    try:
-        # Generuj przykładowe dane CRM
-        dashboard_data = {
-            'summary': {
-                'total_customers': 1247,
-                'active_projects': 23,
-                'monthly_revenue': 185420.50,
-                'conversion_rate': 23.5,
-                'customer_satisfaction': 4.2
-            },
-            'recent_activities': [
-                {
-                    'type': 'new_customer',
-                    'description': 'Nowy klient: ABC Manufacturing Sp. z o.o.',
-                    'timestamp': (datetime.now() - timedelta(hours=2)).isoformat(),
-                    'value': 45000.00
-                },
-                {
-                    'type': 'project_completed',
-                    'description': 'Zakończenie wdrożenia ERP w XYZ Corp',
-                    'timestamp': (datetime.now() - timedelta(hours=5)).isoformat(),
-                    'value': 120000.00
-                },
-                {
-                    'type': 'support_ticket',
-                    'description': 'Nowe zgłoszenie wsparcia - moduł finansowy',
-                    'timestamp': (datetime.now() - timedelta(hours=1)).isoformat(),
-                    'priority': 'high'
-                }
-            ],
-            'sales_pipeline': {
-                'prospects': 45,
-                'qualified_leads': 23,
-                'proposals_sent': 12,
-                'negotiations': 8,
-                'closed_won': 5,
-                'closed_lost': 3
-            },
-            'top_customers': [
-                {'name': 'Mega Corp S.A.', 'revenue': 245000.00, 'projects': 3},
-                {'name': 'Tech Solutions Sp. z o.o.', 'revenue': 189000.00, 'projects': 2},
-                {'name': 'Global Industries', 'revenue': 156000.00, 'projects': 4}
-            ],
-            'performance_metrics': {
-                'monthly_growth': 12.5,
-                'customer_retention': 94.2,
-                'average_deal_size': 87500.00,
-                'sales_cycle_days': 45
-            },
-            'timestamp': datetime.now().isoformat()
-        }
-        
-        return jsonify(dashboard_data)
-        
-    except Exception as e:
-        logger.error(f"[ERROR] Błąd dashboard CRM: {e}")
-        return jsonify({'error': str(e)}), 500
-
-# === SYSTEM ANALYTICS ===
-
-@app.route('/api/analytics/usage', methods=['GET'])
-def system_analytics():
-    """Analityka wykorzystania systemu"""
-    try:
-        analytics = {
-            'daily_queries': 156,
-            'popular_modules': [
-                {'name': 'RAG Chat', 'usage': 45},
-                {'name': 'SQL Analyzer', 'usage': 23},
-                {'name': 'Document Manager', 'usage': 18},
-                {'name': 'Code Analyzer', 'usage': 12}
-            ],
-            'user_satisfaction': 4.3,
-            'response_times': {
-                'avg_rag_response': 2.3,
-                'avg_sql_analysis': 1.8,
-                'avg_code_analysis': 3.1
-            },
-            'error_rates': {
-                'rag_errors': 0.02,
-                'sql_errors': 0.05,
-                'system_errors': 0.01
-            },
-            'performance_trends': {
-                'queries_trend': '+15%',
-                'satisfaction_trend': '+8%',
-                'performance_trend': '+5%'
-            },
-            'timestamp': datetime.now().isoformat()
-        }
-        
-        return jsonify(analytics)
-        
-    except Exception as e:
-        logger.error(f"[ERROR] Błąd analityki: {e}")
-        return jsonify({'error': str(e)}), 500
-
-# === INITIALIZATION ENDPOINT ===
-
-@app.route('/api/initialize', methods=['POST'])
-def initialize_system():
-    """Inicjalizuje system z dokumentami"""
-    try:
-        if not advanced_rag:
-            return jsonify({'error': 'Advanced RAG niedostępny'}), 503
-        
-        # Załaduj dokumenty z BazaWiedzy - POPRAWIONA ŚCIEŻKA  
-        knowledge_base_path = os.path.join(os.path.dirname(__file__), "data", "knowledge_base", "BazaWiedzy", "Tabele_2025_0")
-        documents = []
-        metadatas = []
-        
-        logger.info(f"[SEARCH] Szukam dokumentów w: {knowledge_base_path}")
-        
-        if os.path.exists(knowledge_base_path):
-            all_files = os.listdir(knowledge_base_path)
-            html_files = [f for f in all_files if f.endswith('.html')]
-            logger.info(f"[FOLDER] Znaleziono {len(html_files)} plików HTML z {len(all_files)} ogółem")
-            
-            # Załaduj więcej dokumentów - zwiększam limit
-            for file in html_files[:50]:  # Zwiększone z 20 na 50
-                try:
-                    file_path = os.path.join(knowledge_base_path, file)
-                    with open(file_path, 'r', encoding='utf-8') as f:
-                        content = f.read()
-                        
-                        # Wyciągnij tekst z HTML (podstawowe parsowanie)
-                        import re
-                        text_content = re.sub(r'<[^>]+>', ' ', content)
-                        text_content = re.sub(r'\s+', ' ', text_content).strip()
-                        
-                        if len(text_content) > 50:  # Zmniejszam próg z 100 na 50
-                            # Podziel na mniejsze fragmenty dla lepszego embedowania
-                            chunk_size = 1500  # Zwiększam z 2000 na 1500
-                            chunks = [text_content[i:i+chunk_size] for i in range(0, len(text_content), chunk_size)]
-                            
-                            for i, chunk in enumerate(chunks):
-                                if len(chunk.strip()) > 50:
-                                    documents.append(chunk)
-                                    metadatas.append({
-                                        'source': file,
-                                        'chunk_id': f"{file}_chunk_{i}",
-                                        'category': 'comarch_erp_documentation',
-                                        'type': 'html_processed',
-                                        'file_size': len(content)
-                                    })
-                    
-                    logger.info(f"[OK] Załadowano: {file} ({len(text_content)} znaków)")
-                        
-                except Exception as e:
-                    logger.warning(f"[WARN] Błąd ładowania {file}: {e}")
-        else:
-            logger.error(f"[ERROR] Katalog nie istnieje: {knowledge_base_path}")
-        
-        if documents:
-            logger.info(f"[START] Inicjalizuję RAG z {len(documents)} fragmentami dokumentów...")
-            advanced_rag.initialize_with_documents(documents, metadatas)
-            
-            result = {
-                'status': 'success',
-                'message': 'System został zainicjalizowany z bazą wiedzy',
-                'documents_loaded': len(documents),
-                'source_files': len(set(m['source'] for m in metadatas)),
-                'timestamp': datetime.now().isoformat()
-            }
-            
-            logger.info(f"[OK] RAG zainicjalizowany: {len(documents)} fragmentów z {len(set(m['source'] for m in metadatas))} plików")
-            return jsonify(result)
-        else:
-            logger.error("[ERROR] Nie znaleziono żadnych dokumentów do załadowania!")
-            return jsonify({
-                'status': 'error',
-                'message': 'Nie znaleziono dokumentów do załadowania',
-                'documents_loaded': 0,
-                'checked_path': knowledge_base_path
-            })
-        
-    except Exception as e:
-        logger.error(f"[ERROR] Błąd inicjalizacji systemu: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
-
-# === SYSTEM MANAGEMENT ===
-
-@app.route('/api/system/restart', methods=['POST'])
-def restart_application():
-    """Restart aplikacji z poziomu interfejsu webowego"""
-    try:
-        import threading
-        import sys
-        import os
-        
-        logger.info("[RESTART] Otrzymano żądanie restartu aplikacji z interfejsu webowego")
-        
-        def delayed_restart():
-            """Funkcja wykonująca restart z opóźnieniem"""
-            import time
-            time.sleep(1)  # Daj czas na wysłanie odpowiedzi
-            logger.info("[RESTART] Restartowanie aplikacji...")
-            
-            try:
-                # Metoda 1: Restart procesu Python
-                python = sys.executable
-                os.execl(python, python, *sys.argv)
-            except Exception as e:
-                logger.error(f"[RESTART ERROR] Błąd restartu: {e}")
-                # Fallback - force exit
-                os._exit(1)
-        
-        # Uruchom restart w osobnym wątku
-        restart_thread = threading.Thread(target=delayed_restart)
-        restart_thread.daemon = True
-        restart_thread.start()
-        
-        return jsonify({
-            'status': 'success',
-            'message': 'Aplikacja zostanie zrestartowana za chwilę...',
-            'restart_time': datetime.now().isoformat(),
-            'estimated_downtime': '5-10 sekund'
-        })
-        
-    except Exception as e:
-        logger.error(f"[RESTART ERROR] Błąd inicjowania restartu: {e}")
-        return jsonify({
-            'status': 'error',
-            'message': f'Błąd restartu: {str(e)}',
-            'timestamp': datetime.now().isoformat()
-        }), 500
-
-@app.route('/api/system/reload-config', methods=['POST', 'OPTIONS'])
-def reload_configuration():
-    """Przeładowanie konfiguracji bez pełnego restartu"""
-    # Handle preflight OPTIONS request
-    if request.method == 'OPTIONS':
-        response = jsonify({'status': 'ok'})
-        response.headers.add('Access-Control-Allow-Origin', '*')
-        response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
-        response.headers.add('Access-Control-Allow-Methods', 'POST, OPTIONS')
-        return response
-        
-    try:
-        logger.info("[RELOAD] Przeładowywanie konfiguracji...")
-        
-        # Przeładuj zmienne środowiskowe
-        load_dotenv(override=True)
-        
-        # Reinicjalizuj konfigurację
-        app.config.from_object(Config)
-        
-        result = {
-            'status': 'success',
-            'message': 'Konfiguracja została przeładowana',
-            'reloaded_components': [
-                'Environment variables',
-                'Flask configuration',
-                'API keys (if changed)'
-            ],
-            'timestamp': datetime.now().isoformat()
-        }
-        
-        logger.info("[RELOAD] Konfiguracja przeładowana pomyślnie")
-        return jsonify(result)
-        
-    except Exception as e:
-        logger.error(f"[RELOAD ERROR] Błąd przeładowania konfiguracji: {e}")
-        return jsonify({
-            'status': 'error',
-            'message': f'Błąd przeładowania: {str(e)}',
-            'timestamp': datetime.now().isoformat()
-        }), 500
-
-@app.route('/api/system/test', methods=['GET', 'POST'])
-def test_endpoint():
-    """Test endpoint to verify server updates"""
-    return jsonify({
-        'status': 'working', 
-        'message': 'Server updated successfully',
-        'timestamp': datetime.now().isoformat(),
-        'method': request.method
-    })
-
-@app.route('/api/system/status', methods=['GET'])
-def system_status():
-    """Rozszerzony status systemu z informacjami o zarządzaniu"""
-    try:
-        # Spróbuj użyć psutil jeśli dostępne
+    @app.route('/api/chat', methods=['POST'])
+    @app.route('/api/rag/chat', methods=['POST']) 
+    @app.route('/api/enhanced/chat', methods=['POST'])
+    def basic_chat():
+        """Podstawowy chat endpoint - fallback"""
         try:
-            import psutil
+            data = request.get_json()
+            message = data.get('message', '') if data else ''
             
-            # Informacje o procesie
-            process = psutil.Process()
+            fallback_response = f"""**System Basic Fallback**
+
+**Zapytanie:** {message}
+
+**Status:** Enhanced RAG v3.0 niedostępny
+
+**Aby uzyskać pełną funkcjonalność:**
+1. Zainstaluj wymagane biblioteki:
+   ```
+   pip install anthropic sentence-transformers chromadb
+   ```
+
+2. Skonfiguruj klucz API w pliku .env:
+   ```
+   ANTHROPIC_API_KEY=your_key_here
+   ```
+
+3. Uruchom Enhanced version:
+   ```
+   python start_enhanced.py
+   ```
+
+**Dostępne funkcje w trybie basic:**
+- Analiza modułów ERP
+- Harmonogramy wdrożeń
+- Plany szkoleń
+- Ocena migracji danych
+
+**Niedostępne w trybie basic:**
+- Advanced RAG v3.0
+- Inteligentne odpowiedzi AI
+- Kontekst konwersacji
+- Fact-checking
+- Cytowania
+
+*To jest podstawowa wersja fallback. Zainstaluj Enhanced RAG dla pełnej funkcjonalności.*"""
+
+            return jsonify({
+                'answer': fallback_response,
+                'confidence': 0.3,
+                'confidence_level': 'low',
+                'sources': [],
+                'reasoning_chain': ['Basic fallback mode'],
+                'validation_score': 0.0,
+                'query_type': 'system_info',
+                'response_type': 'fallback',
+                'citations': [],
+                'fact_check_score': 0.0,
+                'relevance_score': 0.3,
+                'completeness_score': 0.5,
+                'clarity_score': 0.8,
+                'models_used': ['basic_fallback'],
+                'processing_steps': ['Basic fallback response generated'],
+                'context_chunks_used': 0,
+                'total_tokens': 0,
+                'processing_time_ms': 1.0,
+                'suggested_followups': [
+                    'Jak zainstalować Enhanced RAG v3.0?',
+                    'Jakie są wymagania systemowe?',
+                    'Gdzie uzyskać klucz API Claude?'
+                ],
+                'session_id': 'basic_fallback',
+                'timestamp': datetime.now().isoformat(),
+                'claude_model': 'basic_fallback',
+                'warning': 'Enhanced RAG v3.0 niedostępny - podstawowa wersja'
+            }), 200
             
-            status = {
-                'system_info': {
-                    'platform': platform.platform(),
-                    'python_version': platform.python_version(),
-                    'process_id': os.getpid(),
-                    'process_memory': f"{process.memory_info().rss / 1024 / 1024:.1f} MB",
-                    'process_cpu': f"{process.cpu_percent():.1f}%",
-                    'uptime_seconds': time.time() - process.create_time()
-                },
-                'application_status': {
-                    'status': 'running',
-                    'version': '2.0.0-advanced',
-                    'debug_mode': app.debug,
-                    'config_loaded': True,
-                    'last_restart': 'N/A'
-                },
-                'services_status': {
-                    'claude_api': bool(ai_service.claude_client),
-                    'embeddings': bool(ai_service.sentence_model),
-                    'vector_db': bool(vector_service.collection),
-                    'advanced_rag': bool(advanced_rag),
-                    'enhanced_rag': bool(enhanced_rag),
-                    'sql_service': bool(sql_code_service),
-                    'document_loader': bool(document_loader)
-                },
-                'management_actions': {
-                    'restart_available': True,
-                    'config_reload_available': True,
-                    'log_level_change': True,
-                    'service_reinit': True
-                },
-                'timestamp': datetime.now().isoformat()
-            }
-            
-        except ImportError:
-            # Fallback bez psutil - biblioteka nie jest zainstalowana
-            logger.info("[INFO] psutil nie jest dostępny - używam podstawowych informacji")
-            
-            status = {
-                'system_info': {
-                    'platform': platform.platform(),
-                    'python_version': platform.python_version(),
-                    'process_id': os.getpid(),
-                    'process_memory': 'N/A (psutil required)',
-                    'process_cpu': 'N/A (psutil required)',
-                    'uptime_seconds': 'N/A (psutil required)'
-                },
-                'application_status': {
-                    'status': 'running',
-                    'version': '2.0.0-advanced',
-                    'debug_mode': app.debug,
-                    'config_loaded': True,
-                    'last_restart': 'N/A'
-                },
-                'services_status': {
-                    'claude_api': bool(ai_service.claude_client),
-                    'embeddings': bool(ai_service.sentence_model),
-                    'vector_db': bool(vector_service.collection),
-                    'advanced_rag': bool(advanced_rag),
-                    'enhanced_rag': bool(enhanced_rag),
-                    'sql_service': bool(sql_code_service),
-                    'document_loader': bool(document_loader)
-                },
-                'management_actions': {
-                    'restart_available': True,
-                    'config_reload_available': True,
-                    'log_level_change': True,
-                    'service_reinit': True
-                },
-                'timestamp': datetime.now().isoformat()
-            }
-        
-        return jsonify(status)
-        
-    except Exception as e:
-        logger.error(f"[ERROR] Błąd system status: {e}")
-        # Minimalny fallback w przypadku krytycznego błędu
+        except Exception as e:
+            logger.error(f"Basic chat error: {e}")
+            return jsonify({
+                'error': f'Błąd podstawowego chatu: {str(e)}',
+                'mode': 'basic_fallback'
+            }), 500
+
+    @app.route('/api/initialize', methods=['POST'])
+    @app.route('/api/enhanced/initialize', methods=['POST'])
+    def basic_initialize():
+        """Podstawowa inicjalizacja - fallback"""
         return jsonify({
-            'system_info': {
-                'platform': 'Unknown',
-                'python_version': 'Unknown',
-                'process_id': os.getpid() if hasattr(os, 'getpid') else 'Unknown'
-            },
-            'application_status': {
-                'status': 'running',
-                'version': '2.0.0-advanced'
-            },
-            'services_status': {
-                'claude_api': bool(ai_service.claude_client),
-                'vector_db': bool(vector_service.collection),
-                'advanced_rag': bool(advanced_rag)
-            },
-            'management_actions': {
-                'restart_available': True,
-                'config_reload_available': True
-            },
-            'timestamp': datetime.now().isoformat(),
-            'error': str(e)
-        })
+            'status': 'warning',
+            'message': 'Enhanced RAG v3.0 niedostępny - brak inicjalizacji AI',
+            'documents_loaded': 0,
+            'action': 'basic_fallback',
+            'recommendation': 'Uruchom: python start_enhanced.py'
+        }), 200
 
-# === ERROR HANDLERS ===
+    # === ERP SPECIFIC ENDPOINTS (bez zmian) ===
+    
+    @app.route('/api/erp/modules/analysis', methods=['POST'])
+    def analyze_erp_modules():
+        """Analiza modułów ERP dla konkretnego wdrożenia"""
+        try:
+            data = request.get_json()
+            if not data or 'company_profile' not in data:
+                return jsonify({'error': 'Brak profilu firmy'}), 400
+            
+            profile = data['company_profile']
+            industry = data.get('industry', 'Ogólny')
+            company_size = data.get('company_size', 'Średnia')
+            
+            # Rekomendacje modułów na podstawie profilu
+            module_recommendations = {
+                'core_modules': {
+                    'Księgowość': {
+                        'priority': 'Wysoki',
+                        'reason': 'Podstawowy moduł wymagany przez przepisy',
+                        'implementation_time': '2-3 tygodnie',
+                        'complexity': 'Średnia'
+                    },
+                    'Kadry i Płace': {
+                        'priority': 'Wysoki',
+                        'reason': 'Kluczowy dla zarządzania zasobami ludzkimi',
+                        'implementation_time': '3-4 tygodnie', 
+                        'complexity': 'Średnia'
+                    },
+                    'Magazyn': {
+                        'priority': 'Wysoki' if 'produkcja' in industry.lower() or 'handel' in industry.lower() else 'Średni',
+                        'reason': 'Zarządzanie stanami magazynowymi',
+                        'implementation_time': '2-3 tygodnie',
+                        'complexity': 'Niska'
+                    }
+                },
+                'optional_modules': {
+                    'CRM': {
+                        'priority': 'Średni',
+                        'reason': 'Wsparcie sprzedaży i obsługi klienta',
+                        'implementation_time': '3-4 tygodnie',
+                        'complexity': 'Średnia'
+                    },
+                    'Serwis': {
+                        'priority': 'Niski' if company_size == 'Mała' else 'Średni',
+                        'reason': 'Zarządzanie usługami posprzedażowymi',
+                        'implementation_time': '2-3 tygodnie',
+                        'complexity': 'Niska'
+                    }
+                }
+            }
+            
+            # Oblicz szacunkowy koszt i czas wdrożenia
+            total_weeks = sum([
+                int(mod['implementation_time'].split('-')[0]) 
+                for category in module_recommendations.values() 
+                for mod in category.values()
+                if mod['priority'] == 'Wysoki'
+            ])
+            
+            result = {
+                'company_profile': profile,
+                'industry': industry,
+                'company_size': company_size,
+                'module_recommendations': module_recommendations,
+                'implementation_summary': {
+                    'estimated_time_weeks': total_weeks,
+                    'estimated_cost_range': f"{total_weeks * 15000} - {total_weeks * 25000} PLN",
+                    'critical_path_modules': ['Księgowość', 'Kadry i Płace']
+                },
+                'timestamp': datetime.now().isoformat(),
+                'mode': 'basic_analysis'
+            }
+            
+            logger.info(f"[ERP] Analiza modułów dla {industry} / {company_size}")
+            return jsonify(result)
+            
+        except Exception as e:
+            logger.error(f"[ERROR] Błąd analizy modułów ERP: {e}")
+            return jsonify({'error': str(e)}), 500
 
-@app.errorhandler(404)
-def not_found(error):
-    return jsonify({'error': 'Endpoint nie znaleziony'}), 404
+    @app.route('/api/erp/implementation/roadmap', methods=['POST'])
+    def generate_implementation_roadmap():
+        """Generuje harmonogram wdrożenia ERP"""
+        try:
+            data = request.get_json()
+            if not data or 'selected_modules' not in data:
+                return jsonify({'error': 'Brak wybranych modułów'}), 400
+            
+            selected_modules = data['selected_modules']
+            start_date = datetime.fromisoformat(data.get('start_date', datetime.now().isoformat()))
+            
+            # Definiuj kolejność wdrożenia (dependency graph)
+            module_dependencies = {
+                'Księgowość': [],
+                'Kadry i Płace': ['Księgowość'],
+                'Magazyn': ['Księgowość'],
+                'CRM': ['Księgowość'],
+                'Produkcja': ['Magazyn', 'Księgowość'],
+                'Serwis': ['CRM', 'Magazyn']
+            }
+            
+            module_durations = {
+                'Księgowość': 21,  # dni
+                'Kadry i Płace': 28,
+                'Magazyn': 21,
+                'CRM': 28,
+                'Produkcja': 56,
+                'Serwis': 21
+            }
+            
+            # Generuj harmonogram
+            roadmap = []
+            completed_modules = set()
+            current_date = start_date
+            phase = 1
+            
+            while len(completed_modules) < len(selected_modules):
+                # Znajdź moduły gotowe do wdrożenia
+                ready_modules = [
+                    mod for mod in selected_modules 
+                    if mod not in completed_modules and 
+                    all(dep in completed_modules for dep in module_dependencies.get(mod, []))
+                ]
+                
+                if not ready_modules:
+                    break
+                
+                # Wybierz moduł o najwyższym priorytecie dla tej fazy
+                module = ready_modules[0]
+                duration = module_durations.get(module, 21)
+                
+                roadmap.append({
+                    'phase': phase,
+                    'module': module,
+                    'start_date': current_date.strftime('%Y-%m-%d'),
+                    'end_date': (current_date + timedelta(days=duration)).strftime('%Y-%m-%d'),
+                    'duration_days': duration,
+                    'dependencies': module_dependencies.get(module, []),
+                    'key_activities': [
+                        'Analiza procesów biznesowych',
+                        'Konfiguracja systemu',
+                        'Migracja danych',
+                        'Testy akceptacyjne',
+                        'Szkolenia użytkowników',
+                        'Go-live'
+                    ]
+                })
+                
+                completed_modules.add(module)
+                current_date += timedelta(days=duration + 7)  # 1 tydzień przerwy między modułami
+                phase += 1
+            
+            result = {
+                'selected_modules': selected_modules,
+                'total_phases': len(roadmap),
+                'total_duration_days': (current_date - start_date).days if roadmap else 0,
+                'roadmap': roadmap,
+                'critical_success_factors': [
+                    'Zaangażowanie kierownictwa',
+                    'Właściwe przygotowanie danych',
+                    'Systematyczne szkolenia',
+                    'Etapowe testowanie'
+                ],
+                'timestamp': datetime.now().isoformat(),
+                'mode': 'basic_roadmap'
+            }
+            
+            logger.info(f"[ERP] Wygenerowano harmonogram dla {len(selected_modules)} modułów")
+            return jsonify(result)
+            
+        except Exception as e:
+            logger.error(f"[ERROR] Błąd generowania harmonogramu: {e}")
+            return jsonify({'error': str(e)}), 500
 
-@app.errorhandler(500)
-def internal_error(error):
-    logger.error(f"Błąd serwera: {error}")
-    return jsonify({'error': 'Wewnętrzny błąd serwera'}), 500
+    # === ERROR HANDLERS ===
+    
+    @app.errorhandler(404)
+    def not_found(error):
+        return jsonify({
+            'error': 'Endpoint nie znaleziony',
+            'mode': 'basic_fallback',
+            'timestamp': datetime.now().isoformat()
+        }), 404
 
-# === MAIN FUNCTION ===
+    @app.errorhandler(500)
+    def internal_error(error):
+        logger.error(f"Błąd serwera: {error}")
+        return jsonify({
+            'error': 'Wewnętrzny błąd serwera',
+            'mode': 'basic_fallback',
+            'timestamp': datetime.now().isoformat()
+        }), 500
 
-def main():
-    """Główna funkcja uruchamiająca serwer"""
-    logger.info("=" * 80)
-    logger.info("[START] ERP AI ASSISTANT - ADVANCED BACKEND SERVER")
-    logger.info("=" * 80)
-    
-    # Sprawdź kluczowe komponenty
-    if not ai_service.claude_client:
-        logger.warning("[WARN] Claude API nie jest dostępne - niektóre funkcje będą ograniczone")
-    
-    if not ai_service.sentence_model:
-        logger.warning("[WARN] Model embeddings nie jest dostępny - RAG będzie ograniczony")
-    
-    # Informacje o dostępnych endpointach
-    logger.info("[INFO] Dostępne endpointy:")
-    logger.info("   [HOME] Główna aplikacja: http://localhost:5000")
-    logger.info("   [HEALTH] Health check: http://localhost:5000/api/health")
-    logger.info("   [BOT] RAG Chat: http://localhost:5000/api/rag/chat")
-    logger.info("   [SQL] SQL Analyzer: http://localhost:5000/api/sql/analyze")
-    logger.info("   [DASH] CRM Dashboard: http://localhost:5000/api/crm/dashboard")
-    logger.info("   [ANALYTICS] System Analytics: http://localhost:5000/api/analytics/usage")
-    
-    logger.info("[POWER] Aby zatrzymać serwer, użyj Ctrl+C")
-    logger.info("=" * 80)
-    
-    # Uruchom serwer Flask
-    try:
-        app.run(
-            host='127.0.0.1',  # Tylko localhost - jeden adres
-            port=5000,
-            debug=False,  # Wyłącz debug w produkcji
-            threaded=True
-        )
-    except KeyboardInterrupt:
-        logger.info("[STOP] Serwer zatrzymany przez użytkownika")
-    except Exception as e:
-        logger.error(f"[ERROR] Błąd uruchamiania serwera: {e}")
+    def main():
+        """Główna funkcja dla basic fallback"""
+        logger.info("=" * 80)
+        logger.info("[START] ERP AI ASSISTANT - BASIC FALLBACK MODE")
+        logger.info("=" * 80)
+        logger.info("⚠️  Enhanced RAG v3.0 niedostępny")
+        logger.info("🔧 Uruchamianie podstawowej wersji")
+        logger.info("[INFO] Dostępne endpointy:")
+        logger.info("   [HOME] Główna aplikacja: http://localhost:5000")
+        logger.info("   [HEALTH] Health check: http://localhost:5000/api/health")
+        logger.info("   [CHAT] Basic chat: http://localhost:5000/api/chat")
+        logger.info("   [ERP] Analiza modułów: http://localhost:5000/api/erp/modules/analysis")
+        logger.info("   [ERP] Harmonogram: http://localhost:5000/api/erp/implementation/roadmap")
+        logger.info("💡 Aby uzyskać Enhanced RAG v3.0:")
+        logger.info("   python start_enhanced.py")
+        logger.info("[POWER] Aby zatrzymać serwer, użyj Ctrl+C")
+        logger.info("=" * 80)
+        
+        try:
+            app.run(
+                host='127.0.0.1',
+                port=5000,
+                debug=False,
+                threaded=True
+            )
+        except KeyboardInterrupt:
+            logger.info("[STOP] Basic fallback zatrzymany przez użytkownika")
+        except Exception as e:
+            logger.error(f"[ERROR] Błąd uruchamiania basic fallback: {e}")
+
+# === UNIVERSAL MAIN ===
 
 if __name__ == '__main__':
     main()
